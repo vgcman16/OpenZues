@@ -18033,7 +18033,7 @@ const crypto = require("crypto");
 const os = require("os");
 const path = require("path");
 const util = require("util");
-const { execFile, spawn } = require("child_process");
+const { execFile, execFileSync, spawn } = require("child_process");
 const { fileURLToPath, pathToFileURL } = require("url");
 const Module = require("module");
 const execFileAsync = util.promisify(execFile);
@@ -20122,13 +20122,13 @@ function isJsonContentType(value) {
 
 function requestBodyErrorToText(code) {
   if (code === "PAYLOAD_TOO_LARGE") {
-    return "Payload Too Large";
+    return "Payload too large";
   }
   if (code === "REQUEST_BODY_TIMEOUT") {
-    return "Request Body Timeout";
+    return "Request body timeout";
   }
   if (code === "CONNECTION_CLOSED") {
-    return "Connection Closed";
+    return "Connection closed";
   }
   return "Bad Request";
 }
@@ -21775,6 +21775,11 @@ function definePluginEntry(options) {
     name: options.name,
     description: options.description,
     ...(options.kind ? { kind: options.kind } : {}),
+    ...(options.reload ? { reload: options.reload } : {}),
+    ...(options.nodeHostCommands ? { nodeHostCommands: options.nodeHostCommands } : {}),
+    ...(options.securityAuditCollectors
+      ? { securityAuditCollectors: options.securityAuditCollectors }
+      : {}),
     get configSchema() {
       return getConfigSchema();
     },
@@ -22162,6 +22167,57 @@ function normalizeWhitespace(value) {
     .trim();
 }
 
+function webToolDecodeEntities(value) {
+  return String(value || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/gi, (_, dec) => String.fromCharCode(Number.parseInt(dec, 10)));
+}
+
+function webToolStripTags(value) {
+  return webToolDecodeEntities(String(value || "").replace(/<[^>]+>/g, ""));
+}
+
+function stripInvisibleUnicode(value) {
+  return String(value || "").replace(/[\u200B-\u200D\uFEFF]/g, "");
+}
+
+function htmlToMarkdown(html) {
+  const rawHtml = String(html || "");
+  const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch ? normalizeWhitespace(webToolStripTags(titleMatch[1])) : undefined;
+  let text = rawHtml
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, "");
+  text = text.replace(
+    /<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
+    (_, href, body) => {
+      const label = normalizeWhitespace(webToolStripTags(body));
+      return label ? `[${label}](${href})` : href;
+    },
+  );
+  text = text.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, level, body) => {
+    const prefix = "#".repeat(Math.max(1, Math.min(6, Number.parseInt(level, 10))));
+    const label = normalizeWhitespace(webToolStripTags(body));
+    return `\n${prefix} ${label}\n`;
+  });
+  text = text.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, body) => {
+    const label = normalizeWhitespace(webToolStripTags(body));
+    return label ? `\n- ${label}` : "";
+  });
+  text = text
+    .replace(/<(br|hr)\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|section|article|header|footer|table|tr|ul|ol)>/gi, "\n");
+  text = normalizeWhitespace(webToolStripTags(text));
+  return title ? { text, title } : { text };
+}
+
 function markdownToText(markdown) {
   let text = String(markdown || "");
   text = text.replace(/!\[[^\]]*]\([^)]+\)/g, "");
@@ -22182,6 +22238,19 @@ function truncateText(value, maxChars) {
     return { text, truncated: false };
   }
   return { text: text.slice(0, maxChars), truncated: true };
+}
+
+async function extractBasicHtmlContent(params = {}) {
+  const cleanHtml = String(params.html || "");
+  const rendered = htmlToMarkdown(cleanHtml);
+  if (params.extractMode === "text") {
+    const text =
+      stripInvisibleUnicode(markdownToText(rendered.text)) ||
+      stripInvisibleUnicode(normalizeWhitespace(webToolStripTags(cleanHtml)));
+    return text ? { text, ...(rendered.title ? { title: rendered.title } : {}) } : null;
+  }
+  const text = stripInvisibleUnicode(rendered.text);
+  return text ? { text, ...(rendered.title ? { title: rendered.title } : {}) } : null;
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -22285,6 +22354,16 @@ async function withTrustedWebToolsEndpoint(params, run) {
   const fetchImpl = params.fetchImpl || globalThis.fetch;
   const response = await fetchImpl(params.url, params.init || {});
   return await run({ response, finalUrl: params.url });
+}
+
+async function fetchWithWebToolsNetworkGuard(params = {}) {
+  const fetchImpl = params.fetchImpl || globalThis.fetch;
+  const response = await fetchImpl(params.url, params.init || {});
+  return {
+    response,
+    finalUrl: params.url,
+    release: async () => undefined,
+  };
 }
 
 async function withSelfHostedWebToolsEndpoint(params, run) {
@@ -22864,8 +22943,216 @@ async function resolveSecretInputModeForEnvSelection(params) {
   return selected === "ref" ? "ref" : "plaintext";
 }
 
-function resolveProviderIdForAuth(provider) {
-  return normalizeOptionalLowercaseString(provider) || String(provider || "");
+const PROVIDER_AUTH_ALIAS_ORIGIN_PRIORITY = {
+  config: 0,
+  bundled: 1,
+  global: 2,
+  workspace: 3,
+};
+let providerAuthAliasMapCache = new WeakMap();
+
+function resetProviderAuthAliasMapCacheForTest() {
+  providerAuthAliasMapCache = new WeakMap();
+}
+
+function normalizePluginConfigId(id) {
+  return normalizeOptionalLowercaseString(id) || "";
+}
+
+function hasPluginConfigId(list, pluginId) {
+  return Array.isArray(list) && list.some((entry) => normalizePluginConfigId(entry) === pluginId);
+}
+
+function findPluginConfigEntry(entries, pluginId) {
+  if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+    return undefined;
+  }
+  for (const [key, value] of Object.entries(entries)) {
+    if (normalizePluginConfigId(key) !== pluginId) {
+      continue;
+    }
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  }
+  return undefined;
+}
+
+function isWorkspacePluginAllowedForAuthAliases(plugin, config) {
+  const pluginsConfig = config && config.plugins;
+  if (pluginsConfig && pluginsConfig.enabled === false) {
+    return false;
+  }
+  const pluginId = normalizePluginConfigId(plugin && plugin.id);
+  if (!pluginId || hasPluginConfigId(pluginsConfig && pluginsConfig.deny, pluginId)) {
+    return false;
+  }
+  const entry = findPluginConfigEntry(pluginsConfig && pluginsConfig.entries, pluginId);
+  if (entry && entry.enabled === false) {
+    return false;
+  }
+  if (
+    (entry && entry.enabled === true) ||
+    hasPluginConfigId(pluginsConfig && pluginsConfig.allow, pluginId)
+  ) {
+    return true;
+  }
+  return normalizePluginConfigId(
+    pluginsConfig && pluginsConfig.slots && pluginsConfig.slots.contextEngine,
+  ) === pluginId;
+}
+
+function shouldUsePluginAuthAliases(plugin, params = {}) {
+  if (
+    !plugin ||
+    plugin.origin !== "workspace" ||
+    params.includeUntrustedWorkspacePlugins === true
+  ) {
+    return true;
+  }
+  return isWorkspacePluginAllowedForAuthAliases(plugin, params.config);
+}
+
+function readProviderAuthAliasPlugins(params = {}) {
+  const snapshot =
+    params.pluginMetadataSnapshot ||
+    params.metadataSnapshot ||
+    params.snapshot ||
+    (params.config &&
+      params.config.plugins &&
+      (params.config.plugins.pluginMetadataSnapshot || params.config.plugins.metadataSnapshot));
+  if (snapshot && Array.isArray(snapshot.plugins)) {
+    return snapshot.plugins;
+  }
+  if (Array.isArray(params.plugins)) {
+    return params.plugins;
+  }
+  const pluginsConfig = params.config && params.config.plugins;
+  if (!pluginsConfig || typeof pluginsConfig !== "object") {
+    return [];
+  }
+  for (const key of ["manifests", "plugins", "registry"]) {
+    const candidate = pluginsConfig[key];
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+    if (candidate && Array.isArray(candidate.plugins)) {
+      return candidate.plugins;
+    }
+  }
+  return [];
+}
+
+function providerAuthAliasCacheKey(params = {}, env = process.env) {
+  const plugins = readProviderAuthAliasPlugins(params).map((plugin) => ({
+    id: plugin && plugin.id,
+    origin: plugin && plugin.origin,
+    providerAuthAliases: plugin && plugin.providerAuthAliases,
+    providerAuthChoices: plugin && plugin.providerAuthChoices,
+  }));
+  return JSON.stringify({
+    includeUntrustedWorkspacePlugins: params.includeUntrustedWorkspacePlugins === true,
+    env: {
+      APPDATA: env && env.APPDATA,
+      HOME: env && env.HOME,
+      OPENCLAW_HOME: env && env.OPENCLAW_HOME,
+      OPENZUES_HOME: env && env.OPENZUES_HOME,
+      USERPROFILE: env && env.USERPROFILE,
+    },
+    pluginsConfig: (params.config && params.config.plugins) || null,
+    plugins,
+  });
+}
+
+function providerAuthAliasOriginPriority(origin) {
+  return Object.prototype.hasOwnProperty.call(PROVIDER_AUTH_ALIAS_ORIGIN_PRIORITY, origin)
+    ? PROVIDER_AUTH_ALIAS_ORIGIN_PRIORITY[origin]
+    : Number.MAX_SAFE_INTEGER;
+}
+
+function setPreferredProviderAuthAlias(params) {
+  const normalizedAlias = agentRuntimeNormalizeProviderId(params.alias);
+  const normalizedTarget = agentRuntimeNormalizeProviderId(params.target);
+  if (!normalizedAlias || !normalizedTarget) {
+    return;
+  }
+  const existing = params.aliases.get(normalizedAlias);
+  if (
+    !existing ||
+    providerAuthAliasOriginPriority(params.origin) <
+      providerAuthAliasOriginPriority(existing.origin)
+  ) {
+    params.aliases.set(normalizedAlias, {
+      origin: params.origin,
+      target: normalizedTarget,
+    });
+  }
+}
+
+function resolveProviderAuthAliasMap(params = {}) {
+  const env = params.env || process.env;
+  let envCache = providerAuthAliasMapCache.get(env);
+  if (!envCache) {
+    envCache = new Map();
+    providerAuthAliasMapCache.set(env, envCache);
+  }
+  const cacheKey = providerAuthAliasCacheKey(params, env);
+  const cached = envCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const preferredAliases = new Map();
+  const aliases = Object.create(null);
+  for (const plugin of readProviderAuthAliasPlugins(params)) {
+    if (!shouldUsePluginAuthAliases(plugin, params)) {
+      continue;
+    }
+    const providerAuthAliases =
+      plugin && plugin.providerAuthAliases && typeof plugin.providerAuthAliases === "object"
+        ? plugin.providerAuthAliases
+        : {};
+    for (const [alias, target] of Object.entries(providerAuthAliases).sort(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
+      setPreferredProviderAuthAlias({
+        aliases: preferredAliases,
+        alias,
+        origin: plugin && plugin.origin,
+        target,
+      });
+    }
+    const choices = Array.isArray(plugin && plugin.providerAuthChoices)
+      ? plugin.providerAuthChoices
+      : [];
+    for (const choice of choices) {
+      const deprecatedChoiceIds = Array.isArray(choice && choice.deprecatedChoiceIds)
+        ? choice.deprecatedChoiceIds
+        : [];
+      for (const deprecatedChoiceId of deprecatedChoiceIds) {
+        setPreferredProviderAuthAlias({
+          aliases: preferredAliases,
+          alias: deprecatedChoiceId,
+          origin: plugin && plugin.origin,
+          target: choice && choice.provider,
+        });
+      }
+    }
+  }
+  for (const [alias, candidate] of preferredAliases) {
+    aliases[alias] = candidate.target;
+  }
+  envCache.set(cacheKey, aliases);
+  return aliases;
+}
+
+function resolveProviderIdForAuth(provider, params = {}) {
+  const normalized = agentRuntimeNormalizeProviderId(provider);
+  if (!normalized) {
+    return normalized;
+  }
+  const aliasMap =
+    params && params.aliasMap && typeof params.aliasMap === "object"
+      ? params.aliasMap
+      : resolveProviderAuthAliasMap(params || {});
+  return aliasMap[normalized] || normalized;
 }
 
 function resolveProviderDefaultEnvSecretRef(provider) {
@@ -23297,10 +23584,20 @@ function omitEnvKeysCaseInsensitive(baseEnv, keys) {
 }
 
 function resolveEnvApiKey(provider, env = process.env, options = {}) {
-  const normalized = normalizeOptionalLowercaseString(provider);
-  if (!normalized) {
+  const normalizedProvider = agentRuntimeNormalizeProviderId(provider);
+  if (!normalizedProvider) {
     return null;
   }
+  const normalized =
+    options.aliasMap && typeof options.aliasMap === "object"
+      ? options.aliasMap[normalizedProvider] || normalizedProvider
+      : resolveProviderIdForAuth(provider, {
+          config: options.config,
+          env,
+          pluginMetadataSnapshot: options.pluginMetadataSnapshot,
+          plugins: options.plugins,
+          workspaceDir: options.workspaceDir,
+        });
   const candidateMap = options.candidateMap || PROVIDER_AUTH_ENV_VAR_CANDIDATES;
   const candidates = Object.prototype.hasOwnProperty.call(candidateMap, normalized)
     ? candidateMap[normalized]
@@ -24009,6 +24306,1548 @@ function createDedupeCache(options) {
 
 function resolveGlobalDedupeCache(key, options) {
   return resolveGlobalSingleton(key, () => createDedupeCache(options));
+}
+
+function sanitizePersistentDedupeData(value) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const out = {};
+  for (const [key, ts] of Object.entries(value)) {
+    if (typeof ts === "number" && Number.isFinite(ts) && ts > 0) {
+      out[key] = ts;
+    }
+  }
+  return out;
+}
+
+function prunePersistentDedupeData(data, now, ttlMs, maxEntries) {
+  if (ttlMs > 0) {
+    for (const [key, ts] of Object.entries(data)) {
+      if (now - ts >= ttlMs) {
+        delete data[key];
+      }
+    }
+  }
+  const keys = Object.keys(data);
+  if (keys.length <= maxEntries) {
+    return;
+  }
+  keys
+    .sort((left, right) => data[left] - data[right])
+    .slice(0, keys.length - maxEntries)
+    .forEach((key) => {
+      delete data[key];
+    });
+}
+
+function resolvePersistentDedupeNamespace(namespace) {
+  return String(namespace || "").trim() || "global";
+}
+
+function resolvePersistentDedupeScopedKey(namespace, key) {
+  return `${namespace}:${key}`;
+}
+
+function isRecentPersistentDedupeTimestamp(seenAt, ttlMs, now) {
+  return seenAt != null && (ttlMs <= 0 || now - seenAt < ttlMs);
+}
+
+function createPersistentDedupe(options) {
+  const ttlMs = Math.max(0, Math.floor(options.ttlMs));
+  const memoryMaxSize = Math.max(0, Math.floor(options.memoryMaxSize));
+  const fileMaxEntries = Math.max(1, Math.floor(options.fileMaxEntries));
+  const memory = createDedupeCache({ ttlMs, maxSize: memoryMaxSize });
+  const inflight = new Map();
+  const fileWriteQueues = new Map();
+
+  function enqueueFileWrite(filePath, fn) {
+    const previous = fileWriteQueues.get(filePath) || Promise.resolve();
+    const next = previous.then(fn, fn);
+    fileWriteQueues.set(filePath, next);
+    next
+      .finally(() => {
+        if (fileWriteQueues.get(filePath) === next) {
+          fileWriteQueues.delete(filePath);
+        }
+      })
+      .catch(() => undefined);
+    return next;
+  }
+
+  async function checkAndRecordInner(key, namespace, scopedKey, now, onDiskError) {
+    if (memory.check(scopedKey, now)) {
+      return false;
+    }
+    const filePath = options.resolveFilePath(namespace);
+    try {
+      const duplicate = await enqueueFileWrite(filePath, async () => {
+        const { value } = await readJsonFileWithFallback(filePath, {});
+        const data = sanitizePersistentDedupeData(value);
+        const seenAt = data[key];
+        if (isRecentPersistentDedupeTimestamp(seenAt, ttlMs, now)) {
+          return true;
+        }
+        data[key] = now;
+        prunePersistentDedupeData(data, now, ttlMs, fileMaxEntries);
+        await writeJsonFileAtomically(filePath, data);
+        return false;
+      });
+      return !duplicate;
+    } catch (error) {
+      if (typeof onDiskError === "function") {
+        onDiskError(error);
+      }
+      memory.check(scopedKey, now);
+      return true;
+    }
+  }
+
+  async function hasRecentInner(key, namespace, scopedKey, now, onDiskError) {
+    if (memory.peek(scopedKey, now)) {
+      return true;
+    }
+    const filePath = options.resolveFilePath(namespace);
+    try {
+      const { value } = await readJsonFileWithFallback(filePath, {});
+      const data = sanitizePersistentDedupeData(value);
+      const seenAt = data[key];
+      if (!isRecentPersistentDedupeTimestamp(seenAt, ttlMs, now)) {
+        return false;
+      }
+      memory.check(scopedKey, seenAt);
+      return true;
+    } catch (error) {
+      if (typeof onDiskError === "function") {
+        onDiskError(error);
+      }
+      return memory.peek(scopedKey, now);
+    }
+  }
+
+  async function warmup(namespace = "global", onError) {
+    const resolvedNamespace = resolvePersistentDedupeNamespace(namespace);
+    const filePath = options.resolveFilePath(resolvedNamespace);
+    const now = Date.now();
+    try {
+      const { value } = await readJsonFileWithFallback(filePath, {});
+      const data = sanitizePersistentDedupeData(value);
+      let loaded = 0;
+      for (const [key, ts] of Object.entries(data)) {
+        if (ttlMs > 0 && now - ts >= ttlMs) {
+          continue;
+        }
+        memory.check(resolvePersistentDedupeScopedKey(resolvedNamespace, key), ts);
+        loaded += 1;
+      }
+      return loaded;
+    } catch (error) {
+      if (typeof onError === "function") {
+        onError(error);
+      }
+      return 0;
+    }
+  }
+
+  async function checkAndRecord(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return true;
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    if (inflight.has(scopedKey)) {
+      return false;
+    }
+    const onDiskError = dedupeOptions.onDiskError || options.onDiskError;
+    const now = dedupeOptions.now ?? Date.now();
+    const work = checkAndRecordInner(trimmed, namespace, scopedKey, now, onDiskError);
+    inflight.set(scopedKey, work);
+    try {
+      return await work;
+    } finally {
+      inflight.delete(scopedKey);
+    }
+  }
+
+  async function hasRecent(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return false;
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    const onDiskError = dedupeOptions.onDiskError || options.onDiskError;
+    const now = dedupeOptions.now ?? Date.now();
+    return hasRecentInner(trimmed, namespace, scopedKey, now, onDiskError);
+  }
+
+  return {
+    checkAndRecord,
+    hasRecent,
+    warmup,
+    clearMemory: () => memory.clear(),
+    memorySize: () => memory.size(),
+  };
+}
+
+function createReleasedClaimError(scopedKey) {
+  return new Error(`claim released before commit: ${scopedKey}`);
+}
+
+function createClaimableDedupe(options) {
+  const ttlMs = Math.max(0, Math.floor(options.ttlMs));
+  const memoryMaxSize = Math.max(0, Math.floor(options.memoryMaxSize));
+  const memory = createDedupeCache({ ttlMs, maxSize: memoryMaxSize });
+  const persistent =
+    typeof options.resolveFilePath === "function"
+      ? createPersistentDedupe({
+          ttlMs,
+          memoryMaxSize,
+          fileMaxEntries: Math.max(1, Math.floor(options.fileMaxEntries)),
+          resolveFilePath: options.resolveFilePath,
+          lockOptions: options.lockOptions,
+          onDiskError: options.onDiskError,
+        })
+      : null;
+  const inflight = new Map();
+
+  async function hasRecent(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return false;
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    if (persistent) {
+      return persistent.hasRecent(trimmed, dedupeOptions);
+    }
+    return memory.peek(scopedKey, dedupeOptions.now);
+  }
+
+  async function claim(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return { kind: "claimed" };
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    const existing = inflight.get(scopedKey);
+    if (existing) {
+      return { kind: "inflight", pending: existing.promise };
+    }
+    let resolvePending;
+    let rejectPending;
+    const promise = new Promise((resolve, reject) => {
+      resolvePending = resolve;
+      rejectPending = reject;
+    });
+    promise.catch(() => undefined);
+    inflight.set(scopedKey, { promise, resolve: resolvePending, reject: rejectPending });
+    try {
+      if (await hasRecent(trimmed, dedupeOptions)) {
+        resolvePending(false);
+        inflight.delete(scopedKey);
+        return { kind: "duplicate" };
+      }
+      return { kind: "claimed" };
+    } catch (error) {
+      rejectPending(error);
+      inflight.delete(scopedKey);
+      throw error;
+    }
+  }
+
+  async function commit(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return true;
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    const current = inflight.get(scopedKey);
+    try {
+      const recorded = persistent
+        ? await persistent.checkAndRecord(trimmed, dedupeOptions)
+        : !memory.check(scopedKey, dedupeOptions.now);
+      if (current) {
+        current.resolve(recorded);
+      }
+      return recorded;
+    } catch (error) {
+      if (current) {
+        current.reject(error);
+      }
+      throw error;
+    } finally {
+      inflight.delete(scopedKey);
+    }
+  }
+
+  function release(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return;
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    const current = inflight.get(scopedKey);
+    if (!current) {
+      return;
+    }
+    current.reject(dedupeOptions.error || createReleasedClaimError(scopedKey));
+    inflight.delete(scopedKey);
+  }
+
+  return {
+    claim,
+    commit,
+    release,
+    hasRecent,
+    warmup: persistent ? persistent.warmup : async () => 0,
+    clearMemory: () => {
+      if (persistent) {
+        persistent.clearMemory();
+      }
+      memory.clear();
+    },
+    memorySize: () => (persistent ? persistent.memorySize() : memory.size()),
+  };
+}
+
+const MODELS_PROVIDER_PAGE_SIZE_DEFAULT = 20;
+const MODELS_PROVIDER_PAGE_SIZE_MAX = 100;
+const MODELS_PROVIDER_ADD_DEPRECATED_TEXT =
+  "\u26a0\ufe0f /models add is deprecated. Use /models to browse providers " +
+  "and /model to switch models.";
+const MODELS_PROVIDER_HIDDEN_PICKER_PROVIDERS = new Set([
+  "claude-cli",
+  "codex",
+  "codex-cli",
+  "google-gemini-cli",
+]);
+
+function normalizeModelsProviderId(value) {
+  return normalizeOptionalLowercaseString(value) || "";
+}
+
+function normalizeModelsProviderModelId(value) {
+  return normalizeOptionalString(value) || "";
+}
+
+function isModelsProviderPickerVisible(provider) {
+  const normalized = normalizeModelsProviderId(provider);
+  return Boolean(normalized) && !MODELS_PROVIDER_HIDDEN_PICKER_PROVIDERS.has(normalized);
+}
+
+function readModelsProviderConfig(cfg, provider) {
+  const providers = cfg && cfg.models && cfg.models.providers;
+  if (!providers || typeof providers !== "object") {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(providers, provider)) {
+    return providers[provider];
+  }
+  const normalized = normalizeModelsProviderId(provider);
+  for (const [candidate, value] of Object.entries(providers)) {
+    if (normalizeModelsProviderId(candidate) === normalized) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function listModelsProviderCatalogEntries(cfg) {
+  const entries = [];
+  const providers = cfg && cfg.models && cfg.models.providers;
+  if (providers && typeof providers === "object") {
+    for (const [rawProvider, providerConfig] of Object.entries(providers)) {
+      const provider = normalizeModelsProviderId(rawProvider);
+      if (!provider || !providerConfig || typeof providerConfig !== "object") {
+        continue;
+      }
+      const models = providerConfig.models || providerConfig.catalog || providerConfig.modelCatalog;
+      if (Array.isArray(models)) {
+        for (const item of models) {
+          if (typeof item === "string") {
+            entries.push({ provider, id: item });
+          } else if (item && typeof item === "object") {
+            const id = normalizeModelsProviderModelId(item.id || item.model || item.name);
+            if (id) {
+              entries.push({
+                provider,
+                id,
+                ...(item.name && item.name !== id ? { name: String(item.name) } : {}),
+              });
+            }
+          }
+        }
+      } else if (models && typeof models === "object") {
+        for (const [rawId, modelConfig] of Object.entries(models)) {
+          const id =
+            normalizeModelsProviderModelId(
+              modelConfig && typeof modelConfig === "object"
+                ? modelConfig.id || modelConfig.model || rawId
+                : rawId,
+            ) || "";
+          if (id) {
+            entries.push({
+              provider,
+              id,
+              ...(modelConfig &&
+              typeof modelConfig === "object" &&
+              modelConfig.name &&
+              modelConfig.name !== id
+                ? { name: String(modelConfig.name) }
+                : {}),
+            });
+          }
+        }
+      }
+    }
+  }
+  const topLevelCatalog = cfg && (cfg.modelCatalog || (cfg.models && cfg.models.catalog));
+  if (Array.isArray(topLevelCatalog)) {
+    for (const item of topLevelCatalog) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const provider = normalizeModelsProviderId(item.provider);
+      const id = normalizeModelsProviderModelId(item.id || item.model);
+      if (provider && id) {
+        entries.push({
+          provider,
+          id,
+          ...(item.name && item.name !== id ? { name: String(item.name) } : {}),
+        });
+      }
+    }
+  }
+  return entries;
+}
+
+function resolveBareModelsProviderForModel(cfg, model, defaultProvider, catalogEntries) {
+  const normalizedModel = normalizeModelsProviderModelId(model);
+  const matches = [];
+  for (const entry of catalogEntries) {
+    if (entry.id === normalizedModel) {
+      matches.push(entry.provider);
+    }
+  }
+  const unique = [...new Set(matches)];
+  if (unique.length === 1) {
+    return unique[0];
+  }
+  return normalizeModelsProviderId(defaultProvider) || "openai";
+}
+
+function resolveModelsProviderRefFromString(raw, defaultProvider, catalogEntries, cfg) {
+  const trimmed = normalizeModelsProviderModelId(raw);
+  if (!trimmed) {
+    return null;
+  }
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex > 0) {
+    const provider = normalizeModelsProviderId(trimmed.slice(0, slashIndex));
+    const model = normalizeModelsProviderModelId(trimmed.slice(slashIndex + 1));
+    return provider && model ? { provider, model } : null;
+  }
+  const provider = resolveBareModelsProviderForModel(cfg, trimmed, defaultProvider, catalogEntries);
+  return provider ? { provider, model: trimmed } : null;
+}
+
+function resolveDefaultModelsProviderModel(cfg, agentId, catalogEntries) {
+  const agents = (cfg && cfg.agents) || {};
+  const agentConfig =
+    agentId && agents && typeof agents === "object" && agents[agentId]
+      ? agents[agentId]
+      : undefined;
+  const modelConfig =
+    (agentConfig && agentConfig.model) ||
+    (agents.defaults && agents.defaults.model) ||
+    (cfg && cfg.models && (cfg.models.default || cfg.models.model)) ||
+    "openai/gpt-5";
+  const primary =
+    typeof modelConfig === "string"
+      ? modelConfig
+      : modelConfig && typeof modelConfig === "object"
+        ? modelConfig.primary || modelConfig.id || modelConfig.model
+        : undefined;
+  const defaultProvider =
+    (cfg && cfg.models && (cfg.models.defaultProvider || cfg.models.provider)) || "openai";
+  return (
+    resolveModelsProviderRefFromString(primary, defaultProvider, catalogEntries, cfg) || {
+      provider: normalizeModelsProviderId(defaultProvider) || "openai",
+      model: "gpt-5",
+    }
+  );
+}
+
+function addModelsProviderEntry(byProvider, provider, model) {
+  const normalizedProvider = normalizeModelsProviderId(provider);
+  const normalizedModel = normalizeModelsProviderModelId(model);
+  if (!isModelsProviderPickerVisible(normalizedProvider) || !normalizedModel) {
+    return;
+  }
+  const models = byProvider.get(normalizedProvider) || new Set();
+  models.add(normalizedModel);
+  byProvider.set(normalizedProvider, models);
+}
+
+function addModelsProviderRawRef(byProvider, raw, defaultProvider, catalogEntries, cfg) {
+  const resolved = resolveModelsProviderRefFromString(raw, defaultProvider, catalogEntries, cfg);
+  if (resolved) {
+    addModelsProviderEntry(byProvider, resolved.provider, resolved.model);
+  }
+}
+
+function addModelsProviderConfigRefs(byProvider, cfg, defaultProvider, catalogEntries) {
+  const defaults = cfg && cfg.agents && cfg.agents.defaults;
+  const modelConfig = defaults && defaults.model;
+  if (typeof modelConfig === "string") {
+    addModelsProviderRawRef(byProvider, modelConfig, defaultProvider, catalogEntries, cfg);
+  } else if (modelConfig && typeof modelConfig === "object") {
+    addModelsProviderRawRef(byProvider, modelConfig.primary, defaultProvider, catalogEntries, cfg);
+    for (const fallback of modelConfig.fallbacks || []) {
+      addModelsProviderRawRef(byProvider, fallback, defaultProvider, catalogEntries, cfg);
+    }
+  }
+  const imageConfig = defaults && defaults.imageModel;
+  if (typeof imageConfig === "string") {
+    addModelsProviderRawRef(byProvider, imageConfig, defaultProvider, catalogEntries, cfg);
+  } else if (imageConfig && typeof imageConfig === "object") {
+    addModelsProviderRawRef(byProvider, imageConfig.primary, defaultProvider, catalogEntries, cfg);
+    for (const fallback of imageConfig.fallbacks || []) {
+      addModelsProviderRawRef(byProvider, fallback, defaultProvider, catalogEntries, cfg);
+    }
+  }
+}
+
+async function buildModelsProviderData(cfg = {}, agentId, options = {}) {
+  const catalogEntries = listModelsProviderCatalogEntries(cfg);
+  const resolvedDefault = resolveDefaultModelsProviderModel(cfg, agentId, catalogEntries);
+  const byProvider = new Map();
+  const modelNames = new Map();
+  for (const entry of catalogEntries) {
+    addModelsProviderEntry(byProvider, entry.provider, entry.id);
+    if (entry.name && entry.name !== entry.id) {
+      modelNames.set(`${normalizeModelsProviderId(entry.provider)}/${entry.id}`, entry.name);
+    }
+  }
+  const defaultsModels =
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.models
+      ? cfg.agents.defaults.models
+      : {};
+  if (defaultsModels && typeof defaultsModels === "object") {
+    for (const raw of Object.keys(defaultsModels)) {
+      addModelsProviderRawRef(
+        byProvider,
+        raw,
+        resolvedDefault.provider,
+        catalogEntries,
+        cfg,
+      );
+    }
+  }
+  addModelsProviderEntry(byProvider, resolvedDefault.provider, resolvedDefault.model);
+  addModelsProviderConfigRefs(byProvider, cfg, resolvedDefault.provider, catalogEntries);
+  const providers = [...byProvider.keys()].sort();
+  const runtimeChoicesByProvider = new Map();
+  const legacyAliases = [
+    { provider: "openai", runtime: "codex-cli", cli: true },
+    { provider: "anthropic", runtime: "claude-cli", cli: true },
+    { provider: "google", runtime: "google-gemini-cli", cli: true },
+  ];
+  for (const alias of legacyAliases) {
+    const provider = normalizeModelsProviderId(alias.provider);
+    const choices = runtimeChoicesByProvider.get(provider) || [
+      {
+        id: "pi",
+        label: "OpenClaw Pi Default",
+        description: "Use the built-in OpenClaw Pi runtime.",
+      },
+    ];
+    choices.push({
+      id: alias.runtime,
+      label: alias.runtime,
+      description: alias.cli
+        ? `Run ${provider} models through ${alias.runtime}.`
+        : `Run ${provider} models through the ${alias.runtime} harness.`,
+    });
+    runtimeChoicesByProvider.set(provider, choices);
+  }
+  return {
+    byProvider,
+    providers,
+    resolvedDefault,
+    modelNames,
+    runtimeChoicesByProvider,
+  };
+}
+
+function resolveModelsProviderAuthLabel(params) {
+  const provider = normalizeModelsProviderId(params.provider);
+  const sessionEntry = params.sessionEntry;
+  if (sessionEntry && typeof sessionEntry === "object") {
+    const override = sessionEntry.authProfileOverride;
+    if (typeof override === "string" && override.trim()) {
+      return override.trim();
+    }
+    if (override && typeof override === "object") {
+      const providerOverride = normalizeOptionalString(override[provider]);
+      if (providerOverride) {
+        return providerOverride;
+      }
+    }
+  }
+  const providerConfig = readModelsProviderConfig(params.cfg || {}, provider);
+  if (providerConfig && typeof providerConfig === "object") {
+    return normalizeOptionalString(
+      providerConfig.authLabel ||
+        providerConfig.authProfileLabel ||
+        providerConfig.authProfile ||
+        providerConfig.accountLabel,
+    );
+  }
+  return undefined;
+}
+
+function resolveModelsProviderLabel(params) {
+  const provider = normalizeModelsProviderId(params.provider);
+  const authLabel = resolveModelsProviderAuthLabel({
+    provider,
+    cfg: params.cfg,
+    sessionEntry: params.sessionEntry,
+  });
+  if (!authLabel || authLabel === "unknown") {
+    return provider;
+  }
+  return `${provider} \u00b7 \ud83d\udd11 ${authLabel}`;
+}
+
+function formatModelsAvailableHeader(params) {
+  const providerLabel = resolveModelsProviderLabel({
+    provider: params.provider,
+    cfg: params.cfg || {},
+    sessionEntry: params.sessionEntry,
+  });
+  return `Models (${providerLabel}) \u2014 ${params.total} available`;
+}
+
+function buildModelsProviderLine(params) {
+  return `- ${params.provider} (${params.count})`;
+}
+
+function buildModelsProviderMenuText(params) {
+  return [
+    "Providers:",
+    ...params.providers.map((provider) =>
+      buildModelsProviderLine({
+        provider,
+        count: (params.byProvider.get(provider) || new Set()).size,
+      }),
+    ),
+    "",
+    "Use: /models <provider>",
+    "Switch: /model <provider/model>",
+  ].join("\n");
+}
+
+function buildModelsProviderInfos(params) {
+  return params.providers.map((provider) => ({
+    id: provider,
+    count: (params.byProvider.get(provider) || new Set()).size,
+  }));
+}
+
+function parseModelsProviderListArgs(tokens) {
+  const provider = normalizeOptionalString(tokens[0]);
+  let page = 1;
+  let all = false;
+  for (const token of tokens.slice(1)) {
+    const lower = normalizeLowercaseStringOrEmpty(token);
+    if (lower === "all" || lower === "--all") {
+      all = true;
+      continue;
+    }
+    if (lower.startsWith("page=")) {
+      const value = Number.parseInt(lower.slice("page=".length), 10);
+      if (Number.isFinite(value) && value > 0) {
+        page = value;
+      }
+      continue;
+    }
+    if (/^[0-9]+$/.test(lower)) {
+      const value = Number.parseInt(lower, 10);
+      if (Number.isFinite(value) && value > 0) {
+        page = value;
+      }
+    }
+  }
+  let pageSize = MODELS_PROVIDER_PAGE_SIZE_DEFAULT;
+  for (const token of tokens) {
+    const lower = normalizeLowercaseStringOrEmpty(token);
+    if (lower.startsWith("limit=") || lower.startsWith("size=")) {
+      const value = Number.parseInt(lower.slice(lower.indexOf("=") + 1), 10);
+      if (Number.isFinite(value) && value > 0) {
+        pageSize = Math.min(MODELS_PROVIDER_PAGE_SIZE_MAX, value);
+      }
+    }
+  }
+  return {
+    action: "list",
+    provider: provider ? normalizeModelsProviderId(provider) : undefined,
+    page,
+    pageSize,
+    all,
+  };
+}
+
+function parseModelsProviderArgs(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) {
+    return { action: "providers" };
+  }
+  const tokens = trimmed.split(/\s+/g).filter(Boolean);
+  const first = normalizeLowercaseStringOrEmpty(tokens[0]);
+  if (first === "providers") {
+    return { action: "providers" };
+  }
+  if (first === "list") {
+    return parseModelsProviderListArgs(tokens.slice(1));
+  }
+  if (first === "add") {
+    return {
+      action: "add",
+      provider: normalizeOptionalString(tokens[1]),
+      modelId: normalizeOptionalString(tokens.slice(2).join(" ")),
+    };
+  }
+  return parseModelsProviderListArgs(tokens);
+}
+
+function getModelsProviderChannelPlugin(surface) {
+  const host = globalThis.__openzuesModelsProviderRuntime || {};
+  if (typeof host.getChannelPlugin === "function") {
+    return host.getChannelPlugin(surface);
+  }
+  if (host.channelPlugins && typeof host.channelPlugins === "object") {
+    return host.channelPlugins[surface] || null;
+  }
+  return null;
+}
+
+async function resolveModelsCommandReply(params) {
+  const body = String(params.commandBodyNormalized || "").trim();
+  if (!/^\/models\b/i.test(body)) {
+    return null;
+  }
+  const argText = body.replace(/^\/models\b/i, "").trim();
+  const parsed = parseModelsProviderArgs(argText);
+  const data = await buildModelsProviderData(params.cfg || {}, params.agentId, {
+    ...(parsed.action === "list" && parsed.all ? { view: "all" } : {}),
+    ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
+  });
+  const { byProvider, providers, modelNames } = data;
+  const commandPlugin = params.surface ? getModelsProviderChannelPlugin(params.surface) : null;
+  const providerInfos = buildModelsProviderInfos({ providers, byProvider });
+
+  if (parsed.action === "providers") {
+    const channelData =
+      (commandPlugin &&
+        commandPlugin.commands &&
+        typeof commandPlugin.commands.buildModelsMenuChannelData === "function" &&
+        commandPlugin.commands.buildModelsMenuChannelData({ providers: providerInfos })) ||
+      (commandPlugin &&
+        commandPlugin.commands &&
+        typeof commandPlugin.commands.buildModelsProviderChannelData === "function" &&
+        commandPlugin.commands.buildModelsProviderChannelData({ providers: providerInfos }));
+    if (channelData) {
+      return { text: "Select a provider:", channelData };
+    }
+    return { text: buildModelsProviderMenuText({ providers, byProvider }) };
+  }
+
+  if (parsed.action === "add") {
+    return { text: MODELS_PROVIDER_ADD_DEPRECATED_TEXT };
+  }
+
+  const { provider, page, pageSize, all } = parsed;
+  if (!provider) {
+    const channelData =
+      commandPlugin &&
+      commandPlugin.commands &&
+      typeof commandPlugin.commands.buildModelsProviderChannelData === "function"
+        ? commandPlugin.commands.buildModelsProviderChannelData({ providers: providerInfos })
+        : null;
+    if (channelData) {
+      return { text: "Select a provider:", channelData };
+    }
+    return { text: buildModelsProviderMenuText({ providers, byProvider }) };
+  }
+
+  if (!byProvider.has(provider)) {
+    return {
+      text: [
+        `Unknown provider: ${provider}`,
+        "",
+        "Available providers:",
+        ...providers.map((entry) => `- ${entry}`),
+        "",
+        "Use: /models <provider>",
+      ].join("\n"),
+    };
+  }
+
+  const models = [...(byProvider.get(provider) || new Set())].sort();
+  const total = models.length;
+  if (total === 0) {
+    const emptyProviderLabel = resolveModelsProviderLabel({
+      provider,
+      cfg: params.cfg || {},
+      sessionEntry: params.sessionEntry,
+    });
+    return {
+      text: [
+        `Models (${emptyProviderLabel}) \u2014 none`,
+        "",
+        "Browse: /models",
+        "Switch: /model <provider/model>",
+      ].join("\n"),
+    };
+  }
+
+  const interactivePageSize = 8;
+  const interactiveTotalPages = Math.max(1, Math.ceil(total / interactivePageSize));
+  const interactivePage = Math.max(1, Math.min(page, interactiveTotalPages));
+  const interactiveChannelData =
+    commandPlugin &&
+    commandPlugin.commands &&
+    typeof commandPlugin.commands.buildModelsListChannelData === "function"
+      ? commandPlugin.commands.buildModelsListChannelData({
+          provider,
+          models,
+          currentModel: params.currentModel,
+          currentPage: interactivePage,
+          totalPages: interactiveTotalPages,
+          pageSize: interactivePageSize,
+          modelNames,
+        })
+      : null;
+  if (interactiveChannelData) {
+    return {
+      text: formatModelsAvailableHeader({
+        provider,
+        total,
+        cfg: params.cfg || {},
+        sessionEntry: params.sessionEntry,
+      }),
+      channelData: interactiveChannelData,
+    };
+  }
+
+  const effectivePageSize = all ? total : pageSize;
+  const pageCount = effectivePageSize > 0 ? Math.ceil(total / effectivePageSize) : 1;
+  const safePage = all ? 1 : Math.max(1, Math.min(page, pageCount));
+  if (!all && page !== safePage) {
+    return {
+      text: [
+        `Page out of range: ${page} (valid: 1-${pageCount})`,
+        "",
+        `Try: /models list ${provider} ${safePage}`,
+        `All: /models list ${provider} all`,
+      ].join("\n"),
+    };
+  }
+  const startIndex = (safePage - 1) * effectivePageSize;
+  const endIndexExclusive = Math.min(total, startIndex + effectivePageSize);
+  const providerLabel = resolveModelsProviderLabel({
+    provider,
+    cfg: params.cfg || {},
+    sessionEntry: params.sessionEntry,
+  });
+  const shownRange = `${startIndex + 1}-${endIndexExclusive} of ${total}`;
+  const lines = [
+    `Models (${providerLabel}) \u2014 showing ${shownRange} (page ${safePage}/${pageCount})`,
+  ];
+  for (const id of models.slice(startIndex, endIndexExclusive)) {
+    lines.push(`- ${provider}/${id}`);
+  }
+  lines.push("", "Switch: /model <provider/model>");
+  if (!all && safePage < pageCount) {
+    lines.push(`More: /models list ${provider} ${safePage + 1}`);
+  }
+  if (!all) {
+    lines.push(`All: /models list ${provider} all`);
+  }
+  return { text: lines.join("\n") };
+}
+
+const SKILL_COMMAND_MAX_LENGTH = 32;
+const SKILL_COMMAND_FALLBACK = "skill";
+const SKILL_COMMAND_DESCRIPTION_MAX_LENGTH = 100;
+
+function sanitizeSkillCommandName(raw) {
+  const normalized = normalizeLowercaseStringOrEmpty(raw)
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  const trimmed = normalized.slice(0, SKILL_COMMAND_MAX_LENGTH);
+  return trimmed || SKILL_COMMAND_FALLBACK;
+}
+
+function resolveUniqueSkillCommandName(base, used) {
+  const normalizedBase = normalizeLowercaseStringOrEmpty(base);
+  if (!used.has(normalizedBase)) {
+    return base;
+  }
+  for (let index = 2; index < 1000; index += 1) {
+    const suffix = `_${index}`;
+    const maxBaseLength = Math.max(1, SKILL_COMMAND_MAX_LENGTH - suffix.length);
+    const trimmedBase = base.slice(0, maxBaseLength);
+    const candidate = `${trimmedBase}${suffix}`;
+    const candidateKey = normalizeLowercaseStringOrEmpty(candidate);
+    if (!used.has(candidateKey)) {
+      return candidate;
+    }
+  }
+  return `${base.slice(0, Math.max(1, SKILL_COMMAND_MAX_LENGTH - 2))}_x`;
+}
+
+function parseSkillCommandFrontmatter(markdown) {
+  const match = String(markdown || "").match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) {
+    return {};
+  }
+  const frontmatter = {};
+  for (const rawLine of match[1].split(/\r?\n/g)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const colonIndex = line.indexOf(":");
+    if (colonIndex <= 0) {
+      continue;
+    }
+    const key = line.slice(0, colonIndex).trim();
+    let value = line.slice(colonIndex + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    frontmatter[key] = value;
+  }
+  return frontmatter;
+}
+
+function resolveSkillCommandBoolean(value, defaultValue = true) {
+  const normalized = normalizeLowercaseStringOrEmpty(value);
+  if (!normalized) {
+    return defaultValue;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  return defaultValue;
+}
+
+function readSkillCommandEntryFromMarkdown(filePath, fallbackName) {
+  let markdown;
+  try {
+    markdown = fs.readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+  const frontmatter = parseSkillCommandFrontmatter(markdown);
+  const rawName = normalizeOptionalString(frontmatter.name) || fallbackName;
+  if (!rawName) {
+    return null;
+  }
+  const userInvocable = resolveSkillCommandBoolean(
+    frontmatter["user-invocable"] ?? frontmatter.userInvocable,
+    true,
+  );
+  if (!userInvocable) {
+    return null;
+  }
+  return {
+    skill: {
+      name: rawName,
+      description: normalizeOptionalString(frontmatter.description) || rawName,
+    },
+    frontmatter,
+  };
+}
+
+function listSkillCommandWorkspaceRoots(workspaceDir) {
+  const host = globalThis.__openzuesSkillCommandsRuntime || {};
+  if (typeof host.listWorkspaceSkillRoots === "function") {
+    return host.listWorkspaceSkillRoots(workspaceDir);
+  }
+  return [
+    path.join(workspaceDir, "skills"),
+    path.join(workspaceDir, ".openclaw", "skills"),
+    path.join(workspaceDir, ".codex", "skills"),
+  ];
+}
+
+function loadSkillCommandWorkspaceEntries(workspaceDir) {
+  const host = globalThis.__openzuesSkillCommandsRuntime || {};
+  if (typeof host.loadWorkspaceSkillEntries === "function") {
+    return host.loadWorkspaceSkillEntries(workspaceDir) || [];
+  }
+  const entries = [];
+  const seenSkillDirs = new Set();
+  for (const root of listSkillCommandWorkspaceRoots(workspaceDir)) {
+    let children = [];
+    try {
+      children = fs.readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!child.isDirectory()) {
+        continue;
+      }
+      const skillDir = path.join(root, child.name);
+      const realKey = (() => {
+        try {
+          return fs.realpathSync(skillDir);
+        } catch {
+          return skillDir;
+        }
+      })();
+      if (seenSkillDirs.has(realKey)) {
+        continue;
+      }
+      seenSkillDirs.add(realKey);
+      for (const filename of ["SKILL.md", "skill.md"]) {
+        const entry = readSkillCommandEntryFromMarkdown(path.join(skillDir, filename), child.name);
+        if (entry) {
+          entries.push(entry);
+          break;
+        }
+      }
+    }
+  }
+  return entries;
+}
+
+function normalizeSkillCommandFilter(value) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.map((entry) => normalizeOptionalString(entry)).filter(Boolean);
+}
+
+function skillCommandMatchesFilter(entry, filter) {
+  if (filter === undefined) {
+    return true;
+  }
+  if (filter.length === 0) {
+    return false;
+  }
+  const skillName = normalizeLowercaseStringOrEmpty(entry.skill && entry.skill.name);
+  return filter.some((candidate) => normalizeLowercaseStringOrEmpty(candidate) === skillName);
+}
+
+function resolveSkillCommandDispatch(entry, commandName) {
+  const frontmatter = entry.frontmatter || {};
+  const kindRaw = normalizeLowercaseStringOrEmpty(
+    frontmatter["command-dispatch"] ?? frontmatter.command_dispatch ?? "",
+  );
+  if (kindRaw !== "tool") {
+    return undefined;
+  }
+  const toolName = normalizeOptionalString(
+    frontmatter["command-tool"] ?? frontmatter.command_tool,
+  );
+  if (!toolName) {
+    return undefined;
+  }
+  const argModeRaw = normalizeLowercaseStringOrEmpty(
+    frontmatter["command-arg-mode"] ?? frontmatter.command_arg_mode ?? "",
+  );
+  const argMode = !argModeRaw || argModeRaw === "raw" ? "raw" : "raw";
+  return { kind: "tool", toolName, argMode };
+}
+
+function buildWorkspaceSkillCommandSpecsNative(workspaceDir, opts = {}) {
+  const filter = normalizeSkillCommandFilter(opts.skillFilter);
+  const used = opts.reservedNames instanceof Set ? opts.reservedNames : new Set();
+  const entries = loadSkillCommandWorkspaceEntries(workspaceDir).filter((entry) =>
+    skillCommandMatchesFilter(entry, filter),
+  );
+  const specs = [];
+  for (const entry of entries) {
+    const rawName = entry.skill.name;
+    const base = sanitizeSkillCommandName(rawName);
+    const unique = resolveUniqueSkillCommandName(base, used);
+    used.add(normalizeLowercaseStringOrEmpty(unique));
+    const rawDescription = normalizeOptionalString(entry.skill.description) || rawName;
+    const description =
+      rawDescription.length > SKILL_COMMAND_DESCRIPTION_MAX_LENGTH
+        ? `${rawDescription.slice(0, SKILL_COMMAND_DESCRIPTION_MAX_LENGTH - 1)}\u2026`
+        : rawDescription;
+    const dispatch = resolveSkillCommandDispatch(entry, unique);
+    specs.push({
+      name: unique,
+      skillName: rawName,
+      description,
+      ...(dispatch ? { dispatch } : {}),
+    });
+  }
+  const host = globalThis.__openzuesSkillCommandsRuntime || {};
+  const bundleCommands =
+    typeof host.loadEnabledClaudeBundleCommands === "function"
+      ? host.loadEnabledClaudeBundleCommands({ workspaceDir, cfg: opts.config }) || []
+      : [];
+  for (const entry of bundleCommands) {
+    const rawName = normalizeOptionalString(entry.rawName || entry.skillName || entry.name);
+    if (!rawName) {
+      continue;
+    }
+    const base = sanitizeSkillCommandName(rawName);
+    const unique = resolveUniqueSkillCommandName(base, used);
+    used.add(normalizeLowercaseStringOrEmpty(unique));
+    const rawDescription = normalizeOptionalString(entry.description) || rawName;
+    specs.push({
+      name: unique,
+      skillName: rawName,
+      description:
+        rawDescription.length > SKILL_COMMAND_DESCRIPTION_MAX_LENGTH
+          ? `${rawDescription.slice(0, SKILL_COMMAND_DESCRIPTION_MAX_LENGTH - 1)}\u2026`
+          : rawDescription,
+      ...(entry.promptTemplate ? { promptTemplate: entry.promptTemplate } : {}),
+      ...(entry.sourceFilePath ? { sourceFilePath: entry.sourceFilePath } : {}),
+    });
+  }
+  return specs;
+}
+
+function listReservedSkillCommandNames(extraNames = []) {
+  const reserved = new Set([
+    "help",
+    "info",
+    "model",
+    "models",
+    "settings",
+    "status",
+    "stop",
+    "tools",
+  ]);
+  for (const name of extraNames) {
+    const trimmed = normalizeOptionalLowercaseString(name);
+    if (trimmed) {
+      reserved.add(trimmed);
+    }
+  }
+  return reserved;
+}
+
+function findSkillCommandAgentConfig(cfg, agentId) {
+  const agents = cfg && cfg.agents;
+  if (!agents || typeof agents !== "object") {
+    return undefined;
+  }
+  if (Array.isArray(agents.list)) {
+    return agents.list.find((entry) => entry && entry.id === agentId);
+  }
+  const entry = agents[agentId];
+  return entry && typeof entry === "object" ? entry : undefined;
+}
+
+function listSkillCommandAgentIds(cfg) {
+  const agents = cfg && cfg.agents;
+  if (!agents || typeof agents !== "object") {
+    return ["main"];
+  }
+  if (Array.isArray(agents.list)) {
+    return agents.list
+      .map((entry) => normalizeOptionalString(entry && entry.id))
+      .filter(Boolean);
+  }
+  const ids = Object.keys(agents).filter((key) => key !== "defaults");
+  return ids.length > 0 ? ids : ["main"];
+}
+
+function resolveSkillCommandAgentWorkspace(cfg, agentId) {
+  const agents = cfg && cfg.agents;
+  const defaults = (agents && agents.defaults) || {};
+  const agentConfig = findSkillCommandAgentConfig(cfg, agentId) || {};
+  const workspace =
+    normalizeOptionalString(
+      agentConfig.workspace ||
+        agentConfig.workspaceDir ||
+        agentConfig.cwd ||
+        agentConfig.dir ||
+        defaults.workspace ||
+        defaults.workspaceDir,
+    ) || process.cwd();
+  return path.resolve(workspace);
+}
+
+function resolveSkillCommandAgentFilter(cfg, agentId) {
+  const agents = cfg && cfg.agents;
+  const defaults = (agents && agents.defaults) || {};
+  const agentConfig = findSkillCommandAgentConfig(cfg, agentId);
+  if (agentConfig && Object.prototype.hasOwnProperty.call(agentConfig, "skills")) {
+    return normalizeSkillCommandFilter(agentConfig.skills) || [];
+  }
+  return normalizeSkillCommandFilter(defaults.skills);
+}
+
+function mergeSkillCommandFilters(existing, incoming) {
+  if (existing === undefined || incoming === undefined) {
+    return undefined;
+  }
+  if (existing.length === 0) {
+    return Array.from(new Set(incoming));
+  }
+  if (incoming.length === 0) {
+    return Array.from(new Set(existing));
+  }
+  return Array.from(new Set([...existing, ...incoming]));
+}
+
+function dedupeSkillCommandsBySkillName(commands) {
+  const seen = new Set();
+  const out = [];
+  for (const command of commands) {
+    const key = normalizeOptionalLowercaseString(command.skillName);
+    if (key && seen.has(key)) {
+      continue;
+    }
+    if (key) {
+      seen.add(key);
+    }
+    out.push(command);
+  }
+  return out;
+}
+
+function listSkillCommandsForWorkspace(params) {
+  return buildWorkspaceSkillCommandSpecsNative(params.workspaceDir, {
+    config: params.cfg,
+    agentId: params.agentId,
+    skillFilter:
+      params.skillFilter !== undefined
+        ? params.skillFilter
+        : resolveSkillCommandAgentFilter(params.cfg, params.agentId),
+    reservedNames: listReservedSkillCommandNames(),
+  });
+}
+
+function listSkillCommandsForAgents(params) {
+  const cfg = params.cfg || {};
+  const agentIds = params.agentIds || listSkillCommandAgentIds(cfg);
+  const used = listReservedSkillCommandNames();
+  const workspaceFilters = new Map();
+  for (const agentId of agentIds) {
+    const workspaceDir = resolveSkillCommandAgentWorkspace(cfg, agentId);
+    if (!fs.existsSync(workspaceDir)) {
+      continue;
+    }
+    let canonicalDir;
+    try {
+      canonicalDir = fs.realpathSync(workspaceDir);
+    } catch {
+      continue;
+    }
+    const skillFilter = resolveSkillCommandAgentFilter(cfg, agentId);
+    const existing = workspaceFilters.get(canonicalDir);
+    if (existing) {
+      existing.skillFilter = mergeSkillCommandFilters(existing.skillFilter, skillFilter);
+      continue;
+    }
+    workspaceFilters.set(canonicalDir, { workspaceDir, skillFilter });
+  }
+  const entries = [];
+  for (const { workspaceDir, skillFilter } of workspaceFilters.values()) {
+    const commands = buildWorkspaceSkillCommandSpecsNative(workspaceDir, {
+      config: cfg,
+      skillFilter,
+      reservedNames: used,
+    });
+    for (const command of commands) {
+      used.add(normalizeLowercaseStringOrEmpty(command.name));
+      entries.push(command);
+    }
+  }
+  return dedupeSkillCommandsBySkillName(entries);
+}
+
+const skillsRuntimeListeners = new Set();
+const skillsRuntimeWorkspaceVersions = new Map();
+let skillsRuntimeGlobalVersion = 0;
+
+function bumpSkillsRuntimeVersion(current) {
+  const now = Date.now();
+  return now <= current ? current + 1 : now;
+}
+
+function emitSkillsRuntimeChange(event) {
+  for (const listener of skillsRuntimeListeners) {
+    try {
+      listener(event);
+    } catch {
+      // Match OpenClaw's default refresh-state behavior: listener failures do
+      // not prevent later listeners or version bumps from completing.
+    }
+  }
+}
+
+function registerSkillsChangeListener(listener) {
+  if (typeof listener !== "function") {
+    throw new TypeError("listener must be a function");
+  }
+  skillsRuntimeListeners.add(listener);
+  return () => {
+    skillsRuntimeListeners.delete(listener);
+  };
+}
+
+function bumpSkillsSnapshotVersion(params = {}) {
+  const reason = normalizeOptionalString(params.reason) || "manual";
+  const changedPath = normalizeOptionalString(params.changedPath);
+  const workspaceDir = normalizeOptionalString(params.workspaceDir);
+  if (workspaceDir) {
+    const current = skillsRuntimeWorkspaceVersions.get(workspaceDir) || 0;
+    const next = bumpSkillsRuntimeVersion(current);
+    skillsRuntimeWorkspaceVersions.set(workspaceDir, next);
+    emitSkillsRuntimeChange({
+      workspaceDir,
+      reason,
+      ...(changedPath ? { changedPath } : {}),
+    });
+    return next;
+  }
+  skillsRuntimeGlobalVersion = bumpSkillsRuntimeVersion(skillsRuntimeGlobalVersion);
+  emitSkillsRuntimeChange({
+    reason,
+    ...(changedPath ? { changedPath } : {}),
+  });
+  return skillsRuntimeGlobalVersion;
+}
+
+function getSkillsSnapshotVersion(workspaceDir) {
+  const workspace = normalizeOptionalString(workspaceDir);
+  if (!workspace) {
+    return skillsRuntimeGlobalVersion;
+  }
+  const local = skillsRuntimeWorkspaceVersions.get(workspace) || 0;
+  return Math.max(skillsRuntimeGlobalVersion, local);
+}
+
+function shouldRefreshSnapshotForVersion(cachedVersion, nextVersion) {
+  const cached = typeof cachedVersion === "number" ? cachedVersion : 0;
+  const next = typeof nextVersion === "number" ? nextVersion : 0;
+  return next === 0 ? cached > 0 : cached < next;
+}
+
+function getQaRunnerRuntimeHost() {
+  return globalThis.__openzuesQaRunnerRuntime || {};
+}
+
+function resolvePrivateQaBundledPluginsEnv(env = process.env) {
+  const host = getQaRunnerRuntimeHost();
+  if (typeof host.resolvePrivateQaBundledPluginsEnv === "function") {
+    return host.resolvePrivateQaBundledPluginsEnv(env);
+  }
+  if (env.OPENCLAW_ENABLE_PRIVATE_QA_CLI !== "1") {
+    return undefined;
+  }
+  const bundledPluginsDir = host.privateQaBundledPluginsDir;
+  if (!bundledPluginsDir) {
+    return undefined;
+  }
+  return {
+    ...env,
+    OPENCLAW_BUNDLED_PLUGINS_DIR: bundledPluginsDir,
+  };
+}
+
+function loadBundledPluginPublicSurfaceModuleSync(params) {
+  const host = getQaRunnerRuntimeHost();
+  if (typeof host.loadBundledPluginPublicSurfaceModuleSync === "function") {
+    return host.loadBundledPluginPublicSurfaceModuleSync(params);
+  }
+  throw new Error(
+    `Unable to open bundled plugin public surface ${params.dirName}/${params.artifactBasename}`,
+  );
+}
+
+function tryLoadActivatedBundledPluginPublicSurfaceModuleSync(params) {
+  const host = getQaRunnerRuntimeHost();
+  if (typeof host.tryLoadActivatedBundledPluginPublicSurfaceModuleSync === "function") {
+    return host.tryLoadActivatedBundledPluginPublicSurfaceModuleSync(params);
+  }
+  return null;
+}
+
+function loadPluginManifestRegistryForQa(params) {
+  const host = getQaRunnerRuntimeHost();
+  if (typeof host.loadPluginManifestRegistry === "function") {
+    return host.loadPluginManifestRegistry(params);
+  }
+  if (host.manifestRegistry) {
+    return host.manifestRegistry;
+  }
+  return { plugins: [], diagnostics: [] };
+}
+
+function isMissingQaRuntimeError(error) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.message.includes("qa-lab") &&
+    (error.message.includes("runtime-api.js") ||
+      error.message.startsWith("Unable to open bundled plugin public surface "))
+  );
+}
+
+function loadQaRuntimeModule() {
+  const env = resolvePrivateQaBundledPluginsEnv();
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: ["qa", "lab"].join("-"),
+    artifactBasename: ["runtime-api", "js"].join("."),
+    ...(env ? { env } : {}),
+  });
+}
+
+function loadQaRunnerBundledPluginTestApi(pluginId) {
+  const env = resolvePrivateQaBundledPluginsEnv();
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: pluginId,
+    artifactBasename: "test-api.js",
+    ...(env ? { env } : {}),
+  });
+}
+
+function isQaRuntimeAvailable() {
+  try {
+    loadQaRuntimeModule();
+    return true;
+  } catch (error) {
+    if (isMissingQaRuntimeError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function listDeclaredQaRunnerPlugins(env = resolvePrivateQaBundledPluginsEnv()) {
+  const registry = loadPluginManifestRegistryForQa(env ? { env } : undefined);
+  return (registry.plugins || [])
+    .filter((plugin) => Array.isArray(plugin.qaRunners) && plugin.qaRunners.length > 0)
+    .slice()
+    .sort((left, right) => {
+      const idCompare = String(left.id || "").localeCompare(String(right.id || ""));
+      if (idCompare !== 0) {
+        return idCompare;
+      }
+      return String(left.rootDir || "").localeCompare(String(right.rootDir || ""));
+    });
+}
+
+function indexQaRunnerRuntimeRegistrations(pluginId, surface) {
+  const registrations = (surface && surface.qaRunnerCliRegistrations) || [];
+  const registrationByCommandName = new Map();
+  for (const registration of registrations) {
+    if (!registration || !registration.commandName || typeof registration.register !== "function") {
+      throw new Error(`QA runner plugin "${pluginId}" exported an invalid CLI registration`);
+    }
+    if (registrationByCommandName.has(registration.commandName)) {
+      throw new Error(
+        `QA runner plugin "${pluginId}" exported duplicate CLI registration ` +
+          `"${registration.commandName}"`,
+      );
+    }
+    registrationByCommandName.set(registration.commandName, registration);
+  }
+  return registrationByCommandName;
+}
+
+function loadQaRunnerRuntimeSurface(plugin, env) {
+  if (plugin.origin === "bundled") {
+    return loadBundledPluginPublicSurfaceModuleSync({
+      dirName: plugin.id,
+      artifactBasename: "runtime-api.js",
+      ...(env ? { env } : {}),
+    });
+  }
+  return tryLoadActivatedBundledPluginPublicSurfaceModuleSync({
+    dirName: plugin.id,
+    artifactBasename: "runtime-api.js",
+    ...(env ? { env } : {}),
+  });
+}
+
+function listQaRunnerCliContributions() {
+  const env = resolvePrivateQaBundledPluginsEnv();
+  const contributions = new Map();
+  for (const plugin of listDeclaredQaRunnerPlugins(env)) {
+    const runtimeSurface = loadQaRunnerRuntimeSurface(plugin, env);
+    const runtimeRegistrationByCommandName = runtimeSurface
+      ? indexQaRunnerRuntimeRegistrations(plugin.id, runtimeSurface)
+      : null;
+    const declaredCommandNames = new Set(
+      (plugin.qaRunners || []).map((runner) => runner.commandName),
+    );
+
+    for (const runner of plugin.qaRunners || []) {
+      const previous = contributions.get(runner.commandName);
+      if (previous && previous.pluginId !== plugin.id) {
+        throw new Error(
+          `QA runner command "${runner.commandName}" declared by both ` +
+            `"${previous.pluginId}" and "${plugin.id}"`,
+        );
+      }
+      const registration = runtimeRegistrationByCommandName
+        ? runtimeRegistrationByCommandName.get(runner.commandName)
+        : null;
+      if (!runtimeSurface) {
+        contributions.set(runner.commandName, {
+          pluginId: plugin.id,
+          commandName: runner.commandName,
+          ...(runner.description ? { description: runner.description } : {}),
+          status: "blocked",
+        });
+        continue;
+      }
+      if (!registration) {
+        throw new Error(
+          `QA runner plugin "${plugin.id}" declared "${runner.commandName}" ` +
+            "in openclaw.plugin.json but did not export a matching CLI registration",
+        );
+      }
+      contributions.set(runner.commandName, {
+        pluginId: plugin.id,
+        commandName: runner.commandName,
+        ...(runner.description ? { description: runner.description } : {}),
+        status: "available",
+        registration,
+      });
+    }
+
+    for (const commandName of runtimeRegistrationByCommandName
+      ? runtimeRegistrationByCommandName.keys()
+      : []) {
+      if (!declaredCommandNames.has(commandName)) {
+        throw new Error(
+          `QA runner plugin "${plugin.id}" exported "${commandName}" from ` +
+            "runtime-api.js but did not declare it in openclaw.plugin.json",
+        );
+      }
+    }
+  }
+  return [...contributions.values()];
 }
 
 const DEFAULT_INBOUND_DEDUPE_TTL_MS = 20 * 60000;
@@ -27980,6 +29819,25 @@ function resolveStateDir(env = process.env, homedir = () => os.homedir()) {
   return path.join(resolveRequiredHomeDir(sourceEnv, homedir), ".openclaw");
 }
 
+function resolveConfigDir(env = process.env, homedir = () => os.homedir()) {
+  const sourceEnv = env || process.env;
+  const stateOverride =
+    typeof sourceEnv.OPENCLAW_STATE_DIR === "string"
+      ? sourceEnv.OPENCLAW_STATE_DIR.trim()
+      : "";
+  if (stateOverride) {
+    return resolveUserPath(stateOverride, sourceEnv, homedir);
+  }
+  const configPath =
+    typeof sourceEnv.OPENCLAW_CONFIG_PATH === "string"
+      ? sourceEnv.OPENCLAW_CONFIG_PATH.trim()
+      : "";
+  if (configPath) {
+    return path.dirname(resolveUserPath(configPath, sourceEnv, homedir));
+  }
+  return path.join(resolveRequiredHomeDir(sourceEnv, homedir), ".openclaw");
+}
+
 function resolveOAuthDir(env = process.env, stateDir) {
   const sourceEnv = env || process.env;
   const override =
@@ -27998,7 +29856,53 @@ function resolveOAuthDir(env = process.env, stateDir) {
   return path.join(resolvedStateDir, "credentials");
 }
 
+const DEFAULT_GATEWAY_PORT = 18789;
+const CONFIG_DIR = resolveConfigDir();
 const STATE_DIR = resolveStateDir();
+
+function parseGatewayPortEnvValue(raw) {
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  if (!trimmed) {
+    return null;
+  }
+  if (/^\d+$/.test(trimmed)) {
+    const parsed = Number.parseInt(trimmed, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  const bracketedIpv6Match = trimmed.match(/^\[[^\]]+\]:(\d+)$/);
+  if (bracketedIpv6Match && bracketedIpv6Match[1]) {
+    const parsed = Number.parseInt(bracketedIpv6Match[1], 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  const firstColon = trimmed.indexOf(":");
+  const lastColon = trimmed.lastIndexOf(":");
+  if (firstColon <= 0 || firstColon !== lastColon) {
+    return null;
+  }
+  const suffix = trimmed.slice(firstColon + 1);
+  if (!/^\d+$/.test(suffix)) {
+    return null;
+  }
+  const parsed = Number.parseInt(suffix, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function resolveGatewayPort(cfg = {}, env = process.env) {
+  const sourceEnv = env || process.env;
+  const rawEnvPort =
+    typeof sourceEnv.OPENCLAW_GATEWAY_PORT === "string"
+      ? sourceEnv.OPENCLAW_GATEWAY_PORT
+      : undefined;
+  const envPort = parseGatewayPortEnvValue(rawEnvPort);
+  if (envPort !== null) {
+    return envPort;
+  }
+  const configPort = cfg && cfg.gateway ? cfg.gateway.port : undefined;
+  if (typeof configPort === "number" && Number.isFinite(configPort) && configPort > 0) {
+    return configPort;
+  }
+  return DEFAULT_GATEWAY_PORT;
+}
 
 function resolveAccountWithDefaultFallback(params) {
   const rawAccountId = params && params.accountId;
@@ -28039,6 +29943,8 @@ function readBooleanParam(params, key) {
   }
   return undefined;
 }
+
+const OWNER_ONLY_TOOL_ERROR = "Tool restricted to owner senders.";
 
 class ToolInputError extends Error {
   constructor(message) {
@@ -28243,8 +30149,28 @@ function textResult(text, details) {
   return { content: [{ type: "text", text }], details };
 }
 
+function failedTextResult(text, details) {
+  return textResult(text, details);
+}
+
+function payloadTextResult(payload) {
+  return textResult(stringifyToolPayload(payload), payload);
+}
+
 function jsonResult(payload) {
   return textResult(JSON.stringify(payload, null, 2), payload);
+}
+
+function wrapOwnerOnlyToolExecution(tool, senderIsOwner) {
+  if (!tool || tool.ownerOnly !== true || senderIsOwner || !tool.execute) {
+    return tool;
+  }
+  return {
+    ...tool,
+    execute: async () => {
+      throw new Error(OWNER_ONLY_TOOL_ERROR);
+    },
+  };
 }
 
 function parseAvailableTags(raw) {
@@ -28265,6 +30191,255 @@ function parseAvailableTags(raw) {
         : {}),
     }));
   return result.length ? result : undefined;
+}
+
+class ToolPlanContractError extends Error {
+  constructor(params) {
+    super(params.message);
+    this.name = "ToolPlanContractError";
+    this.code = params.code;
+    this.toolName = params.toolName;
+  }
+}
+
+function defineToolDescriptor(descriptor) {
+  return descriptor;
+}
+
+function defineToolDescriptors(descriptors) {
+  return descriptors;
+}
+
+function toolAvailabilityIsRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function toolAvailabilityResolveConfigPath(config, pathValue) {
+  let current = config;
+  for (const segment of Array.isArray(pathValue) ? pathValue : []) {
+    if (!toolAvailabilityIsRecord(current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function toolAvailabilityHasConfiguredValue(params) {
+  const value = params.value;
+  const signal = params.signal || {};
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if ((signal.check || "exists") === "available") {
+    return params.context &&
+      typeof params.context.isConfigValueAvailable === "function" &&
+      params.context.isConfigValueAvailable({
+        value,
+        path: signal.path,
+        signal,
+      }) === true;
+  }
+  if ((signal.check || "exists") === "exists") {
+    return true;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (typeof value === "object") {
+    return Object.keys(value).length > 0;
+  }
+  return true;
+}
+
+function toolAvailabilityDiagnostic(reason, signal, message) {
+  return { reason, signal, message };
+}
+
+function toolAvailabilityEvaluateSignal(signal, context = {}) {
+  switch (signal && signal.kind) {
+    case "always":
+      return null;
+    case "auth":
+      return context.authProviderIds && context.authProviderIds.has(signal.providerId)
+        ? null
+        : toolAvailabilityDiagnostic(
+            "auth-missing",
+            signal,
+            `Missing auth provider: ${signal.providerId}`,
+          );
+    case "config": {
+      const value = toolAvailabilityResolveConfigPath(context.config, signal.path);
+      return toolAvailabilityHasConfiguredValue({ value, signal, context })
+        ? null
+        : toolAvailabilityDiagnostic(
+            "config-missing",
+            signal,
+            `Missing config path: ${(signal.path || []).join(".")}`,
+          );
+    }
+    case "env":
+      return context.env && context.env[signal.name] && context.env[signal.name].trim()
+        ? null
+        : toolAvailabilityDiagnostic(
+            "env-missing",
+            signal,
+            `Missing environment value: ${signal.name}`,
+          );
+    case "plugin-enabled":
+      return context.enabledPluginIds && context.enabledPluginIds.has(signal.pluginId)
+        ? null
+        : toolAvailabilityDiagnostic(
+            "plugin-disabled",
+            signal,
+            `Plugin is not enabled: ${signal.pluginId}`,
+          );
+    case "context": {
+      const value = context.values && context.values[signal.key];
+      if (!Object.prototype.hasOwnProperty.call(signal, "equals")) {
+        return value === undefined
+          ? toolAvailabilityDiagnostic(
+              "context-mismatch",
+              signal,
+              `Missing context value: ${signal.key}`,
+            )
+          : null;
+      }
+      return value === signal.equals
+        ? null
+        : toolAvailabilityDiagnostic(
+            "context-mismatch",
+            signal,
+            `Context value did not match: ${signal.key}`,
+          );
+    }
+    default:
+      return toolAvailabilityDiagnostic(
+        "unsupported-signal",
+        signal,
+        "Unsupported availability signal",
+      );
+  }
+}
+
+function toolAvailabilityEvaluateExpression(expression, context = {}) {
+  if (expression && Object.prototype.hasOwnProperty.call(expression, "kind")) {
+    const diagnostic = toolAvailabilityEvaluateSignal(expression, context);
+    return diagnostic ? [diagnostic] : [];
+  }
+  if (expression && Object.prototype.hasOwnProperty.call(expression, "allOf")) {
+    if (!Array.isArray(expression.allOf) || expression.allOf.length === 0) {
+      return [{ reason: "unsupported-signal", message: "Empty availability allOf group" }];
+    }
+    return expression.allOf.flatMap((entry) =>
+      toolAvailabilityEvaluateExpression(entry, context),
+    );
+  }
+  if (expression && Object.prototype.hasOwnProperty.call(expression, "anyOf")) {
+    if (!Array.isArray(expression.anyOf) || expression.anyOf.length === 0) {
+      return [{ reason: "unsupported-signal", message: "Empty availability anyOf group" }];
+    }
+    const diagnostics = expression.anyOf.map((entry) =>
+      toolAvailabilityEvaluateExpression(entry, context),
+    );
+    return diagnostics.some((entries) => entries.length === 0) ? [] : diagnostics.flat();
+  }
+  return [{ reason: "unsupported-signal", message: "Unsupported availability expression" }];
+}
+
+function evaluateToolAvailability(params = {}) {
+  const descriptor = params.descriptor || {};
+  const availability = descriptor.availability || { kind: "always" };
+  if (
+    !availability ||
+    !(
+      Object.prototype.hasOwnProperty.call(availability, "kind") ||
+      Object.prototype.hasOwnProperty.call(availability, "allOf") ||
+      Object.prototype.hasOwnProperty.call(availability, "anyOf")
+    )
+  ) {
+    return [{ reason: "unsupported-signal", message: "Unsupported availability expression" }];
+  }
+  return toolAvailabilityEvaluateExpression(availability, params.context || {});
+}
+
+function formatToolExecutorRef(ref) {
+  switch (ref && ref.kind) {
+    case "core":
+      return `core:${ref.executorId}`;
+    case "plugin":
+      return `plugin:${ref.pluginId}:${ref.toolName}`;
+    case "channel":
+      return `channel:${ref.channelId}:${ref.actionId}`;
+    case "mcp":
+      return `mcp:${ref.serverId}:${ref.toolName}`;
+    default:
+      return ref;
+  }
+}
+
+function compareToolDescriptors(left, right) {
+  return (
+    String(left.sortKey || left.name).localeCompare(String(right.sortKey || right.name)) ||
+    String(left.name).localeCompare(String(right.name))
+  );
+}
+
+function assertUniqueToolDescriptorNames(descriptors) {
+  const seen = new Set();
+  for (const descriptor of descriptors) {
+    if (seen.has(descriptor.name)) {
+      throw new ToolPlanContractError({
+        code: "duplicate-tool-name",
+        toolName: descriptor.name,
+        message: `Duplicate tool descriptor name: ${descriptor.name}`,
+      });
+    }
+    seen.add(descriptor.name);
+  }
+}
+
+function buildToolPlan(options = {}) {
+  const descriptors = [...(Array.isArray(options.descriptors) ? options.descriptors : [])].sort(
+    compareToolDescriptors,
+  );
+  assertUniqueToolDescriptorNames(descriptors);
+  const visible = [];
+  const hidden = [];
+  for (const descriptor of descriptors) {
+    const diagnostics = evaluateToolAvailability({
+      descriptor,
+      context: options.availability,
+    });
+    if (diagnostics.length > 0) {
+      hidden.push({ descriptor, diagnostics });
+      continue;
+    }
+    if (!descriptor.executor) {
+      throw new ToolPlanContractError({
+        code: "missing-executor",
+        toolName: descriptor.name,
+        message: `Visible tool descriptor has no executor ref: ${descriptor.name}`,
+      });
+    }
+    visible.push({ descriptor, executor: descriptor.executor });
+  }
+  return { visible, hidden };
+}
+
+function toToolProtocolDescriptor(entry) {
+  return {
+    name: entry.descriptor.name,
+    description: entry.descriptor.description,
+    inputSchema: entry.descriptor.inputSchema,
+  };
+}
+
+function toToolProtocolDescriptors(entries) {
+  return (Array.isArray(entries) ? entries : []).map(toToolProtocolDescriptor);
 }
 
 function normalizeTimestamp(raw) {
@@ -28423,6 +30598,30 @@ function stringEnum(values, options = {}) {
 
 function optionalStringEnum(values, options = {}) {
   return stringEnum(values, options);
+}
+
+const CHANNEL_TARGET_DESCRIPTION =
+  "Recipient/channel: E.164 for WhatsApp/Signal, Telegram chat id/@username, " +
+  "Discord/Slack/Mattermost <channelId|user:ID|channel:ID>, or iMessage handle/chat_id";
+
+const CHANNEL_TARGETS_DESCRIPTION =
+  "Recipient/channel targets (same format as --target); accepts ids or names " +
+  "when the directory is available.";
+
+function channelTargetSchema(options = {}) {
+  return {
+    type: "string",
+    description: options.description || CHANNEL_TARGET_DESCRIPTION,
+  };
+}
+
+function channelTargetsSchema(options = {}) {
+  return {
+    type: "array",
+    items: channelTargetSchema({
+      description: options.description || CHANNEL_TARGETS_DESCRIPTION,
+    }),
+  };
 }
 
 function makeSchemaResult(ok, data, message) {
@@ -29484,13 +31683,7 @@ function extractTextFromChatContent(content, opts = {}) {
 }
 
 function stripAssistantReasoningTags(text) {
-  if (!text || !/<\s*\/?\s*(?:antml:)?(?:think(?:ing)?|thought)\b/i.test(text)) {
-    return text;
-  }
-  return text.replace(
-    /<\s*(?:antml:)?(?:think(?:ing)?|thought)\s*>[\s\S]*?<\s*\/\s*(?:antml:)?(?:think(?:ing)?|thought)\s*>/gi,
-    "",
-  );
+  return stripThinkingTagsFromText(text);
 }
 
 function stripMinimaxToolCallXml(text) {
@@ -29586,6 +31779,839 @@ function extractAssistantText(msg = {}) {
   return sanitizeUserFacingAssistantText(extracted, {
     errorContext: Boolean(msg && msg.stopReason === "error"),
   });
+}
+
+const AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN =
+  "(?:(?:antml:)?(?:think(?:ing)?|thought)|antthinking)";
+const AGENT_RUNTIME_THINKING_TAG_OPEN_RE = new RegExp(
+  `<\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\s*>`,
+  "i",
+);
+const AGENT_RUNTIME_THINKING_TAG_CLOSE_RE = new RegExp(
+  `<\\s*\\/\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\s*>`,
+  "i",
+);
+const AGENT_RUNTIME_THINKING_TAG_SCAN_RE = new RegExp(
+  `<\\s*(\\/?)\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\s*>`,
+  "gi",
+);
+const AGENT_RUNTIME_THINKING_TAG_OPEN_GLOBAL_RE = new RegExp(
+  `<\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\s*>`,
+  "gi",
+);
+const AGENT_RUNTIME_THINKING_TAG_CLOSE_GLOBAL_RE = new RegExp(
+  `<\\s*\\/\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\s*>`,
+  "gi",
+);
+const AGENT_RUNTIME_THINKING_TAG_WITH_ATTRS_RE = new RegExp(
+  `<\\s*(\\/?)\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\b[^<>]*>`,
+  "gi",
+);
+const AGENT_RUNTIME_FINAL_TAG_RE = /<\s*\/?\s*final\b[^<>]*>/gi;
+
+function isAssistantMessage(msg) {
+  return Boolean(msg && msg.role === "assistant");
+}
+
+function stripThinkingTagsFromText(text) {
+  const hasThinkingTag =
+    /<\s*\/?\s*(?:(?:antml:)?(?:think(?:ing)?|thought)|antthinking|final)\b/i.test(text);
+  if (!text || !hasThinkingTag) {
+    return text;
+  }
+  const cleaned = String(text).replace(AGENT_RUNTIME_FINAL_TAG_RE, "");
+  AGENT_RUNTIME_THINKING_TAG_WITH_ATTRS_RE.lastIndex = 0;
+  let result = "";
+  let lastIndex = 0;
+  let thinkingDepth = 0;
+  let firstUnclosedContentIndex;
+  for (const match of cleaned.matchAll(AGENT_RUNTIME_THINKING_TAG_WITH_ATTRS_RE)) {
+    const idx = match.index || 0;
+    const isClose = match[1] === "/";
+    if (thinkingDepth === 0) {
+      if (isClose) {
+        result += cleaned.slice(lastIndex, idx);
+        lastIndex = idx + match[0].length;
+        continue;
+      }
+      result += cleaned.slice(lastIndex, idx);
+      thinkingDepth = 1;
+      firstUnclosedContentIndex = idx + match[0].length;
+    } else if (isClose) {
+      thinkingDepth -= 1;
+      if (thinkingDepth === 0) {
+        firstUnclosedContentIndex = undefined;
+      }
+    } else {
+      thinkingDepth += 1;
+    }
+    lastIndex = idx + match[0].length;
+  }
+  if (thinkingDepth === 0) {
+    result += cleaned.slice(lastIndex);
+  }
+  const trimmed = result.trim();
+  if (thinkingDepth > 0 && !trimmed && firstUnclosedContentIndex !== undefined && cleaned.trim()) {
+    return cleaned.slice(firstUnclosedContentIndex).trim();
+  }
+  return trimmed;
+}
+
+function agentRuntimeNormalizeAssistantPhase(value) {
+  return value === "commentary" || value === "final_answer" ? value : undefined;
+}
+
+function agentRuntimeParseAssistantTextSignature(value) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return null;
+  }
+  if (!value.startsWith("{")) {
+    return { id: value };
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || parsed.v !== 1) {
+      return null;
+    }
+    const result = {};
+    if (typeof parsed.id === "string") {
+      result.id = parsed.id;
+    }
+    const phase = agentRuntimeNormalizeAssistantPhase(parsed.phase);
+    if (phase) {
+      result.phase = phase;
+    }
+    return result;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function agentRuntimeExtractAssistantTextForPhase(msg = {}, phase) {
+  const messagePhase = agentRuntimeNormalizeAssistantPhase(msg && msg.phase);
+  const shouldIncludeContent = (resolvedPhase) => {
+    if (phase) {
+      return resolvedPhase === phase;
+    }
+    return resolvedPhase === undefined;
+  };
+  const finalize = (text) =>
+    sanitizeUserFacingAssistantText(text, {
+      errorContext: Boolean(msg && msg.stopReason === "error"),
+    });
+  if (typeof (msg && msg.content) === "string") {
+    const hadRequestedPhase = phase ? messagePhase === phase : messagePhase === undefined;
+    return {
+      text: shouldIncludeContent(messagePhase)
+        ? finalize(sanitizeAssistantVisibleText(msg.content))
+        : "",
+      hadRequestedPhase,
+    };
+  }
+  if (!Array.isArray(msg && msg.content)) {
+    return { text: "", hadRequestedPhase: false };
+  }
+  const hasExplicitPhasedTextBlocks = msg.content.some((block) => {
+    if (!block || typeof block !== "object" || block.type !== "text") {
+      return false;
+    }
+    return Boolean(agentRuntimeParseAssistantTextSignature(block.textSignature)?.phase);
+  });
+  let hadRequestedPhase = false;
+  const parts = [];
+  for (const block of msg.content) {
+    if (!block || typeof block !== "object" || block.type !== "text") {
+      continue;
+    }
+    const signature = agentRuntimeParseAssistantTextSignature(block.textSignature);
+    const resolvedPhase =
+      (signature && signature.phase) || (hasExplicitPhasedTextBlocks ? undefined : messagePhase);
+    if (phase ? resolvedPhase === phase : resolvedPhase === undefined) {
+      hadRequestedPhase = true;
+    }
+    if (!shouldIncludeContent(resolvedPhase)) {
+      continue;
+    }
+    const sanitized = sanitizeAssistantVisibleText(block.text);
+    if (sanitized.trim()) {
+      parts.push(sanitized);
+    }
+  }
+  return {
+    text: finalize(parts.join("\n").trim()),
+    hadRequestedPhase,
+  };
+}
+
+function extractAssistantVisibleText(msg = {}) {
+  const finalAnswerExtraction = agentRuntimeExtractAssistantTextForPhase(msg, "final_answer");
+  if (finalAnswerExtraction.hadRequestedPhase) {
+    return finalAnswerExtraction.text.trim() ? finalAnswerExtraction.text : "";
+  }
+  return agentRuntimeExtractAssistantTextForPhase(msg).text;
+}
+
+function extractAssistantThinking(msg = {}) {
+  if (!Array.isArray(msg && msg.content)) {
+    return "";
+  }
+  const blocks = [];
+  for (const block of msg.content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    if (block.type !== "thinking") {
+      continue;
+    }
+    const thinking = typeof block.thinking === "string" ? block.thinking.trim() : "";
+    if (thinking) {
+      blocks.push(thinking);
+      continue;
+    }
+    if (typeof block.thinkingSignature === "string" && block.thinkingSignature.trim()) {
+      blocks.push("Native reasoning was produced; no summary text was returned.");
+    }
+  }
+  return blocks.join("\n").trim();
+}
+
+function formatReasoningMessage(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const italicLines = trimmed
+    .split("\n")
+    .map((line) => (line ? `_${line}_` : line))
+    .join("\n");
+  return `Reasoning:\n${italicLines}`;
+}
+
+function splitThinkingTaggedText(text) {
+  const raw = String(text || "");
+  const trimmedStart = raw.trimStart();
+  if (!trimmedStart.startsWith("<")) {
+    return null;
+  }
+  if (!AGENT_RUNTIME_THINKING_TAG_OPEN_RE.test(trimmedStart)) {
+    return null;
+  }
+  AGENT_RUNTIME_THINKING_TAG_OPEN_RE.lastIndex = 0;
+  if (!AGENT_RUNTIME_THINKING_TAG_CLOSE_RE.test(raw)) {
+    return null;
+  }
+  AGENT_RUNTIME_THINKING_TAG_CLOSE_RE.lastIndex = 0;
+
+  let inThinking = false;
+  let cursor = 0;
+  let thinkingStart = 0;
+  const blocks = [];
+  const pushText = (value) => {
+    if (value) {
+      blocks.push({ type: "text", text: value });
+    }
+  };
+  const pushThinking = (value) => {
+    const cleaned = String(value || "").trim();
+    if (cleaned) {
+      blocks.push({ type: "thinking", thinking: cleaned });
+    }
+  };
+  for (const match of raw.matchAll(AGENT_RUNTIME_THINKING_TAG_SCAN_RE)) {
+    const index = match.index || 0;
+    const isClose = Boolean(match[1] && match[1].includes("/"));
+    if (!inThinking && !isClose) {
+      pushText(raw.slice(cursor, index));
+      thinkingStart = index + match[0].length;
+      inThinking = true;
+      continue;
+    }
+    if (inThinking && isClose) {
+      pushThinking(raw.slice(thinkingStart, index));
+      cursor = index + match[0].length;
+      inThinking = false;
+    }
+  }
+  if (inThinking) {
+    return null;
+  }
+  pushText(raw.slice(cursor));
+  return blocks.some((block) => block.type === "thinking") ? blocks : null;
+}
+
+function promoteThinkingTagsToBlocks(message) {
+  if (!message || !Array.isArray(message.content)) {
+    return;
+  }
+  if (
+    message.content.some(
+      (block) => block && typeof block === "object" && block.type === "thinking",
+    )
+  ) {
+    return;
+  }
+  const next = [];
+  let changed = false;
+  for (const block of message.content) {
+    if (!block || typeof block !== "object" || block.type !== "text") {
+      next.push(block);
+      continue;
+    }
+    const split = splitThinkingTaggedText(block.text);
+    if (!split) {
+      next.push(block);
+      continue;
+    }
+    changed = true;
+    for (const part of split) {
+      if (part.type === "thinking") {
+        next.push({ type: "thinking", thinking: part.thinking });
+      } else {
+        const cleaned = String(part.text || "").trimStart();
+        if (cleaned) {
+          next.push({ type: "text", text: cleaned });
+        }
+      }
+    }
+  }
+  if (changed) {
+    message.content = next;
+  }
+}
+
+function extractThinkingFromTaggedText(text) {
+  const raw = String(text || "");
+  if (!raw) {
+    return "";
+  }
+  let result = "";
+  let lastIndex = 0;
+  let inThinking = false;
+  for (const match of raw.matchAll(AGENT_RUNTIME_THINKING_TAG_SCAN_RE)) {
+    const idx = match.index || 0;
+    if (inThinking) {
+      result += raw.slice(lastIndex, idx);
+    }
+    const isClose = match[1] === "/";
+    inThinking = !isClose;
+    lastIndex = idx + match[0].length;
+  }
+  return result.trim();
+}
+
+function extractThinkingFromTaggedStream(text) {
+  const raw = String(text || "");
+  if (!raw) {
+    return "";
+  }
+  const closed = extractThinkingFromTaggedText(raw);
+  if (closed) {
+    return closed;
+  }
+  const openMatches = [...raw.matchAll(AGENT_RUNTIME_THINKING_TAG_OPEN_GLOBAL_RE)];
+  if (openMatches.length === 0) {
+    return "";
+  }
+  const closeMatches = [...raw.matchAll(AGENT_RUNTIME_THINKING_TAG_CLOSE_GLOBAL_RE)];
+  const lastOpen = openMatches[openMatches.length - 1];
+  const lastClose = closeMatches[closeMatches.length - 1];
+  if (lastClose && (lastClose.index || -1) > (lastOpen.index || -1)) {
+    return closed;
+  }
+  const start = (lastOpen.index || 0) + lastOpen[0].length;
+  return raw.slice(start).trim();
+}
+
+function stripDowngradedToolCallText(text) {
+  if (!text) {
+    return text;
+  }
+  if (!/\[Tool (?:Call|Result)/i.test(text) && !/\[Historical context/i.test(text)) {
+    return text;
+  }
+  let cleaned = String(text);
+  const downgradedToolCallRe = new RegExp(
+    String.raw`\[Tool Call:[^\]]*\]\s*(?:\r?\n)?\s*Arguments:\s*` +
+      String.raw`(?:\{[\s\S]*?\}|"[^"]*"|[^\r\n]*)\s*` +
+      String.raw`(?=\r?\n[A-Z][^\r\n]*|\r?\n?\[Tool |\s*$)`,
+    "gi",
+  );
+  cleaned = cleaned.replace(downgradedToolCallRe, "");
+  cleaned = cleaned.replace(
+    /\[Tool Result for ID[^\]]*\]\n?[\s\S]*?(?=\n*\[Tool |\n*$)/gi,
+    "",
+  );
+  cleaned = cleaned.replace(/\[Historical context:[^\]]*\]\n?/gi, "");
+  return cleaned.replace(/\n{2,}/g, "\n").trim();
+}
+
+function agentRuntimeParseFenceSpans(buffer) {
+  const spans = [];
+  let open = null;
+  let offset = 0;
+  while (offset <= buffer.length) {
+    const nextNewline = buffer.indexOf("\n", offset);
+    const lineEnd = nextNewline === -1 ? buffer.length : nextNewline;
+    const line = buffer.slice(offset, lineEnd);
+    const match = line.match(/^( {0,3})(`{3,}|~{3,})(.*)$/);
+    if (match) {
+      const indent = match[1];
+      const marker = match[2];
+      const markerChar = marker[0];
+      const markerLen = marker.length;
+      if (!open) {
+        open = {
+          start: offset,
+          markerChar,
+          markerLen,
+          openLine: line,
+          marker,
+          indent,
+        };
+      } else if (open.markerChar === markerChar && markerLen >= open.markerLen) {
+        spans.push({
+          start: open.start,
+          end: lineEnd,
+          openLine: open.openLine,
+          marker: open.marker,
+          indent: open.indent,
+        });
+        open = null;
+      }
+    }
+    if (nextNewline === -1) {
+      break;
+    }
+    offset = nextNewline + 1;
+  }
+  if (open) {
+    spans.push({
+      start: open.start,
+      end: buffer.length,
+      openLine: open.openLine,
+      marker: open.marker,
+      indent: open.indent,
+    });
+  }
+  return spans;
+}
+
+function agentRuntimeFindFenceSpanAt(spans, index) {
+  let low = 0;
+  let high = spans.length - 1;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const span = spans[mid];
+    if (!span) {
+      break;
+    }
+    if (index <= span.start) {
+      high = mid - 1;
+      continue;
+    }
+    if (index >= span.end) {
+      low = mid + 1;
+      continue;
+    }
+    return span;
+  }
+  return undefined;
+}
+
+function agentRuntimeIsSafeFenceBreak(spans, index) {
+  return !agentRuntimeFindFenceSpanAt(spans, index);
+}
+
+function agentRuntimeFindSafeSentenceBreakIndex(text, fenceSpans, minChars, offset = 0) {
+  let sentenceIdx = -1;
+  for (const match of text.matchAll(/[.!?](?=\s|$)/g)) {
+    const at = match.index || -1;
+    if (at < minChars) {
+      continue;
+    }
+    const candidate = at + 1;
+    if (agentRuntimeIsSafeFenceBreak(fenceSpans, offset + candidate)) {
+      sentenceIdx = candidate;
+    }
+  }
+  return sentenceIdx >= minChars ? sentenceIdx : -1;
+}
+
+function agentRuntimeFindSafeParagraphBreakIndex(params) {
+  const text = params.text;
+  const fenceSpans = params.fenceSpans;
+  const minChars = params.minChars;
+  const reverse = params.reverse;
+  const offset = params.offset || 0;
+  let paragraphIdx = reverse ? text.lastIndexOf("\n\n") : text.indexOf("\n\n");
+  while (reverse ? paragraphIdx >= minChars : paragraphIdx !== -1) {
+    for (const candidate of [paragraphIdx, paragraphIdx + 1]) {
+      if (candidate < minChars || candidate < 0 || candidate >= text.length) {
+        continue;
+      }
+      if (agentRuntimeIsSafeFenceBreak(fenceSpans, offset + candidate)) {
+        return candidate;
+      }
+    }
+    paragraphIdx = reverse
+      ? text.lastIndexOf("\n\n", paragraphIdx - 1)
+      : text.indexOf("\n\n", paragraphIdx + 2);
+  }
+  return -1;
+}
+
+function agentRuntimeFindSafeNewlineBreakIndex(params) {
+  const text = params.text;
+  const fenceSpans = params.fenceSpans;
+  const minChars = params.minChars;
+  const reverse = params.reverse;
+  const offset = params.offset || 0;
+  let newlineIdx = reverse ? text.lastIndexOf("\n") : text.indexOf("\n");
+  while (reverse ? newlineIdx >= minChars : newlineIdx !== -1) {
+    if (
+      newlineIdx >= minChars &&
+      agentRuntimeIsSafeFenceBreak(fenceSpans, offset + newlineIdx)
+    ) {
+      return newlineIdx;
+    }
+    newlineIdx = reverse
+      ? text.lastIndexOf("\n", newlineIdx - 1)
+      : text.indexOf("\n", newlineIdx + 1);
+  }
+  return -1;
+}
+
+function agentRuntimeFindFenceCloseLineStart(buffer, fence, offset = 0) {
+  const relativeFenceEnd = Math.min(buffer.length, Math.max(0, fence.end - offset));
+  if (relativeFenceEnd <= 0) {
+    return -1;
+  }
+  const lastNewline = buffer.lastIndexOf("\n", relativeFenceEnd - 1);
+  return lastNewline >= 0 ? lastNewline + 1 : -1;
+}
+
+function agentRuntimeSkipLeadingNewlines(value, start = 0) {
+  let i = start;
+  while (i < value.length && value[i] === "\n") {
+    i += 1;
+  }
+  return i;
+}
+
+function agentRuntimeStripLeadingNewlines(value) {
+  const start = agentRuntimeSkipLeadingNewlines(value);
+  return start > 0 ? value.slice(start) : value;
+}
+
+function agentRuntimeFindNextParagraphBreak(buffer, fenceSpans, startIndex = 0, minChars = 1) {
+  if (startIndex < 0) {
+    return null;
+  }
+  const re = /\n[\t ]*\n+/g;
+  re.lastIndex = startIndex;
+  let match = re.exec(buffer);
+  while (match !== null) {
+    const index = match.index || -1;
+    if (
+      index >= 0 &&
+      index - startIndex >= minChars &&
+      agentRuntimeIsSafeFenceBreak(fenceSpans, index)
+    ) {
+      return { index, length: match[0].length };
+    }
+    match = re.exec(buffer);
+  }
+  return null;
+}
+
+class EmbeddedBlockChunker {
+  constructor(chunking) {
+    this._buffer = "";
+    this._chunking = chunking || {};
+  }
+
+  append(text) {
+    if (!text) {
+      return;
+    }
+    this._buffer += String(text);
+  }
+
+  reset() {
+    this._buffer = "";
+  }
+
+  get bufferedText() {
+    return this._buffer;
+  }
+
+  hasBuffered() {
+    return this._buffer.length > 0;
+  }
+
+  drain(params) {
+    const force = Boolean(params && params.force);
+    const emit = params && typeof params.emit === "function" ? params.emit : () => {};
+    const minChars = Math.max(1, Math.floor(Number(this._chunking.minChars || 1)));
+    const maxChars = Math.max(
+      minChars,
+      Math.floor(Number(this._chunking.maxChars || minChars)),
+    );
+    if (this._buffer.length < minChars && !force) {
+      return;
+    }
+    if (force && this._buffer.length <= maxChars) {
+      if (this._buffer.trim().length > 0) {
+        emit(this._buffer);
+      }
+      this._buffer = "";
+      return;
+    }
+
+    const source = this._buffer;
+    const fenceSpans = agentRuntimeParseFenceSpans(source);
+    let start = 0;
+    let reopenFence;
+
+    while (start < source.length) {
+      const reopenPrefix = reopenFence ? `${reopenFence.openLine}\n` : "";
+      const remainingLength = reopenPrefix.length + (source.length - start);
+      if (!force && remainingLength < minChars) {
+        break;
+      }
+
+      if (this._chunking.flushOnParagraph && !force) {
+        const paragraphBreak = agentRuntimeFindNextParagraphBreak(
+          source,
+          fenceSpans,
+          start,
+          minChars,
+        );
+        const paragraphLimit = Math.max(1, maxChars - reopenPrefix.length);
+        if (paragraphBreak && paragraphBreak.index - start <= paragraphLimit) {
+          const chunk = `${reopenPrefix}${source.slice(start, paragraphBreak.index)}`;
+          if (chunk.trim().length > 0) {
+            emit(chunk);
+          }
+          start = agentRuntimeSkipLeadingNewlines(
+            source,
+            paragraphBreak.index + paragraphBreak.length,
+          );
+          reopenFence = undefined;
+          continue;
+        }
+        if (remainingLength < maxChars) {
+          break;
+        }
+      }
+
+      const view = source.slice(start);
+      const breakResult =
+        force && remainingLength <= maxChars
+          ? this._pickSoftBreakIndex(view, fenceSpans, 1, start)
+          : this._pickBreakIndex(view, fenceSpans, force ? 1 : undefined, start);
+      if (breakResult.index <= 0) {
+        if (force) {
+          emit(`${reopenPrefix}${source.slice(start)}`);
+          start = source.length;
+          reopenFence = undefined;
+        }
+        break;
+      }
+
+      const consumed = this._emitBreakResult({
+        breakResult,
+        emit,
+        reopenPrefix,
+        source,
+        start,
+      });
+      if (consumed === null) {
+        continue;
+      }
+      start = consumed.start;
+      reopenFence = consumed.reopenFence;
+      const nextLength =
+        (reopenFence ? `${reopenFence.openLine}\n`.length : 0) + (source.length - start);
+      if (nextLength < minChars && !force) {
+        break;
+      }
+      if (nextLength < maxChars && !force && !this._chunking.flushOnParagraph) {
+        break;
+      }
+    }
+
+    this._buffer = reopenFence
+      ? `${reopenFence.openLine}\n${source.slice(start)}`
+      : agentRuntimeStripLeadingNewlines(source.slice(start));
+  }
+
+  _emitBreakResult(params) {
+    const breakIdx = params.breakResult.index;
+    if (breakIdx <= 0) {
+      return null;
+    }
+    const absoluteBreakIdx = params.start + breakIdx;
+    let rawChunk = `${params.reopenPrefix}${params.source.slice(params.start, absoluteBreakIdx)}`;
+    if (rawChunk.trim().length === 0) {
+      return {
+        start: agentRuntimeSkipLeadingNewlines(params.source, absoluteBreakIdx),
+        reopenFence: undefined,
+      };
+    }
+    const fenceSplit = params.breakResult.fenceSplit;
+    if (fenceSplit) {
+      const closeFence = rawChunk.endsWith("\n")
+        ? `${fenceSplit.closeFenceLine}\n`
+        : `\n${fenceSplit.closeFenceLine}\n`;
+      rawChunk = `${rawChunk}${closeFence}`;
+    }
+    params.emit(rawChunk);
+    if (fenceSplit) {
+      return { start: absoluteBreakIdx, reopenFence: fenceSplit.fence };
+    }
+    const nextStart =
+      absoluteBreakIdx < params.source.length && /\s/.test(params.source[absoluteBreakIdx])
+        ? absoluteBreakIdx + 1
+        : absoluteBreakIdx;
+    return {
+      start: agentRuntimeSkipLeadingNewlines(params.source, nextStart),
+      reopenFence: undefined,
+    };
+  }
+
+  _pickSoftBreakIndex(buffer, fenceSpans, minCharsOverride, offset = 0) {
+    const minChars = Math.max(
+      1,
+      Math.floor(Number(minCharsOverride || this._chunking.minChars || 1)),
+    );
+    if (buffer.length < minChars) {
+      return { index: -1 };
+    }
+    const preference = this._chunking.breakPreference || "paragraph";
+    if (preference === "paragraph") {
+      const paragraphIdx = agentRuntimeFindSafeParagraphBreakIndex({
+        text: buffer,
+        fenceSpans,
+        minChars,
+        reverse: false,
+        offset,
+      });
+      if (paragraphIdx !== -1) {
+        return { index: paragraphIdx };
+      }
+    }
+    if (preference === "paragraph" || preference === "newline") {
+      const newlineIdx = agentRuntimeFindSafeNewlineBreakIndex({
+        text: buffer,
+        fenceSpans,
+        minChars,
+        reverse: false,
+        offset,
+      });
+      if (newlineIdx !== -1) {
+        return { index: newlineIdx };
+      }
+    }
+    if (preference !== "newline") {
+      const sentenceIdx = agentRuntimeFindSafeSentenceBreakIndex(
+        buffer,
+        fenceSpans,
+        minChars,
+        offset,
+      );
+      if (sentenceIdx !== -1) {
+        return { index: sentenceIdx };
+      }
+    }
+    return { index: -1 };
+  }
+
+  _pickBreakIndex(buffer, fenceSpans, minCharsOverride, offset = 0) {
+    const minChars = Math.max(
+      1,
+      Math.floor(Number(minCharsOverride || this._chunking.minChars || 1)),
+    );
+    const maxChars = Math.max(
+      minChars,
+      Math.floor(Number(this._chunking.maxChars || minChars)),
+    );
+    if (buffer.length < minChars) {
+      return { index: -1 };
+    }
+    const window = buffer.slice(0, Math.min(maxChars, buffer.length));
+    const preference = this._chunking.breakPreference || "paragraph";
+    if (preference === "paragraph") {
+      const paragraphIdx = agentRuntimeFindSafeParagraphBreakIndex({
+        text: window,
+        fenceSpans,
+        minChars,
+        reverse: true,
+        offset,
+      });
+      if (paragraphIdx !== -1) {
+        return { index: paragraphIdx };
+      }
+    }
+    if (preference === "paragraph" || preference === "newline") {
+      const newlineIdx = agentRuntimeFindSafeNewlineBreakIndex({
+        text: window,
+        fenceSpans,
+        minChars,
+        reverse: true,
+        offset,
+      });
+      if (newlineIdx !== -1) {
+        return { index: newlineIdx };
+      }
+    }
+    if (preference !== "newline") {
+      const sentenceIdx = agentRuntimeFindSafeSentenceBreakIndex(
+        window,
+        fenceSpans,
+        minChars,
+        offset,
+      );
+      if (sentenceIdx !== -1) {
+        return { index: sentenceIdx };
+      }
+    }
+    if (preference === "newline" && buffer.length < maxChars) {
+      return { index: -1 };
+    }
+    for (let i = window.length - 1; i >= minChars; i -= 1) {
+      if (/\s/.test(window[i]) && agentRuntimeIsSafeFenceBreak(fenceSpans, offset + i)) {
+        return { index: i };
+      }
+    }
+    if (buffer.length >= maxChars) {
+      if (agentRuntimeIsSafeFenceBreak(fenceSpans, offset + maxChars)) {
+        return { index: maxChars };
+      }
+      const fence = agentRuntimeFindFenceSpanAt(fenceSpans, offset + maxChars);
+      if (fence) {
+        const closeFenceStart = agentRuntimeFindFenceCloseLineStart(buffer, fence, offset);
+        if (closeFenceStart >= minChars && closeFenceStart < maxChars) {
+          return {
+            index: closeFenceStart,
+            fenceSplit: {
+              closeFenceLine: `${fence.indent}${fence.marker}`,
+              fence,
+            },
+          };
+        }
+        return {
+          index: maxChars,
+          fenceSplit: {
+            closeFenceLine: `${fence.indent}${fence.marker}`,
+            fence,
+          },
+        };
+      }
+      return { index: maxChars };
+    }
+    return { index: -1 };
+  }
 }
 
 function normalizeMessageChannel(raw) {
@@ -30188,17 +33214,31 @@ function evaluateSenderGroupAccessForPolicy(params) {
 }
 
 function resolveRuntimeGroupPolicy(params) {
-  const configuredFallbackPolicy = params.configuredFallbackPolicy || "open";
-  const missingProviderFallbackPolicy = params.missingProviderFallbackPolicy || "allowlist";
+  const configuredFallbackPolicy = params.configuredFallbackPolicy ?? "open";
+  const missingProviderFallbackPolicy = params.missingProviderFallbackPolicy ?? "allowlist";
   const groupPolicy = params.providerConfigPresent
-    ? params.groupPolicy || params.defaultGroupPolicy || configuredFallbackPolicy
-    : params.groupPolicy || missingProviderFallbackPolicy;
+    ? (params.groupPolicy ?? params.defaultGroupPolicy ?? configuredFallbackPolicy)
+    : (params.groupPolicy ?? missingProviderFallbackPolicy);
   return {
     groupPolicy,
     providerMissingFallbackApplied:
       !params.providerConfigPresent && params.groupPolicy === undefined,
   };
 }
+
+function resolveDefaultGroupPolicy(cfg) {
+  return cfg && cfg.channels && cfg.channels.defaults
+    ? cfg.channels.defaults.groupPolicy
+    : undefined;
+}
+
+const GROUP_POLICY_BLOCKED_LABEL = {
+  group: "group messages",
+  guild: "guild messages",
+  room: "room messages",
+  channel: "channel messages",
+  space: "space messages",
+};
 
 function resolveOpenProviderRuntimeGroupPolicy(params) {
   return resolveRuntimeGroupPolicy({
@@ -30208,6 +33248,38 @@ function resolveOpenProviderRuntimeGroupPolicy(params) {
     configuredFallbackPolicy: "open",
     missingProviderFallbackPolicy: "allowlist",
   });
+}
+
+function resolveAllowlistProviderRuntimeGroupPolicy(params) {
+  return resolveRuntimeGroupPolicy({
+    providerConfigPresent: params.providerConfigPresent,
+    groupPolicy: params.groupPolicy,
+    defaultGroupPolicy: params.defaultGroupPolicy,
+    configuredFallbackPolicy: "allowlist",
+    missingProviderFallbackPolicy: "allowlist",
+  });
+}
+
+const warnedMissingProviderGroupPolicy = new Set();
+
+function warnMissingProviderGroupPolicyFallbackOnce(params) {
+  if (!params.providerMissingFallbackApplied) {
+    return false;
+  }
+  const key = `${params.providerKey}:${params.accountId ?? "*"}`;
+  if (warnedMissingProviderGroupPolicy.has(key)) {
+    return false;
+  }
+  warnedMissingProviderGroupPolicy.add(key);
+  const blockedLabel = normalizeOptionalString(params.blockedLabel) || "group messages";
+  if (typeof params.log === "function") {
+    const message =
+      `${params.providerKey}: channels.${params.providerKey} is missing; ` +
+      `defaulting groupPolicy to "allowlist" (` +
+      `${blockedLabel} blocked until explicitly configured).`;
+    params.log(message);
+  }
+  return true;
 }
 
 function evaluateSenderGroupAccess(params) {
@@ -33421,6 +36493,477 @@ function createEnvPatchedAccountSetupAdapter(params) {
   });
 }
 
+function setupHasPresentValue(value) {
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  return value !== undefined && value !== null;
+}
+
+function createSetupInputPresenceValidator(params = {}) {
+  return (inputParams = {}) => {
+    const input =
+      inputParams.input && typeof inputParams.input === "object" ? inputParams.input : {};
+    const accountId = normalizeAccountId(inputParams.accountId);
+    if (params.defaultAccountOnlyEnvError && input.useEnv && accountId !== DEFAULT_ACCOUNT_ID) {
+      return params.defaultAccountOnlyEnvError;
+    }
+    if (!input.useEnv) {
+      for (const requirement of params.whenNotUseEnv || []) {
+        const keys = Array.isArray(requirement.someOf) ? requirement.someOf : [];
+        if (keys.some((key) => setupHasPresentValue(input[key]))) {
+          continue;
+        }
+        return requirement.message || "invalid input";
+      }
+    }
+    return typeof params.validate === "function"
+      ? params.validate({ ...inputParams, accountId, input })
+      : null;
+  };
+}
+
+function mergeAllowFromEntries(current, additions) {
+  return [...new Set(normalizeStringEntries([...(current || []), ...(additions || [])]))];
+}
+
+function splitSetupEntries(raw) {
+  return String(raw || "")
+    .split(/[\n,;]+/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function parseSetupEntriesWithParser(raw, parseEntry) {
+  const entries = [];
+  for (const part of splitSetupEntries(raw)) {
+    const parsed = parseEntry(part);
+    if (parsed && parsed.error !== undefined) {
+      return { entries: [], error: parsed.error };
+    }
+    if (parsed && parsed.value !== undefined) {
+      entries.push(parsed.value);
+    }
+  }
+  return { entries: mergeAllowFromEntries(undefined, entries) };
+}
+
+function parseSetupEntriesAllowingWildcard(raw, parseEntry) {
+  return parseSetupEntriesWithParser(raw, (entry) => {
+    if (entry === "*") {
+      return { value: "*" };
+    }
+    return parseEntry(entry);
+  });
+}
+
+function parseMentionOrPrefixedId(params = {}) {
+  const trimmed = String(params.value || "").trim();
+  if (!trimmed) {
+    return null;
+  }
+  const mentionMatch = trimmed.match(params.mentionPattern);
+  if (mentionMatch && mentionMatch[1]) {
+    return typeof params.normalizeId === "function"
+      ? params.normalizeId(mentionMatch[1])
+      : mentionMatch[1];
+  }
+  const stripped = params.prefixPattern ? trimmed.replace(params.prefixPattern, "") : trimmed;
+  if (!params.idPattern || !params.idPattern.test(stripped)) {
+    return null;
+  }
+  return typeof params.normalizeId === "function" ? params.normalizeId(stripped) : stripped;
+}
+
+function createStandardChannelSetupStatus(params = {}) {
+  const status = {
+    configuredLabel: params.configuredLabel,
+    unconfiguredLabel: params.unconfiguredLabel,
+    resolveConfigured: params.resolveConfigured || (() => false),
+    ...(params.configuredHint ? { configuredHint: params.configuredHint } : {}),
+    ...(params.unconfiguredHint ? { unconfiguredHint: params.unconfiguredHint } : {}),
+    ...(typeof params.configuredScore === "number"
+      ? { configuredScore: params.configuredScore }
+      : {}),
+    ...(typeof params.unconfiguredScore === "number"
+      ? { unconfiguredScore: params.unconfiguredScore }
+      : {}),
+  };
+  if (params.includeStatusLine || params.resolveExtraStatusLines) {
+    status.resolveStatusLines = async ({ cfg, accountId, configured } = {}) => {
+      const lines = params.includeStatusLine
+        ? [
+            `${params.channelLabel}: ${
+              configured ? params.configuredLabel : params.unconfiguredLabel
+            }`,
+          ]
+        : [];
+      const extra =
+        typeof params.resolveExtraStatusLines === "function"
+          ? await params.resolveExtraStatusLines({ cfg, accountId, configured })
+          : [];
+      return [...lines, ...(extra || [])];
+    };
+  }
+  return status;
+}
+
+function resolveSetupAccountId(params = {}) {
+  return normalizeOptionalString(params.accountId)
+    ? normalizeAccountId(params.accountId)
+    : params.defaultAccountId;
+}
+
+function patchChannelConfigForAccount(params = {}) {
+  return patchScopedSetupAccountConfig({
+    cfg: params.cfg || {},
+    channelKey: params.channel,
+    accountId: normalizeAccountId(params.accountId),
+    patch: params.patch || {},
+    ensureChannelEnabled: true,
+    ensureAccountEnabled: true,
+  });
+}
+
+function setAccountAllowFromForChannel(params = {}) {
+  return patchChannelConfigForAccount({
+    cfg: params.cfg,
+    channel: params.channel,
+    accountId: params.accountId,
+    patch: { dmPolicy: "allowlist", allowFrom: params.allowFrom || [] },
+  });
+}
+
+function setAccountGroupPolicyForChannel(params = {}) {
+  return patchChannelConfigForAccount({
+    cfg: params.cfg,
+    channel: params.channel,
+    accountId: params.accountId,
+    patch: { groupPolicy: params.groupPolicy },
+  });
+}
+
+function createAccountScopedAllowFromSection(params = {}) {
+  return {
+    ...(params.helpTitle ? { helpTitle: params.helpTitle } : {}),
+    ...(params.helpLines ? { helpLines: params.helpLines } : {}),
+    ...(params.credentialInputKey ? { credentialInputKey: params.credentialInputKey } : {}),
+    message: params.message,
+    placeholder: params.placeholder,
+    invalidWithoutCredentialNote: params.invalidWithoutCredentialNote,
+    parseId: params.parseId,
+    resolveEntries: params.resolveEntries,
+    apply: ({ cfg, accountId, allowFrom } = {}) =>
+      setAccountAllowFromForChannel({
+        cfg,
+        channel: params.channel,
+        accountId,
+        allowFrom,
+      }),
+  };
+}
+
+function createAccountScopedGroupAccessSection(params = {}) {
+  return {
+    label: params.label,
+    placeholder: params.placeholder,
+    ...(params.helpTitle ? { helpTitle: params.helpTitle } : {}),
+    ...(params.helpLines ? { helpLines: params.helpLines } : {}),
+    ...(params.skipAllowlistEntries ? { skipAllowlistEntries: true } : {}),
+    currentPolicy: params.currentPolicy,
+    currentEntries: params.currentEntries,
+    updatePrompt: params.updatePrompt,
+    setPolicy: ({ cfg, accountId, policy } = {}) =>
+      setAccountGroupPolicyForChannel({
+        cfg,
+        channel: params.channel,
+        accountId,
+        groupPolicy: policy,
+      }),
+    ...(params.resolveAllowlist
+      ? {
+          resolveAllowlist: async ({
+            cfg,
+            accountId,
+            credentialValues,
+            entries,
+            prompter,
+          } = {}) => {
+            try {
+              return await params.resolveAllowlist({
+                cfg,
+                accountId,
+                credentialValues,
+                entries,
+                prompter,
+              });
+            } catch (error) {
+              await noteChannelLookupFailure({ prompter, label: params.label, error });
+              return params.fallbackResolved(entries || []);
+            }
+          },
+        }
+      : {}),
+    applyAllowlist: ({ cfg, accountId, resolved } = {}) =>
+      params.applyAllowlist({ cfg, accountId, resolved }),
+  };
+}
+
+async function noteChannelLookupSummary(params = {}) {
+  const lines = [];
+  for (const section of params.resolvedSections || []) {
+    if (section.values && section.values.length > 0) {
+      lines.push(`${section.title}: ${section.values.join(", ")}`);
+    }
+  }
+  if (params.unresolved && params.unresolved.length > 0) {
+    lines.push(`Unresolved (kept as typed): ${params.unresolved.join(", ")}`);
+  }
+  if (lines.length > 0 && params.prompter && typeof params.prompter.note === "function") {
+    await params.prompter.note(lines.join("\n"), params.label);
+  }
+}
+
+async function noteChannelLookupFailure(params = {}) {
+  if (params.prompter && typeof params.prompter.note === "function") {
+    await params.prompter.note(
+      `Channel lookup failed; keeping entries as typed. ${String(params.error)}`,
+      params.label,
+    );
+  }
+}
+
+async function resolveEntriesWithOptionalToken(params = {}) {
+  const token = normalizeOptionalString(params.token);
+  if (!token) {
+    return (params.entries || []).map(params.buildWithoutToken);
+  }
+  return await params.resolveEntries({ token, entries: params.entries || [] });
+}
+
+async function promptResolvedAllowFrom(params = {}) {
+  const entry = await params.prompter.text({
+    message: params.message,
+    placeholder: params.placeholder,
+    initialValue: params.existing && params.existing[0] ? String(params.existing[0]) : undefined,
+    validate: (value) => (normalizeOptionalString(value) ? undefined : "Required"),
+  });
+  const parts = params.parseInputs ? params.parseInputs(entry) : splitSetupEntries(entry);
+  if (!params.token) {
+    return mergeAllowFromEntries(params.existing, parts.map(params.parseId).filter(Boolean));
+  }
+  const results = await params.resolveEntries({ token: params.token, entries: parts });
+  return mergeAllowFromEntries(
+    params.existing,
+    results.map((result) => result.id).filter(Boolean),
+  );
+}
+
+async function promptParsedAllowFromForAccount(params = {}) {
+  const accountId = resolveSetupAccountId({
+    accountId: params.accountId,
+    defaultAccountId: params.defaultAccountId,
+  });
+  const existing =
+    typeof params.getExistingAllowFrom === "function"
+      ? params.getExistingAllowFrom({ cfg: params.cfg, accountId })
+      : [];
+  const entry = await params.prompter.text({
+    message: params.message,
+    placeholder: params.placeholder,
+    initialValue: existing && existing[0] ? String(existing[0]) : undefined,
+    validate: (value) => {
+      const raw = normalizeOptionalString(value) || "";
+      if (!raw) {
+        return "Required";
+      }
+      const parsed = params.parseEntries(raw);
+      return parsed && parsed.error;
+    },
+  });
+  const parsed = params.parseEntries(entry);
+  const unique =
+    typeof params.mergeEntries === "function"
+      ? params.mergeEntries({ existing, parsed: parsed.entries })
+      : mergeAllowFromEntries(undefined, parsed.entries);
+  return await params.applyAllowFrom({ cfg: params.cfg, accountId, allowFrom: unique });
+}
+
+async function promptLegacyChannelAllowFromForAccount(params = {}) {
+  const accountId = resolveSetupAccountId({
+    accountId: params.accountId,
+    defaultAccountId: params.defaultAccountId,
+  });
+  const account = params.resolveAccount(params.cfg, accountId);
+  const existing = params.resolveExisting(account, params.cfg);
+  const token = params.resolveToken(account);
+  const allowFrom = await promptResolvedAllowFrom({
+    prompter: params.prompter,
+    existing,
+    token,
+    message: params.message,
+    placeholder: params.placeholder,
+    label: params.noteTitle,
+    parseInputs: splitSetupEntries,
+    parseId: params.parseId,
+    invalidWithoutTokenNote: params.invalidWithoutTokenNote,
+    resolveEntries: params.resolveEntries,
+  });
+  return setAccountAllowFromForChannel({
+    cfg: params.cfg,
+    channel: params.channel,
+    accountId,
+    allowFrom,
+  });
+}
+
+function createCliPathTextInput(params = {}) {
+  return {
+    inputKey: params.inputKey,
+    message: params.message,
+    currentValue: params.resolvePath,
+    initialValue: params.resolvePath,
+    shouldPrompt: params.shouldPrompt,
+    confirmCurrentValue: false,
+    applyCurrentValue: true,
+    ...(params.helpTitle ? { helpTitle: params.helpTitle } : {}),
+    ...(params.helpLines ? { helpLines: params.helpLines } : {}),
+  };
+}
+
+function createDelegatedSetupWizardStatusResolvers(loadWizard) {
+  return {
+    async resolveStatusLines(params) {
+      const wizard = await loadWizard();
+      return wizard.status.resolveStatusLines ? await wizard.status.resolveStatusLines(params) : [];
+    },
+    async resolveSelectionHint(params) {
+      const wizard = await loadWizard();
+      return wizard.status.resolveSelectionHint
+        ? await wizard.status.resolveSelectionHint(params)
+        : undefined;
+    },
+    async resolveQuickstartScore(params) {
+      const wizard = await loadWizard();
+      return wizard.status.resolveQuickstartScore
+        ? await wizard.status.resolveQuickstartScore(params)
+        : undefined;
+    },
+  };
+}
+
+function createDelegatedTextInputShouldPrompt(params = {}) {
+  return async (inputParams = {}) => {
+    const wizard = await params.loadWizard();
+    const input = (wizard.textInputs || []).find((entry) => entry.inputKey === params.inputKey);
+    return input && typeof input.shouldPrompt === "function"
+      ? await input.shouldPrompt(inputParams)
+      : false;
+  };
+}
+
+function createDelegatedSetupWizardProxy(params = {}) {
+  const loadWizard = params.loadWizard;
+  return {
+    channel: params.channel,
+    status: {
+      ...(params.status || {}),
+      resolveConfigured: async (statusParams) => {
+        const wizard = await loadWizard();
+        return await wizard.status.resolveConfigured(statusParams);
+      },
+      ...createDelegatedSetupWizardStatusResolvers(loadWizard),
+    },
+    ...(params.resolveShouldPromptAccountIds
+      ? { resolveShouldPromptAccountIds: params.resolveShouldPromptAccountIds }
+      : {}),
+    ...(params.delegatePrepare
+      ? {
+          prepare: async (prepareParams) => {
+            const wizard = await loadWizard();
+            return wizard.prepare ? await wizard.prepare(prepareParams) : undefined;
+          },
+        }
+      : {}),
+    credentials: params.credentials || [],
+    ...(params.textInputs ? { textInputs: params.textInputs } : {}),
+    ...(params.delegateFinalize
+      ? {
+          finalize: async (finalizeParams) => {
+            const wizard = await loadWizard();
+            return wizard.finalize ? await wizard.finalize(finalizeParams) : undefined;
+          },
+        }
+      : {}),
+    ...(params.completionNote ? { completionNote: params.completionNote } : {}),
+    ...(params.dmPolicy ? { dmPolicy: params.dmPolicy } : {}),
+    ...(params.disable ? { disable: params.disable } : {}),
+    ...(params.onAccountRecorded ? { onAccountRecorded: params.onAccountRecorded } : {}),
+  };
+}
+
+function createAllowlistSetupWizardProxy(params = {}) {
+  return params.createBase({
+    promptAllowFrom: async ({ cfg, prompter, accountId } = {}) => {
+      const wizard = await params.loadWizard();
+      if (!wizard.dmPolicy || !wizard.dmPolicy.promptAllowFrom) {
+        return cfg;
+      }
+      return await wizard.dmPolicy.promptAllowFrom({ cfg, prompter, accountId });
+    },
+    resolveAllowFromEntries: async ({ cfg, accountId, credentialValues, entries } = {}) => {
+      const wizard = await params.loadWizard();
+      if (!wizard.allowFrom || !wizard.allowFrom.resolveEntries) {
+        return (entries || []).map((input) => ({ input, resolved: false, id: null }));
+      }
+      return await wizard.allowFrom.resolveEntries({
+        cfg,
+        accountId,
+        credentialValues,
+        entries,
+      });
+    },
+    resolveGroupAllowlist: async ({ cfg, accountId, credentialValues, entries, prompter } = {}) => {
+      const wizard = await params.loadWizard();
+      if (!wizard.groupAccess || !wizard.groupAccess.resolveAllowlist) {
+        return params.fallbackResolvedGroupAllowlist(entries || []);
+      }
+      return await wizard.groupAccess.resolveAllowlist({
+        cfg,
+        accountId,
+        credentialValues,
+        entries,
+        prompter,
+      });
+    },
+  });
+}
+
+function createLegacyCompatChannelDmPolicy(params = {}) {
+  return createTopLevelChannelDmPolicy({
+    label: params.label,
+    channel: params.channel,
+    policyKey: `channels.${params.channel}.dmPolicy`,
+    allowFromKey: `channels.${params.channel}.allowFrom`,
+    getCurrent: (cfg) =>
+      (cfg.channels && cfg.channels[params.channel] && cfg.channels[params.channel].dmPolicy) ||
+      "disabled",
+    promptAllowFrom: params.promptAllowFrom,
+  });
+}
+
+function createClackPrompter() {
+  const unavailable = () => {
+    throw new Error("Interactive setup prompts are unavailable in the native plugin bridge.");
+  };
+  return {
+    confirm: unavailable,
+    note: unavailable,
+    select: unavailable,
+    text: unavailable,
+  };
+}
+
 function createOptionalChannelSetupWizard(params) {
   const message = buildOptionalChannelSetupMessage(params);
   return {
@@ -36535,7 +40078,18 @@ const pluginSdkEntrypoints = [
   "agent-config-primitives",
   "allow-from",
   "allowlist-config-edit",
+  "browser-bridge",
+  "browser-control-auth",
   "browser-config",
+  "browser-config-runtime",
+  "browser-host-inspection",
+  "browser-maintenance",
+  "browser-node-host",
+  "browser-node-runtime",
+  "browser-profiles",
+  "browser-setup-tools",
+  "browser-support",
+  "browser-trash",
   "boolean-param",
   "channel-contract-testing",
   "dangerous-name-runtime",
@@ -36711,7 +40265,18 @@ const supportedBundledFacadeSdkEntrypoints = [
   "zalouser",
 ];
 const publicPluginOwnedSdkEntrypoints = [
+  "browser-control-auth",
+  "browser-bridge",
   "browser-config",
+  "browser-config-runtime",
+  "browser-host-inspection",
+  "browser-maintenance",
+  "browser-node-host",
+  "browser-node-runtime",
+  "browser-profiles",
+  "browser-setup-tools",
+  "browser-support",
+  "browser-trash",
   "image-generation-core",
   "memory-core-host-engine-embeddings",
   "memory-core-host-engine-foundation",
@@ -36793,6 +40358,529 @@ const typeOnlyPluginSdkRequests = new Set([
   "@openclaw/plugin-sdk/tts-runtime.types",
 ]);
 
+const ZodIssueCode = Object.freeze({
+  custom: "custom",
+  invalid_enum_value: "invalid_enum_value",
+  invalid_literal: "invalid_literal",
+  invalid_string: "invalid_string",
+  invalid_type: "invalid_type",
+  invalid_union: "invalid_union",
+  too_big: "too_big",
+  too_small: "too_small",
+  unrecognized_keys: "unrecognized_keys",
+});
+
+class ZodError extends Error {
+  constructor(issues) {
+    super(JSON.stringify(issues || []));
+    this.name = "ZodError";
+    this.issues = issues || [];
+    this.errors = this.issues;
+  }
+}
+
+function zodErrorMessage(options, fallback) {
+  if (typeof options === "string") {
+    return options;
+  }
+  if (options && typeof options.error === "string") {
+    return options.error;
+  }
+  if (options && typeof options.message === "string") {
+    return options.message;
+  }
+  return fallback;
+}
+
+function zodIssue(path, code, message) {
+  return { code, path: Array.isArray(path) ? path : [], message };
+}
+
+function zodOk(value) {
+  return { ok: true, value };
+}
+
+function zodFail(path, code, message) {
+  return { ok: false, issues: [zodIssue(path, code, message)] };
+}
+
+class MiniZodType {
+  parse(value) {
+    const parsed = this._parse(value, []);
+    if (parsed.ok) {
+      return parsed.value;
+    }
+    throw new ZodError(parsed.issues);
+  }
+
+  safeParse(value) {
+    const parsed = this._parse(value, []);
+    if (parsed.ok) {
+      return { success: true, data: parsed.value };
+    }
+    return { success: false, error: new ZodError(parsed.issues) };
+  }
+
+  optional() {
+    return new MiniZodOptional(this);
+  }
+
+  default(value) {
+    return new MiniZodDefault(this, value);
+  }
+
+  describe(description) {
+    this.description = description;
+    return this;
+  }
+
+  transform(transformer) {
+    return new MiniZodTransform(this, transformer);
+  }
+}
+
+class MiniZodOptional extends MiniZodType {
+  constructor(inner) {
+    super();
+    this.inner = inner;
+  }
+
+  _parse(value, path) {
+    if (value === undefined) {
+      return zodOk(undefined);
+    }
+    return this.inner._parse(value, path);
+  }
+}
+
+class MiniZodDefault extends MiniZodType {
+  constructor(inner, defaultValue) {
+    super();
+    this.inner = inner;
+    this.defaultValue = defaultValue;
+  }
+
+  _parse(value, path) {
+    const next =
+      value === undefined
+        ? typeof this.defaultValue === "function"
+          ? this.defaultValue()
+          : this.defaultValue
+        : value;
+    return this.inner._parse(next, path);
+  }
+}
+
+class MiniZodTransform extends MiniZodType {
+  constructor(inner, transformer) {
+    super();
+    this.inner = inner;
+    this.transformer = transformer;
+  }
+
+  _parse(value, path) {
+    const parsed = this.inner._parse(value, path);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    return zodOk(this.transformer(parsed.value));
+  }
+}
+
+class MiniZodString extends MiniZodType {
+  constructor(options) {
+    super();
+    this.options = options || {};
+    this.steps = [];
+  }
+
+  trim() {
+    this.steps.push({ kind: "trim" });
+    return this;
+  }
+
+  min(length, options) {
+    this.steps.push({ kind: "min", length, options });
+    return this;
+  }
+
+  url(options) {
+    this.steps.push({ kind: "url", options });
+    return this;
+  }
+
+  startsWith(prefix, options) {
+    this.steps.push({ kind: "startsWith", prefix, options });
+    return this;
+  }
+
+  _parse(value, path) {
+    if (typeof value !== "string") {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected string"),
+      );
+    }
+    let next = value;
+    const issues = [];
+    for (const step of this.steps) {
+      if (step.kind === "trim") {
+        next = next.trim();
+      } else if (step.kind === "min" && next.length < step.length) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.too_small,
+            zodErrorMessage(step.options, `String must contain at least ${step.length}`),
+          ),
+        );
+      } else if (step.kind === "url") {
+        try {
+          new URL(next);
+        } catch {
+          issues.push(
+            zodIssue(
+              path,
+              ZodIssueCode.invalid_string,
+              zodErrorMessage(step.options, "Invalid url"),
+            ),
+          );
+        }
+      } else if (step.kind === "startsWith" && !next.startsWith(step.prefix)) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.invalid_string,
+            zodErrorMessage(step.options, `String must start with ${step.prefix}`),
+          ),
+        );
+      }
+    }
+    return issues.length > 0 ? { ok: false, issues } : zodOk(next);
+  }
+}
+
+class MiniZodNumber extends MiniZodType {
+  constructor(options) {
+    super();
+    this.options = options || {};
+    this.steps = [];
+  }
+
+  int(options) {
+    this.steps.push({ kind: "int", options });
+    return this;
+  }
+
+  min(value, options) {
+    this.steps.push({ kind: "min", value, options });
+    return this;
+  }
+
+  max(value, options) {
+    this.steps.push({ kind: "max", value, options });
+    return this;
+  }
+
+  positive(options) {
+    this.steps.push({ kind: "positive", options });
+    return this;
+  }
+
+  _parse(value, path) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected number"),
+      );
+    }
+    const issues = [];
+    for (const step of this.steps) {
+      if (step.kind === "int" && !Number.isInteger(value)) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.invalid_type,
+            zodErrorMessage(step.options, "Expected integer"),
+          ),
+        );
+      } else if (step.kind === "min" && value < step.value) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.too_small,
+            zodErrorMessage(step.options, `Number must be >= ${step.value}`),
+          ),
+        );
+      } else if (step.kind === "max" && value > step.value) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.too_big,
+            zodErrorMessage(step.options, `Number must be <= ${step.value}`),
+          ),
+        );
+      } else if (step.kind === "positive" && value <= 0) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.too_small,
+            zodErrorMessage(step.options, "Number must be > 0"),
+          ),
+        );
+      }
+    }
+    return issues.length > 0 ? { ok: false, issues } : zodOk(value);
+  }
+}
+
+class MiniZodBoolean extends MiniZodType {
+  constructor(options) {
+    super();
+    this.options = options || {};
+  }
+
+  _parse(value, path) {
+    if (typeof value !== "boolean") {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected boolean"),
+      );
+    }
+    return zodOk(value);
+  }
+}
+
+class MiniZodUnknown extends MiniZodType {
+  _parse(value, _path) {
+    return zodOk(value);
+  }
+}
+
+class MiniZodEnum extends MiniZodType {
+  constructor(values, options) {
+    super();
+    this.values = Array.isArray(values) ? [...values] : [];
+    this.options = options || {};
+  }
+
+  _parse(value, path) {
+    if (!this.values.includes(value)) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_enum_value,
+        zodErrorMessage(this.options, "Invalid enum value"),
+      );
+    }
+    return zodOk(value);
+  }
+}
+
+class MiniZodLiteral extends MiniZodType {
+  constructor(expected, options) {
+    super();
+    this.expected = expected;
+    this.options = options || {};
+  }
+
+  _parse(value, path) {
+    if (value !== this.expected) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_literal,
+        zodErrorMessage(this.options, "Invalid literal value"),
+      );
+    }
+    return zodOk(value);
+  }
+}
+
+class MiniZodUnion extends MiniZodType {
+  constructor(options, config) {
+    super();
+    this.options = Array.isArray(options) ? options : [];
+    this.config = config || {};
+  }
+
+  _parse(value, path) {
+    for (const option of this.options) {
+      const parsed = option._parse(value, path);
+      if (parsed.ok) {
+        return parsed;
+      }
+    }
+    return zodFail(
+      path,
+      ZodIssueCode.invalid_union,
+      zodErrorMessage(this.config, "Invalid input"),
+    );
+  }
+}
+
+class MiniZodArray extends MiniZodType {
+  constructor(inner, options) {
+    super();
+    this.inner = inner;
+    this.options = options || {};
+  }
+
+  _parse(value, path) {
+    if (!Array.isArray(value)) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected array"),
+      );
+    }
+    const result = [];
+    const issues = [];
+    value.forEach((entry, index) => {
+      const parsed = this.inner._parse(entry, [...path, index]);
+      if (parsed.ok) {
+        result[index] = parsed.value;
+      } else {
+        issues.push(...parsed.issues);
+      }
+    });
+    return issues.length > 0 ? { ok: false, issues } : zodOk(result);
+  }
+}
+
+class MiniZodRecord extends MiniZodType {
+  constructor(keySchema, valueSchema, options) {
+    super();
+    this.keySchema = valueSchema ? keySchema : new MiniZodString();
+    this.valueSchema = valueSchema || keySchema;
+    this.options = options || {};
+  }
+
+  _parse(value, path) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected object"),
+      );
+    }
+    const result = {};
+    const issues = [];
+    for (const [key, entry] of Object.entries(value)) {
+      const keyParsed = this.keySchema._parse(key, [...path, key]);
+      if (!keyParsed.ok) {
+        issues.push(...keyParsed.issues);
+        continue;
+      }
+      const parsed = this.valueSchema._parse(entry, [...path, key]);
+      if (parsed.ok) {
+        result[key] = parsed.value;
+      } else {
+        issues.push(...parsed.issues);
+      }
+    }
+    return issues.length > 0 ? { ok: false, issues } : zodOk(result);
+  }
+}
+
+class MiniZodObject extends MiniZodType {
+  constructor(shape, options) {
+    super();
+    this.shape = shape || {};
+    this.options = options || {};
+    this.strictMode = false;
+    this.refiners = [];
+  }
+
+  strict() {
+    this.strictMode = true;
+    return this;
+  }
+
+  superRefine(refiner) {
+    if (typeof refiner === "function") {
+      this.refiners.push(refiner);
+    }
+    return this;
+  }
+
+  _parse(value, path) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected object"),
+      );
+    }
+    const result = {};
+    const issues = [];
+    for (const [key, schema] of Object.entries(this.shape)) {
+      const parsed = schema._parse(value[key], [...path, key]);
+      if (parsed.ok) {
+        if (parsed.value !== undefined || Object.hasOwn(value, key)) {
+          result[key] = parsed.value;
+        }
+      } else {
+        issues.push(...parsed.issues);
+      }
+    }
+    if (this.strictMode) {
+      for (const key of Object.keys(value)) {
+        if (!Object.hasOwn(this.shape, key)) {
+          issues.push(
+            zodIssue(
+              [...path, key],
+              ZodIssueCode.unrecognized_keys,
+              `Unrecognized key: ${key}`,
+            ),
+          );
+        }
+      }
+    }
+    if (issues.length > 0) {
+      return { ok: false, issues };
+    }
+    const context = {
+      addIssue(issue) {
+        issues.push({
+          code: issue.code || ZodIssueCode.custom,
+          path: Array.isArray(issue.path) ? issue.path : [],
+          message: issue.message || "Invalid input",
+        });
+      },
+    };
+    for (const refiner of this.refiners) {
+      refiner(result, context);
+    }
+    return issues.length > 0 ? { ok: false, issues } : zodOk(result);
+  }
+}
+
+const z = {
+  ZodError,
+  ZodIssueCode,
+  any: () => new MiniZodUnknown(),
+  array: (schema, options) => new MiniZodArray(schema, options),
+  boolean: (options) => new MiniZodBoolean(options),
+  enum: (values, options) => new MiniZodEnum(values, options),
+  literal: (value, options) => new MiniZodLiteral(value, options),
+  number: (options) => new MiniZodNumber(options),
+  object: (shape, options) => new MiniZodObject(shape, options),
+  record: (keySchema, valueSchema, options) =>
+    new MiniZodRecord(keySchema, valueSchema, options),
+  strictObject: (shape, options) => new MiniZodObject(shape, options).strict(),
+  string: (options) => new MiniZodString(options),
+  union: (options, config) => new MiniZodUnion(options, config),
+  unknown: () => new MiniZodUnknown(),
+};
+
+const zodRuntime = {
+  ...z,
+  default: z,
+  z,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -36822,6 +40910,471 @@ const mediaMimeRuntime = {
 const mediaStoreRuntime = {
   resolveMediaBufferPath,
   saveMediaBuffer,
+};
+
+const WEB_MEDIA_MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const WEB_MEDIA_MAX_AUDIO_BYTES = 16 * 1024 * 1024;
+const WEB_MEDIA_MAX_VIDEO_BYTES = 16 * 1024 * 1024;
+const WEB_MEDIA_MAX_DOCUMENT_BYTES = 100 * 1024 * 1024;
+const WEB_MEDIA_HOST_READ_TEXT_MIMES = new Set(["text/csv", "text/markdown"]);
+const WEB_MEDIA_HOST_READ_DOCUMENT_MIMES = new Set([
+  "application/msword",
+  "application/pdf",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/csv",
+  "text/markdown",
+]);
+const WEB_MEDIA_WINDOWS_DRIVE_RE = /^[A-Za-z]:[\\/]/;
+
+class LocalMediaAccessError extends Error {
+  constructor(code, message, options) {
+    super(message, options);
+    this.name = "LocalMediaAccessError";
+    this.code = code;
+  }
+}
+
+function getDefaultLocalRoots() {
+  const stateDir = path.resolve(resolveStateDir());
+  const configDir = path.resolve(resolveConfigDir());
+  return Array.from(
+    new Set([
+      os.tmpdir(),
+      path.join(configDir, "media"),
+      path.join(stateDir, "media"),
+      path.join(stateDir, "canvas"),
+      path.join(stateDir, "workspace"),
+      path.join(stateDir, "sandboxes"),
+    ]),
+  );
+}
+
+function assertNoWindowsNetworkPathForWebMedia(filePath, label = "Path") {
+  if (isWindowsNetworkPath(String(filePath))) {
+    throw new Error(`${label} cannot use Windows network paths: ${filePath}`);
+  }
+}
+
+async function resolveWebMediaRealPath(filePath) {
+  try {
+    return await fs.promises.realpath(filePath);
+  } catch (_error) {
+    return path.resolve(filePath);
+  }
+}
+
+async function assertLocalMediaAllowed(mediaPath, localRoots) {
+  if (localRoots === "any") {
+    return;
+  }
+  try {
+    assertNoWindowsNetworkPathForWebMedia(mediaPath, "Local media path");
+  } catch (err) {
+    throw new LocalMediaAccessError("network-path-not-allowed", err.message, {
+      cause: err,
+    });
+  }
+  const roots = localRoots || getDefaultLocalRoots();
+  const resolved = await resolveWebMediaRealPath(mediaPath);
+  for (const root of roots) {
+    const resolvedRoot = await resolveWebMediaRealPath(root);
+    if (resolvedRoot === path.parse(resolvedRoot).root) {
+      throw new LocalMediaAccessError(
+        "invalid-root",
+        `Invalid localRoots entry (refuses filesystem root): ${root}. ` +
+          "Pass a narrower directory.",
+      );
+    }
+    if (isPathInsideRoot(resolvedRoot, resolved)) {
+      return;
+    }
+  }
+  throw new LocalMediaAccessError(
+    "path-not-allowed",
+    `Local media path is not under an allowed directory: ${mediaPath}`,
+  );
+}
+
+function maxBytesForWebMediaKind(kind) {
+  switch (kind) {
+    case "image":
+      return WEB_MEDIA_MAX_IMAGE_BYTES;
+    case "audio":
+      return WEB_MEDIA_MAX_AUDIO_BYTES;
+    case "video":
+      return WEB_MEDIA_MAX_VIDEO_BYTES;
+    case "document":
+    default:
+      return WEB_MEDIA_MAX_DOCUMENT_BYTES;
+  }
+}
+
+function formatWebMediaMb(bytes, digits = 2) {
+  return (bytes / (1024 * 1024)).toFixed(digits);
+}
+
+function formatWebMediaCapLimit(label, cap, size) {
+  return `${label} exceeds ${formatWebMediaMb(cap, 0)}MB limit ` +
+    `(got ${formatWebMediaMb(size)}MB)`;
+}
+
+function toWebMediaBuffer(value) {
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+  if (ArrayBuffer.isView(value)) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (value instanceof ArrayBuffer) {
+    return Buffer.from(value);
+  }
+  return Buffer.from(value || []);
+}
+
+function isSupportedWebMediaImage(buffer) {
+  return Boolean(buffer && mediaKindFromMime(sniffMime(buffer)) === "image");
+}
+
+async function optimizeImageToJpeg(buffer, maxBytes, _opts = {}) {
+  const source = toWebMediaBuffer(buffer);
+  if (!isSupportedWebMediaImage(source)) {
+    throw new Error("Failed to optimize image");
+  }
+  return {
+    buffer: source,
+    optimizedSize: source.length,
+    resizeSide: 2048,
+    quality: source.length <= maxBytes ? 80 : 40,
+  };
+}
+
+async function optimizeImageToPng(buffer, maxBytes) {
+  const source = toWebMediaBuffer(buffer);
+  if (!isSupportedWebMediaImage(source)) {
+    throw new Error("Failed to optimize PNG image");
+  }
+  return {
+    buffer: source,
+    optimizedSize: source.length,
+    resizeSide: 2048,
+    compressionLevel: source.length <= maxBytes ? 6 : 9,
+  };
+}
+
+function resolveWebMediaOptions(params) {
+  const maxBytesOrOptions = params.maxBytesOrOptions;
+  if (typeof maxBytesOrOptions === "number" || maxBytesOrOptions === undefined) {
+    return {
+      maxBytes: maxBytesOrOptions,
+      optimizeImages: params.optimizeImages,
+      ssrfPolicy: params.options && params.options.ssrfPolicy,
+      localRoots: params.options && params.options.localRoots,
+    };
+  }
+  return {
+    ...maxBytesOrOptions,
+    optimizeImages: params.optimizeImages
+      ? (maxBytesOrOptions.optimizeImages ?? true)
+      : false,
+  };
+}
+
+async function resolveMediaStoreUriToPath(mediaUrl) {
+  if (!/^media:\/\//i.test(mediaUrl)) {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = new URL(mediaUrl);
+  } catch (err) {
+    throw new LocalMediaAccessError("invalid-path", err.message, { cause: err });
+  }
+  const location = parsed.hostname;
+  const encodedId = parsed.pathname.replace(/^\/+/u, "");
+  if (location !== "inbound") {
+    throw new LocalMediaAccessError(
+      "path-not-allowed",
+      `Unsupported media store URI location: ${location || "(none)"}`,
+    );
+  }
+  if (!encodedId || hasEncodedFileUrlSeparator(encodedId)) {
+    throw new LocalMediaAccessError("invalid-path", `Invalid media store URI: ${mediaUrl}`);
+  }
+  const id = decodeURIComponent(encodedId);
+  if (!id || id.includes("/") || id.includes("\\") || id.includes("\0")) {
+    throw new LocalMediaAccessError("invalid-path", `Invalid media store URI: ${mediaUrl}`);
+  }
+  try {
+    return await resolveMediaBufferPath(id, "inbound");
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      throw new LocalMediaAccessError("not-found", `Local media file not found: ${mediaUrl}`, {
+        cause: err,
+      });
+    }
+    throw new LocalMediaAccessError("invalid-path", err.message, { cause: err });
+  }
+}
+
+function isValidatedWebMediaText(buffer) {
+  if (!buffer || buffer.length === 0) {
+    return true;
+  }
+  if (buffer.includes(0)) {
+    return false;
+  }
+  const text = buffer.toString("utf8");
+  let printable = 0;
+  let control = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) || 0;
+    if (code === 9 || code === 10 || code === 13 || code === 32) {
+      printable += 1;
+    } else if (code < 32 || (code >= 0x7f && code <= 0x9f)) {
+      control += 1;
+    } else {
+      printable += 1;
+    }
+  }
+  return printable + control > 0 && printable / (printable + control) > 0.95;
+}
+
+function assertHostReadWebMediaAllowed(params) {
+  const declaredMime = normalizeMimeType(
+    params.filePath ? MIME_BY_EXT[getFileExtension(params.filePath)] : undefined,
+  );
+  const sniffedMime = normalizeMimeType(params.sniffedContentType);
+  const contentType = normalizeMimeType(params.contentType);
+  if (
+    declaredMime &&
+    WEB_MEDIA_HOST_READ_TEXT_MIMES.has(declaredMime) &&
+    isValidatedWebMediaText(params.buffer)
+  ) {
+    return;
+  }
+  const sniffedKind = mediaKindFromMime(sniffedMime);
+  if (sniffedKind === "image" || sniffedKind === "audio" || sniffedKind === "video") {
+    return;
+  }
+  if (
+    sniffedKind === "document" &&
+    sniffedMime &&
+    WEB_MEDIA_HOST_READ_DOCUMENT_MIMES.has(sniffedMime)
+  ) {
+    return;
+  }
+  if (
+    params.kind === "document" &&
+    contentType &&
+    WEB_MEDIA_HOST_READ_DOCUMENT_MIMES.has(contentType)
+  ) {
+    throw new LocalMediaAccessError(
+      "path-not-allowed",
+      `Host-local media sends require buffer-verified media/document types ` +
+        `(got fallback ${contentType}).`,
+    );
+  }
+  throw new LocalMediaAccessError(
+    "path-not-allowed",
+    `Host-local media sends only allow buffer-verified images, audio, video, PDF, ` +
+      `and Office documents (got ${sniffedMime || contentType || "unknown"}).`,
+  );
+}
+
+async function readLocalWebMediaFile(filePath) {
+  let stat;
+  try {
+    stat = await fs.promises.lstat(filePath);
+  } catch (err) {
+    if (isNotFoundPathError(err)) {
+      throw new LocalMediaAccessError(
+        "not-found",
+        `Local media file not found: ${filePath}`,
+        { cause: err },
+      );
+    }
+    throw new LocalMediaAccessError(
+      "invalid-path",
+      `Local media path is not safe to read: ${filePath}`,
+      { cause: err },
+    );
+  }
+  if (!stat.isFile()) {
+    throw new LocalMediaAccessError(
+      "not-file",
+      `Local media path is not a file: ${filePath}`,
+    );
+  }
+  return await fs.promises.readFile(filePath);
+}
+
+async function fetchWebMediaRemote(mediaUrl, options, fetchCap) {
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    throw new Error("fetch is not available for remote media");
+  }
+  const response = await fetchImpl(mediaUrl, options.requestInit || undefined);
+  if (!response || !response.ok) {
+    const status = response && response.status ? response.status : "unknown";
+    throw new Error(`Failed to fetch remote media (${status}): ${mediaUrl}`);
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (buffer.length > fetchCap) {
+    throw new Error(formatWebMediaCapLimit("Media", fetchCap, buffer.length));
+  }
+  const contentType =
+    response.headers && typeof response.headers.get === "function"
+      ? normalizeMimeType(response.headers.get("content-type"))
+      : undefined;
+  return {
+    buffer,
+    contentType,
+    fileName: basenameFromMediaSource(mediaUrl),
+  };
+}
+
+async function finalizeWebMedia(params, options) {
+  const cap =
+    options.maxBytes !== undefined
+      ? options.maxBytes
+      : maxBytesForWebMediaKind(params.kind || "document");
+  if (params.buffer.length > cap) {
+    const label = params.contentType === "image/gif" ? "GIF" : "Media";
+    throw new Error(
+      formatWebMediaCapLimit(label, cap, params.buffer.length),
+    );
+  }
+  return {
+    buffer: params.buffer,
+    contentType: params.contentType || undefined,
+    kind: params.kind,
+    fileName: params.fileName,
+  };
+}
+
+async function loadWebMediaInternal(mediaUrl, options = {}) {
+  let source = String(mediaUrl || "");
+  if (!/^\s*media:\/\//i.test(source)) {
+    source = source.replace(/^\s*MEDIA\s*:\s*/i, "");
+  }
+  source = (await resolveMediaStoreUriToPath(source)) || source;
+  if (source.startsWith("file://")) {
+    try {
+      source = safeFileURLToPath(source);
+    } catch (err) {
+      throw new LocalMediaAccessError("invalid-file-url", err.message, { cause: err });
+    }
+  }
+  if (/^https?:\/\//i.test(source)) {
+    const defaultFetchCap = maxBytesForWebMediaKind("document");
+    const fetchCap =
+      options.maxBytes === undefined
+        ? defaultFetchCap
+        : options.optimizeImages
+          ? Math.max(options.maxBytes, defaultFetchCap)
+          : options.maxBytes;
+    const fetched = await fetchWebMediaRemote(source, options, fetchCap);
+    const mime = await detectMime({
+      buffer: fetched.buffer,
+      headerMime: fetched.contentType,
+      filePath: fetched.fileName,
+    });
+    return await finalizeWebMedia(
+      {
+        buffer: fetched.buffer,
+        contentType: mime,
+        kind: mediaKindFromMime(mime),
+        fileName: fetched.fileName,
+      },
+      options,
+    );
+  }
+  if (source.startsWith("~")) {
+    source = resolveUserPath(source);
+  }
+  if (
+    options.workspaceDir &&
+    !path.isAbsolute(source) &&
+    !WEB_MEDIA_WINDOWS_DRIVE_RE.test(source)
+  ) {
+    source = path.resolve(options.workspaceDir, source);
+  }
+  try {
+    assertNoWindowsNetworkPathForWebMedia(source, "Local media path");
+  } catch (err) {
+    throw new LocalMediaAccessError("network-path-not-allowed", err.message, {
+      cause: err,
+    });
+  }
+  if ((options.sandboxValidated || options.localRoots === "any") && !options.readFile) {
+    throw new LocalMediaAccessError(
+      "unsafe-bypass",
+      "Refusing localRoots bypass without readFile override. Use sandboxValidated " +
+        "with readFile, or pass explicit localRoots.",
+    );
+  }
+  if (!(options.sandboxValidated || options.localRoots === "any")) {
+    await assertLocalMediaAllowed(source, options.localRoots);
+  }
+  const data = toWebMediaBuffer(
+    options.readFile ? await options.readFile(source) : await readLocalWebMediaFile(source),
+  );
+  const sniffedMime = await detectMime({ buffer: data });
+  const mime = await detectMime({ buffer: data, filePath: source });
+  const kind = mediaKindFromMime(mime);
+  if (options.hostReadCapability) {
+    assertHostReadWebMediaAllowed({
+      sniffedContentType: sniffedMime,
+      contentType: mime,
+      filePath: source,
+      kind,
+      buffer: data,
+    });
+  }
+  let fileName = path.basename(source) || undefined;
+  if (fileName && !path.extname(fileName) && mime) {
+    const ext = extensionForMime(mime);
+    if (ext) {
+      fileName = `${fileName}${ext}`;
+    }
+  }
+  return await finalizeWebMedia(
+    {
+      buffer: data,
+      contentType: mime,
+      kind,
+      fileName,
+    },
+    options,
+  );
+}
+
+async function loadWebMedia(mediaUrl, maxBytesOrOptions, options) {
+  return await loadWebMediaInternal(
+    mediaUrl,
+    resolveWebMediaOptions({ maxBytesOrOptions, options, optimizeImages: true }),
+  );
+}
+
+async function loadWebMediaRaw(mediaUrl, maxBytesOrOptions, options) {
+  return await loadWebMediaInternal(
+    mediaUrl,
+    resolveWebMediaOptions({ maxBytesOrOptions, options, optimizeImages: false }),
+  );
+}
+
+const webMediaRuntime = {
+  getDefaultLocalRoots,
+  LocalMediaAccessError,
+  loadWebMedia,
+  loadWebMediaRaw,
+  optimizeImageToJpeg,
+  optimizeImageToPng,
 };
 
 const stringNormalizationRuntime = {
@@ -36923,6 +41476,174 @@ const webhookTargetsRuntime = {
   withResolvedWebhookRequestPipeline,
 };
 
+const DEFAULT_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
+const AUTH_RATE_LIMIT_SCOPE_DEFAULT = "default";
+const AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET = "shared-secret";
+const AUTH_RATE_LIMIT_SCOPE_DEVICE_TOKEN = "device-token";
+const AUTH_RATE_LIMIT_SCOPE_HOOK_AUTH = "hook-auth";
+const BROWSER_ORIGIN_RATE_LIMIT_KEY_PREFIX = "browser-origin:";
+
+function normalizePluginHttpPath(inputPath, fallback) {
+  const trimmed = normalizeOptionalString(inputPath);
+  if (!trimmed) {
+    const fallbackTrimmed = normalizeOptionalString(fallback);
+    if (!fallbackTrimmed) {
+      return null;
+    }
+    return fallbackTrimmed.startsWith("/") ? fallbackTrimmed : `/${fallbackTrimmed}`;
+  }
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+function normalizeRateLimitClientIp(ip) {
+  if (typeof ip === "string" && ip.startsWith(BROWSER_ORIGIN_RATE_LIMIT_KEY_PREFIX)) {
+    return ip;
+  }
+  const trimmed = normalizeOptionalString(ip);
+  if (!trimmed) {
+    return "unknown";
+  }
+  if (trimmed.startsWith("::ffff:")) {
+    return trimmed.slice("::ffff:".length);
+  }
+  return trimmed;
+}
+
+function isRateLimitLoopbackAddress(ip) {
+  const normalized = normalizeRateLimitClientIp(ip).toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "::1" ||
+    normalized === "0:0:0:0:0:0:0:1" ||
+    normalized.startsWith("127.")
+  );
+}
+
+function createAuthRateLimiter(config = {}) {
+  const maxAttempts = config.maxAttempts || 10;
+  const windowMs = config.windowMs || 60000;
+  const lockoutMs = config.lockoutMs || 300000;
+  const exemptLoopback = config.exemptLoopback !== undefined ? config.exemptLoopback : true;
+  const pruneIntervalMs = config.pruneIntervalMs !== undefined ? config.pruneIntervalMs : 60000;
+  const entries = new Map();
+  const pruneTimer = pruneIntervalMs > 0 ? setInterval(() => prune(), pruneIntervalMs) : null;
+  if (pruneTimer && typeof pruneTimer.unref === "function") {
+    pruneTimer.unref();
+  }
+
+  function normalizeScope(scope) {
+    return normalizeOptionalString(scope) || AUTH_RATE_LIMIT_SCOPE_DEFAULT;
+  }
+
+  function resolveKey(rawIp, rawScope) {
+    const ip = normalizeRateLimitClientIp(rawIp);
+    return { key: `${normalizeScope(rawScope)}:${ip}`, ip };
+  }
+
+  function isExempt(ip) {
+    return exemptLoopback && isRateLimitLoopbackAddress(ip);
+  }
+
+  function slideWindow(entry, now) {
+    const cutoff = now - windowMs;
+    entry.attempts = entry.attempts.filter((timestamp) => timestamp > cutoff);
+  }
+
+  function check(rawIp, rawScope) {
+    const { key, ip } = resolveKey(rawIp, rawScope);
+    if (isExempt(ip)) {
+      return { allowed: true, remaining: maxAttempts, retryAfterMs: 0 };
+    }
+    const now = Date.now();
+    const entry = entries.get(key);
+    if (!entry) {
+      return { allowed: true, remaining: maxAttempts, retryAfterMs: 0 };
+    }
+    if (entry.lockedUntil && now < entry.lockedUntil) {
+      return {
+        allowed: false,
+        remaining: 0,
+        retryAfterMs: entry.lockedUntil - now,
+      };
+    }
+    if (entry.lockedUntil && now >= entry.lockedUntil) {
+      entry.lockedUntil = undefined;
+      entry.attempts = [];
+    }
+    slideWindow(entry, now);
+    const remaining = Math.max(0, maxAttempts - entry.attempts.length);
+    return { allowed: remaining > 0, remaining, retryAfterMs: 0 };
+  }
+
+  function recordFailure(rawIp, rawScope) {
+    const { key, ip } = resolveKey(rawIp, rawScope);
+    if (isExempt(ip)) {
+      return;
+    }
+    const now = Date.now();
+    let entry = entries.get(key);
+    if (!entry) {
+      entry = { attempts: [] };
+      entries.set(key, entry);
+    }
+    if (entry.lockedUntil && now < entry.lockedUntil) {
+      return;
+    }
+    slideWindow(entry, now);
+    entry.attempts.push(now);
+    if (entry.attempts.length >= maxAttempts) {
+      entry.lockedUntil = now + lockoutMs;
+    }
+  }
+
+  function reset(rawIp, rawScope) {
+    const { key } = resolveKey(rawIp, rawScope);
+    entries.delete(key);
+  }
+
+  function prune() {
+    const now = Date.now();
+    for (const [key, entry] of entries) {
+      if (entry.lockedUntil && now < entry.lockedUntil) {
+        continue;
+      }
+      slideWindow(entry, now);
+      if (entry.attempts.length === 0) {
+        entries.delete(key);
+      }
+    }
+  }
+
+  function size() {
+    return entries.size;
+  }
+
+  function dispose() {
+    if (pruneTimer) {
+      clearInterval(pruneTimer);
+    }
+    entries.clear();
+  }
+
+  return { check, recordFailure, reset, size, prune, dispose };
+}
+
+const webhookIngressRuntime = {
+  DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+  AUTH_RATE_LIMIT_SCOPE_DEFAULT,
+  AUTH_RATE_LIMIT_SCOPE_DEVICE_TOKEN,
+  AUTH_RATE_LIMIT_SCOPE_HOOK_AUTH,
+  AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET,
+  ...webhookMemoryGuardsRuntime,
+  ...webhookRequestGuardsRuntime,
+  ...webhookTargetsRuntime,
+  ...webhookPathRuntime,
+  createAuthRateLimiter,
+  normalizePluginHttpPath,
+  normalizeRateLimitClientIp,
+  rawDataToString,
+};
+
 const requestUrlRuntime = {
   resolveRequestUrl,
 };
@@ -36963,6 +41684,11 @@ const providerModelIdNormalizeRuntime = {
   normalizeAntigravityPreviewModelId,
   normalizeGooglePreviewModelId,
   normalizeNativeXaiModelId,
+};
+
+const googleModelIdRuntime = {
+  normalizeAntigravityModelId: normalizeAntigravityPreviewModelId,
+  normalizeGoogleModelId: normalizeGooglePreviewModelId,
 };
 
 const xaiModelIdRuntime = {
@@ -37022,11 +41748,1433 @@ const providerCatalogSharedRuntime = {
   supportsNativeStreamingUsageCompat,
 };
 
+let nativeRegisteredProviderPlugins = [];
+
+function normalizeNativeProviderPluginId(provider) {
+  return normalizeOptionalString(provider && (provider.pluginId || provider.id)) || "";
+}
+
+function cloneNativeProviderPlugin(provider) {
+  return { ...(provider || {}) };
+}
+
+function nativeProviderPluginAllowedByConfig(provider, config) {
+  const pluginId = normalizeNativeProviderPluginId(provider);
+  const plugins = config && config.plugins;
+  if (!plugins || !pluginId) {
+    return true;
+  }
+  if (plugins.enabled === false) {
+    return false;
+  }
+  if (Array.isArray(plugins.deny) && plugins.deny.includes(pluginId)) {
+    return false;
+  }
+  const entry = plugins.entries && plugins.entries[pluginId];
+  if (entry && entry.enabled === false) {
+    return false;
+  }
+  return true;
+}
+
+function createNativePluginIdScopeSet(pluginIds) {
+  if (!Array.isArray(pluginIds) || pluginIds.length === 0) {
+    return null;
+  }
+  return new Set(pluginIds.map((pluginId) => normalizeOptionalString(pluginId)).filter(Boolean));
+}
+
+function nativeProviderMatchesRef(provider, ref) {
+  const normalized = normalizeProviderId(ref || "");
+  if (!normalized) {
+    return false;
+  }
+  if (normalizeProviderId(provider && provider.id) === normalized) {
+    return true;
+  }
+  const refs = [
+    ...((provider && Array.isArray(provider.aliases) && provider.aliases) || []),
+    ...((provider && Array.isArray(provider.hookAliases) && provider.hookAliases) || []),
+  ];
+  return refs.some((entry) => normalizeProviderId(entry) === normalized);
+}
+
+function nativeProviderPluginInScope(provider, params = {}) {
+  const pluginIdScope = createNativePluginIdScopeSet(params.onlyPluginIds);
+  const pluginId = normalizeNativeProviderPluginId(provider);
+  if (pluginIdScope && !pluginIdScope.has(pluginId)) {
+    return false;
+  }
+  if (!nativeProviderPluginAllowedByConfig(provider, params.config)) {
+    return false;
+  }
+  const providerRefs = Array.isArray(params.providerRefs) ? params.providerRefs : [];
+  if (
+    providerRefs.length > 0 &&
+    !providerRefs.some((ref) => nativeProviderMatchesRef(provider, ref))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function resolvePluginProviders(params = {}) {
+  return nativeRegisteredProviderPlugins
+    .filter((provider) => nativeProviderPluginInScope(provider, params))
+    .map(cloneNativeProviderPlugin);
+}
+
+function isPluginProvidersLoadInFlight(_params = {}) {
+  return false;
+}
+
+function dedupeSortedNativePluginIds(values) {
+  return Array.from(new Set(values.filter(Boolean))).sort((left, right) =>
+    left.localeCompare(right),
+  );
+}
+
+function resolveCatalogHookProviderPluginIds(params = {}) {
+  return dedupeSortedNativePluginIds(
+    resolvePluginProviders(params).map((provider) => normalizeNativeProviderPluginId(provider)),
+  );
+}
+
+function resolveOwningPluginIdsForProvider(params = {}) {
+  const provider = normalizeOptionalString(params.provider);
+  if (!provider) {
+    return undefined;
+  }
+  const matches = nativeRegisteredProviderPlugins
+    .filter((entry) => nativeProviderMatchesRef(entry, provider))
+    .map((entry) => normalizeNativeProviderPluginId(entry));
+  const deduped = dedupeSortedNativePluginIds(matches);
+  return deduped.length > 0 ? deduped : undefined;
+}
+
+async function augmentModelCatalogWithProviderPlugins(params = {}) {
+  const supplemental = [];
+  const providers = resolvePluginProviders(params);
+  for (const provider of providers) {
+    if (typeof provider.augmentModelCatalog !== "function") {
+      continue;
+    }
+    const next = await provider.augmentModelCatalog(params.context || {});
+    if (Array.isArray(next) && next.length > 0) {
+      supplemental.push(...next);
+    }
+  }
+  return supplemental;
+}
+
+const providerCatalogRuntime = {
+  augmentModelCatalogWithProviderPlugins,
+  isPluginProvidersLoadInFlight,
+  resolveCatalogHookProviderPluginIds,
+  resolveOwningPluginIdsForProvider,
+  resolvePluginProviders,
+};
+
+const OPENCODE_ZEN_DEFAULT_MODEL = "opencode/claude-opus-4-6";
+const LEGACY_OPENCODE_ZEN_DEFAULT_MODELS = new Set([
+  "opencode/claude-opus-4-5",
+  "opencode-zen/claude-opus-4-5",
+]);
+
+function extractAgentDefaultModelFallbacks(model) {
+  if (!model || typeof model !== "object" || !("fallbacks" in model)) {
+    return undefined;
+  }
+  return Array.isArray(model.fallbacks) ? model.fallbacks.map((value) => String(value)) : undefined;
+}
+
+function normalizeAgentModelAliasEntry(entry) {
+  return typeof entry === "string" ? { modelRef: entry } : entry;
+}
+
+function withAgentModelAliases(existing, aliases) {
+  const next = { ...(existing || {}) };
+  for (const entry of aliases || []) {
+    const normalized = normalizeAgentModelAliasEntry(entry);
+    const modelRef = normalized && normalized.modelRef;
+    if (!modelRef) {
+      continue;
+    }
+    next[modelRef] = {
+      ...next[modelRef],
+      ...(normalized.alias
+        ? { alias: (next[modelRef] && next[modelRef].alias) || normalized.alias }
+        : {}),
+    };
+  }
+  return next;
+}
+
+function applyOnboardAuthAgentModelsAndProviders(cfg = {}, params = {}) {
+  const agents = cfg.agents || {};
+  const defaults = agents.defaults || {};
+  const mergedAgentModels = {
+    ...(defaults.models || {}),
+    ...(params.agentModels || {}),
+  };
+  return {
+    ...cfg,
+    agents: {
+      ...agents,
+      defaults: {
+        ...defaults,
+        models: mergedAgentModels,
+      },
+    },
+    models: {
+      mode: (cfg.models && cfg.models.mode) || "merge",
+      providers: params.providers || {},
+    },
+  };
+}
+
+function applyAgentDefaultModelPrimary(cfg = {}, primary) {
+  const agents = cfg.agents || {};
+  const defaults = agents.defaults || {};
+  const existingFallbacks = extractAgentDefaultModelFallbacks(defaults.model);
+  return {
+    ...cfg,
+    agents: {
+      ...agents,
+      defaults: {
+        ...defaults,
+        model: {
+          ...(existingFallbacks ? { fallbacks: existingFallbacks } : {}),
+          primary,
+        },
+      },
+    },
+  };
+}
+
+function resolveProviderOnboardPrimaryStringValue(model) {
+  if (typeof model === "string") {
+    return normalizeOptionalString(model);
+  }
+  if (!model || typeof model !== "object") {
+    return undefined;
+  }
+  return normalizeOptionalString(model.primary);
+}
+
+function applyOpencodeZenModelDefault(cfg = {}) {
+  const current = resolveProviderOnboardPrimaryStringValue(
+    cfg.agents && cfg.agents.defaults && cfg.agents.defaults.model,
+  );
+  const normalizedCurrent =
+    current && LEGACY_OPENCODE_ZEN_DEFAULT_MODELS.has(current)
+      ? OPENCODE_ZEN_DEFAULT_MODEL
+      : current;
+  if (normalizedCurrent === OPENCODE_ZEN_DEFAULT_MODEL) {
+    return { next: cfg, changed: false };
+  }
+  return {
+    next: applyAgentDefaultModelPrimary(cfg, OPENCODE_ZEN_DEFAULT_MODEL),
+    changed: true,
+  };
+}
+
+function findNormalizedProviderKeyForOnboard(providers, providerId) {
+  const normalized = normalizeProviderId(providerId);
+  return Object.keys(providers || {}).find((key) => normalizeProviderId(key) === normalized);
+}
+
+function resolveProviderModelMergeStateForOnboard(cfg = {}, providerId) {
+  const providers = { ...((cfg.models && cfg.models.providers) || {}) };
+  const existingProviderKey = findNormalizedProviderKeyForOnboard(providers, providerId);
+  const existingProvider =
+    existingProviderKey !== undefined ? providers[existingProviderKey] : undefined;
+  const existingModels = Array.isArray(existingProvider && existingProvider.models)
+    ? existingProvider.models
+    : [];
+  if (existingProviderKey && existingProviderKey !== providerId) {
+    delete providers[existingProviderKey];
+  }
+  return { providers, existingProvider, existingModels };
+}
+
+function buildProviderConfigForOnboard(params) {
+  const existingProvider = params.existingProvider || {};
+  const { apiKey: existingApiKey, ...existingProviderRest } = existingProvider;
+  const normalizedApiKey =
+    typeof existingApiKey === "string" ? normalizeOptionalString(existingApiKey) : undefined;
+  return {
+    ...existingProviderRest,
+    baseUrl: params.baseUrl,
+    api: params.api,
+    ...(normalizedApiKey ? { apiKey: normalizedApiKey } : {}),
+    models: params.mergedModels.length > 0 ? params.mergedModels : params.fallbackModels,
+  };
+}
+
+function applyProviderConfigWithMergedModelsForOnboard(cfg, params) {
+  params.providerState.providers[params.providerId] = buildProviderConfigForOnboard({
+    existingProvider: params.providerState.existingProvider,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    mergedModels: params.mergedModels,
+    fallbackModels: params.fallbackModels,
+  });
+  return applyOnboardAuthAgentModelsAndProviders(cfg, {
+    agentModels: params.agentModels,
+    providers: params.providerState.providers,
+  });
+}
+
+function applyProviderConfigWithDefaultModels(cfg = {}, params = {}) {
+  const providerState = resolveProviderModelMergeStateForOnboard(cfg, params.providerId);
+  const defaultModels = params.defaultModels || [];
+  const defaultModelId = params.defaultModelId || (defaultModels[0] && defaultModels[0].id);
+  const hasDefaultModel = defaultModelId
+    ? providerState.existingModels.some((model) => model && model.id === defaultModelId)
+    : true;
+  const mergedModels =
+    providerState.existingModels.length > 0
+      ? hasDefaultModel || defaultModels.length === 0
+        ? providerState.existingModels
+        : [...providerState.existingModels, ...defaultModels]
+      : defaultModels;
+  return applyProviderConfigWithMergedModelsForOnboard(cfg, {
+    agentModels: params.agentModels || {},
+    providerId: params.providerId,
+    providerState,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    mergedModels,
+    fallbackModels: defaultModels,
+  });
+}
+
+function applyProviderConfigWithDefaultModel(cfg = {}, params = {}) {
+  return applyProviderConfigWithDefaultModels(cfg, {
+    agentModels: params.agentModels || {},
+    providerId: params.providerId,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    defaultModels: params.defaultModel ? [params.defaultModel] : [],
+    defaultModelId:
+      params.defaultModelId || (params.defaultModel && params.defaultModel.id),
+  });
+}
+
+function applyProviderConfigWithDefaultModelPreset(cfg = {}, params = {}) {
+  const next = applyProviderConfigWithDefaultModel(cfg, {
+    agentModels: withAgentModelAliases(
+      cfg.agents && cfg.agents.defaults && cfg.agents.defaults.models,
+      params.aliases || [],
+    ),
+    providerId: params.providerId,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    defaultModel: params.defaultModel,
+    defaultModelId: params.defaultModelId,
+  });
+  return params.primaryModelRef
+    ? applyAgentDefaultModelPrimary(next, params.primaryModelRef)
+    : next;
+}
+
+function applyProviderConfigWithDefaultModelsPreset(cfg = {}, params = {}) {
+  const next = applyProviderConfigWithDefaultModels(cfg, {
+    agentModels: withAgentModelAliases(
+      cfg.agents && cfg.agents.defaults && cfg.agents.defaults.models,
+      params.aliases || [],
+    ),
+    providerId: params.providerId,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    defaultModels: params.defaultModels || [],
+    defaultModelId: params.defaultModelId,
+  });
+  return params.primaryModelRef
+    ? applyAgentDefaultModelPrimary(next, params.primaryModelRef)
+    : next;
+}
+
+function applyProviderConfigWithModelCatalog(cfg = {}, params = {}) {
+  const providerState = resolveProviderModelMergeStateForOnboard(cfg, params.providerId);
+  const catalogModels = params.catalogModels || [];
+  const mergedModels =
+    providerState.existingModels.length > 0
+      ? [
+          ...providerState.existingModels,
+          ...catalogModels.filter(
+            (model) =>
+              !providerState.existingModels.some(
+                (existing) => existing && model && existing.id === model.id,
+              ),
+          ),
+        ]
+      : catalogModels;
+  return applyProviderConfigWithMergedModelsForOnboard(cfg, {
+    agentModels: params.agentModels || {},
+    providerId: params.providerId,
+    providerState,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    mergedModels,
+    fallbackModels: catalogModels,
+  });
+}
+
+function applyProviderConfigWithModelCatalogPreset(cfg = {}, params = {}) {
+  const next = applyProviderConfigWithModelCatalog(cfg, {
+    agentModels: withAgentModelAliases(
+      cfg.agents && cfg.agents.defaults && cfg.agents.defaults.models,
+      params.aliases || [],
+    ),
+    providerId: params.providerId,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    catalogModels: params.catalogModels || [],
+  });
+  return params.primaryModelRef
+    ? applyAgentDefaultModelPrimary(next, params.primaryModelRef)
+    : next;
+}
+
+function createProviderPresetAppliers(params) {
+  return {
+    applyProviderConfig(cfg, ...args) {
+      const resolved = params.resolveParams(cfg, ...args);
+      return resolved ? params.applyPreset(cfg, resolved) : cfg;
+    },
+    applyConfig(cfg, ...args) {
+      const resolved = params.resolveParams(cfg, ...args);
+      if (!resolved) {
+        return cfg;
+      }
+      return params.applyPreset(cfg, {
+        ...resolved,
+        primaryModelRef: params.primaryModelRef,
+      });
+    },
+  };
+}
+
+function createDefaultModelPresetAppliers(params) {
+  return createProviderPresetAppliers({
+    resolveParams: params.resolveParams,
+    applyPreset: applyProviderConfigWithDefaultModelPreset,
+    primaryModelRef: params.primaryModelRef,
+  });
+}
+
+function createDefaultModelsPresetAppliers(params) {
+  return createProviderPresetAppliers({
+    resolveParams: params.resolveParams,
+    applyPreset: applyProviderConfigWithDefaultModelsPreset,
+    primaryModelRef: params.primaryModelRef,
+  });
+}
+
+function createModelCatalogPresetAppliers(params) {
+  return createProviderPresetAppliers({
+    resolveParams: params.resolveParams,
+    applyPreset: applyProviderConfigWithModelCatalogPreset,
+    primaryModelRef: params.primaryModelRef,
+  });
+}
+
+function modelKeyForOnboard(provider, model) {
+  const providerId = normalizeOptionalString(provider) || "";
+  const modelId = normalizeOptionalString(model) || "";
+  if (!providerId) {
+    return modelId;
+  }
+  if (!modelId) {
+    return providerId;
+  }
+  return normalizeLowercaseStringOrEmpty(modelId).startsWith(
+    `${normalizeLowercaseStringOrEmpty(providerId)}/`,
+  )
+    ? modelId
+    : `${providerId}/${modelId}`;
+}
+
+function resolveStaticAllowlistModelKeyForOnboard(raw, defaultProvider = "openai") {
+  const trimmed = normalizeOptionalString(raw);
+  if (!trimmed) {
+    return null;
+  }
+  const slash = trimmed.indexOf("/");
+  const providerRaw =
+    slash === -1 ? defaultProvider : normalizeOptionalString(trimmed.slice(0, slash));
+  const modelRaw = slash === -1 ? trimmed : normalizeOptionalString(trimmed.slice(slash + 1));
+  if (!providerRaw || !modelRaw) {
+    return null;
+  }
+  return modelKeyForOnboard(normalizeProviderId(providerRaw), modelRaw);
+}
+
+function ensureModelAllowlistEntry(params = {}) {
+  const cfg = params.cfg || {};
+  const rawModelRef = normalizeOptionalString(params.modelRef);
+  if (!rawModelRef) {
+    return cfg;
+  }
+  const agents = cfg.agents || {};
+  const defaults = agents.defaults || {};
+  const models = { ...(defaults.models || {}) };
+  const keySet = new Set([rawModelRef]);
+  const canonicalKey = resolveStaticAllowlistModelKeyForOnboard(
+    rawModelRef,
+    params.defaultProvider || "openai",
+  );
+  if (canonicalKey) {
+    keySet.add(canonicalKey);
+  }
+  for (const key of keySet) {
+    models[key] = {
+      ...models[key],
+    };
+  }
+  return {
+    ...cfg,
+    agents: {
+      ...agents,
+      defaults: {
+        ...defaults,
+        models,
+      },
+    },
+  };
+}
+
+const providerOnboardRuntime = {
+  OPENCODE_ZEN_DEFAULT_MODEL,
+  applyAgentDefaultModelPrimary,
+  applyOnboardAuthAgentModelsAndProviders,
+  applyOpencodeZenModelDefault,
+  applyProviderConfigWithDefaultModel,
+  applyProviderConfigWithDefaultModelPreset,
+  applyProviderConfigWithDefaultModels,
+  applyProviderConfigWithDefaultModelsPreset,
+  applyProviderConfigWithModelCatalog,
+  applyProviderConfigWithModelCatalogPreset,
+  createDefaultModelPresetAppliers,
+  createDefaultModelsPresetAppliers,
+  createModelCatalogPresetAppliers,
+  ensureModelAllowlistEntry,
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+  withAgentModelAliases,
+};
+
+const PROVIDER_USAGE_DEFAULT_TIMEOUT_MS = 5000;
+const PROVIDER_USAGE_LABELS = {
+  anthropic: "Claude",
+  "github-copilot": "Copilot",
+  "google-gemini-cli": "Gemini",
+  minimax: "MiniMax",
+  "openai-codex": "Codex",
+  xiaomi: "Xiaomi",
+  zai: "z.ai",
+};
+const PROVIDER_USAGE_PROVIDERS = [
+  "anthropic",
+  "github-copilot",
+  "google-gemini-cli",
+  "minimax",
+  "openai-codex",
+  "xiaomi",
+  "zai",
+];
+const MINIMAX_USAGE_ORIGIN = "https://api.minimaxi.com";
+const MINIMAX_USAGE_PATH = "/v1/token_plan/remains";
+const MINIMAX_RESET_KEYS = [
+  "reset_at",
+  "resetAt",
+  "reset_time",
+  "resetTime",
+  "next_reset_at",
+  "nextResetAt",
+  "next_reset_time",
+  "nextResetTime",
+  "expires_at",
+  "expiresAt",
+  "expire_at",
+  "expireAt",
+  "end_time",
+  "endTime",
+  "window_end",
+  "windowEnd",
+];
+const MINIMAX_PERCENT_KEYS = [
+  "used_percent",
+  "usedPercent",
+  "used_rate",
+  "usage_rate",
+  "used_ratio",
+  "usage_ratio",
+  "usedRatio",
+  "usageRatio",
+];
+const MINIMAX_REMAINING_PERCENT_KEYS = ["usage_percent", "usagePercent"];
+const MINIMAX_USED_KEYS = [
+  "used",
+  "usage",
+  "used_amount",
+  "usedAmount",
+  "used_tokens",
+  "usedTokens",
+  "used_quota",
+  "usedQuota",
+  "used_times",
+  "usedTimes",
+  "prompt_used",
+  "promptUsed",
+  "used_prompt",
+  "usedPrompt",
+  "prompts_used",
+  "promptsUsed",
+  "consumed",
+];
+const MINIMAX_TOTAL_KEYS = [
+  "total",
+  "total_amount",
+  "totalAmount",
+  "total_tokens",
+  "totalTokens",
+  "total_quota",
+  "totalQuota",
+  "total_times",
+  "totalTimes",
+  "prompt_total",
+  "promptTotal",
+  "total_prompt",
+  "totalPrompt",
+  "prompt_limit",
+  "promptLimit",
+  "limit_prompt",
+  "limitPrompt",
+  "prompts_total",
+  "promptsTotal",
+  "total_prompts",
+  "totalPrompts",
+  "current_interval_total_count",
+  "currentIntervalTotalCount",
+  "current_weekly_total_count",
+  "currentWeeklyTotalCount",
+  "limit",
+  "quota",
+  "quota_limit",
+  "quotaLimit",
+  "max",
+];
+const MINIMAX_REMAINING_KEYS = [
+  "remain",
+  "remaining",
+  "remain_amount",
+  "remainingAmount",
+  "remaining_amount",
+  "remain_tokens",
+  "remainingTokens",
+  "remaining_tokens",
+  "remain_quota",
+  "remainingQuota",
+  "remaining_quota",
+  "remain_times",
+  "remainingTimes",
+  "remaining_times",
+  "prompt_remain",
+  "promptRemain",
+  "remain_prompt",
+  "remainPrompt",
+  "prompt_remaining",
+  "promptRemaining",
+  "remaining_prompt",
+  "remainingPrompt",
+  "prompts_remaining",
+  "promptsRemaining",
+  "prompt_left",
+  "promptLeft",
+  "prompts_left",
+  "promptsLeft",
+  "left",
+  "current_interval_usage_count",
+  "currentIntervalUsageCount",
+  "current_weekly_usage_count",
+  "currentWeeklyUsageCount",
+];
+const MINIMAX_PLAN_KEYS = ["plan", "plan_name", "planName", "product", "tier"];
+const MINIMAX_WINDOW_HOUR_KEYS = [
+  "window_hours",
+  "windowHours",
+  "duration_hours",
+  "durationHours",
+  "hours",
+];
+const MINIMAX_WINDOW_MINUTE_KEYS = [
+  "window_minutes",
+  "windowMinutes",
+  "duration_minutes",
+  "durationMinutes",
+  "minutes",
+];
+
+function resolveUsageProviderId(provider) {
+  if (!provider) {
+    return undefined;
+  }
+  const normalized = normalizeProviderId(provider);
+  if (
+    normalized === "minimax-portal" ||
+    normalized === "minimax-cn" ||
+    normalized === "minimax-portal-cn"
+  ) {
+    return "minimax";
+  }
+  return PROVIDER_USAGE_PROVIDERS.includes(normalized) ? normalized : undefined;
+}
+
+function clampPercent(value) {
+  return Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+}
+
+function resolveProviderUsageHomeDir(env = process.env) {
+  const explicitHome = normalizeOptionalString(env.OPENCLAW_HOME);
+  if (explicitHome) {
+    if (explicitHome === "~" || explicitHome.startsWith("~/") || explicitHome.startsWith("~\\")) {
+      const fallbackHome =
+        normalizeOptionalString(env.HOME) ||
+        normalizeOptionalString(env.USERPROFILE) ||
+        normalizeOptionalString(os.homedir());
+      return fallbackHome
+        ? path.resolve(explicitHome.replace(/^~(?=$|[\\/])/, fallbackHome))
+        : undefined;
+    }
+    return path.resolve(explicitHome);
+  }
+  const rawHome =
+    normalizeOptionalString(env.HOME) ||
+    normalizeOptionalString(env.USERPROFILE) ||
+    normalizeOptionalString(os.homedir()) ||
+    process.cwd();
+  return path.resolve(rawHome);
+}
+
+function resolveLegacyPiAgentAccessToken(env = process.env, providerIds = []) {
+  try {
+    const homeDir = resolveProviderUsageHomeDir(env);
+    const authPath = path.join(homeDir, ".pi", "agent", "auth.json");
+    if (!fs.existsSync(authPath)) {
+      return undefined;
+    }
+    const parsed = JSON.parse(fs.readFileSync(authPath, "utf8"));
+    for (const providerId of providerIds) {
+      const token = parsed && parsed[providerId] && parsed[providerId].access;
+      if (typeof token === "string" && token.trim()) {
+        return token;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+async function fetchProviderUsageJson(url, init = {}, timeoutMs, fetchFn = fetch) {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    typeof timeoutMs === "number" && timeoutMs > 0
+      ? timeoutMs
+      : PROVIDER_USAGE_DEFAULT_TIMEOUT_MS,
+  );
+  try {
+    return await fetchFn(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function buildUsageErrorSnapshot(provider, error) {
+  return {
+    provider,
+    displayName: PROVIDER_USAGE_LABELS[provider],
+    windows: [],
+    error,
+  };
+}
+
+function buildUsageHttpErrorSnapshot(options = {}) {
+  const tokenExpiredStatuses = options.tokenExpiredStatuses || [];
+  if (tokenExpiredStatuses.includes(options.status)) {
+    return buildUsageErrorSnapshot(options.provider, "Token expired");
+  }
+  const suffix =
+    typeof options.message === "string" && options.message.trim()
+      ? `: ${options.message.trim()}`
+      : "";
+  return buildUsageErrorSnapshot(options.provider, `HTTP ${options.status}${suffix}`);
+}
+
+function buildClaudeUsageWindows(data = {}) {
+  const windows = [];
+  if (data.five_hour && data.five_hour.utilization !== undefined) {
+    windows.push({
+      label: "5h",
+      usedPercent: clampPercent(data.five_hour.utilization),
+      ...(data.five_hour.resets_at
+        ? { resetAt: new Date(data.five_hour.resets_at).getTime() }
+        : {}),
+    });
+  }
+  if (data.seven_day && data.seven_day.utilization !== undefined) {
+    windows.push({
+      label: "Week",
+      usedPercent: clampPercent(data.seven_day.utilization),
+      ...(data.seven_day.resets_at
+        ? { resetAt: new Date(data.seven_day.resets_at).getTime() }
+        : {}),
+    });
+  }
+  const modelWindow = data.seven_day_sonnet || data.seven_day_opus;
+  if (modelWindow && modelWindow.utilization !== undefined) {
+    windows.push({
+      label: data.seven_day_sonnet ? "Sonnet" : "Opus",
+      usedPercent: clampPercent(modelWindow.utilization),
+    });
+  }
+  return windows;
+}
+
+function resolveClaudeWebSessionKey() {
+  const direct =
+    normalizeOptionalString(process.env.CLAUDE_AI_SESSION_KEY) ||
+    normalizeOptionalString(process.env.CLAUDE_WEB_SESSION_KEY);
+  if (direct && direct.startsWith("sk-ant-")) {
+    return direct;
+  }
+  const cookieHeader = normalizeOptionalString(process.env.CLAUDE_WEB_COOKIE);
+  if (!cookieHeader) {
+    return undefined;
+  }
+  const stripped = cookieHeader.replace(/^cookie:\s*/i, "");
+  const match = stripped.match(/(?:^|;\s*)sessionKey=([^;\s]+)/i);
+  const value = match && normalizeOptionalString(match[1]);
+  return value && value.startsWith("sk-ant-") ? value : undefined;
+}
+
+async function fetchClaudeWebUsage(sessionKey, timeoutMs, fetchFn) {
+  const headers = {
+    Cookie: `sessionKey=${sessionKey}`,
+    Accept: "application/json",
+  };
+  const orgRes = await fetchProviderUsageJson(
+    "https://claude.ai/api/organizations",
+    { headers },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!orgRes.ok) {
+    return null;
+  }
+  const orgs = await orgRes.json();
+  const orgId = orgs && orgs[0] && normalizeOptionalString(orgs[0].uuid);
+  if (!orgId) {
+    return null;
+  }
+  const usageRes = await fetchProviderUsageJson(
+    `https://claude.ai/api/organizations/${orgId}/usage`,
+    { headers },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!usageRes.ok) {
+    return null;
+  }
+  const windows = buildClaudeUsageWindows(await usageRes.json());
+  return windows.length > 0
+    ? { provider: "anthropic", displayName: PROVIDER_USAGE_LABELS.anthropic, windows }
+    : null;
+}
+
+async function fetchClaudeUsage(token, timeoutMs, fetchFn = fetch) {
+  const res = await fetchProviderUsageJson(
+    "https://api.anthropic.com/api/oauth/usage",
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "openclaw",
+        Accept: "application/json",
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "oauth-2025-04-20",
+      },
+    },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!res.ok) {
+    let message;
+    try {
+      const data = await res.json();
+      const raw = data && data.error && data.error.message;
+      if (typeof raw === "string" && raw.trim()) {
+        message = raw.trim();
+      }
+    } catch {
+      // Ignore parse errors.
+    }
+    if (res.status === 403 && message && message.includes("scope requirement user:profile")) {
+      const sessionKey = resolveClaudeWebSessionKey();
+      if (sessionKey) {
+        const web = await fetchClaudeWebUsage(sessionKey, timeoutMs, fetchFn);
+        if (web) {
+          return web;
+        }
+      }
+    }
+    return buildUsageHttpErrorSnapshot({
+      provider: "anthropic",
+      status: res.status,
+      message,
+    });
+  }
+  return {
+    provider: "anthropic",
+    displayName: PROVIDER_USAGE_LABELS.anthropic,
+    windows: buildClaudeUsageWindows(await res.json()),
+  };
+}
+
+function resolveCodexSecondaryWindowLabel(params) {
+  if (params.windowHours >= 168) {
+    return "Week";
+  }
+  if (params.windowHours < 24) {
+    return `${params.windowHours}h`;
+  }
+  if (
+    typeof params.secondaryResetAt === "number" &&
+    typeof params.primaryResetAt === "number" &&
+    params.secondaryResetAt - params.primaryResetAt >= 3 * 24 * 60 * 60
+  ) {
+    return "Week";
+  }
+  return "Day";
+}
+
+async function fetchCodexUsage(token, accountId, timeoutMs, fetchFn = fetch) {
+  const defaultHeaders = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+  };
+  if (accountId) {
+    defaultHeaders["ChatGPT-Account-Id"] = accountId;
+  }
+  const headers =
+    resolveProviderRequestHeaders({
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api/wham/usage",
+      capability: "other",
+      transport: "http",
+      defaultHeaders,
+    }) || defaultHeaders;
+  const res = await fetchProviderUsageJson(
+    "https://chatgpt.com/backend-api/wham/usage",
+    { method: "GET", headers },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!res.ok) {
+    return buildUsageHttpErrorSnapshot({
+      provider: "openai-codex",
+      status: res.status,
+      tokenExpiredStatuses: [401, 403],
+    });
+  }
+  const data = await res.json();
+  const windows = [];
+  if (data.rate_limit && data.rate_limit.primary_window) {
+    const primary = data.rate_limit.primary_window;
+    const windowHours = Math.round((primary.limit_window_seconds || 10800) / 3600);
+    windows.push({
+      label: `${windowHours}h`,
+      usedPercent: clampPercent(primary.used_percent || 0),
+      ...(primary.reset_at ? { resetAt: primary.reset_at * 1000 } : {}),
+    });
+  }
+  if (data.rate_limit && data.rate_limit.secondary_window) {
+    const secondary = data.rate_limit.secondary_window;
+    const windowHours = Math.round((secondary.limit_window_seconds || 86400) / 3600);
+    const label = resolveCodexSecondaryWindowLabel({
+      windowHours,
+      primaryResetAt:
+        data.rate_limit.primary_window && data.rate_limit.primary_window.reset_at,
+      secondaryResetAt: secondary.reset_at,
+    });
+    windows.push({
+      label,
+      usedPercent: clampPercent(secondary.used_percent || 0),
+      ...(secondary.reset_at ? { resetAt: secondary.reset_at * 1000 } : {}),
+    });
+  }
+  let plan = data.plan_type;
+  if (data.credits && data.credits.balance !== undefined && data.credits.balance !== null) {
+    const balance =
+      typeof data.credits.balance === "number"
+        ? data.credits.balance
+        : Number.parseFloat(data.credits.balance) || 0;
+    plan = plan ? `${plan} ($${balance.toFixed(2)})` : `$${balance.toFixed(2)}`;
+  }
+  return {
+    provider: "openai-codex",
+    displayName: PROVIDER_USAGE_LABELS["openai-codex"],
+    windows,
+    plan,
+  };
+}
+
+async function fetchGeminiUsage(token, timeoutMs, fetchFn = fetch, provider) {
+  const res = await fetchProviderUsageJson(
+    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!res.ok) {
+    return buildUsageHttpErrorSnapshot({ provider, status: res.status });
+  }
+  const data = await res.json();
+  const quotas = {};
+  for (const bucket of data.buckets || []) {
+    const model = bucket.modelId || "unknown";
+    const fraction = bucket.remainingFraction !== undefined ? bucket.remainingFraction : 1;
+    if (!quotas[model] || fraction < quotas[model]) {
+      quotas[model] = fraction;
+    }
+  }
+  const windows = [];
+  let proMin = 1;
+  let flashMin = 1;
+  let hasPro = false;
+  let hasFlash = false;
+  for (const [model, fraction] of Object.entries(quotas)) {
+    const lower = normalizeLowercaseStringOrEmpty(model);
+    if (lower.includes("pro")) {
+      hasPro = true;
+      if (fraction < proMin) {
+        proMin = fraction;
+      }
+    }
+    if (lower.includes("flash")) {
+      hasFlash = true;
+      if (fraction < flashMin) {
+        flashMin = fraction;
+      }
+    }
+  }
+  if (hasPro) {
+    windows.push({ label: "Pro", usedPercent: clampPercent((1 - proMin) * 100) });
+  }
+  if (hasFlash) {
+    windows.push({ label: "Flash", usedPercent: clampPercent((1 - flashMin) * 100) });
+  }
+  return { provider, displayName: PROVIDER_USAGE_LABELS[provider], windows };
+}
+
+function pickProviderUsageNumber(record, keys) {
+  for (const key of keys) {
+    const parsed = parseFiniteNumber(record[key]);
+    if (parsed !== undefined) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function pickProviderUsageString(record, keys) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function parseProviderUsageEpoch(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.floor(value < 1e12 ? value * 1000 : value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function providerUsageHasAny(record, keys) {
+  return keys.some((key) => key in record);
+}
+
+function scoreMinimaxUsageRecord(record) {
+  let score = 0;
+  if (providerUsageHasAny(record, MINIMAX_PERCENT_KEYS)) {
+    score += 4;
+  }
+  if (providerUsageHasAny(record, MINIMAX_TOTAL_KEYS)) {
+    score += 3;
+  }
+  if (
+    providerUsageHasAny(record, MINIMAX_USED_KEYS) ||
+    providerUsageHasAny(record, MINIMAX_REMAINING_KEYS)
+  ) {
+    score += 2;
+  }
+  if (providerUsageHasAny(record, MINIMAX_RESET_KEYS)) {
+    score += 1;
+  }
+  if (providerUsageHasAny(record, MINIMAX_PLAN_KEYS)) {
+    score += 1;
+  }
+  return score;
+}
+
+function collectMinimaxUsageCandidates(root) {
+  const queue = [{ value: root, depth: 0 }];
+  const seen = new Set();
+  const candidates = [];
+  let scanned = 0;
+  while (queue.length && scanned < 60) {
+    const { value, depth } = queue.shift();
+    scanned += 1;
+    if (isRecord(value)) {
+      if (seen.has(value)) {
+        continue;
+      }
+      seen.add(value);
+      const score = scoreMinimaxUsageRecord(value);
+      if (score > 0) {
+        candidates.push({ record: value, score, depth });
+      }
+      if (depth < 4) {
+        for (const nested of Object.values(value)) {
+          if (isRecord(nested) || Array.isArray(nested)) {
+            queue.push({ value: nested, depth: depth + 1 });
+          }
+        }
+      }
+    } else if (Array.isArray(value) && depth < 4) {
+      for (const nested of value) {
+        if (isRecord(nested) || Array.isArray(nested)) {
+          queue.push({ value: nested, depth: depth + 1 });
+        }
+      }
+    }
+  }
+  candidates.sort((a, b) => b.score - a.score || a.depth - b.depth);
+  return candidates.map((candidate) => candidate.record);
+}
+
+function deriveMinimaxWindowLabelFromTimestamps(record) {
+  const startTime = parseProviderUsageEpoch(record.start_time || record.startTime);
+  const endTime = parseProviderUsageEpoch(record.end_time || record.endTime);
+  if (startTime !== undefined && endTime !== undefined && endTime > startTime) {
+    const durationHours = (endTime - startTime) / 3600000;
+    if (durationHours >= 1 && Number.isFinite(durationHours)) {
+      return `${Math.round(durationHours)}h`;
+    }
+    const durationMinutes = Math.round((endTime - startTime) / 60000);
+    if (durationMinutes > 0) {
+      return `${durationMinutes}m`;
+    }
+  }
+  return undefined;
+}
+
+function deriveMinimaxWindowLabel(payload) {
+  const hours = pickProviderUsageNumber(payload, MINIMAX_WINDOW_HOUR_KEYS);
+  if (hours && Number.isFinite(hours)) {
+    return `${hours}h`;
+  }
+  const minutes = pickProviderUsageNumber(payload, MINIMAX_WINDOW_MINUTE_KEYS);
+  if (minutes && Number.isFinite(minutes)) {
+    return `${minutes}m`;
+  }
+  return deriveMinimaxWindowLabelFromTimestamps(payload) || "5h";
+}
+
+function deriveMinimaxUsedPercent(payload) {
+  const total = pickProviderUsageNumber(payload, MINIMAX_TOTAL_KEYS);
+  let used = pickProviderUsageNumber(payload, MINIMAX_USED_KEYS);
+  const remaining = pickProviderUsageNumber(payload, MINIMAX_REMAINING_KEYS);
+  if (used === undefined && remaining !== undefined && total !== undefined) {
+    used = total - remaining;
+  }
+  if (total && total > 0 && used !== undefined && Number.isFinite(used)) {
+    return clampPercent((used / total) * 100);
+  }
+  const percentRaw = pickProviderUsageNumber(payload, MINIMAX_PERCENT_KEYS);
+  if (percentRaw !== undefined) {
+    return clampPercent(percentRaw <= 1 ? percentRaw * 100 : percentRaw);
+  }
+  const remainingPercentRaw = pickProviderUsageNumber(payload, MINIMAX_REMAINING_PERCENT_KEYS);
+  if (remainingPercentRaw !== undefined) {
+    const remainingNormalized = clampPercent(
+      remainingPercentRaw <= 1 ? remainingPercentRaw * 100 : remainingPercentRaw,
+    );
+    return clampPercent(100 - remainingNormalized);
+  }
+  return null;
+}
+
+function pickMinimaxChatModelRemains(modelRemains) {
+  const records = modelRemains.filter(isRecord);
+  if (records.length === 0) {
+    return undefined;
+  }
+  const chatRecord = records.find((record) => {
+    const name = typeof record.model_name === "string" ? record.model_name : "";
+    const total = parseFiniteNumber(record.current_interval_total_count);
+    return (
+      normalizeLowercaseStringOrEmpty(name).startsWith("minimax-m") &&
+      total !== undefined &&
+      total > 0
+    );
+  });
+  return (
+    chatRecord ||
+    records.find((record) => {
+      const total = parseFiniteNumber(record.current_interval_total_count);
+      return total !== undefined && total > 0;
+    })
+  );
+}
+
+function resolveMinimaxUsageUrl(baseUrl) {
+  const trimmed = normalizeOptionalString(baseUrl);
+  if (!trimmed) {
+    return `${MINIMAX_USAGE_ORIGIN}${MINIMAX_USAGE_PATH}`;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return `${parsed.origin}${MINIMAX_USAGE_PATH}`;
+    }
+  } catch {
+    // Fall through to the stable default.
+  }
+  return `${MINIMAX_USAGE_ORIGIN}${MINIMAX_USAGE_PATH}`;
+}
+
+async function fetchMinimaxUsage(apiKey, timeoutMs, fetchFn = fetch, options = {}) {
+  const res = await fetchProviderUsageJson(
+    resolveMinimaxUsageUrl(options.baseUrl),
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "MM-API-Source": "OpenClaw",
+      },
+    },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!res.ok) {
+    return buildUsageHttpErrorSnapshot({ provider: "minimax", status: res.status });
+  }
+  const data = await res.json().catch(() => null);
+  if (!isRecord(data)) {
+    return {
+      provider: "minimax",
+      displayName: PROVIDER_USAGE_LABELS.minimax,
+      windows: [],
+      error: "Invalid JSON",
+    };
+  }
+  const baseResp = isRecord(data.base_resp) ? data.base_resp : undefined;
+  if (baseResp && typeof baseResp.status_code === "number" && baseResp.status_code !== 0) {
+    return {
+      provider: "minimax",
+      displayName: PROVIDER_USAGE_LABELS.minimax,
+      windows: [],
+      error: normalizeOptionalString(baseResp.status_msg) || "API error",
+    };
+  }
+  const payload = isRecord(data.data) ? data.data : data;
+  const modelRemains = Array.isArray(payload.model_remains) ? payload.model_remains : null;
+  const chatRemains = modelRemains ? pickMinimaxChatModelRemains(modelRemains) : undefined;
+  const usageSource = chatRemains || payload;
+  const candidates = collectMinimaxUsageCandidates(usageSource);
+  let usageRecord = usageSource;
+  let usedPercent = null;
+  for (const candidate of candidates) {
+    const candidatePercent = deriveMinimaxUsedPercent(candidate);
+    if (candidatePercent !== null) {
+      usageRecord = candidate;
+      usedPercent = candidatePercent;
+      break;
+    }
+  }
+  if (usedPercent === null) {
+    usedPercent = deriveMinimaxUsedPercent(usageSource);
+  }
+  if (usedPercent === null) {
+    return {
+      provider: "minimax",
+      displayName: PROVIDER_USAGE_LABELS.minimax,
+      windows: [],
+      error: "Unsupported response shape",
+    };
+  }
+  const resetAt =
+    parseProviderUsageEpoch(pickProviderUsageString(usageRecord, MINIMAX_RESET_KEYS)) ||
+    parseProviderUsageEpoch(pickProviderUsageNumber(usageRecord, MINIMAX_RESET_KEYS)) ||
+    parseProviderUsageEpoch(pickProviderUsageString(payload, MINIMAX_RESET_KEYS)) ||
+    parseProviderUsageEpoch(pickProviderUsageNumber(payload, MINIMAX_RESET_KEYS));
+  const windowLabel = chatRemains
+    ? deriveMinimaxWindowLabel(chatRemains)
+    : deriveMinimaxWindowLabel(usageRecord);
+  const modelName =
+    chatRemains && typeof chatRemains.model_name === "string"
+      ? chatRemains.model_name
+      : undefined;
+  const plan =
+    pickProviderUsageString(usageRecord, MINIMAX_PLAN_KEYS) ||
+    pickProviderUsageString(payload, MINIMAX_PLAN_KEYS) ||
+    (modelName ? `Coding Plan \u00b7 ${modelName}` : undefined);
+  return {
+    provider: "minimax",
+    displayName: PROVIDER_USAGE_LABELS.minimax,
+    windows: [
+      {
+        label: windowLabel,
+        usedPercent,
+        ...(resetAt ? { resetAt } : {}),
+      },
+    ],
+    ...(plan ? { plan } : {}),
+  };
+}
+
+async function fetchZaiUsage(apiKey, timeoutMs, fetchFn = fetch) {
+  const res = await fetchProviderUsageJson(
+    "https://api.z.ai/api/monitor/usage/quota/limit",
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+    },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!res.ok) {
+    return buildUsageHttpErrorSnapshot({ provider: "zai", status: res.status });
+  }
+  const data = await res.json();
+  if (!data.success || data.code !== 200) {
+    const errorMessage = typeof data.msg === "string" ? data.msg.trim() : "";
+    return {
+      provider: "zai",
+      displayName: PROVIDER_USAGE_LABELS.zai,
+      windows: [],
+      error: errorMessage || "API error",
+    };
+  }
+  const windows = [];
+  for (const limit of (data.data && data.data.limits) || []) {
+    const percent = clampPercent(limit.percentage || 0);
+    const nextReset = limit.nextResetTime
+      ? new Date(limit.nextResetTime).getTime()
+      : undefined;
+    let windowLabel = "Limit";
+    if (limit.unit === 1) {
+      windowLabel = `${limit.number}d`;
+    } else if (limit.unit === 3) {
+      windowLabel = `${limit.number}h`;
+    } else if (limit.unit === 5) {
+      windowLabel = `${limit.number}m`;
+    }
+    if (limit.type === "TOKENS_LIMIT") {
+      windows.push({
+        label: `Tokens (${windowLabel})`,
+        usedPercent: percent,
+        ...(nextReset ? { resetAt: nextReset } : {}),
+      });
+    } else if (limit.type === "TIME_LIMIT") {
+      windows.push({
+        label: "Monthly",
+        usedPercent: percent,
+        ...(nextReset ? { resetAt: nextReset } : {}),
+      });
+    }
+  }
+  const planName = (data.data && (data.data.planName || data.data.plan)) || undefined;
+  return {
+    provider: "zai",
+    displayName: PROVIDER_USAGE_LABELS.zai,
+    windows,
+    ...(planName ? { plan: planName } : {}),
+  };
+}
+
+const providerUsageRuntime = {
+  PROVIDER_LABELS: PROVIDER_USAGE_LABELS,
+  buildUsageErrorSnapshot,
+  buildUsageHttpErrorSnapshot,
+  clampPercent,
+  fetchClaudeUsage,
+  fetchCodexUsage,
+  fetchGeminiUsage,
+  fetchJson: fetchProviderUsageJson,
+  fetchMinimaxUsage,
+  fetchZaiUsage,
+  resolveLegacyPiAgentAccessToken,
+};
+
+function extractToolSend(args = {}, expectedAction = "sendMessage") {
+  const action = readStringValue(args.action) ? readStringValue(args.action).trim() : "";
+  if (action !== expectedAction) {
+    return null;
+  }
+  const to = readStringValue(args.to);
+  if (!to) {
+    return null;
+  }
+  const accountId = readStringValue(args.accountId)
+    ? readStringValue(args.accountId).trim()
+    : undefined;
+  const threadIdRaw =
+    typeof args.threadId === "number"
+      ? String(args.threadId)
+      : readStringValue(args.threadId)
+        ? readStringValue(args.threadId).trim()
+        : "";
+  const threadId = threadIdRaw.length > 0 ? threadIdRaw : undefined;
+  return { to, accountId, threadId };
+}
+
+const toolSendRuntime = {
+  extractToolSend,
+};
+
 const providerEntryRuntime = {
   buildSingleProviderApiKeyCatalog,
   createProviderApiKeyAuthMethod,
   definePluginEntry,
   defineSingleProviderPluginEntry,
+};
+
+const openProseRuntime = {
+  definePluginEntry,
 };
 
 const providerEnableConfigRuntime = {
@@ -40482,6 +46630,3858 @@ const imageGenerationCoreAuthRuntime = {
   resolveApiKeyForProvider,
 };
 
+function parseGenerationModelRef(raw) {
+  const trimmed = normalizeOptionalString(raw);
+  if (!trimmed) {
+    return null;
+  }
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === trimmed.length - 1) {
+    return null;
+  }
+  const provider = normalizeOptionalString(trimmed.slice(0, slashIndex));
+  const model = normalizeOptionalString(trimmed.slice(slashIndex + 1));
+  if (!provider || !model) {
+    return null;
+  }
+  return { provider, model };
+}
+
+function parseVideoGenerationModelRef(raw) {
+  return parseGenerationModelRef(raw);
+}
+
+function resolveAgentModelPrimaryValue(model) {
+  if (typeof model === "string") {
+    return normalizeOptionalString(model);
+  }
+  if (!model || typeof model !== "object") {
+    return undefined;
+  }
+  return normalizeOptionalString(model.primary);
+}
+
+function resolveAgentModelFallbackValues(model) {
+  if (!model || typeof model !== "object" || !Array.isArray(model.fallbacks)) {
+    return [];
+  }
+  return model.fallbacks;
+}
+
+function resolveAgentModelTimeoutMsValue(model) {
+  if (!model || typeof model !== "object") {
+    return undefined;
+  }
+  return typeof model.timeoutMs === "number" &&
+    Number.isFinite(model.timeoutMs) &&
+    model.timeoutMs > 0
+    ? Math.floor(model.timeoutMs)
+    : undefined;
+}
+
+function isFailoverError(err) {
+  if (err instanceof Error && err.name === "FailoverError") {
+    return true;
+  }
+  return Boolean(
+    err &&
+      typeof err === "object" &&
+      err.name === "FailoverError" &&
+      typeof err.reason === "string",
+  );
+}
+
+function readDirectStatusCode(err) {
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
+  const candidate = err.status ?? err.statusCode;
+  if (typeof candidate === "number" && Number.isFinite(candidate)) {
+    return candidate;
+  }
+  if (typeof candidate === "string" && /^\d+$/.test(candidate)) {
+    return Number(candidate);
+  }
+  return undefined;
+}
+
+function readDirectStringProperty(err, prop) {
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
+  const candidate = err[prop];
+  if (typeof candidate !== "string") {
+    return undefined;
+  }
+  return normalizeOptionalString(candidate);
+}
+
+function describeFailoverError(err) {
+  if (isFailoverError(err)) {
+    return {
+      message: err.message || "",
+      rawError: err.rawError,
+      reason: err.reason,
+      status: err.status,
+      code: err.code,
+      provider: err.provider,
+      model: err.model,
+      profileId: err.profileId,
+      sessionId: err.sessionId,
+      lane: err.lane,
+    };
+  }
+  return {
+    message: formatErrorMessage(err),
+    status: readDirectStatusCode(err),
+    code: readDirectStringProperty(err, "code"),
+    provider: readDirectStringProperty(err, "provider"),
+  };
+}
+
+function formatCapabilityAttemptRef(attempt) {
+  return `${attempt.provider}/${attempt.model}`;
+}
+
+function isAbortLikeFallbackAttempt(attempt) {
+  const message = String((attempt && attempt.error) || "").trim().toLowerCase();
+  return (
+    message === "this operation was aborted" ||
+    message === "operation was aborted" ||
+    message.includes("operation was aborted") ||
+    message.includes("request was aborted")
+  );
+}
+
+function formatCapabilityFailureAttempt(attempt) {
+  return `${formatCapabilityAttemptRef(attempt)}: ${attempt.error}`;
+}
+
+function formatCapabilityFailureAttempts(attempts) {
+  if (!Array.isArray(attempts) || attempts.length === 0) {
+    return "unknown";
+  }
+  const aborted = attempts.filter(isAbortLikeFallbackAttempt);
+  if (aborted.length === 0) {
+    return attempts.map(formatCapabilityFailureAttempt).join(" | ");
+  }
+  if (aborted.length === attempts.length) {
+    const refs = aborted.map(formatCapabilityAttemptRef).join(", ");
+    return (
+      `${aborted.length} fallback(s) aborted after the request was cancelled or timed out: ` +
+      refs
+    );
+  }
+  const primary = attempts.filter((attempt) => !isAbortLikeFallbackAttempt(attempt));
+  const abortedRefs = aborted.map(formatCapabilityAttemptRef).join(", ");
+  return [
+    primary.map(formatCapabilityFailureAttempt).join(" | "),
+    `${aborted.length} fallback(s) aborted after the request was cancelled or timed out: ` +
+      abortedRefs,
+  ].join(" | ");
+}
+
+function throwCapabilityGenerationFailure(params = {}) {
+  const attempts = Array.isArray(params.attempts) ? params.attempts : [];
+  if (attempts.length <= 1 && params.lastError) {
+    throw params.lastError;
+  }
+  const summary = formatCapabilityFailureAttempts(attempts);
+  throw new Error(
+    `All ${params.capabilityLabel} models failed (${attempts.length}): ${summary}`,
+  );
+}
+
+function resolveCurrentDefaultProviderId(cfg) {
+  const configured = resolveAgentModelPrimaryValue(
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.model,
+  );
+  if (!configured) {
+    return "openai";
+  }
+  const slash = configured.indexOf("/");
+  if (slash <= 0) {
+    return "openai";
+  }
+  return normalizeOptionalString(configured.slice(0, slash)) || "openai";
+}
+
+function isCapabilityProviderConfigured(provider, cfg, agentDir) {
+  if (provider && typeof provider.isConfigured === "function") {
+    return provider.isConfigured({ cfg, agentDir });
+  }
+  const envVars = getProviderEnvVars(provider && provider.id);
+  return envVars.some((name) => normalizeOptionalString(process.env[name]));
+}
+
+function resolveAutoCapabilityFallbackRefs(params = {}) {
+  const providers =
+    typeof params.listProviders === "function" ? params.listProviders(params.cfg) || [] : [];
+  const providerDefaults = new Map();
+  for (const provider of providers) {
+    const providerId = normalizeOptionalString(provider && provider.id);
+    const modelId = normalizeOptionalString(provider && provider.defaultModel);
+    if (
+      !providerId ||
+      !modelId ||
+      providerDefaults.has(providerId) ||
+      !isCapabilityProviderConfigured(provider, params.cfg, params.agentDir)
+    ) {
+      continue;
+    }
+    const aliases = Array.isArray(provider.aliases)
+      ? provider.aliases.flatMap((alias) => {
+          const normalized = normalizeOptionalString(alias);
+          return normalized ? [normalized] : [];
+        })
+      : [];
+    providerDefaults.set(providerId, { ref: `${providerId}/${modelId}`, aliases });
+  }
+  const defaultProvider = resolveCurrentDefaultProviderId(params.cfg);
+  const providerIds = Array.from(providerDefaults.keys()).sort((left, right) =>
+    left.localeCompare(right),
+  );
+  const matchesDefaultProvider = (providerId) => {
+    const entry = providerDefaults.get(providerId);
+    return providerId === defaultProvider || (entry && entry.aliases.includes(defaultProvider));
+  };
+  return [
+    ...providerIds.filter(matchesDefaultProvider),
+    ...providerIds.filter((providerId) => !matchesDefaultProvider(providerId)),
+  ].flatMap((providerId) => {
+    const entry = providerDefaults.get(providerId);
+    return entry ? [entry.ref] : [];
+  });
+}
+
+function resolveCapabilityModelCandidates(params = {}) {
+  const candidates = [];
+  const seen = new Set();
+  const parseModelRef =
+    typeof params.parseModelRef === "function" ? params.parseModelRef : parseGenerationModelRef;
+  const add = (raw) => {
+    const parsed = parseModelRef(raw);
+    if (!parsed) {
+      return;
+    }
+    const key = `${parsed.provider}/${parsed.model}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    candidates.push(parsed);
+  };
+
+  const override = parseModelRef(params.modelOverride);
+  if (override) {
+    return [override];
+  }
+
+  add(params.modelOverride);
+  add(resolveAgentModelPrimaryValue(params.modelConfig));
+  for (const fallback of resolveAgentModelFallbackValues(params.modelConfig)) {
+    add(fallback);
+  }
+  const autoProviderFallbackEnabled =
+    params.autoProviderFallback ??
+    !(
+      params.cfg &&
+      params.cfg.agents &&
+      params.cfg.agents.defaults &&
+      params.cfg.agents.defaults.mediaGenerationAutoProviderFallback === false
+    );
+  if (autoProviderFallbackEnabled && typeof params.listProviders === "function") {
+    for (const candidate of resolveAutoCapabilityFallbackRefs({
+      cfg: params.cfg || {},
+      agentDir: params.agentDir,
+      listProviders: params.listProviders,
+    })) {
+      add(candidate);
+    }
+  }
+  return candidates;
+}
+
+function buildNoCapabilityModelConfiguredMessage(params = {}) {
+  const getEnvVars =
+    typeof params.getProviderEnvVars === "function"
+      ? params.getProviderEnvVars
+      : getProviderEnvVars;
+  const providers = Array.isArray(params.providers) ? params.providers : [];
+  const sampleModel = providers.find(
+    (provider) =>
+      normalizeOptionalString(provider && provider.id) &&
+      normalizeOptionalString(provider && provider.defaultModel),
+  );
+  const sampleRef = sampleModel
+    ? `${sampleModel.id}/${sampleModel.defaultModel}`
+    : params.fallbackSampleRef || "<provider>/<model>";
+  const authHints = providers
+    .flatMap((provider) => {
+      const providerId = provider && provider.id;
+      const envVars = getEnvVars(providerId);
+      if (!Array.isArray(envVars) || envVars.length === 0) {
+        return [];
+      }
+      return [`${providerId}: ${envVars.join(" / ")}`];
+    })
+    .slice(0, 3);
+  return [
+    `No ${params.capabilityLabel} model configured. Set ` +
+      `agents.defaults.${params.modelConfigKey}.primary to a provider/model like ` +
+      `"${sampleRef}".`,
+    authHints.length > 0
+      ? "If you want a specific provider, also configure that provider's " +
+        `auth/API key first (${authHints.join("; ")}).`
+      : "If you want a specific provider, also configure that provider's auth/API key first.",
+  ].join(" ");
+}
+
+function recordCapabilityCandidateFailure(params = {}) {
+  const attempts = Array.isArray(params.attempts) ? params.attempts : [];
+  const described = isFailoverError(params.error) ? describeFailoverError(params.error) : null;
+  attempts.push({
+    provider: params.provider,
+    model: params.model,
+    error: described && described.message ? described.message : formatErrorMessage(params.error),
+    reason: described && described.reason,
+    status: described && described.status,
+    code: described && described.code,
+  });
+}
+
+function hasMediaNormalizationEntry(entry) {
+  return Boolean(
+    entry &&
+      (entry.requested !== undefined ||
+        entry.applied !== undefined ||
+        entry.derivedFrom !== undefined ||
+        (Array.isArray(entry.supportedValues) && entry.supportedValues.length > 0)),
+  );
+}
+
+function normalizeSupportedValues(values) {
+  return Array.isArray(values)
+    ? values.flatMap((entry) => (normalizeOptionalString(entry) ? [entry] : []))
+    : [];
+}
+
+function compareScores(next, best) {
+  if (!best) {
+    return true;
+  }
+  if (next.primary !== best.primary) {
+    return next.primary < best.primary;
+  }
+  if (next.secondary !== best.secondary) {
+    return next.secondary < best.secondary;
+  }
+  return next.tertiary.localeCompare(best.tertiary) < 0;
+}
+
+function parsePositiveDimensionPair(raw, pattern) {
+  const trimmed = normalizeOptionalString(raw);
+  if (!trimmed) {
+    return null;
+  }
+  const match = pattern.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+  return { width, height };
+}
+
+function parseAspectRatioValue(raw) {
+  const pair = parsePositiveDimensionPair(raw, /^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+  return pair ? { ...pair, value: pair.width / pair.height } : null;
+}
+
+function parseSizeValue(raw) {
+  const pair = parsePositiveDimensionPair(raw, /^(\d+)\s*x\s*(\d+)$/i);
+  if (!pair) {
+    return null;
+  }
+  return {
+    ...pair,
+    aspectRatio: pair.width / pair.height,
+    area: pair.width * pair.height,
+  };
+}
+
+function greatestCommonDivisor(leftValue, rightValue) {
+  let left = Math.abs(leftValue);
+  let right = Math.abs(rightValue);
+  while (right !== 0) {
+    const next = left % right;
+    left = right;
+    right = next;
+  }
+  return left || 1;
+}
+
+function deriveAspectRatioFromSize(size) {
+  const parsed = parseSizeValue(size);
+  if (!parsed) {
+    return undefined;
+  }
+  const divisor = greatestCommonDivisor(parsed.width, parsed.height);
+  return `${parsed.width / divisor}:${parsed.height / divisor}`;
+}
+
+function resolveClosestAspectRatio(params = {}) {
+  const supported = normalizeSupportedValues(params.supportedAspectRatios);
+  if (supported.length === 0) {
+    return params.requestedAspectRatio || deriveAspectRatioFromSize(params.requestedSize);
+  }
+  if (params.requestedAspectRatio && supported.includes(params.requestedAspectRatio)) {
+    return params.requestedAspectRatio;
+  }
+  const requested =
+    parseAspectRatioValue(params.requestedAspectRatio) ||
+    parseAspectRatioValue(deriveAspectRatioFromSize(params.requestedSize));
+  if (!requested) {
+    return undefined;
+  }
+  let bestValue;
+  let bestScore = null;
+  for (const candidate of supported) {
+    const parsed = parseAspectRatioValue(candidate);
+    if (!parsed) {
+      continue;
+    }
+    const score = {
+      primary: Math.abs(Math.log(parsed.value / requested.value)),
+      secondary: Math.abs(parsed.width * requested.height - requested.width * parsed.height),
+      tertiary: candidate,
+    };
+    if (compareScores(score, bestScore)) {
+      bestValue = candidate;
+      bestScore = score;
+    }
+  }
+  return bestValue;
+}
+
+function resolveClosestSize(params = {}) {
+  const supported = normalizeSupportedValues(params.supportedSizes);
+  if (supported.length === 0) {
+    return params.requestedSize;
+  }
+  if (params.requestedSize && supported.includes(params.requestedSize)) {
+    return params.requestedSize;
+  }
+  const requested = parseSizeValue(params.requestedSize);
+  const requestedAspectRatio = parseAspectRatioValue(params.requestedAspectRatio);
+  if (!requested && !requestedAspectRatio) {
+    return undefined;
+  }
+  let bestValue;
+  let bestScore = null;
+  for (const candidate of supported) {
+    const parsed = parseSizeValue(candidate);
+    if (!parsed) {
+      continue;
+    }
+    const ratio = requested ? requested.aspectRatio : requestedAspectRatio.value;
+    const score = {
+      primary: Math.abs(Math.log(parsed.aspectRatio / ratio)),
+      secondary: requested ? Math.abs(Math.log(parsed.area / requested.area)) : parsed.area,
+      tertiary: candidate,
+    };
+    if (compareScores(score, bestScore)) {
+      bestValue = candidate;
+      bestScore = score;
+    }
+  }
+  return bestValue;
+}
+
+const IMAGE_RESOLUTION_ORDER = ["1K", "2K", "4K"];
+
+function resolveClosestResolution(params = {}) {
+  const supported = normalizeSupportedValues(params.supportedResolutions);
+  if (supported.length === 0) {
+    return params.requestedResolution;
+  }
+  if (params.requestedResolution && supported.includes(params.requestedResolution)) {
+    return params.requestedResolution;
+  }
+  const order = Array.isArray(params.order) ? params.order : IMAGE_RESOLUTION_ORDER;
+  const requestedIndex = params.requestedResolution
+    ? order.indexOf(params.requestedResolution)
+    : -1;
+  if (requestedIndex < 0) {
+    return undefined;
+  }
+  let bestValue;
+  let bestScore = null;
+  for (const candidate of supported) {
+    const candidateIndex = order.indexOf(candidate);
+    if (candidateIndex < 0) {
+      continue;
+    }
+    const score = {
+      primary: Math.abs(candidateIndex - requestedIndex),
+      secondary: candidateIndex,
+      tertiary: candidate,
+    };
+    if (compareScores(score, bestScore)) {
+      bestValue = candidate;
+      bestScore = score;
+    }
+  }
+  return bestValue;
+}
+
+function normalizeDurationToClosestMax(durationSeconds, maxDurationSeconds) {
+  if (typeof durationSeconds !== "number" || !Number.isFinite(durationSeconds)) {
+    return undefined;
+  }
+  const rounded = Math.max(1, Math.round(durationSeconds));
+  if (
+    typeof maxDurationSeconds !== "number" ||
+    !Number.isFinite(maxDurationSeconds) ||
+    maxDurationSeconds <= 0
+  ) {
+    return rounded;
+  }
+  return Math.min(rounded, Math.max(1, Math.round(maxDurationSeconds)));
+}
+
+function buildMediaGenerationNormalizationMetadata(params = {}) {
+  const metadata = {};
+  const normalization = params.normalization || {};
+  if (
+    normalization.size &&
+    normalization.size.requested !== undefined &&
+    normalization.size.applied !== undefined
+  ) {
+    metadata.requestedSize = normalization.size.requested;
+    metadata.normalizedSize = normalization.size.applied;
+  }
+  if (normalization.aspectRatio && normalization.aspectRatio.applied !== undefined) {
+    if (normalization.aspectRatio.requested !== undefined) {
+      metadata.requestedAspectRatio = normalization.aspectRatio.requested;
+    }
+    metadata.normalizedAspectRatio = normalization.aspectRatio.applied;
+    if (
+      normalization.aspectRatio.derivedFrom === "size" &&
+      params.requestedSizeForDerivedAspectRatio
+    ) {
+      metadata.requestedSize = params.requestedSizeForDerivedAspectRatio;
+      metadata.aspectRatioDerivedFromSize = deriveAspectRatioFromSize(
+        params.requestedSizeForDerivedAspectRatio,
+      );
+    }
+  }
+  if (
+    normalization.resolution &&
+    normalization.resolution.requested !== undefined &&
+    normalization.resolution.applied !== undefined
+  ) {
+    metadata.requestedResolution = normalization.resolution.requested;
+    metadata.normalizedResolution = normalization.resolution.applied;
+  }
+  if (
+    normalization.durationSeconds &&
+    normalization.durationSeconds.requested !== undefined &&
+    normalization.durationSeconds.applied !== undefined
+  ) {
+    metadata.requestedDurationSeconds = normalization.durationSeconds.requested;
+    metadata.normalizedDurationSeconds = normalization.durationSeconds.applied;
+    if (
+      params.includeSupportedDurationSeconds &&
+      Array.isArray(normalization.durationSeconds.supportedValues) &&
+      normalization.durationSeconds.supportedValues.length > 0
+    ) {
+      metadata.supportedDurationSeconds = normalization.durationSeconds.supportedValues;
+    }
+  }
+  return metadata;
+}
+
+const mediaGenerationRuntime = {
+  buildMediaGenerationNormalizationMetadata,
+  buildNoCapabilityModelConfiguredMessage,
+  deriveAspectRatioFromSize,
+  hasMediaNormalizationEntry,
+  normalizeDurationToClosestMax,
+  recordCapabilityCandidateFailure,
+  resolveCapabilityModelCandidates,
+  resolveClosestAspectRatio,
+  resolveClosestResolution,
+  resolveClosestSize,
+  throwCapabilityGenerationFailure,
+};
+
+const mediaGenerationRuntimeSharedRuntime = {
+  buildNoCapabilityModelConfiguredMessage,
+  resolveCapabilityModelCandidates,
+  throwCapabilityGenerationFailure,
+};
+
+const UNSAFE_VIDEO_GENERATION_PROVIDER_IDS = new Set(["__proto__", "constructor", "prototype"]);
+
+function normalizeVideoGenerationProviderId(id) {
+  const normalized = normalizeOptionalLowercaseString(id || "");
+  if (!normalized || UNSAFE_VIDEO_GENERATION_PROVIDER_IDS.has(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function listVideoGenerationProviders(cfg) {
+  if (cfg && cfg.plugins && cfg.plugins.enabled === false) {
+    return [];
+  }
+  return [];
+}
+
+function getVideoGenerationProvider(providerId, cfg) {
+  const normalized = normalizeVideoGenerationProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const providers = listVideoGenerationProviders(cfg);
+  return providers.find((provider) => {
+    const id = normalizeVideoGenerationProviderId(provider && provider.id);
+    if (id === normalized) {
+      return true;
+    }
+    return Array.isArray(provider && provider.aliases)
+      ? provider.aliases.some((alias) => normalizeVideoGenerationProviderId(alias) === normalized)
+      : false;
+  });
+}
+
+function resolveVideoGenerationMode(params = {}) {
+  const inputImageCount = params.inputImageCount || 0;
+  const inputVideoCount = params.inputVideoCount || 0;
+  if (inputImageCount > 0 && inputVideoCount > 0) {
+    return null;
+  }
+  if (inputVideoCount > 0) {
+    return "videoToVideo";
+  }
+  if (inputImageCount > 0) {
+    return "imageToVideo";
+  }
+  return "generate";
+}
+
+function resolveVideoGenerationModeCapabilities(params = {}) {
+  const mode = resolveVideoGenerationMode(params);
+  const providerCapabilities = (params.provider && params.provider.capabilities) || {};
+  const withModelLimits = (caps) => {
+    if (!caps) {
+      return caps;
+    }
+    const model = normalizeOptionalString(params.model);
+    if (!model) {
+      return caps;
+    }
+    const maxInputImages = caps.maxInputImagesByModel && caps.maxInputImagesByModel[model];
+    const maxInputVideos = caps.maxInputVideosByModel && caps.maxInputVideosByModel[model];
+    const maxInputAudios = caps.maxInputAudiosByModel && caps.maxInputAudiosByModel[model];
+    if (
+      typeof maxInputImages !== "number" &&
+      typeof maxInputVideos !== "number" &&
+      typeof maxInputAudios !== "number"
+    ) {
+      return caps;
+    }
+    return {
+      ...caps,
+      ...(typeof maxInputImages === "number" ? { maxInputImages } : {}),
+      ...(typeof maxInputVideos === "number" ? { maxInputVideos } : {}),
+      ...(typeof maxInputAudios === "number" ? { maxInputAudios } : {}),
+    };
+  };
+  if (mode === "generate") {
+    return { mode, capabilities: withModelLimits(providerCapabilities.generate) };
+  }
+  if (mode === "imageToVideo") {
+    return { mode, capabilities: withModelLimits(providerCapabilities.imageToVideo) };
+  }
+  if (mode === "videoToVideo") {
+    return { mode, capabilities: withModelLimits(providerCapabilities.videoToVideo) };
+  }
+  const videoToVideoCapabilities = withModelLimits(providerCapabilities.videoToVideo);
+  if (
+    (params.inputImageCount || 0) > 0 &&
+    (params.inputVideoCount || 0) > 0 &&
+    videoToVideoCapabilities &&
+    videoToVideoCapabilities.enabled &&
+    (videoToVideoCapabilities.maxInputImages || 0) > 0
+  ) {
+    return { mode, capabilities: videoToVideoCapabilities };
+  }
+  return { mode, capabilities: undefined };
+}
+
+function normalizeVideoGenerationSupportedDurationValues(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return undefined;
+  }
+  const normalized = Array.from(new Set(values))
+    .filter((value) => typeof value === "number" && Number.isFinite(value) && value > 0)
+    .map((value) => Math.round(value))
+    .filter((value) => value > 0)
+    .sort((left, right) => left - right);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function resolveVideoGenerationSupportedDurations(params = {}) {
+  const { capabilities } = resolveVideoGenerationModeCapabilities(params);
+  const model = normalizeOptionalString(params.model);
+  const modelSpecific =
+    model &&
+    capabilities &&
+    capabilities.supportedDurationSecondsByModel &&
+    capabilities.supportedDurationSecondsByModel[model];
+  return normalizeVideoGenerationSupportedDurationValues(
+    modelSpecific || (capabilities && capabilities.supportedDurationSeconds),
+  );
+}
+
+function normalizeVideoGenerationDuration(params = {}) {
+  if (typeof params.durationSeconds !== "number" || !Number.isFinite(params.durationSeconds)) {
+    return undefined;
+  }
+  const rounded = Math.max(1, Math.round(params.durationSeconds));
+  const supported = resolveVideoGenerationSupportedDurations(params);
+  if (!supported || supported.length === 0) {
+    return rounded;
+  }
+  return supported.reduce((best, current) => {
+    const currentDistance = Math.abs(current - rounded);
+    const bestDistance = Math.abs(best - rounded);
+    if (currentDistance < bestDistance) {
+      return current;
+    }
+    if (currentDistance === bestDistance && current > best) {
+      return current;
+    }
+    return best;
+  });
+}
+
+function finalizeVideoGenerationNormalization(normalization) {
+  return hasMediaNormalizationEntry(normalization.size) ||
+    hasMediaNormalizationEntry(normalization.aspectRatio) ||
+    hasMediaNormalizationEntry(normalization.resolution) ||
+    hasMediaNormalizationEntry(normalization.durationSeconds)
+    ? normalization
+    : undefined;
+}
+
+function resolveVideoGenerationOverrides(params = {}) {
+  const { capabilities: caps } = resolveVideoGenerationModeCapabilities({
+    provider: params.provider,
+    model: params.model,
+    inputImageCount: params.inputImageCount,
+    inputVideoCount: params.inputVideoCount,
+  });
+  const ignoredOverrides = [];
+  const normalization = {};
+  let size = params.size;
+  let aspectRatio = params.aspectRatio;
+  let resolution = params.resolution;
+  let audio = params.audio;
+  let watermark = params.watermark;
+
+  if (caps) {
+    if (size && Array.isArray(caps.sizes) && caps.sizes.length > 0 && caps.supportsSize) {
+      const normalizedSize = resolveClosestSize({
+        requestedSize: size,
+        requestedAspectRatio: aspectRatio,
+        supportedSizes: caps.sizes,
+      });
+      if (normalizedSize && normalizedSize !== size) {
+        normalization.size = { requested: size, applied: normalizedSize };
+      }
+      size = normalizedSize;
+    }
+
+    if (!caps.supportsSize && size) {
+      let translated = false;
+      if (caps.supportsAspectRatio) {
+        const normalizedAspectRatio = resolveClosestAspectRatio({
+          requestedAspectRatio: aspectRatio,
+          requestedSize: size,
+          supportedAspectRatios: caps.aspectRatios,
+        });
+        if (normalizedAspectRatio) {
+          aspectRatio = normalizedAspectRatio;
+          normalization.aspectRatio = {
+            applied: normalizedAspectRatio,
+            derivedFrom: "size",
+          };
+          translated = true;
+        }
+      }
+      if (!translated) {
+        ignoredOverrides.push({ key: "size", value: size });
+      }
+      size = undefined;
+    }
+
+    if (
+      aspectRatio &&
+      Array.isArray(caps.aspectRatios) &&
+      caps.aspectRatios.length > 0 &&
+      caps.supportsAspectRatio
+    ) {
+      const normalizedAspectRatio = resolveClosestAspectRatio({
+        requestedAspectRatio: aspectRatio,
+        requestedSize: size,
+        supportedAspectRatios: caps.aspectRatios,
+      });
+      if (normalizedAspectRatio && normalizedAspectRatio !== aspectRatio) {
+        normalization.aspectRatio = {
+          requested: aspectRatio,
+          applied: normalizedAspectRatio,
+        };
+      } else if (!normalizedAspectRatio) {
+        ignoredOverrides.push({ key: "aspectRatio", value: aspectRatio });
+      }
+      aspectRatio = normalizedAspectRatio;
+    } else if (!caps.supportsAspectRatio && aspectRatio) {
+      const derivedSize =
+        caps.supportsSize && !size
+          ? resolveClosestSize({
+              requestedSize: params.size,
+              requestedAspectRatio: aspectRatio,
+              supportedSizes: caps.sizes,
+            })
+          : undefined;
+      if (derivedSize) {
+        size = derivedSize;
+        normalization.size = { applied: derivedSize, derivedFrom: "aspectRatio" };
+      } else {
+        ignoredOverrides.push({ key: "aspectRatio", value: aspectRatio });
+      }
+      aspectRatio = undefined;
+    }
+
+    if (
+      resolution &&
+      Array.isArray(caps.resolutions) &&
+      caps.resolutions.length > 0 &&
+      caps.supportsResolution
+    ) {
+      const normalizedResolution = resolveClosestResolution({
+        requestedResolution: resolution,
+        supportedResolutions: caps.resolutions,
+      });
+      if (normalizedResolution && normalizedResolution !== resolution) {
+        normalization.resolution = {
+          requested: resolution,
+          applied: normalizedResolution,
+        };
+      }
+      resolution = normalizedResolution;
+    } else if (resolution && !caps.supportsResolution) {
+      ignoredOverrides.push({ key: "resolution", value: resolution });
+      resolution = undefined;
+    }
+
+    if (typeof audio === "boolean" && !caps.supportsAudio) {
+      ignoredOverrides.push({ key: "audio", value: audio });
+      audio = undefined;
+    }
+
+    if (typeof watermark === "boolean" && !caps.supportsWatermark) {
+      ignoredOverrides.push({ key: "watermark", value: watermark });
+      watermark = undefined;
+    }
+  }
+
+  if (caps && size && !caps.supportsSize) {
+    ignoredOverrides.push({ key: "size", value: size });
+    size = undefined;
+  }
+  if (caps && aspectRatio && !caps.supportsAspectRatio) {
+    ignoredOverrides.push({ key: "aspectRatio", value: aspectRatio });
+    aspectRatio = undefined;
+  }
+  if (caps && resolution && !caps.supportsResolution) {
+    ignoredOverrides.push({ key: "resolution", value: resolution });
+    resolution = undefined;
+  }
+
+  if (!normalization.size && size && params.size && params.size !== size) {
+    normalization.size = { requested: params.size, applied: size };
+  }
+  if (
+    !normalization.aspectRatio &&
+    aspectRatio &&
+    ((!params.aspectRatio && params.size) || params.aspectRatio !== aspectRatio)
+  ) {
+    normalization.aspectRatio = {
+      applied: aspectRatio,
+      ...(params.aspectRatio ? { requested: params.aspectRatio } : {}),
+      ...(!params.aspectRatio && params.size ? { derivedFrom: "size" } : {}),
+    };
+  }
+  if (!normalization.resolution && resolution && params.resolution !== resolution) {
+    normalization.resolution = { requested: params.resolution, applied: resolution };
+  }
+
+  const requestedDurationSeconds =
+    typeof params.durationSeconds === "number" && Number.isFinite(params.durationSeconds)
+      ? Math.max(1, Math.round(params.durationSeconds))
+      : undefined;
+  const durationSeconds = normalizeVideoGenerationDuration({
+    provider: params.provider,
+    model: params.model,
+    durationSeconds: requestedDurationSeconds,
+    inputImageCount: params.inputImageCount || 0,
+    inputVideoCount: params.inputVideoCount || 0,
+  });
+  const supportedDurationSeconds = resolveVideoGenerationSupportedDurations({
+    provider: params.provider,
+    model: params.model,
+    inputImageCount: params.inputImageCount || 0,
+    inputVideoCount: params.inputVideoCount || 0,
+  });
+
+  if (
+    typeof requestedDurationSeconds === "number" &&
+    typeof durationSeconds === "number" &&
+    requestedDurationSeconds !== durationSeconds
+  ) {
+    normalization.durationSeconds = {
+      requested: requestedDurationSeconds,
+      applied: durationSeconds,
+      ...(supportedDurationSeconds && supportedDurationSeconds.length
+        ? { supportedValues: supportedDurationSeconds }
+        : {}),
+    };
+  }
+
+  return {
+    size,
+    aspectRatio,
+    resolution,
+    durationSeconds,
+    supportedDurationSeconds,
+    audio,
+    watermark,
+    ignoredOverrides,
+    normalization: finalizeVideoGenerationNormalization(normalization),
+  };
+}
+
+function validateVideoProviderOptionsAgainstDeclaration(params = {}) {
+  const providerOptions =
+    params.providerOptions && typeof params.providerOptions === "object"
+      ? params.providerOptions
+      : {};
+  const keys = Object.keys(providerOptions);
+  if (keys.length === 0) {
+    return undefined;
+  }
+  const declaration = params.declaration;
+  if (declaration === undefined) {
+    return undefined;
+  }
+  if (!declaration || Object.keys(declaration).length === 0) {
+    return (
+      `${params.providerId}/${params.model} does not accept providerOptions ` +
+      `(caller supplied: ${keys.join(", ")}); skipping`
+    );
+  }
+  const unknown = keys.filter((key) => !Object.prototype.hasOwnProperty.call(declaration, key));
+  if (unknown.length > 0) {
+    const accepted = Object.keys(declaration).join(", ");
+    return (
+      `${params.providerId}/${params.model} does not accept providerOptions keys: ` +
+      `${unknown.join(", ")} (accepted: ${accepted}); skipping`
+    );
+  }
+  for (const key of keys) {
+    const expected = declaration[key];
+    const value = providerOptions[key];
+    const actual = typeof value;
+    if (expected === "number" && (actual !== "number" || !Number.isFinite(value))) {
+      return (
+        `${params.providerId}/${params.model} expects providerOptions.${key} to be ` +
+        `a finite number, got ${actual}; skipping`
+      );
+    }
+    if (expected === "boolean" && actual !== "boolean") {
+      return (
+        `${params.providerId}/${params.model} expects providerOptions.${key} to be ` +
+        `a boolean, got ${actual}; skipping`
+      );
+    }
+    if (expected === "string" && actual !== "string") {
+      return (
+        `${params.providerId}/${params.model} expects providerOptions.${key} to be ` +
+        `a string, got ${actual}; skipping`
+      );
+    }
+  }
+  return undefined;
+}
+
+function buildNoVideoGenerationModelConfiguredMessage(cfg, deps = {}) {
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listVideoGenerationProviders;
+  return buildNoCapabilityModelConfiguredMessage({
+    capabilityLabel: "video-generation",
+    modelConfigKey: "videoGenerationModel",
+    providers: listProviders(cfg),
+    getProviderEnvVars: deps.getProviderEnvVars,
+  });
+}
+
+function listRuntimeVideoGenerationProviders(params = {}, deps = {}) {
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listVideoGenerationProviders;
+  return listProviders(params.config);
+}
+
+async function generateVideo(params = {}, deps = {}) {
+  const cfg = params.cfg || {};
+  const getProvider =
+    typeof deps.getProvider === "function" ? deps.getProvider : getVideoGenerationProvider;
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listVideoGenerationProviders;
+  const logger = deps.log || createSubsystemLogger("video-generation");
+  const timeoutMs =
+    params.timeoutMs ??
+    resolveAgentModelTimeoutMsValue(
+      cfg.agents && cfg.agents.defaults && cfg.agents.defaults.videoGenerationModel,
+    );
+  const candidates = resolveCapabilityModelCandidates({
+    cfg,
+    modelConfig: cfg.agents && cfg.agents.defaults && cfg.agents.defaults.videoGenerationModel,
+    modelOverride: params.modelOverride,
+    parseModelRef: parseVideoGenerationModelRef,
+    agentDir: params.agentDir,
+    listProviders,
+  });
+  if (candidates.length === 0) {
+    throw new Error(buildNoVideoGenerationModelConfiguredMessage(cfg, deps));
+  }
+
+  const attempts = [];
+  let lastError;
+  let skipWarnEmitted = false;
+  const warnOnFirstSkip = (reason) => {
+    if (!skipWarnEmitted && logger && typeof logger.warn === "function") {
+      skipWarnEmitted = true;
+      logger.warn(`video-generation candidate skipped: ${reason}`);
+    }
+  };
+
+  for (const candidate of candidates) {
+    const provider = getProvider(candidate.provider, cfg);
+    if (!provider) {
+      const error = `No video-generation provider registered for ${candidate.provider}`;
+      attempts.push({ provider: candidate.provider, model: candidate.model, error });
+      lastError = new Error(error);
+      continue;
+    }
+
+    const inputImageCount = Array.isArray(params.inputImages) ? params.inputImages.length : 0;
+    const inputVideoCount = Array.isArray(params.inputVideos) ? params.inputVideos.length : 0;
+    const inputAudioCount = Array.isArray(params.inputAudios) ? params.inputAudios.length : 0;
+    if (inputAudioCount > 0) {
+      const { capabilities: candCaps } = resolveVideoGenerationModeCapabilities({
+        provider,
+        model: candidate.model,
+        inputImageCount,
+        inputVideoCount,
+      });
+      const maxAudio =
+        (candCaps && candCaps.maxInputAudios) ||
+        (provider.capabilities && provider.capabilities.maxInputAudios) ||
+        0;
+      if (inputAudioCount > maxAudio) {
+        const error =
+          maxAudio === 0
+            ? `${candidate.provider}/${candidate.model} does not support reference ` +
+              "audio inputs; skipping to avoid silent audio drop"
+            : `${candidate.provider}/${candidate.model} supports at most ${maxAudio} ` +
+              `reference audio(s), ${inputAudioCount} requested; skipping`;
+        attempts.push({ provider: candidate.provider, model: candidate.model, error });
+        lastError = new Error(error);
+        warnOnFirstSkip(error);
+        if (logger && typeof logger.debug === "function") {
+          logger.debug(
+            "video-generation candidate skipped (audio capability): " +
+              `${candidate.provider}/${candidate.model}`,
+          );
+        }
+        continue;
+      }
+    }
+
+    if (
+      params.providerOptions &&
+      typeof params.providerOptions === "object" &&
+      Object.keys(params.providerOptions).length > 0
+    ) {
+      const { capabilities: optCaps } = resolveVideoGenerationModeCapabilities({
+        provider,
+        model: candidate.model,
+        inputImageCount,
+        inputVideoCount,
+      });
+      const declaredOptions =
+        (optCaps && optCaps.providerOptions) ||
+        (provider.capabilities && provider.capabilities.providerOptions);
+      const mismatch = validateVideoProviderOptionsAgainstDeclaration({
+        providerId: candidate.provider,
+        model: candidate.model,
+        providerOptions: params.providerOptions,
+        declaration: declaredOptions,
+      });
+      if (mismatch) {
+        attempts.push({ provider: candidate.provider, model: candidate.model, error: mismatch });
+        lastError = new Error(mismatch);
+        warnOnFirstSkip(mismatch);
+        if (logger && typeof logger.debug === "function") {
+          logger.debug(
+            "video-generation candidate skipped (providerOptions): " +
+              `${candidate.provider}/${candidate.model}`,
+          );
+        }
+        continue;
+      }
+    }
+
+    if (typeof params.durationSeconds === "number" && Number.isFinite(params.durationSeconds)) {
+      const { capabilities: durCaps } = resolveVideoGenerationModeCapabilities({
+        provider,
+        model: candidate.model,
+        inputImageCount,
+        inputVideoCount,
+      });
+      const supportedDurations = resolveVideoGenerationSupportedDurations({
+        provider,
+        model: candidate.model,
+        inputImageCount,
+        inputVideoCount,
+      });
+      const maxDuration =
+        (durCaps && durCaps.maxDurationSeconds) ||
+        (provider.capabilities && provider.capabilities.maxDurationSeconds);
+      if (
+        !supportedDurations &&
+        typeof maxDuration === "number" &&
+        Math.round(params.durationSeconds) > maxDuration
+      ) {
+        const error =
+          `${candidate.provider}/${candidate.model} supports at most ${maxDuration}s ` +
+          `per video, ${params.durationSeconds}s requested; skipping`;
+        attempts.push({ provider: candidate.provider, model: candidate.model, error });
+        lastError = new Error(error);
+        warnOnFirstSkip(error);
+        if (logger && typeof logger.debug === "function") {
+          logger.debug(
+            "video-generation candidate skipped (duration capability): " +
+              `${candidate.provider}/${candidate.model}`,
+          );
+        }
+        continue;
+      }
+    }
+
+    try {
+      const sanitized = resolveVideoGenerationOverrides({
+        provider,
+        model: candidate.model,
+        size: params.size,
+        aspectRatio: params.aspectRatio,
+        resolution: params.resolution,
+        durationSeconds: params.durationSeconds,
+        audio: params.audio,
+        watermark: params.watermark,
+        inputImageCount,
+        inputVideoCount,
+      });
+      const result = await provider.generateVideo({
+        provider: candidate.provider,
+        model: candidate.model,
+        prompt: params.prompt,
+        cfg,
+        agentDir: params.agentDir,
+        authStore: params.authStore,
+        size: sanitized.size,
+        aspectRatio: sanitized.aspectRatio,
+        resolution: sanitized.resolution,
+        durationSeconds: sanitized.durationSeconds,
+        audio: sanitized.audio,
+        watermark: sanitized.watermark,
+        inputImages: params.inputImages,
+        inputVideos: params.inputVideos,
+        inputAudios: params.inputAudios,
+        providerOptions: params.providerOptions,
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      });
+      if (!result || !Array.isArray(result.videos) || result.videos.length === 0) {
+        throw new Error("Video generation provider returned no videos.");
+      }
+      for (const [index, video] of result.videos.entries()) {
+        if (!video || (!video.buffer && !video.url)) {
+          throw new Error(
+            "Video generation provider returned an undeliverable asset at index " +
+              `${index}: neither buffer nor url is set.`,
+          );
+        }
+      }
+      return {
+        videos: result.videos,
+        provider: candidate.provider,
+        model: result.model || candidate.model,
+        attempts,
+        normalization: sanitized.normalization,
+        metadata: {
+          ...(result.metadata || {}),
+          ...buildMediaGenerationNormalizationMetadata({
+            normalization: sanitized.normalization,
+            requestedSizeForDerivedAspectRatio: params.size,
+            includeSupportedDurationSeconds: true,
+          }),
+        },
+        ignoredOverrides: sanitized.ignoredOverrides,
+      };
+    } catch (err) {
+      lastError = err;
+      recordCapabilityCandidateFailure({
+        attempts,
+        provider: candidate.provider,
+        model: candidate.model,
+        error: err,
+      });
+      if (logger && typeof logger.debug === "function") {
+        logger.debug(`video-generation candidate failed: ${candidate.provider}/${candidate.model}`);
+      }
+    }
+  }
+
+  return throwCapabilityGenerationFailure({
+    capabilityLabel: "video generation",
+    attempts,
+    lastError,
+  });
+}
+
+const videoGenerationRuntime = {
+  generateVideo,
+  listRuntimeVideoGenerationProviders,
+};
+
+function normalizeCapabilityProviderId(providerId) {
+  return normalizeOptionalLowercaseString(providerId);
+}
+
+function resolvePluginCapabilityProviders(params = {}) {
+  const cfg = params.cfg || {};
+  const key = params.key;
+  if (
+    cfg.plugins &&
+    cfg.plugins.enabled === false &&
+    key !== "speechProviders" &&
+    key !== "mediaUnderstandingProviders"
+  ) {
+    return [];
+  }
+  const candidates = [
+    cfg[key],
+    cfg.capabilityProviders && cfg.capabilityProviders[key],
+    cfg.plugins && cfg.plugins.capabilityProviders && cfg.plugins.capabilityProviders[key],
+    cfg.plugins && cfg.plugins[key],
+  ];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) {
+      continue;
+    }
+    return candidate.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return [];
+      }
+      return [entry.provider && typeof entry.provider === "object" ? entry.provider : entry];
+    });
+  }
+  return [];
+}
+
+function buildCapabilityProviderMaps(providers = [], normalizeId = normalizeCapabilityProviderId) {
+  const canonical = new Map();
+  const aliases = new Map();
+  for (const provider of providers) {
+    const id = normalizeId(provider && provider.id);
+    if (!id) {
+      continue;
+    }
+    canonical.set(id, provider);
+    aliases.set(id, provider);
+    if (Array.isArray(provider.aliases)) {
+      for (const alias of provider.aliases) {
+        const normalizedAlias = normalizeId(alias);
+        if (normalizedAlias) {
+          aliases.set(normalizedAlias, provider);
+        }
+      }
+    }
+  }
+  return { canonical, aliases };
+}
+
+function normalizeRealtimeTranscriptionProviderId(providerId) {
+  return normalizeCapabilityProviderId(providerId);
+}
+
+function listRealtimeTranscriptionProviders(cfg) {
+  return [
+    ...buildCapabilityProviderMaps(
+      resolvePluginCapabilityProviders({
+        key: "realtimeTranscriptionProviders",
+        cfg,
+      }),
+      normalizeRealtimeTranscriptionProviderId,
+    ).canonical.values(),
+  ];
+}
+
+function getRealtimeTranscriptionProvider(providerId, cfg) {
+  const normalized = normalizeRealtimeTranscriptionProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  return buildCapabilityProviderMaps(
+    listRealtimeTranscriptionProviders(cfg),
+    normalizeRealtimeTranscriptionProviderId,
+  ).aliases.get(normalized);
+}
+
+function canonicalizeRealtimeTranscriptionProviderId(providerId, cfg) {
+  const normalized = normalizeRealtimeTranscriptionProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const provider = getRealtimeTranscriptionProvider(normalized, cfg);
+  return (provider && provider.id) || normalized;
+}
+
+function createRealtimeTranscriptionWebSocketSession(options = {}) {
+  const callbacks = options.callbacks || {};
+  let closed = false;
+  let connected = false;
+  let ready = false;
+  let queuedAudio = [];
+  let queuedBytes = 0;
+  let connectTimer;
+  let connectResolve;
+  let connectReject;
+
+  const connectTimeoutMs =
+    typeof options.connectTimeoutMs === "number" && Number.isFinite(options.connectTimeoutMs)
+      ? options.connectTimeoutMs
+      : 10000;
+  const maxQueuedBytes =
+    typeof options.maxQueuedBytes === "number" && Number.isFinite(options.maxQueuedBytes)
+      ? options.maxQueuedBytes
+      : 2 * 1024 * 1024;
+
+  const clearConnectTimer = () => {
+    if (connectTimer) {
+      clearTimeout(connectTimer);
+      connectTimer = undefined;
+    }
+  };
+
+  const normalizeError = (error) => (error instanceof Error ? error : new Error(String(error)));
+
+  const emitError = (error) => {
+    if (callbacks && typeof callbacks.onError === "function") {
+      callbacks.onError(normalizeError(error));
+    }
+  };
+
+  const flushQueuedAudio = () => {
+    const pending = queuedAudio;
+    queuedAudio = [];
+    queuedBytes = 0;
+    for (const audio of pending) {
+      options.sendAudio(audio, transport);
+    }
+  };
+
+  const settleConnected = () => {
+    clearConnectTimer();
+    if (typeof connectResolve === "function") {
+      const resolve = connectResolve;
+      connectResolve = undefined;
+      connectReject = undefined;
+      resolve();
+    }
+  };
+
+  const transport = {
+    callbacks,
+    closeNow() {
+      closed = true;
+      connected = false;
+      ready = false;
+      queuedAudio = [];
+      queuedBytes = 0;
+      clearConnectTimer();
+    },
+    failConnect(error) {
+      const normalized = normalizeError(error);
+      closed = true;
+      connected = false;
+      ready = false;
+      queuedAudio = [];
+      queuedBytes = 0;
+      clearConnectTimer();
+      emitError(normalized);
+      if (typeof connectReject === "function") {
+        const reject = connectReject;
+        connectResolve = undefined;
+        connectReject = undefined;
+        reject(normalized);
+      }
+    },
+    isOpen() {
+      return connected && !closed;
+    },
+    isReady() {
+      return ready;
+    },
+    markReady() {
+      if (closed) {
+        return;
+      }
+      ready = true;
+      flushQueuedAudio();
+      settleConnected();
+    },
+    sendBinary(payload) {
+      return Boolean(payload) && connected && !closed;
+    },
+    sendJson(payload) {
+      JSON.stringify(payload);
+      return connected && !closed;
+    },
+  };
+
+  const queueAudio = (audio) => {
+    const copy = Buffer.from(audio);
+    queuedAudio.push(copy);
+    queuedBytes += copy.byteLength;
+    while (queuedBytes > maxQueuedBytes && queuedAudio.length > 0) {
+      const dropped = queuedAudio.shift();
+      queuedBytes -= dropped ? dropped.byteLength : 0;
+    }
+  };
+
+  return {
+    async connect() {
+      closed = false;
+      connected = true;
+      ready = false;
+      return await new Promise((resolve, reject) => {
+        connectResolve = resolve;
+        connectReject = reject;
+        connectTimer = setTimeout(() => {
+          transport.failConnect(
+            new Error(
+              options.connectTimeoutMessage ||
+                `${options.providerId} realtime transcription connection timeout`,
+            ),
+          );
+        }, connectTimeoutMs);
+        try {
+          if (typeof options.onOpen === "function") {
+            options.onOpen(transport);
+          }
+          if (options.readyOnOpen) {
+            transport.markReady();
+          } else if (ready) {
+            settleConnected();
+          }
+        } catch (error) {
+          transport.failConnect(error);
+        }
+      });
+    },
+    sendAudio(audio) {
+      if (closed || !audio || audio.byteLength === 0) {
+        return;
+      }
+      if (connected && ready) {
+        options.sendAudio(audio, transport);
+        return;
+      }
+      queueAudio(audio);
+    },
+    close() {
+      if (connected && !closed && typeof options.onClose === "function") {
+        try {
+          options.onClose(transport);
+        } catch (error) {
+          emitError(error);
+        }
+      }
+      transport.closeNow();
+    },
+    isConnected() {
+      return connected && ready && !closed;
+    },
+  };
+}
+
+const realtimeTranscriptionRuntime = {
+  canonicalizeRealtimeTranscriptionProviderId,
+  createRealtimeTranscriptionWebSocketSession,
+  getRealtimeTranscriptionProvider,
+  listRealtimeTranscriptionProviders,
+  normalizeRealtimeTranscriptionProviderId,
+};
+
+const REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ = {
+  encoding: "g711_ulaw",
+  sampleRateHz: 8000,
+  channels: 1,
+};
+const REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ = {
+  encoding: "pcm16",
+  sampleRateHz: 24000,
+  channels: 1,
+};
+const REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME = "openclaw_agent_consult";
+const REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES = [
+  "safe-read-only",
+  "owner",
+  "none",
+];
+const REALTIME_VOICE_AGENT_CONSULT_TOOL = {
+  type: "function",
+  name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+  description:
+    "Ask the full OpenClaw agent for deeper reasoning, current information, " +
+    "or tool-backed help before speaking.",
+  parameters: {
+    type: "object",
+    properties: {
+      question: {
+        type: "string",
+        description: "The concrete question or task the user asked.",
+      },
+      context: {
+        type: "string",
+        description: "Optional relevant context or transcript summary.",
+      },
+      responseStyle: {
+        type: "string",
+        description: "Optional style hint for the spoken answer.",
+      },
+    },
+    required: ["question"],
+  },
+};
+const REALTIME_VOICE_SAFE_READ_ONLY_TOOLS = [
+  "read",
+  "web_search",
+  "web_fetch",
+  "x_search",
+  "memory_search",
+  "memory_get",
+];
+const REALTIME_VOICE_TELEPHONY_SAMPLE_RATE = 8000;
+const REALTIME_VOICE_RESAMPLE_FILTER_TAPS = 31;
+const REALTIME_VOICE_RESAMPLE_CUTOFF_GUARD = 0.94;
+
+function normalizeRealtimeVoiceProviderId(providerId) {
+  return normalizeCapabilityProviderId(providerId);
+}
+
+function listRealtimeVoiceProviders(cfg) {
+  return [
+    ...buildCapabilityProviderMaps(
+      resolvePluginCapabilityProviders({
+        key: "realtimeVoiceProviders",
+        cfg,
+      }),
+      normalizeRealtimeVoiceProviderId,
+    ).canonical.values(),
+  ];
+}
+
+function getRealtimeVoiceProvider(providerId, cfg) {
+  const normalized = normalizeRealtimeVoiceProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  return buildCapabilityProviderMaps(
+    listRealtimeVoiceProviders(cfg),
+    normalizeRealtimeVoiceProviderId,
+  ).aliases.get(normalized);
+}
+
+function canonicalizeRealtimeVoiceProviderId(providerId, cfg) {
+  const normalized = normalizeRealtimeVoiceProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const provider = getRealtimeVoiceProvider(normalized, cfg);
+  return (provider && provider.id) || normalized;
+}
+
+function resolveConfiguredRealtimeVoiceProvider(params = {}) {
+  const cfgForResolve = params.cfgForResolve || params.cfg || {};
+  const providers = params.providers || listRealtimeVoiceProviders(params.cfg);
+  const resolution = resolveConfiguredCapabilityProvider({
+    configuredProviderId: params.configuredProviderId,
+    providerConfigs: params.providerConfigs,
+    cfg: params.cfg,
+    cfgForResolve,
+    getConfiguredProvider: (providerId) =>
+      params.providers
+        ? params.providers.find((entry) => entry && entry.id === providerId)
+        : getRealtimeVoiceProvider(providerId, params.cfg),
+    listProviders: () => providers,
+    resolveProviderConfig: ({ provider, cfg, rawConfig }) => {
+      const rawConfigWithModel =
+        params.defaultModel && rawConfig.model === undefined
+          ? { ...rawConfig, model: params.defaultModel }
+          : rawConfig;
+      if (provider && typeof provider.resolveConfig === "function") {
+        return provider.resolveConfig({ cfg, rawConfig: rawConfigWithModel });
+      }
+      return rawConfigWithModel;
+    },
+    isProviderConfigured: ({ provider, cfg, providerConfig }) =>
+      provider.isConfigured({ cfg, providerConfig }),
+  });
+  if (!resolution.ok && resolution.code === "missing-configured-provider") {
+    throw new Error(
+      `Realtime voice provider "${resolution.configuredProviderId}" is not registered`,
+    );
+  }
+  if (!resolution.ok && resolution.code === "no-registered-provider") {
+    throw new Error(
+      params.noRegisteredProviderMessage || "No realtime voice provider registered",
+    );
+  }
+  if (!resolution.ok) {
+    throw new Error(`Realtime voice provider "${resolution.provider && resolution.provider.id}" ` +
+      "is not configured");
+  }
+  return {
+    provider: resolution.provider,
+    providerConfig: resolution.providerConfig,
+  };
+}
+
+function buildRealtimeVoiceAgentConsultWorkingResponse(audienceLabel = "person") {
+  return {
+    status: "working",
+    tool: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+    message:
+      `Tell the ${audienceLabel} briefly that you are checking, then wait for the ` +
+      "final OpenClaw result before answering with the actual result.",
+  };
+}
+
+function isRealtimeVoiceAgentConsultToolPolicy(value) {
+  return (
+    typeof value === "string" && REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES.includes(value)
+  );
+}
+
+function resolveRealtimeVoiceAgentConsultToolPolicy(value, fallback) {
+  const normalized = normalizeOptionalLowercaseString(value);
+  return isRealtimeVoiceAgentConsultToolPolicy(normalized) ? normalized : fallback;
+}
+
+function resolveRealtimeVoiceAgentConsultTools(policy, customTools = []) {
+  const tools = new Map();
+  if (policy !== "none") {
+    tools.set(REALTIME_VOICE_AGENT_CONSULT_TOOL.name, REALTIME_VOICE_AGENT_CONSULT_TOOL);
+  }
+  for (const tool of customTools || []) {
+    if (tool && tool.name && !tools.has(tool.name)) {
+      tools.set(tool.name, tool);
+    }
+  }
+  return [...tools.values()];
+}
+
+function resolveRealtimeVoiceAgentConsultToolsAllow(policy) {
+  if (policy === "owner") {
+    return undefined;
+  }
+  if (policy === "safe-read-only") {
+    return [...REALTIME_VOICE_SAFE_READ_ONLY_TOOLS];
+  }
+  return [];
+}
+
+function readRealtimeVoiceConsultStringArg(args, key) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return undefined;
+  }
+  return normalizeOptionalString(args[key]);
+}
+
+function parseRealtimeVoiceAgentConsultArgs(args) {
+  const question = readRealtimeVoiceConsultStringArg(args, "question");
+  if (!question) {
+    throw new Error("question required");
+  }
+  return {
+    question,
+    context: readRealtimeVoiceConsultStringArg(args, "context"),
+    responseStyle: readRealtimeVoiceConsultStringArg(args, "responseStyle"),
+  };
+}
+
+function buildRealtimeVoiceAgentConsultChatMessage(args) {
+  const parsed = parseRealtimeVoiceAgentConsultArgs(args);
+  return [
+    parsed.question,
+    parsed.context ? `Context:\n${parsed.context}` : undefined,
+    parsed.responseStyle ? `Spoken style:\n${parsed.responseStyle}` : undefined,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function buildRealtimeVoiceAgentConsultPrompt(params) {
+  const parsed = parseRealtimeVoiceAgentConsultArgs(params.args);
+  const assistantLabel = params.assistantLabel || "Agent";
+  const questionSourceLabel = params.questionSourceLabel || params.userLabel.toLowerCase();
+  const transcript = (params.transcript || [])
+    .slice(-12)
+    .map((entry) => {
+      const label = entry.role === "assistant" ? assistantLabel : params.userLabel;
+      return `${label}: ${entry.text}`;
+    })
+    .join("\n");
+  return [
+    `You are helping an OpenClaw realtime voice agent during ${params.surface}.`,
+    `Answer the ${questionSourceLabel}'s question with the strongest useful reasoning ` +
+      "and available tools.",
+    "Return only the concise answer the realtime voice agent should speak next.",
+    "Do not include markdown, citations unless needed, tool logs, or private reasoning.",
+    parsed.responseStyle ? `Spoken style: ${parsed.responseStyle}` : undefined,
+    transcript ? `Recent transcript:\n${transcript}` : undefined,
+    parsed.context ? `Additional context:\n${parsed.context}` : undefined,
+    `Question:\n${parsed.question}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function collectRealtimeVoiceAgentConsultVisibleText(payloads) {
+  const chunks = [];
+  for (const payload of payloads || []) {
+    if (!payload || payload.isError || payload.isReasoning) {
+      continue;
+    }
+    const text = normalizeOptionalString(payload.text);
+    if (text) {
+      chunks.push(text);
+    }
+  }
+  return chunks.length > 0 ? chunks.join("\n\n").trim() : null;
+}
+
+function resolveRealtimeVoiceAgentSandboxSessionKey(agentId, sessionKey) {
+  const trimmed = String(sessionKey || "").trim();
+  if (trimmed.toLowerCase().startsWith("agent:")) {
+    return trimmed;
+  }
+  return `agent:${agentId}:${trimmed}`;
+}
+
+async function consultRealtimeVoiceAgent(params) {
+  const agentId = params.agentId || "main";
+  const agentRuntime = params.agentRuntime;
+  const agentDir = agentRuntime.resolveAgentDir(params.cfg, agentId);
+  const workspaceDir = agentRuntime.resolveAgentWorkspaceDir(params.cfg, agentId);
+  await agentRuntime.ensureAgentWorkspace({ dir: workspaceDir });
+  const storePath = agentRuntime.session.resolveStorePath(
+    params.cfg && params.cfg.session && params.cfg.session.store,
+    { agentId },
+  );
+  const sessionStore = agentRuntime.session.loadSessionStore(storePath) || {};
+  const existing = sessionStore[params.sessionKey] || {};
+  const sessionId =
+    normalizeOptionalString(existing.sessionId) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
+  sessionStore[params.sessionKey] = {
+    ...existing,
+    sessionId,
+    updatedAt: Date.now(),
+  };
+  await agentRuntime.session.saveSessionStore(storePath, sessionStore);
+  const sessionFile = agentRuntime.session.resolveSessionFilePath(
+    sessionId,
+    sessionStore[params.sessionKey],
+    { agentId },
+  );
+  const result = await agentRuntime.runEmbeddedPiAgent({
+    sessionId,
+    sessionKey: params.sessionKey,
+    sandboxSessionKey: resolveRealtimeVoiceAgentSandboxSessionKey(agentId, params.sessionKey),
+    agentId,
+    messageProvider: params.messageProvider,
+    sessionFile,
+    workspaceDir,
+    config: params.cfg,
+    prompt: buildRealtimeVoiceAgentConsultPrompt({
+      args: params.args,
+      transcript: params.transcript,
+      surface: params.surface,
+      userLabel: params.userLabel,
+      assistantLabel: params.assistantLabel,
+      questionSourceLabel: params.questionSourceLabel,
+    }),
+    provider: params.provider,
+    model: params.model,
+    thinkLevel: params.thinkLevel || "high",
+    verboseLevel: "off",
+    reasoningLevel: "off",
+    toolResultFormat: "plain",
+    toolsAllow: params.toolsAllow,
+    timeoutMs:
+      params.timeoutMs ||
+      agentRuntime.resolveAgentTimeoutMs({
+        cfg: params.cfg,
+      }),
+    runId: `${params.runIdPrefix}:${Date.now()}`,
+    lane: params.lane,
+    extraSystemPrompt:
+      params.extraSystemPrompt ||
+      "You are a behind-the-scenes consultant for a live voice agent. " +
+        "Be accurate, brief, and speakable.",
+    agentDir,
+  });
+  const text = collectRealtimeVoiceAgentConsultVisibleText(result.payloads || []);
+  if (!text) {
+    const reason = result.meta && result.meta.aborted
+      ? "agent run aborted"
+      : "agent returned no speakable text";
+    if (params.logger && typeof params.logger.warn === "function") {
+      params.logger.warn(`[realtime-voice] agent consult produced no answer: ${reason}`);
+    }
+    return {
+      text: params.fallbackText || "I need a moment to verify that before answering.",
+    };
+  }
+  return { text };
+}
+
+function createRealtimeVoiceBridgeSession(params) {
+  let bridge;
+  const requireBridge = () => {
+    if (!bridge) {
+      throw new Error("Realtime voice bridge is not ready");
+    }
+    return bridge;
+  };
+  const session = {
+    get bridge() {
+      return requireBridge();
+    },
+    acknowledgeMark() {
+      return requireBridge().acknowledgeMark();
+    },
+    close() {
+      return requireBridge().close();
+    },
+    connect() {
+      return requireBridge().connect();
+    },
+    sendAudio(audio) {
+      return requireBridge().sendAudio(audio);
+    },
+    sendUserMessage(text) {
+      const activeBridge = requireBridge();
+      if (typeof activeBridge.sendUserMessage === "function") {
+        return activeBridge.sendUserMessage(text);
+      }
+      return undefined;
+    },
+    handleBargeIn(options) {
+      const activeBridge = requireBridge();
+      if (typeof activeBridge.handleBargeIn === "function") {
+        return activeBridge.handleBargeIn(options);
+      }
+      return undefined;
+    },
+    setMediaTimestamp(ts) {
+      return requireBridge().setMediaTimestamp(ts);
+    },
+    submitToolResult(callId, result, options) {
+      return requireBridge().submitToolResult(callId, result, options);
+    },
+    triggerGreeting(instructions) {
+      const activeBridge = requireBridge();
+      if (typeof activeBridge.triggerGreeting === "function") {
+        return activeBridge.triggerGreeting(instructions);
+      }
+      return undefined;
+    },
+  };
+  const canSendAudio = () =>
+    params.audioSink && typeof params.audioSink.isOpen === "function"
+      ? params.audioSink.isOpen()
+      : true;
+  bridge = params.provider.createBridge({
+    providerConfig: params.providerConfig,
+    audioFormat: params.audioFormat,
+    instructions: params.instructions,
+    tools: params.tools,
+    onAudio(audio) {
+      if (canSendAudio()) {
+        params.audioSink.sendAudio(audio);
+      }
+    },
+    onClearAudio() {
+      if (canSendAudio() && params.audioSink && typeof params.audioSink.clearAudio === "function") {
+        params.audioSink.clearAudio();
+      }
+    },
+    onMark(markName) {
+      if (!canSendAudio() || params.markStrategy === "ignore") {
+        return;
+      }
+      if (params.markStrategy === "ack-immediately") {
+        if (bridge && typeof bridge.acknowledgeMark === "function") {
+          bridge.acknowledgeMark();
+        }
+        return;
+      }
+      if (
+        (params.markStrategy === undefined || params.markStrategy === "transport") &&
+        params.audioSink &&
+        typeof params.audioSink.sendMark === "function"
+      ) {
+        params.audioSink.sendMark(markName);
+      }
+    },
+    onTranscript: params.onTranscript,
+    onToolCall(event) {
+      if (!bridge || typeof params.onToolCall !== "function") {
+        return;
+      }
+      params.onToolCall(event, session);
+    },
+    onReady() {
+      if (!bridge) {
+        return;
+      }
+      if (params.triggerGreetingOnReady && typeof bridge.triggerGreeting === "function") {
+        bridge.triggerGreeting(params.initialGreetingInstructions);
+      }
+      if (typeof params.onReady === "function") {
+        params.onReady(session);
+      }
+    },
+    onError: params.onError,
+    onClose: params.onClose,
+  });
+  return session;
+}
+
+function realtimeVoiceClamp16(value) {
+  return Math.max(-32768, Math.min(32767, value));
+}
+
+function realtimeVoiceSinc(x) {
+  if (x === 0) {
+    return 1;
+  }
+  return Math.sin(Math.PI * x) / (Math.PI * x);
+}
+
+function sampleRealtimeVoiceBandlimited(input, inputSamples, srcPos, cutoffCyclesPerSample) {
+  const half = Math.floor(REALTIME_VOICE_RESAMPLE_FILTER_TAPS / 2);
+  const center = Math.floor(srcPos);
+  let weighted = 0;
+  let weightSum = 0;
+  for (let tap = -half; tap <= half; tap += 1) {
+    const sampleIndex = center + tap;
+    if (sampleIndex < 0 || sampleIndex >= inputSamples) {
+      continue;
+    }
+    const distance = sampleIndex - srcPos;
+    const lowPass =
+      2 * cutoffCyclesPerSample * realtimeVoiceSinc(2 * cutoffCyclesPerSample * distance);
+    const tapIndex = tap + half;
+    const window =
+      0.5 -
+      0.5 * Math.cos((2 * Math.PI * tapIndex) / (REALTIME_VOICE_RESAMPLE_FILTER_TAPS - 1));
+    const coeff = lowPass * window;
+    weighted += input.readInt16LE(sampleIndex * 2) * coeff;
+    weightSum += coeff;
+  }
+  if (weightSum === 0) {
+    const nearest = Math.max(0, Math.min(inputSamples - 1, Math.round(srcPos)));
+    return input.readInt16LE(nearest * 2);
+  }
+  return weighted / weightSum;
+}
+
+function resamplePcm(input, inputSampleRate, outputSampleRate) {
+  if (inputSampleRate === outputSampleRate) {
+    return input;
+  }
+  const inputSamples = Math.floor(input.length / 2);
+  if (inputSamples === 0) {
+    return Buffer.alloc(0);
+  }
+  const ratio = inputSampleRate / outputSampleRate;
+  const outputSamples = Math.floor(inputSamples / ratio);
+  const output = Buffer.alloc(outputSamples * 2);
+  const maxCutoff = 0.5;
+  const downsampleCutoff = ratio > 1 ? maxCutoff / ratio : maxCutoff;
+  const cutoffCyclesPerSample = Math.max(
+    0.01,
+    downsampleCutoff * REALTIME_VOICE_RESAMPLE_CUTOFF_GUARD,
+  );
+  for (let index = 0; index < outputSamples; index += 1) {
+    const sample = Math.round(
+      sampleRealtimeVoiceBandlimited(input, inputSamples, index * ratio, cutoffCyclesPerSample),
+    );
+    output.writeInt16LE(realtimeVoiceClamp16(sample), index * 2);
+  }
+  return output;
+}
+
+function resamplePcmTo8k(input, inputSampleRate) {
+  return resamplePcm(input, inputSampleRate, REALTIME_VOICE_TELEPHONY_SAMPLE_RATE);
+}
+
+function realtimeVoiceLinearToMulaw(sample) {
+  const BIAS = 132;
+  const CLIP = 32635;
+  const sign = sample < 0 ? 0x80 : 0;
+  let magnitude = sample < 0 ? -sample : sample;
+  if (magnitude > CLIP) {
+    magnitude = CLIP;
+  }
+  magnitude += BIAS;
+  let exponent = 7;
+  for (let expMask = 0x4000; (magnitude & expMask) === 0 && exponent > 0; exponent -= 1) {
+    expMask >>= 1;
+  }
+  const mantissa = (magnitude >> (exponent + 3)) & 0x0f;
+  return ~(sign | (exponent << 4) | mantissa) & 0xff;
+}
+
+function realtimeVoiceMulawToLinear(value) {
+  const muLaw = ~value & 0xff;
+  const sign = muLaw & 0x80;
+  const exponent = (muLaw >> 4) & 0x07;
+  const mantissa = muLaw & 0x0f;
+  let sample = ((mantissa << 3) + 132) << exponent;
+  sample -= 132;
+  return sign ? -sample : sample;
+}
+
+function pcmToMulaw(pcm) {
+  const samples = Math.floor(pcm.length / 2);
+  const mulaw = Buffer.alloc(samples);
+  for (let index = 0; index < samples; index += 1) {
+    const sample = pcm.readInt16LE(index * 2);
+    mulaw[index] = realtimeVoiceLinearToMulaw(sample);
+  }
+  return mulaw;
+}
+
+function mulawToPcm(mulaw) {
+  const pcm = Buffer.alloc(mulaw.length * 2);
+  for (let index = 0; index < mulaw.length; index += 1) {
+    pcm.writeInt16LE(
+      realtimeVoiceClamp16(realtimeVoiceMulawToLinear(mulaw[index] || 0)),
+      index * 2,
+    );
+  }
+  return pcm;
+}
+
+function convertPcmToMulaw8k(pcm, inputSampleRate) {
+  return pcmToMulaw(resamplePcmTo8k(pcm, inputSampleRate));
+}
+
+const realtimeVoiceRuntime = {
+  REALTIME_VOICE_AGENT_CONSULT_TOOL,
+  REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+  REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES,
+  REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ,
+  REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
+  buildRealtimeVoiceAgentConsultChatMessage,
+  buildRealtimeVoiceAgentConsultPrompt,
+  buildRealtimeVoiceAgentConsultWorkingResponse,
+  canonicalizeRealtimeVoiceProviderId,
+  collectRealtimeVoiceAgentConsultVisibleText,
+  consultRealtimeVoiceAgent,
+  convertPcmToMulaw8k,
+  createRealtimeVoiceBridgeSession,
+  getRealtimeVoiceProvider,
+  isRealtimeVoiceAgentConsultToolPolicy,
+  listRealtimeVoiceProviders,
+  mulawToPcm,
+  normalizeRealtimeVoiceProviderId,
+  parseRealtimeVoiceAgentConsultArgs,
+  pcmToMulaw,
+  resamplePcm,
+  resamplePcmTo8k,
+  resolveConfiguredRealtimeVoiceProvider,
+  resolveRealtimeVoiceAgentConsultToolPolicy,
+  resolveRealtimeVoiceAgentConsultTools,
+  resolveRealtimeVoiceAgentConsultToolsAllow,
+};
+
+const MEDIA_UNDERSTANDING_DEFAULT_MAX_CHARS_BY_CAPABILITY = {
+  image: 500,
+  audio: undefined,
+  video: 500,
+};
+const MEDIA_UNDERSTANDING_DEFAULT_MAX_BYTES = {
+  image: 10 * 1024 * 1024,
+  audio: 20 * 1024 * 1024,
+  video: 50 * 1024 * 1024,
+};
+const MEDIA_UNDERSTANDING_DEFAULT_TIMEOUT_SECONDS = {
+  image: 60,
+  audio: 60,
+  video: 120,
+};
+const MEDIA_UNDERSTANDING_DEFAULT_PROMPT = {
+  image: "Describe the image.",
+  audio: "Transcribe the audio.",
+  video: "Describe the video.",
+};
+const MEDIA_UNDERSTANDING_KIND_BY_CAPABILITY = {
+  audio: "audio.transcription",
+  image: "image.description",
+  video: "video.description",
+};
+const MEDIA_UNDERSTANDING_MIN_AUDIO_FILE_BYTES = 1024;
+
+class MediaUnderstandingSkipError extends Error {
+  constructor(reason, message) {
+    super(message);
+    this.name = "MediaUnderstandingSkipError";
+    this.reason = reason;
+  }
+}
+
+function normalizeMediaProviderId(id) {
+  const normalized = normalizeOptionalLowercaseString(id);
+  if (normalized === "gemini") {
+    return "google";
+  }
+  return normalized || "";
+}
+
+function mergeMediaUnderstandingProviderIntoRegistry(registry, provider, registryKey) {
+  if (!provider || typeof provider !== "object") {
+    return;
+  }
+  const normalizedKey = normalizeMediaProviderId(registryKey || provider.id);
+  if (!normalizedKey) {
+    return;
+  }
+  const existing = registry.get(normalizedKey);
+  if (existing) {
+    registry.set(normalizedKey, {
+      ...existing,
+      ...provider,
+      capabilities: provider.capabilities || existing.capabilities,
+      defaultModels: provider.defaultModels || existing.defaultModels,
+      autoPriority: provider.autoPriority || existing.autoPriority,
+      nativeDocumentInputs: provider.nativeDocumentInputs || existing.nativeDocumentInputs,
+    });
+    return;
+  }
+  registry.set(normalizedKey, provider);
+}
+
+function buildMediaUnderstandingRegistry(overrides, cfg) {
+  const registry = new Map();
+  for (const provider of resolvePluginCapabilityProviders({
+    key: "mediaUnderstandingProviders",
+    cfg,
+  })) {
+    mergeMediaUnderstandingProviderIntoRegistry(registry, provider);
+  }
+  if (overrides && typeof overrides === "object") {
+    for (const [key, provider] of Object.entries(overrides)) {
+      mergeMediaUnderstandingProviderIntoRegistry(registry, provider, key);
+    }
+  }
+  return registry;
+}
+
+function getMediaUnderstandingProvider(id, registry) {
+  return registry.get(normalizeMediaProviderId(id));
+}
+
+function normalizeMediaAttachmentPath(raw) {
+  const value = normalizeOptionalString(raw);
+  if (!value) {
+    return undefined;
+  }
+  if (value.startsWith("file://")) {
+    try {
+      return fileURLToPath(value);
+    } catch (_error) {
+      return undefined;
+    }
+  }
+  return value;
+}
+
+function normalizeMediaUnderstandingAttachments(ctx) {
+  const pathsFromArray = Array.isArray(ctx.MediaPaths) ? ctx.MediaPaths : undefined;
+  const urlsFromArray = Array.isArray(ctx.MediaUrls) ? ctx.MediaUrls : undefined;
+  const typesFromArray = Array.isArray(ctx.MediaTypes) ? ctx.MediaTypes : undefined;
+  const transcribedIndexes = new Set(
+    Array.isArray(ctx.MediaTranscribedIndexes)
+      ? ctx.MediaTranscribedIndexes.filter((index) => Number.isInteger(index) && index >= 0)
+      : [],
+  );
+  const resolveMime = (count, index) => {
+    const typeHint = normalizeOptionalString(typesFromArray && typesFromArray[index]);
+    if (typeHint) {
+      return typeHint;
+    }
+    return count === 1 ? ctx.MediaType : undefined;
+  };
+  if (pathsFromArray && pathsFromArray.length > 0) {
+    const count = pathsFromArray.length;
+    const urls = urlsFromArray && urlsFromArray.length > 0 ? urlsFromArray : undefined;
+    return pathsFromArray
+      .map((value, index) => ({
+        path: normalizeMediaAttachmentPath(value),
+        url: (urls && urls[index]) || ctx.MediaUrl,
+        mime: resolveMime(count, index),
+        index,
+        alreadyTranscribed: transcribedIndexes.has(index),
+      }))
+      .filter((entry) => Boolean(entry.path || normalizeOptionalString(entry.url)));
+  }
+  if (urlsFromArray && urlsFromArray.length > 0) {
+    const count = urlsFromArray.length;
+    return urlsFromArray
+      .map((value, index) => ({
+        path: undefined,
+        url: normalizeOptionalString(value),
+        mime: resolveMime(count, index),
+        index,
+        alreadyTranscribed: transcribedIndexes.has(index),
+      }))
+      .filter((entry) => Boolean(entry.url));
+  }
+  const pathValue = normalizeMediaAttachmentPath(ctx.MediaPath);
+  const url = normalizeOptionalString(ctx.MediaUrl);
+  if (!pathValue && !url) {
+    return [];
+  }
+  return [
+    {
+      path: pathValue,
+      url: url || undefined,
+      mime: ctx.MediaType,
+      index: 0,
+      alreadyTranscribed: transcribedIndexes.has(0),
+    },
+  ];
+}
+
+function resolveMediaAttachmentKind(attachment) {
+  const mime = normalizeOptionalLowercaseString(attachment && attachment.mime);
+  if (mime) {
+    if (mime.startsWith("image/")) {
+      return "image";
+    }
+    if (mime.startsWith("audio/")) {
+      return "audio";
+    }
+    if (mime.startsWith("video/")) {
+      return "video";
+    }
+  }
+  const value = normalizeOptionalLowercaseString(
+    (attachment && (attachment.path || attachment.url)) || "",
+  );
+  const ext = path.extname(value);
+  if ([".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"].includes(ext)) {
+    return "video";
+  }
+  if ([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".webm"].includes(ext)) {
+    return "audio";
+  }
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".tif"].includes(ext)) {
+    return "image";
+  }
+  return "unknown";
+}
+
+function isMediaUnderstandingAttachmentRecord(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  if (typeof value.index !== "number") {
+    return false;
+  }
+  if (value.path !== undefined && typeof value.path !== "string") {
+    return false;
+  }
+  if (value.url !== undefined && typeof value.url !== "string") {
+    return false;
+  }
+  if (value.mime !== undefined && typeof value.mime !== "string") {
+    return false;
+  }
+  return value.alreadyTranscribed === undefined || typeof value.alreadyTranscribed === "boolean";
+}
+
+function orderMediaUnderstandingAttachments(attachments, prefer) {
+  const list = Array.isArray(attachments)
+    ? attachments.filter(isMediaUnderstandingAttachmentRecord)
+    : [];
+  if (!prefer || prefer === "first") {
+    return list;
+  }
+  if (prefer === "last") {
+    return [...list].reverse();
+  }
+  if (prefer === "path") {
+    return [...list.filter((item) => item.path), ...list.filter((item) => !item.path)];
+  }
+  if (prefer === "url") {
+    return [...list.filter((item) => item.url), ...list.filter((item) => !item.url)];
+  }
+  return list;
+}
+
+function selectMediaUnderstandingAttachments(params) {
+  const input = Array.isArray(params.attachments)
+    ? params.attachments.filter(isMediaUnderstandingAttachmentRecord)
+    : [];
+  const matches = input.filter((item) => {
+    if (params.capability === "audio" && item.alreadyTranscribed) {
+      return false;
+    }
+    return resolveMediaAttachmentKind(item) === params.capability;
+  });
+  if (matches.length === 0) {
+    return [];
+  }
+  const ordered = orderMediaUnderstandingAttachments(
+    matches,
+    params.policy && params.policy.prefer,
+  );
+  const mode = params.policy && params.policy.mode ? params.policy.mode : "first";
+  const maxAttachments =
+    params.policy && typeof params.policy.maxAttachments === "number"
+      ? params.policy.maxAttachments
+      : 1;
+  if (mode === "all") {
+    return ordered.slice(0, Math.max(1, maxAttachments));
+  }
+  return ordered.slice(0, 1);
+}
+
+function isMediaUnderstandingPathAllowed(filePath, roots) {
+  if (!roots || roots.length === 0) {
+    return true;
+  }
+  const resolved = path.resolve(filePath);
+  const normalized = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  return roots.some((root) => {
+    const resolvedRoot = path.resolve(root);
+    const normalizedRoot =
+      process.platform === "win32" ? resolvedRoot.toLowerCase() : resolvedRoot;
+    return normalized === normalizedRoot || normalized.startsWith(`${normalizedRoot}${path.sep}`);
+  });
+}
+
+class NativeMediaAttachmentCache {
+  constructor(attachments, options = {}) {
+    this.attachments = Array.isArray(attachments) ? attachments : [];
+    this.entries = new Map();
+    this.localPathRoots = Array.isArray(options.localPathRoots) ? options.localPathRoots : [];
+    this.workspaceDir = options.workspaceDir ? path.resolve(options.workspaceDir) : undefined;
+    for (const attachment of this.attachments) {
+      this.entries.set(attachment.index, { attachment });
+    }
+  }
+
+  async getBuffer(params) {
+    const entry = this.ensureEntry(params.attachmentIndex);
+    if (entry.buffer) {
+      if (entry.buffer.length > params.maxBytes) {
+        throw new MediaUnderstandingSkipError(
+          "maxBytes",
+          `Attachment ${params.attachmentIndex + 1} exceeds maxBytes ${params.maxBytes}`,
+        );
+      }
+      return {
+        buffer: entry.buffer,
+        mime: entry.bufferMime,
+        fileName: entry.bufferFileName || `media-${params.attachmentIndex + 1}`,
+        size: entry.buffer.length,
+      };
+    }
+    const resolvedPath = this.resolveLocalPath(entry.attachment);
+    if (!resolvedPath) {
+      throw new MediaUnderstandingSkipError(
+        "empty",
+        `Attachment ${params.attachmentIndex + 1} has no path or URL.`,
+      );
+    }
+    if (!isMediaUnderstandingPathAllowed(resolvedPath, this.localPathRoots)) {
+      throw new MediaUnderstandingSkipError(
+        "blocked",
+        `Attachment ${params.attachmentIndex + 1} path is outside allowed roots.`,
+      );
+    }
+    const stat = fs.statSync(resolvedPath);
+    if (!stat.isFile()) {
+      throw new MediaUnderstandingSkipError(
+        "empty",
+        `Attachment ${params.attachmentIndex + 1} path is not a regular file.`,
+      );
+    }
+    if (stat.size > params.maxBytes) {
+      throw new MediaUnderstandingSkipError(
+        "maxBytes",
+        `Attachment ${params.attachmentIndex + 1} exceeds maxBytes ${params.maxBytes}`,
+      );
+    }
+    const buffer = fs.readFileSync(resolvedPath);
+    entry.buffer = buffer;
+    entry.bufferMime = entry.attachment.mime;
+    entry.bufferFileName = path.basename(resolvedPath) || `media-${params.attachmentIndex + 1}`;
+    return {
+      buffer,
+      mime: entry.bufferMime,
+      fileName: entry.bufferFileName,
+      size: buffer.length,
+    };
+  }
+
+  async getPath(params) {
+    const entry = this.ensureEntry(params.attachmentIndex);
+    const resolvedPath = this.resolveLocalPath(entry.attachment);
+    if (resolvedPath) {
+      if (!isMediaUnderstandingPathAllowed(resolvedPath, this.localPathRoots)) {
+        throw new MediaUnderstandingSkipError(
+          "blocked",
+          `Attachment ${params.attachmentIndex + 1} path is outside allowed roots.`,
+        );
+      }
+      const stat = fs.statSync(resolvedPath);
+      if (params.maxBytes && stat.size > params.maxBytes) {
+        throw new MediaUnderstandingSkipError(
+          "maxBytes",
+          `Attachment ${params.attachmentIndex + 1} exceeds maxBytes ${params.maxBytes}`,
+        );
+      }
+      return { path: resolvedPath };
+    }
+    const media = await this.getBuffer(params);
+    const tmpPath = path.join(
+      os.tmpdir(),
+      `openclaw-media-${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`,
+    );
+    fs.writeFileSync(tmpPath, media.buffer);
+    return {
+      path: tmpPath,
+      cleanup: async () => {
+        fs.rmSync(tmpPath, { force: true });
+      },
+    };
+  }
+
+  async cleanup() {}
+
+  ensureEntry(attachmentIndex) {
+    const existing = this.entries.get(attachmentIndex);
+    if (existing) {
+      return existing;
+    }
+    const attachment =
+      this.attachments.find((item) => item.index === attachmentIndex) || { index: attachmentIndex };
+    const entry = { attachment };
+    this.entries.set(attachmentIndex, entry);
+    return entry;
+  }
+
+  resolveLocalPath(attachment) {
+    const rawPath = normalizeMediaAttachmentPath(attachment && attachment.path);
+    if (!rawPath) {
+      return undefined;
+    }
+    return this.workspaceDir ? path.resolve(this.workspaceDir, rawPath) : path.resolve(rawPath);
+  }
+}
+
+function createMediaAttachmentCache(attachments, options) {
+  return new NativeMediaAttachmentCache(attachments, options);
+}
+
+function resolveMediaUnderstandingTimeoutMs(seconds, fallbackSeconds) {
+  const value =
+    typeof seconds === "number" && Number.isFinite(seconds) ? seconds : fallbackSeconds;
+  return Math.max(1000, Math.floor(value * 1000));
+}
+
+function resolveMediaUnderstandingPrompt(capability, prompt, maxChars) {
+  const base = normalizeOptionalString(prompt) || MEDIA_UNDERSTANDING_DEFAULT_PROMPT[capability];
+  if (!maxChars || capability === "audio") {
+    return base;
+  }
+  return `${base} Respond in at most ${maxChars} characters.`;
+}
+
+function resolveMediaUnderstandingMaxChars(params) {
+  const configured =
+    params.entry.maxChars ??
+    (params.config && params.config.maxChars) ??
+    (((params.cfg.tools || {}).media || {})[params.capability] || {}).maxChars;
+  if (typeof configured === "number") {
+    return configured;
+  }
+  return MEDIA_UNDERSTANDING_DEFAULT_MAX_CHARS_BY_CAPABILITY[params.capability];
+}
+
+function resolveMediaUnderstandingMaxBytes(params) {
+  const configured =
+    params.entry.maxBytes ??
+    (params.config && params.config.maxBytes) ??
+    (((params.cfg.tools || {}).media || {})[params.capability] || {}).maxBytes;
+  if (typeof configured === "number") {
+    return configured;
+  }
+  return MEDIA_UNDERSTANDING_DEFAULT_MAX_BYTES[params.capability];
+}
+
+function resolveMediaUnderstandingModelEntries(params) {
+  const sharedModels = (((params.cfg.tools || {}).media || {}).models) || [];
+  const capabilityModels = (params.config && params.config.models) || [];
+  return [...capabilityModels, ...sharedModels].filter((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    const caps = Array.isArray(entry.capabilities) ? entry.capabilities : undefined;
+    if (caps && caps.length > 0) {
+      return caps.includes(params.capability);
+    }
+    const providerId = normalizeMediaProviderId(entry.provider);
+    if (providerId && params.providerRegistry) {
+      const provider = params.providerRegistry.get(providerId);
+      if (Array.isArray(provider && provider.capabilities) && provider.capabilities.length > 0) {
+        return provider.capabilities.includes(params.capability);
+      }
+    }
+    return true;
+  });
+}
+
+function resolveMediaEntryRunOptions(params) {
+  const maxBytes = resolveMediaUnderstandingMaxBytes(params);
+  const maxChars = resolveMediaUnderstandingMaxChars(params);
+  const timeoutMs = resolveMediaUnderstandingTimeoutMs(
+    params.entry.timeoutSeconds ??
+      (params.config && params.config.timeoutSeconds) ??
+      (((params.cfg.tools || {}).media || {})[params.capability] || {}).timeoutSeconds,
+    MEDIA_UNDERSTANDING_DEFAULT_TIMEOUT_SECONDS[params.capability],
+  );
+  const prompt = resolveMediaUnderstandingPrompt(
+    params.capability,
+    params.entry.prompt ??
+      (params.config && params.config.prompt) ??
+      (((params.cfg.tools || {}).media || {})[params.capability] || {}).prompt,
+    maxChars,
+  );
+  return { maxBytes, maxChars, timeoutMs, prompt };
+}
+
+function resolveMediaRequestOverrides(config) {
+  return {
+    prompt: config && config._requestPromptOverride,
+    language: config && config._requestLanguageOverride,
+  };
+}
+
+function trimMediaUnderstandingOutput(text, maxChars) {
+  const trimmed = String(text || "").trim();
+  if (!maxChars || trimmed.length <= maxChars) {
+    return trimmed;
+  }
+  return trimmed.slice(0, maxChars).trim();
+}
+
+function buildMediaUnderstandingModelDecision(params) {
+  if (params.entryType === "cli") {
+    const command = normalizeOptionalString(params.entry.command);
+    return {
+      type: "cli",
+      provider: command || "cli",
+      model: params.entry.model || command,
+      outcome: params.outcome,
+      reason: params.reason,
+    };
+  }
+  const providerIdRaw = normalizeOptionalString(params.entry.provider);
+  const providerId = providerIdRaw ? normalizeMediaProviderId(providerIdRaw) : undefined;
+  return {
+    type: "provider",
+    provider: providerId || providerIdRaw,
+    model: params.entry.model,
+    outcome: params.outcome,
+    reason: params.reason,
+  };
+}
+
+function findMediaUnderstandingDecisionReason(decision, outcome) {
+  const attachments = Array.isArray(decision && decision.attachments)
+    ? decision.attachments
+    : [];
+  for (const attachment of attachments) {
+    const attempts = Array.isArray(attachment && attachment.attempts) ? attachment.attempts : [];
+    for (const attempt of attempts) {
+      if (outcome && attempt.outcome !== outcome) {
+        continue;
+      }
+      const reason = normalizeOptionalString(attempt.reason);
+      if (reason) {
+        return reason;
+      }
+    }
+  }
+  return undefined;
+}
+
+function normalizeMediaUnderstandingDecisionReason(reason) {
+  const trimmed = normalizeOptionalString(reason);
+  if (!trimmed) {
+    return undefined;
+  }
+  const normalized = trimmed.replace(/^Error:\s*/i, "").trim();
+  return normalized || undefined;
+}
+
+function resolveLiteralMediaProviderApiKey(cfg, providerId) {
+  const providers = (cfg.models && cfg.models.providers) || {};
+  const exact = providers[providerId];
+  if (exact && typeof exact.apiKey === "string" && exact.apiKey.trim()) {
+    return exact.apiKey.trim();
+  }
+  for (const [key, value] of Object.entries(providers)) {
+    if (normalizeMediaProviderId(key) === providerId && value && typeof value.apiKey === "string") {
+      return value.apiKey.trim() || undefined;
+    }
+  }
+  return undefined;
+}
+
+function resolveMediaProviderConfig(cfg, providerId) {
+  const providers = (cfg.models && cfg.models.providers) || {};
+  if (providers[providerId] && typeof providers[providerId] === "object") {
+    return providers[providerId];
+  }
+  for (const [key, value] of Object.entries(providers)) {
+    if (normalizeMediaProviderId(key) === providerId && value && typeof value === "object") {
+      return value;
+    }
+  }
+  return {};
+}
+
+async function runMediaUnderstandingProviderEntry(params) {
+  const entry = params.entry;
+  const capability = params.capability;
+  const providerIdRaw = normalizeOptionalString(entry.provider);
+  if (!providerIdRaw) {
+    throw new Error(`Provider entry missing provider for ${capability}`);
+  }
+  const providerId = normalizeMediaProviderId(providerIdRaw);
+  const runOptions = resolveMediaEntryRunOptions(params);
+  const requestOverrides = resolveMediaRequestOverrides(params.config);
+
+  if (capability === "image") {
+    if (!params.agentDir) {
+      throw new Error("Image understanding requires agentDir");
+    }
+    const modelId = normalizeOptionalString(entry.model);
+    if (!modelId) {
+      throw new Error("Image understanding requires model id");
+    }
+    const media = await params.cache.getBuffer({
+      attachmentIndex: params.attachmentIndex,
+      maxBytes: runOptions.maxBytes,
+      timeoutMs: runOptions.timeoutMs,
+    });
+    const provider = getMediaUnderstandingProvider(providerId, params.providerRegistry);
+    if (!provider || typeof provider.describeImage !== "function") {
+      throw new Error(`Provider does not support image analysis: ${providerIdRaw}`);
+    }
+    const result = await provider.describeImage({
+      buffer: media.buffer,
+      fileName: media.fileName,
+      mime: media.mime,
+      model: modelId,
+      provider: providerId,
+      prompt: requestOverrides.prompt || runOptions.prompt,
+      timeoutMs: runOptions.timeoutMs,
+      profile: entry.profile,
+      preferredProfile: entry.preferredProfile,
+      agentDir: params.agentDir,
+      cfg: params.cfg,
+    });
+    return {
+      kind: "image.description",
+      attachmentIndex: params.attachmentIndex,
+      text: trimMediaUnderstandingOutput(result.text, runOptions.maxChars),
+      provider: providerId,
+      model: result.model || modelId,
+    };
+  }
+
+  const provider = getMediaUnderstandingProvider(providerId, params.providerRegistry);
+  if (!provider) {
+    throw new Error(`Media provider not available: ${providerId}`);
+  }
+  const media = await params.cache.getBuffer({
+    attachmentIndex: params.attachmentIndex,
+    maxBytes: runOptions.maxBytes,
+    timeoutMs: runOptions.timeoutMs,
+  });
+  const providerConfig = resolveMediaProviderConfig(params.cfg, providerId);
+  const apiKey = resolveLiteralMediaProviderApiKey(params.cfg, providerId) || "";
+
+  if (capability === "audio") {
+    if (media.size < MEDIA_UNDERSTANDING_MIN_AUDIO_FILE_BYTES) {
+      throw new MediaUnderstandingSkipError(
+        "tooSmall",
+        `Audio attachment ${params.attachmentIndex + 1} is too small ` +
+          `(${media.size} bytes, minimum ${MEDIA_UNDERSTANDING_MIN_AUDIO_FILE_BYTES})`,
+      );
+    }
+    if (typeof provider.transcribeAudio !== "function") {
+      throw new Error(`Audio transcription provider "${providerId}" not available.`);
+    }
+    const model =
+      normalizeOptionalString(entry.model) ||
+      normalizeOptionalString(provider.defaultModels && provider.defaultModels.audio);
+    const result = await provider.transcribeAudio({
+      buffer: media.buffer,
+      fileName: media.fileName,
+      mime: media.mime,
+      apiKey,
+      baseUrl: entry.baseUrl || (params.config && params.config.baseUrl) || providerConfig.baseUrl,
+      headers: {
+        ...(providerConfig.headers || {}),
+        ...((params.config && params.config.headers) || {}),
+        ...(entry.headers || {}),
+      },
+      request: entry.request || (params.config && params.config.request) || providerConfig.request,
+      model,
+      language:
+        requestOverrides.language ||
+        entry.language ||
+        (params.config && params.config.language) ||
+        (((params.cfg.tools || {}).media || {}).audio || {}).language,
+      prompt: requestOverrides.prompt || runOptions.prompt,
+      timeoutMs: runOptions.timeoutMs,
+      fetchFn: globalThis.fetch,
+    });
+    return {
+      kind: "audio.transcription",
+      attachmentIndex: params.attachmentIndex,
+      text: trimMediaUnderstandingOutput(result.text, runOptions.maxChars),
+      provider: providerId,
+      model: result.model || model,
+    };
+  }
+
+  if (typeof provider.describeVideo !== "function") {
+    throw new Error(`Video understanding provider "${providerId}" not available.`);
+  }
+  const result = await provider.describeVideo({
+    buffer: media.buffer,
+    fileName: media.fileName,
+    mime: media.mime,
+    apiKey,
+    baseUrl: entry.baseUrl || (params.config && params.config.baseUrl) || providerConfig.baseUrl,
+    headers: {
+      ...(providerConfig.headers || {}),
+      ...((params.config && params.config.headers) || {}),
+      ...(entry.headers || {}),
+    },
+    request: entry.request || (params.config && params.config.request) || providerConfig.request,
+    model: entry.model,
+    prompt: runOptions.prompt,
+    timeoutMs: runOptions.timeoutMs,
+    fetchFn: globalThis.fetch,
+  });
+  return {
+    kind: "video.description",
+    attachmentIndex: params.attachmentIndex,
+    text: trimMediaUnderstandingOutput(result.text, runOptions.maxChars),
+    provider: providerId,
+    model: result.model || entry.model,
+  };
+}
+
+async function runMediaUnderstandingAttachmentEntries(params) {
+  const attempts = [];
+  for (const entry of params.entries) {
+    const entryType = entry.type || (entry.command ? "cli" : "provider");
+    try {
+      if (entryType === "cli") {
+        throw new MediaUnderstandingSkipError("unsupported", "CLI media entry unavailable");
+      }
+      const result = await runMediaUnderstandingProviderEntry({
+        ...params,
+        entry,
+      });
+      if (result && result.text) {
+        const decision = buildMediaUnderstandingModelDecision({
+          entry,
+          entryType,
+          outcome: "success",
+        });
+        if (result.provider) {
+          decision.provider = result.provider;
+        }
+        if (result.model) {
+          decision.model = result.model;
+        }
+        attempts.push(decision);
+        return { output: result, attempts };
+      }
+      attempts.push(
+        buildMediaUnderstandingModelDecision({
+          entry,
+          entryType,
+          outcome: "skipped",
+          reason: "empty output",
+        }),
+      );
+    } catch (error) {
+      attempts.push(
+        buildMediaUnderstandingModelDecision({
+          entry,
+          entryType,
+          outcome: error instanceof MediaUnderstandingSkipError ? "skipped" : "failed",
+          reason:
+            error instanceof MediaUnderstandingSkipError
+              ? `${error.reason}: ${error.message}`
+              : String(error),
+        }),
+      );
+    }
+  }
+  return { output: null, attempts };
+}
+
+function hasFailedMediaUnderstandingAttempt(attachments) {
+  return attachments.some((attachment) =>
+    attachment.attempts.some((attempt) => attempt.outcome === "failed"),
+  );
+}
+
+async function runMediaUnderstandingCapability(params) {
+  const config = params.config || (((params.cfg.tools || {}).media || {})[params.capability]);
+  if (config && config.enabled === false) {
+    return {
+      outputs: [],
+      decision: { capability: params.capability, outcome: "disabled", attachments: [] },
+    };
+  }
+  const selected = selectMediaUnderstandingAttachments({
+    capability: params.capability,
+    attachments: params.media,
+    policy: config && config.attachments,
+  });
+  if (selected.length === 0) {
+    return {
+      outputs: [],
+      decision: { capability: params.capability, outcome: "no-attachment", attachments: [] },
+    };
+  }
+  const entries = resolveMediaUnderstandingModelEntries({
+    cfg: params.cfg,
+    capability: params.capability,
+    config,
+    providerRegistry: params.providerRegistry,
+  });
+  if (entries.length === 0) {
+    return {
+      outputs: [],
+      decision: {
+        capability: params.capability,
+        outcome: "skipped",
+        attachments: selected.map((item) => ({ attachmentIndex: item.index, attempts: [] })),
+      },
+    };
+  }
+  const outputs = [];
+  const attachmentDecisions = [];
+  for (const attachment of selected) {
+    const { output, attempts } = await runMediaUnderstandingAttachmentEntries({
+      capability: params.capability,
+      cfg: params.cfg,
+      attachmentIndex: attachment.index,
+      agentDir: params.agentDir,
+      providerRegistry: params.providerRegistry,
+      cache: params.attachments,
+      entries,
+      config,
+    });
+    if (output) {
+      outputs.push(output);
+    }
+    attachmentDecisions.push({
+      attachmentIndex: attachment.index,
+      attempts,
+      chosen: attempts.find((attempt) => attempt.outcome === "success"),
+    });
+  }
+  return {
+    outputs,
+    decision: {
+      capability: params.capability,
+      outcome:
+        outputs.length > 0
+          ? "success"
+          : hasFailedMediaUnderstandingAttempt(attachmentDecisions)
+            ? "failed"
+            : "skipped",
+      attachments: attachmentDecisions,
+    },
+  };
+}
+
+function buildMediaUnderstandingFileContext(params) {
+  return {
+    MediaPath: params.filePath,
+    MediaType: params.mime,
+  };
+}
+
+async function runMediaUnderstandingFile(params) {
+  const requestPrompt = normalizeOptionalString(params.prompt);
+  const requestTimeoutSeconds =
+    typeof params.timeoutMs === "number" &&
+    Number.isFinite(params.timeoutMs) &&
+    params.timeoutMs > 0
+      ? Math.ceil(params.timeoutMs / 1000)
+      : undefined;
+  const sourceCfg = params.cfg || {};
+  const sourceTools = sourceCfg.tools || {};
+  const sourceMedia = sourceTools.media || {};
+  const capabilityConfig = sourceMedia[params.capability] || {};
+  const cfg =
+    requestPrompt || requestTimeoutSeconds !== undefined
+      ? {
+          ...sourceCfg,
+          tools: {
+            ...sourceTools,
+            media: {
+              ...sourceMedia,
+              [params.capability]: {
+                ...capabilityConfig,
+                ...(requestPrompt
+                  ? {
+                      prompt: requestPrompt,
+                      _requestPromptOverride: requestPrompt,
+                    }
+                  : {}),
+                ...(requestTimeoutSeconds !== undefined
+                  ? { timeoutSeconds: requestTimeoutSeconds }
+                  : {}),
+              },
+            },
+          },
+        }
+      : sourceCfg;
+  const ctx = buildMediaUnderstandingFileContext(params);
+  const attachments = normalizeMediaUnderstandingAttachments(ctx);
+  if (attachments.length === 0) {
+    return {
+      text: undefined,
+      decision: { capability: params.capability, outcome: "no-attachment", attachments: [] },
+    };
+  }
+  const config = ((cfg.tools || {}).media || {})[params.capability];
+  if (config && config.enabled === false) {
+    return {
+      text: undefined,
+      provider: undefined,
+      model: undefined,
+      output: undefined,
+      decision: { capability: params.capability, outcome: "disabled", attachments: [] },
+    };
+  }
+  const providerRegistry = buildMediaUnderstandingRegistry(undefined, cfg);
+  const cache = createMediaAttachmentCache(attachments, {
+    localPathRoots: [path.dirname(params.filePath)],
+    ssrfPolicy: (((cfg.tools || {}).web || {}).fetch || {}).ssrfPolicy,
+  });
+  try {
+    const result = await runMediaUnderstandingCapability({
+      capability: params.capability,
+      cfg,
+      ctx,
+      attachments: cache,
+      media: attachments,
+      agentDir: params.agentDir,
+      providerRegistry,
+      config,
+      activeModel: params.activeModel,
+    });
+    if (result.outputs.length === 0 && result.decision.outcome === "failed") {
+      throw new Error(
+        normalizeMediaUnderstandingDecisionReason(
+          findMediaUnderstandingDecisionReason(result.decision, "failed"),
+        ) || `${params.capability} understanding failed`,
+      );
+    }
+    const output = result.outputs.find(
+      (entry) => entry.kind === MEDIA_UNDERSTANDING_KIND_BY_CAPABILITY[params.capability],
+    );
+    const text = normalizeOptionalString(output && output.text);
+    const fileResult = {
+      text: text || undefined,
+      provider: output && output.provider,
+      model: output && output.model,
+      output,
+    };
+    if (result.decision) {
+      fileResult.decision = result.decision;
+    }
+    return fileResult;
+  } finally {
+    await cache.cleanup();
+  }
+}
+
+async function describeImageFile(params) {
+  return await runMediaUnderstandingFile({ ...params, capability: "image" });
+}
+
+async function describeImageFileWithModel(params) {
+  const timeoutMs = params.timeoutMs ?? 30000;
+  const providerRegistry = buildMediaUnderstandingRegistry(undefined, params.cfg);
+  const provider = providerRegistry.get(normalizeMediaProviderId(params.provider));
+  if (!provider || typeof provider.describeImage !== "function") {
+    throw new Error(`Provider does not support image analysis: ${params.provider}`);
+  }
+  const buffer = fs.readFileSync(params.filePath);
+  return await provider.describeImage({
+    buffer,
+    fileName: path.basename(params.filePath),
+    mime: params.mime,
+    provider: params.provider,
+    model: params.model,
+    prompt: params.prompt,
+    maxTokens: params.maxTokens,
+    timeoutMs,
+    cfg: params.cfg,
+    agentDir: params.agentDir || "",
+  });
+}
+
+async function describeVideoFile(params) {
+  return await runMediaUnderstandingFile({ ...params, capability: "video" });
+}
+
+async function transcribeAudioFile(params) {
+  const sourceCfg = params.cfg || {};
+  const sourceTools = sourceCfg.tools || {};
+  const sourceMedia = sourceTools.media || {};
+  const audioConfig = sourceMedia.audio || {};
+  const cfg =
+    params.language || params.prompt
+      ? {
+          ...sourceCfg,
+          tools: {
+            ...sourceTools,
+            media: {
+              ...sourceMedia,
+              audio: {
+                ...audioConfig,
+                ...(params.language ? { _requestLanguageOverride: params.language } : {}),
+                ...(params.prompt ? { _requestPromptOverride: params.prompt } : {}),
+                ...(params.language ? { language: params.language } : {}),
+                ...(params.prompt ? { prompt: params.prompt } : {}),
+              },
+            },
+          },
+        }
+      : sourceCfg;
+  return await runMediaUnderstandingFile({ ...params, cfg, capability: "audio" });
+}
+
+const mediaUnderstandingRuntime = {
+  describeImageFile,
+  describeImageFileWithModel,
+  describeVideoFile,
+  runMediaUnderstandingFile,
+  transcribeAudioFile,
+};
+
+function resolveMediaUnderstandingString(value, fallback) {
+  const trimmed = normalizeOptionalString(value);
+  return trimmed || fallback;
+}
+
+function coerceOpenAiCompatibleVideoText(payload) {
+  const choices = payload && Array.isArray(payload.choices) ? payload.choices : [];
+  const message = choices[0] && choices[0].message;
+  if (!message) {
+    return null;
+  }
+  if (typeof message.content === "string" && message.content.trim()) {
+    return message.content.trim();
+  }
+  if (Array.isArray(message.content)) {
+    const text = message.content
+      .map((part) => (typeof part.text === "string" ? part.text.trim() : ""))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    if (text) {
+      return text;
+    }
+  }
+  if (typeof message.reasoning_content === "string" && message.reasoning_content.trim()) {
+    return message.reasoning_content.trim();
+  }
+  return null;
+}
+
+function buildOpenAiCompatibleVideoRequestBody(params) {
+  return {
+    model: params.model,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: params.prompt },
+          {
+            type: "video_url",
+            video_url: {
+              url: `data:${params.mime};base64,${Buffer.from(params.buffer).toString("base64")}`,
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function resolveAudioTranscriptionUploadFileName(fileName, mime) {
+  const trimmed = normalizeOptionalString(fileName);
+  const baseName = trimmed ? path.basename(trimmed) : "audio";
+  const lowerMime = normalizeOptionalLowercaseString(mime);
+  if (/\.aac$/i.test(baseName)) {
+    return `${baseName.slice(0, -4) || "audio"}.m4a`;
+  }
+  if (!path.extname(baseName) && lowerMime === "audio/aac") {
+    return `${baseName || "audio"}.m4a`;
+  }
+  return baseName;
+}
+
+function buildAudioTranscriptionFormData(params) {
+  const form = new FormData();
+  const bytes = new Uint8Array(Buffer.from(params.buffer));
+  const blob = new Blob([bytes], {
+    type: params.mime || "application/octet-stream",
+  });
+  form.append("file", blob, resolveAudioTranscriptionUploadFileName(params.fileName, params.mime));
+  for (const [name, value] of Object.entries(params.fields || {})) {
+    const text = typeof value === "string" ? value.trim() : value == null ? "" : String(value);
+    if (text) {
+      form.append(name, text);
+    }
+  }
+  return form;
+}
+
+function normalizeMediaUnderstandingBaseUrl(value, fallback) {
+  const raw = normalizeOptionalString(value) || normalizeOptionalString(fallback);
+  if (!raw) {
+    throw new Error("Missing baseUrl: provide baseUrl or defaultBaseUrl");
+  }
+  return raw.replace(/\/+$/, "");
+}
+
+function resolveMediaProviderHttpRequestConfig(params) {
+  const baseUrl = normalizeMediaUnderstandingBaseUrl(params.baseUrl, params.defaultBaseUrl);
+  const headers = new Headers(params.defaultHeaders || {});
+  if (params.headers) {
+    for (const [key, value] of Object.entries(params.headers)) {
+      if (typeof value === "string") {
+        headers.set(key, value);
+      }
+    }
+  }
+  return {
+    baseUrl,
+    allowPrivateNetwork: Boolean(params.allowPrivateNetwork),
+    headers,
+  };
+}
+
+async function readMediaUnderstandingErrorResponse(res) {
+  try {
+    if (typeof res.text !== "function") {
+      return undefined;
+    }
+    const text = normalizeOptionalString(await res.text());
+    if (!text) {
+      return undefined;
+    }
+    return text.slice(0, 300);
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+async function assertOkOrThrowHttpError(res, message) {
+  if (res && res.ok) {
+    return;
+  }
+  const status = res && res.status ? ` HTTP ${res.status}` : "";
+  const detail = await readMediaUnderstandingErrorResponse(res);
+  throw new Error(`${message}${status}${detail ? `: ${detail}` : ""}`);
+}
+
+function requireTranscriptionText(value, missingMessage) {
+  const text = normalizeOptionalString(value);
+  if (!text) {
+    throw new Error(missingMessage);
+  }
+  return text;
+}
+
+function resolveOpenAiCompatibleAudioModel(model, fallback) {
+  return normalizeOptionalString(model) || fallback;
+}
+
+async function postTranscriptionRequest(params) {
+  const response = await params.fetchFn(params.url, {
+    method: "POST",
+    headers: params.headers,
+    body: params.body,
+  });
+  return {
+    response,
+    release: async () => {},
+  };
+}
+
+async function transcribeOpenAiCompatibleAudio(params) {
+  const fetchFn = params.fetchFn || fetch;
+  const { baseUrl, headers } = resolveMediaProviderHttpRequestConfig({
+    baseUrl: params.baseUrl,
+    defaultBaseUrl: params.defaultBaseUrl,
+    headers: params.headers,
+    request: params.request,
+    defaultHeaders: {
+      authorization: `Bearer ${params.apiKey}`,
+    },
+    provider: params.provider,
+    api: "openai-audio-transcriptions",
+    capability: "audio",
+    transport: "media-understanding",
+  });
+  const url = `${baseUrl}/audio/transcriptions`;
+  const model = resolveOpenAiCompatibleAudioModel(params.model, params.defaultModel);
+  const form = buildAudioTranscriptionFormData({
+    buffer: params.buffer,
+    fileName: params.fileName,
+    mime: params.mime,
+    fields: {
+      model,
+      language: params.language,
+      prompt: params.prompt,
+    },
+  });
+  const { response: res, release } = await postTranscriptionRequest({
+    url,
+    headers,
+    body: form,
+    timeoutMs: params.timeoutMs,
+    fetchFn,
+    pinDns: false,
+    allowPrivateNetwork: false,
+  });
+  try {
+    await assertOkOrThrowHttpError(res, "Audio transcription failed");
+    const payload = await res.json();
+    const text = requireTranscriptionText(
+      payload && payload.text,
+      "Audio transcription response missing text",
+    );
+    return { text, model };
+  } finally {
+    await release();
+  }
+}
+
+function resolveNativeImageUnderstandingRuntimeMethod(name) {
+  const runtime = globalThis.__openzuesMediaUnderstandingImageRuntime;
+  if (runtime && typeof runtime[name] === "function") {
+    return runtime[name].bind(runtime);
+  }
+  throw new Error(`${name} requires an image understanding runtime.`);
+}
+
+async function describeImagesWithModel(params) {
+  return await resolveNativeImageUnderstandingRuntimeMethod("describeImagesWithModel")(params);
+}
+
+async function describeImagesWithModelPayloadTransform(params, onPayload) {
+  const runtime = globalThis.__openzuesMediaUnderstandingImageRuntime;
+  if (runtime && typeof runtime.describeImagesWithModelPayloadTransform === "function") {
+    return await runtime.describeImagesWithModelPayloadTransform(params, onPayload);
+  }
+  return await resolveNativeImageUnderstandingRuntimeMethod("describeImagesWithModel")(params);
+}
+
+async function describeImageWithModel(params) {
+  const runtime = globalThis.__openzuesMediaUnderstandingImageRuntime;
+  if (runtime && typeof runtime.describeImageWithModel === "function") {
+    return await runtime.describeImageWithModel(params);
+  }
+  return await describeImagesWithModel({
+    images: [
+      {
+        buffer: params.buffer,
+        fileName: params.fileName,
+        mime: params.mime,
+      },
+    ],
+    model: params.model,
+    provider: params.provider,
+    prompt: params.prompt,
+    maxTokens: params.maxTokens,
+    timeoutMs: params.timeoutMs,
+    profile: params.profile,
+    preferredProfile: params.preferredProfile,
+    authStore: params.authStore,
+    agentDir: params.agentDir,
+    cfg: params.cfg,
+  });
+}
+
+async function describeImageWithModelPayloadTransform(params, onPayload) {
+  const runtime = globalThis.__openzuesMediaUnderstandingImageRuntime;
+  if (runtime && typeof runtime.describeImageWithModelPayloadTransform === "function") {
+    return await runtime.describeImageWithModelPayloadTransform(params, onPayload);
+  }
+  return await describeImagesWithModelPayloadTransform(
+    {
+      images: [
+        {
+          buffer: params.buffer,
+          fileName: params.fileName,
+          mime: params.mime,
+        },
+      ],
+      model: params.model,
+      provider: params.provider,
+      prompt: params.prompt,
+      maxTokens: params.maxTokens,
+      timeoutMs: params.timeoutMs,
+      profile: params.profile,
+      preferredProfile: params.preferredProfile,
+      authStore: params.authStore,
+      agentDir: params.agentDir,
+      cfg: params.cfg,
+    },
+    onPayload,
+  );
+}
+
+const mediaUnderstandingProviderRuntime = {
+  buildOpenAiCompatibleVideoRequestBody,
+  coerceOpenAiCompatibleVideoText,
+  describeImageWithModel,
+  describeImageWithModelPayloadTransform,
+  describeImagesWithModel,
+  describeImagesWithModelPayloadTransform,
+  resolveMediaUnderstandingString,
+  transcribeOpenAiCompatibleAudio,
+};
+
+const videoGenerationCoreRuntime = {
+  buildNoCapabilityModelConfiguredMessage,
+  createSubsystemLogger,
+  describeFailoverError,
+  getProviderEnvVars,
+  getVideoGenerationProvider,
+  isFailoverError,
+  listVideoGenerationProviders,
+  parseVideoGenerationModelRef,
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+  resolveCapabilityModelCandidates,
+  throwCapabilityGenerationFailure,
+};
+
+function parseImageGenerationModelRef(raw) {
+  return parseGenerationModelRef(raw);
+}
+
+function parseGeminiAuth(apiKey) {
+  const key = String(apiKey || "");
+  if (key.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(key);
+      if (parsed && typeof parsed.token === "string" && parsed.token) {
+        return {
+          headers: {
+            Authorization: `Bearer ${parsed.token}`,
+            "Content-Type": "application/json",
+          },
+        };
+      }
+    } catch (_error) {
+      // Fall through to API key auth, matching OpenClaw's permissive parser.
+    }
+  }
+  return {
+    headers: {
+      "x-goog-api-key": key,
+      "Content-Type": "application/json",
+    },
+  };
+}
+
+const UNSAFE_IMAGE_GENERATION_PROVIDER_IDS = new Set(["__proto__", "constructor", "prototype"]);
+
+function normalizeImageGenerationProviderId(id) {
+  const normalized = normalizeOptionalLowercaseString(id || "");
+  if (!normalized || UNSAFE_IMAGE_GENERATION_PROVIDER_IDS.has(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function listImageGenerationProviders(cfg) {
+  if (cfg && cfg.plugins && cfg.plugins.enabled === false) {
+    return [];
+  }
+  return [];
+}
+
+function getImageGenerationProvider(providerId, cfg) {
+  const normalized = normalizeImageGenerationProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const providers = listImageGenerationProviders(cfg);
+  return providers.find((provider) => {
+    const id = normalizeImageGenerationProviderId(provider && provider.id);
+    if (id === normalized) {
+      return true;
+    }
+    return Array.isArray(provider && provider.aliases)
+      ? provider.aliases.some((alias) => normalizeImageGenerationProviderId(alias) === normalized)
+      : false;
+  });
+}
+
+function finalizeImageNormalization(normalization) {
+  return hasMediaNormalizationEntry(normalization.size) ||
+    hasMediaNormalizationEntry(normalization.aspectRatio) ||
+    hasMediaNormalizationEntry(normalization.resolution)
+    ? normalization
+    : undefined;
+}
+
+function resolveImageGenerationOverrides(params = {}) {
+  const provider = params.provider || {};
+  const capabilities = provider.capabilities || {};
+  const hasInputImages = Array.isArray(params.inputImages) && params.inputImages.length > 0;
+  const modeCaps = hasInputImages
+    ? capabilities.edit || {}
+    : capabilities.generate || {};
+  const geometry = capabilities.geometry || {};
+  const ignoredOverrides = [];
+  const normalization = {};
+  let size = params.size;
+  let aspectRatio = params.aspectRatio;
+  let resolution = params.resolution;
+  let quality = params.quality;
+  let outputFormat = params.outputFormat;
+  let background = params.background;
+
+  if (size && Array.isArray(geometry.sizes) && geometry.sizes.length > 0 && modeCaps.supportsSize) {
+    const normalizedSize = resolveClosestSize({
+      requestedSize: size,
+      supportedSizes: geometry.sizes,
+    });
+    if (normalizedSize && normalizedSize !== size) {
+      normalization.size = { requested: size, applied: normalizedSize };
+    }
+    size = normalizedSize;
+  }
+
+  if (!modeCaps.supportsSize && size) {
+    let translated = false;
+    if (modeCaps.supportsAspectRatio) {
+      const normalizedAspectRatio = resolveClosestAspectRatio({
+        requestedAspectRatio: aspectRatio,
+        requestedSize: size,
+        supportedAspectRatios: geometry.aspectRatios,
+      });
+      if (normalizedAspectRatio) {
+        aspectRatio = normalizedAspectRatio;
+        normalization.aspectRatio = {
+          applied: normalizedAspectRatio,
+          derivedFrom: "size",
+        };
+        translated = true;
+      }
+    }
+    if (!translated) {
+      ignoredOverrides.push({ key: "size", value: size });
+    }
+    size = undefined;
+  }
+
+  if (
+    aspectRatio &&
+    Array.isArray(geometry.aspectRatios) &&
+    geometry.aspectRatios.length > 0 &&
+    modeCaps.supportsAspectRatio
+  ) {
+    const normalizedAspectRatio = resolveClosestAspectRatio({
+      requestedAspectRatio: aspectRatio,
+      requestedSize: size,
+      supportedAspectRatios: geometry.aspectRatios,
+    });
+    if (normalizedAspectRatio && normalizedAspectRatio !== aspectRatio) {
+      normalization.aspectRatio = {
+        requested: aspectRatio,
+        applied: normalizedAspectRatio,
+      };
+    }
+    aspectRatio = normalizedAspectRatio;
+  } else if (!modeCaps.supportsAspectRatio && aspectRatio) {
+    const derivedSize =
+      modeCaps.supportsSize && !size
+        ? resolveClosestSize({
+            requestedSize: params.size,
+            requestedAspectRatio: aspectRatio,
+            supportedSizes: geometry.sizes,
+          })
+        : undefined;
+    if (derivedSize) {
+      size = derivedSize;
+      normalization.size = { applied: derivedSize, derivedFrom: "aspectRatio" };
+    } else {
+      ignoredOverrides.push({ key: "aspectRatio", value: aspectRatio });
+    }
+    aspectRatio = undefined;
+  }
+
+  if (
+    resolution &&
+    Array.isArray(geometry.resolutions) &&
+    geometry.resolutions.length > 0 &&
+    modeCaps.supportsResolution
+  ) {
+    const normalizedResolution = resolveClosestResolution({
+      requestedResolution: resolution,
+      supportedResolutions: geometry.resolutions,
+    });
+    if (normalizedResolution && normalizedResolution !== resolution) {
+      normalization.resolution = {
+        requested: resolution,
+        applied: normalizedResolution,
+      };
+    }
+    resolution = normalizedResolution;
+  } else if (!modeCaps.supportsResolution && resolution) {
+    ignoredOverrides.push({ key: "resolution", value: resolution });
+    resolution = undefined;
+  }
+
+  const output = capabilities.output || {};
+  if (quality && !(Array.isArray(output.qualities) ? output.qualities : []).includes(quality)) {
+    ignoredOverrides.push({ key: "quality", value: quality });
+    quality = undefined;
+  }
+  if (
+    outputFormat &&
+    !(Array.isArray(output.formats) ? output.formats : []).includes(outputFormat)
+  ) {
+    ignoredOverrides.push({ key: "outputFormat", value: outputFormat });
+    outputFormat = undefined;
+  }
+  if (
+    background &&
+    !(Array.isArray(output.backgrounds) ? output.backgrounds : []).includes(background)
+  ) {
+    ignoredOverrides.push({ key: "background", value: background });
+    background = undefined;
+  }
+
+  if (
+    !normalization.aspectRatio &&
+    aspectRatio &&
+    ((!params.aspectRatio && params.size) || params.aspectRatio !== aspectRatio)
+  ) {
+    normalization.aspectRatio = {
+      applied: aspectRatio,
+      ...(params.aspectRatio ? { requested: params.aspectRatio } : {}),
+      ...(!params.aspectRatio && params.size ? { derivedFrom: "size" } : {}),
+    };
+  }
+  if (!normalization.size && size && params.size && params.size !== size) {
+    normalization.size = { requested: params.size, applied: size };
+  }
+  if (!normalization.resolution && resolution && params.resolution !== resolution) {
+    normalization.resolution = { requested: params.resolution, applied: resolution };
+  }
+
+  return {
+    size,
+    aspectRatio,
+    resolution,
+    quality,
+    outputFormat,
+    background,
+    ignoredOverrides,
+    normalization: finalizeImageNormalization(normalization),
+  };
+}
+
+function buildNoImageGenerationModelConfiguredMessage(cfg, deps = {}) {
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listImageGenerationProviders;
+  return buildNoCapabilityModelConfiguredMessage({
+    capabilityLabel: "image-generation",
+    modelConfigKey: "imageGenerationModel",
+    providers: listProviders(cfg),
+    getProviderEnvVars: deps.getProviderEnvVars,
+  });
+}
+
+function listRuntimeImageGenerationProviders(params = {}, deps = {}) {
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listImageGenerationProviders;
+  return listProviders(params.config);
+}
+
+async function generateImage(params = {}, deps = {}) {
+  const cfg = params.cfg || {};
+  const getProvider =
+    typeof deps.getProvider === "function" ? deps.getProvider : getImageGenerationProvider;
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listImageGenerationProviders;
+  const logger = deps.log || createSubsystemLogger("image-generation");
+  const timeoutMs =
+    params.timeoutMs ??
+    resolveAgentModelTimeoutMsValue(
+      cfg.agents && cfg.agents.defaults && cfg.agents.defaults.imageGenerationModel,
+    );
+  const candidates = resolveCapabilityModelCandidates({
+    cfg,
+    modelConfig: cfg.agents && cfg.agents.defaults && cfg.agents.defaults.imageGenerationModel,
+    modelOverride: params.modelOverride,
+    parseModelRef: parseImageGenerationModelRef,
+    agentDir: params.agentDir,
+    listProviders,
+  });
+  if (candidates.length === 0) {
+    throw new Error(buildNoImageGenerationModelConfiguredMessage(cfg, deps));
+  }
+
+  const attempts = [];
+  let lastError;
+  for (const candidate of candidates) {
+    const provider = getProvider(candidate.provider, cfg);
+    if (!provider) {
+      const error = `No image-generation provider registered for ${candidate.provider}`;
+      attempts.push({ provider: candidate.provider, model: candidate.model, error });
+      lastError = new Error(error);
+      if (logger && typeof logger.warn === "function") {
+        logger.warn(
+          `image-generation candidate failed: ${candidate.provider}/${candidate.model}: ${error}`,
+        );
+      }
+      continue;
+    }
+    try {
+      const sanitized = resolveImageGenerationOverrides({
+        provider,
+        size: params.size,
+        aspectRatio: params.aspectRatio,
+        resolution: params.resolution,
+        quality: params.quality,
+        outputFormat: params.outputFormat,
+        background: params.background,
+        inputImages: params.inputImages,
+      });
+      const request = {
+        provider: candidate.provider,
+        model: candidate.model,
+        prompt: params.prompt,
+        cfg,
+        agentDir: params.agentDir,
+        authStore: params.authStore,
+        count: params.count,
+        size: sanitized.size,
+        aspectRatio: sanitized.aspectRatio,
+        resolution: sanitized.resolution,
+        quality: sanitized.quality,
+        outputFormat: sanitized.outputFormat,
+        background: sanitized.background,
+        inputImages: params.inputImages,
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        providerOptions: params.providerOptions,
+      };
+      const result = await provider.generateImage(request);
+      if (!result || !Array.isArray(result.images) || result.images.length === 0) {
+        throw new Error("Image generation provider returned no images.");
+      }
+      return {
+        images: result.images,
+        provider: candidate.provider,
+        model: result.model || candidate.model,
+        attempts,
+        normalization: sanitized.normalization,
+        metadata: {
+          ...(result.metadata || {}),
+          ...buildMediaGenerationNormalizationMetadata({
+            normalization: sanitized.normalization,
+            requestedSizeForDerivedAspectRatio: params.size,
+          }),
+        },
+        ignoredOverrides: sanitized.ignoredOverrides,
+      };
+    } catch (err) {
+      lastError = err;
+      recordCapabilityCandidateFailure({
+        attempts,
+        provider: candidate.provider,
+        model: candidate.model,
+        error: err,
+      });
+      if (logger && typeof logger.warn === "function") {
+        const message = isFailoverError(err)
+          ? describeFailoverError(err).message
+          : formatErrorMessage(err);
+        logger.warn(
+          `image-generation candidate failed: ${candidate.provider}/${candidate.model}: ${message}`,
+        );
+      }
+    }
+  }
+  return throwCapabilityGenerationFailure({
+    capabilityLabel: "image generation",
+    attempts,
+    lastError,
+  });
+}
+
+const imageGenerationRuntime = {
+  generateImage,
+  listRuntimeImageGenerationProviders,
+};
+
+const OPENAI_DEFAULT_IMAGE_MODEL = "gpt-image-2";
+
+const imageGenerationCoreRuntime = {
+  OPENAI_DEFAULT_IMAGE_MODEL,
+  buildNoCapabilityModelConfiguredMessage,
+  createSubsystemLogger,
+  describeFailoverError,
+  getImageGenerationProvider,
+  getProviderEnvVars,
+  isFailoverError,
+  listImageGenerationProviders,
+  normalizeGoogleModelId: normalizeGooglePreviewModelId,
+  parseGeminiAuth,
+  parseImageGenerationModelRef,
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+  resolveApiKeyForProvider,
+  resolveCapabilityModelCandidates,
+  throwCapabilityGenerationFailure,
+};
+
+function parseMusicGenerationModelRef(raw) {
+  return parseGenerationModelRef(raw);
+}
+
+const UNSAFE_MUSIC_GENERATION_PROVIDER_IDS = new Set(["__proto__", "constructor", "prototype"]);
+
+function normalizeMusicGenerationProviderId(id) {
+  const normalized = normalizeOptionalLowercaseString(id || "");
+  if (!normalized || UNSAFE_MUSIC_GENERATION_PROVIDER_IDS.has(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function listMusicGenerationProviders(cfg) {
+  if (cfg && cfg.plugins && cfg.plugins.enabled === false) {
+    return [];
+  }
+  return [];
+}
+
+function getMusicGenerationProvider(providerId, cfg) {
+  const normalized = normalizeMusicGenerationProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const providers = listMusicGenerationProviders(cfg);
+  return providers.find((provider) => {
+    const id = normalizeMusicGenerationProviderId(provider && provider.id);
+    if (id === normalized) {
+      return true;
+    }
+    return Array.isArray(provider && provider.aliases)
+      ? provider.aliases.some((alias) => normalizeMusicGenerationProviderId(alias) === normalized)
+      : false;
+  });
+}
+
+const musicGenerationCoreRuntime = {
+  createSubsystemLogger,
+  describeFailoverError,
+  getMusicGenerationProvider,
+  getProviderEnvVars,
+  isFailoverError,
+  listMusicGenerationProviders,
+  parseMusicGenerationModelRef,
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+};
+
 const providerAuthApiKeyRuntime = {
   applyAuthProfileConfig,
   buildApiKeyCredential,
@@ -42961,6 +52961,10 @@ const bundledChannelConfigSchemaRuntime = {
   WhatsAppConfigSchema: providerChannelConfigSchema,
 };
 
+const googleChatRuntimeShared = {
+  GoogleChatConfigSchema: providerChannelConfigSchema,
+};
+
 function normalizeChannelDmPolicy(value) {
   return value === "pairing" || value === "allowlist" || value === "open" || value === "disabled"
     ? value
@@ -45408,6 +55412,18 @@ const channelTargetsRuntime = {
   resolveTargetsWithOptionalToken,
 };
 
+const messagingTargetsRuntime = {
+  buildMessagingTarget,
+  ensureTargetId,
+  normalizeTargetId,
+  parseAtUserTarget,
+  parseMentionPrefixOrAtUserTarget,
+  parseTargetMention,
+  parseTargetPrefix,
+  parseTargetPrefixes,
+  requireTargetKind,
+};
+
 const channelStreamingRuntime = {
   getChannelStreamingConfigObject,
   resolveChannelPreviewStreamMode,
@@ -45814,6 +55830,36 @@ const dedupeRuntime = {
   resolveGlobalDedupeCache,
 };
 
+const persistentDedupeRuntime = {
+  createClaimableDedupe,
+  createPersistentDedupe,
+};
+
+const modelsProviderRuntime = {
+  buildModelsProviderData,
+  formatModelsAvailableHeader,
+  resolveModelsCommandReply,
+};
+
+const skillCommandsRuntime = {
+  listSkillCommandsForAgents,
+  listSkillCommandsForWorkspace,
+};
+
+const skillsRuntime = {
+  bumpSkillsSnapshotVersion,
+  getSkillsSnapshotVersion,
+  registerSkillsChangeListener,
+  shouldRefreshSnapshotForVersion,
+};
+
+const qaRunnerRuntime = {
+  isQaRuntimeAvailable,
+  listQaRunnerCliContributions,
+  loadQaRunnerBundledPluginTestApi,
+  loadQaRuntimeModule,
+};
+
 const replyDedupeRuntime = {
   resetInboundDedupe,
 };
@@ -45937,6 +55983,14 @@ const groupAccessRuntime = {
   evaluateSenderGroupAccessForPolicy,
   resolveOpenProviderRuntimeGroupPolicy,
   resolveSenderScopedGroupPolicy,
+};
+
+const runtimeGroupPolicyRuntime = {
+  GROUP_POLICY_BLOCKED_LABEL,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveDefaultGroupPolicy,
+  resolveOpenProviderRuntimeGroupPolicy,
+  warnMissingProviderGroupPolicyFallbackOnce,
 };
 
 const groupActivationRuntime = {
@@ -46844,6 +56898,1292 @@ const runCommandRuntime = {
   runPluginCommandWithTimeout,
 };
 
+const SANDBOX_BLOCKED_ENV_VAR_PATTERNS = [
+  /^ANTHROPIC_API_KEY$/i,
+  /^OPENAI_API_KEY$/i,
+  /^GEMINI_API_KEY$/i,
+  /^OPENROUTER_API_KEY$/i,
+  /^MINIMAX_API_KEY$/i,
+  /^ELEVENLABS_API_KEY$/i,
+  /^SYNTHETIC_API_KEY$/i,
+  /^TELEGRAM_BOT_TOKEN$/i,
+  /^DISCORD_BOT_TOKEN$/i,
+  /^SLACK_(BOT|APP)_TOKEN$/i,
+  /^LINE_CHANNEL_SECRET$/i,
+  /^LINE_CHANNEL_ACCESS_TOKEN$/i,
+  /^OPENCLAW_GATEWAY_(TOKEN|PASSWORD)$/i,
+  /^AWS_(SECRET_ACCESS_KEY|SECRET_KEY|SESSION_TOKEN)$/i,
+  /^(GH|GITHUB)_TOKEN$/i,
+  /^(AZURE|AZURE_OPENAI|COHERE|AI_GATEWAY|OPENROUTER)_API_KEY$/i,
+  /_?(API_KEY|TOKEN|PASSWORD|PRIVATE_KEY|SECRET)$/i,
+];
+const SANDBOX_ALLOWED_ENV_VAR_PATTERNS = [
+  /^LANG$/,
+  /^LC_.*$/i,
+  /^PATH$/i,
+  /^HOME$/i,
+  /^USER$/i,
+  /^SHELL$/i,
+  /^TERM$/i,
+  /^TZ$/i,
+  /^NODE_ENV$/i,
+];
+const sandboxBackendFactories = new Map();
+
+function sandboxMatchesAnyPattern(value, patterns) {
+  return patterns.some((pattern) => pattern.test(value));
+}
+
+function validateSandboxEnvVarValue(value) {
+  if (String(value).includes("\0")) {
+    return "Contains null bytes";
+  }
+  if (String(value).length > 32768) {
+    return "Value exceeds maximum length";
+  }
+  if (/^[A-Za-z0-9+/=]{80,}$/.test(String(value))) {
+    return "Value looks like base64-encoded credential data";
+  }
+  return undefined;
+}
+
+function sanitizeEnvVars(envVars = {}, options = {}) {
+  const allowed = {};
+  const blocked = [];
+  const warnings = [];
+  const blockedPatterns = [
+    ...SANDBOX_BLOCKED_ENV_VAR_PATTERNS,
+    ...((options && options.customBlockedPatterns) || []),
+  ];
+  const allowedPatterns = [
+    ...SANDBOX_ALLOWED_ENV_VAR_PATTERNS,
+    ...((options && options.customAllowedPatterns) || []),
+  ];
+  for (const [rawKey, value] of Object.entries(envVars || {})) {
+    const key = String(rawKey || "").trim();
+    if (!key || value === undefined) {
+      continue;
+    }
+    if (sandboxMatchesAnyPattern(key, blockedPatterns)) {
+      blocked.push(key);
+      continue;
+    }
+    if (options && options.strictMode && !sandboxMatchesAnyPattern(key, allowedPatterns)) {
+      blocked.push(key);
+      continue;
+    }
+    const warning = validateSandboxEnvVarValue(String(value));
+    if (warning) {
+      if (warning === "Contains null bytes") {
+        blocked.push(key);
+        continue;
+      }
+      warnings.push(`${key}: ${warning}`);
+    }
+    allowed[key] = String(value);
+  }
+  return { allowed, blocked, warnings };
+}
+
+function normalizeSandboxBackendId(id) {
+  const normalized = normalizeOptionalString(id)?.toLowerCase();
+  if (!normalized) {
+    throw new Error("Sandbox backend id must not be empty.");
+  }
+  return normalized;
+}
+
+function registerSandboxBackend(id, registration) {
+  const normalizedId = normalizeSandboxBackendId(id);
+  const resolved =
+    typeof registration === "function" ? { factory: registration } : { ...(registration || {}) };
+  const previous = sandboxBackendFactories.get(normalizedId);
+  sandboxBackendFactories.set(normalizedId, resolved);
+  return () => {
+    if (previous) {
+      sandboxBackendFactories.set(normalizedId, previous);
+    } else {
+      sandboxBackendFactories.delete(normalizedId);
+    }
+  };
+}
+
+function getSandboxBackendFactory(id) {
+  const registration = sandboxBackendFactories.get(normalizeSandboxBackendId(id));
+  return registration && typeof registration.factory === "function" ? registration.factory : null;
+}
+
+function getSandboxBackendManager(id) {
+  const registration = sandboxBackendFactories.get(normalizeSandboxBackendId(id));
+  return registration && registration.manager ? registration.manager : null;
+}
+
+function requireSandboxBackendFactory(id) {
+  const factory = getSandboxBackendFactory(id);
+  if (factory) {
+    return factory;
+  }
+  throw new Error(
+    [
+      `Sandbox backend "${id}" is not registered.`,
+      "Load the plugin that provides it, or set agents.defaults.sandbox.backend=docker.",
+    ].join("\n"),
+  );
+}
+
+function shellEscape(value) {
+  return `'${String(value).replaceAll("'", `'"'"'`)}'`;
+}
+
+function buildRemoteCommand(argv = []) {
+  return (Array.isArray(argv) ? argv : []).map((entry) => shellEscape(entry)).join(" ");
+}
+
+function buildExecRemoteCommand(params = {}) {
+  const body = params.workdir
+    ? `cd ${shellEscape(params.workdir)} && ${params.command || ""}`
+    : String(params.command || "");
+  const env = params.env && typeof params.env === "object" ? params.env : {};
+  const entries = Object.entries(env);
+  const argv =
+    entries.length > 0
+      ? ["env", ...entries.map(([key, value]) => `${key}=${value}`), "/bin/sh", "-c", body]
+      : ["/bin/sh", "-c", body];
+  return buildRemoteCommand(argv);
+}
+
+function buildSshSandboxArgv(params = {}) {
+  const session = params.session || {};
+  return [
+    session.command || "ssh",
+    "-F",
+    session.configPath,
+    ...(params.tty
+      ? ["-tt", "-o", "RequestTTY=force", "-o", "SetEnv=TERM=xterm-256color"]
+      : ["-T", "-o", "RequestTTY=no"]),
+    session.host,
+    params.remoteCommand || "",
+  ];
+}
+
+function parseSandboxSshTarget(target) {
+  const trimmed = normalizeOptionalString(target);
+  if (!trimmed) {
+    return null;
+  }
+  const atIndex = trimmed.lastIndexOf("@");
+  const user = atIndex >= 0 ? trimmed.slice(0, atIndex) : undefined;
+  const hostPort = atIndex >= 0 ? trimmed.slice(atIndex + 1) : trimmed;
+  const colonIndex = hostPort.lastIndexOf(":");
+  const host = colonIndex >= 0 ? hostPort.slice(0, colonIndex) : hostPort;
+  const portRaw = colonIndex >= 0 ? hostPort.slice(colonIndex + 1) : "";
+  const port = portRaw ? Number.parseInt(portRaw, 10) : 22;
+  if (!host || !Number.isFinite(port)) {
+    return null;
+  }
+  return { host, port, ...(user ? { user } : {}) };
+}
+
+function normalizeInlineSshMaterial(contents, filename) {
+  const withoutBom = String(contents || "").replace(/^\uFEFF/, "");
+  const normalizedNewlines = withoutBom.replace(/\r\n?/g, "\n");
+  const normalizedEscapedNewlines = normalizedNewlines
+    .replace(/\\r\\n/g, "\\n")
+    .replace(/\\r/g, "\\n");
+  const expanded =
+    filename === "identity" || filename === "certificate.pub"
+      ? normalizedEscapedNewlines.replace(/\\n/g, "\n")
+      : normalizedEscapedNewlines;
+  return expanded.endsWith("\n") ? expanded : `${expanded}\n`;
+}
+
+async function writeSshSecretMaterial(configDir, filename, contents) {
+  const filePath = path.join(configDir, filename);
+  await fs.promises.writeFile(filePath, normalizeInlineSshMaterial(contents, filename), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  try {
+    await fs.promises.chmod(filePath, 0o600);
+  } catch {}
+  return filePath;
+}
+
+function resolveOptionalSshLocalPath(value) {
+  const raw = normalizeOptionalString(value);
+  return raw ? resolveUserPath(raw) : undefined;
+}
+
+async function createSshSandboxSessionFromSettings(settings = {}) {
+  const parsed = parseSandboxSshTarget(settings.target);
+  if (!parsed) {
+    throw new Error(`Invalid sandbox SSH target: ${settings.target}`);
+  }
+  const configDir = await fs.promises.mkdtemp(
+    path.join(resolvePreferredOpenClawTmpDir(), "openclaw-sandbox-ssh-"),
+  );
+  try {
+    const identityFile = settings.identityData
+      ? await writeSshSecretMaterial(configDir, "identity", settings.identityData)
+      : resolveOptionalSshLocalPath(settings.identityFile);
+    const certificateFile = settings.certificateData
+      ? await writeSshSecretMaterial(configDir, "certificate.pub", settings.certificateData)
+      : resolveOptionalSshLocalPath(settings.certificateFile);
+    const knownHostsFile = settings.knownHostsData
+      ? await writeSshSecretMaterial(configDir, "known_hosts", settings.knownHostsData)
+      : resolveOptionalSshLocalPath(settings.knownHostsFile);
+    const configPath = path.join(configDir, "config");
+    const lines = [
+      "Host openclaw-sandbox",
+      `  HostName ${parsed.host}`,
+      `  Port ${parsed.port}`,
+      "  BatchMode yes",
+      "  ConnectTimeout 5",
+      "  ServerAliveInterval 15",
+      "  ServerAliveCountMax 3",
+      `  StrictHostKeyChecking ${settings.strictHostKeyChecking ? "yes" : "no"}`,
+      `  UpdateHostKeys ${settings.updateHostKeys ? "yes" : "no"}`,
+    ];
+    if (parsed.user) {
+      lines.push(`  User ${parsed.user}`);
+    }
+    if (knownHostsFile) {
+      lines.push(`  UserKnownHostsFile ${knownHostsFile}`);
+    } else if (!settings.strictHostKeyChecking) {
+      lines.push("  UserKnownHostsFile /dev/null");
+    }
+    if (identityFile) {
+      lines.push(`  IdentityFile ${identityFile}`);
+    }
+    if (certificateFile) {
+      lines.push(`  CertificateFile ${certificateFile}`);
+    }
+    if (identityFile || certificateFile) {
+      lines.push("  IdentitiesOnly yes");
+    }
+    await fs.promises.writeFile(configPath, `${lines.join("\n")}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    try {
+      await fs.promises.chmod(configPath, 0o600);
+    } catch {}
+    return {
+      command: normalizeOptionalString(settings.command) || "ssh",
+      configPath,
+      host: "openclaw-sandbox",
+    };
+  } catch (error) {
+    await fs.promises.rm(configDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function createSshSandboxSessionFromConfigText(params = {}) {
+  const host =
+    normalizeOptionalString(params.host) ||
+    (String(params.configText || "").match(/^\s*Host\s+(\S+)/m) || [])[1];
+  if (!host) {
+    throw new Error("Failed to parse SSH config output.");
+  }
+  const configDir = await fs.promises.mkdtemp(
+    path.join(resolvePreferredOpenClawTmpDir(), "openclaw-sandbox-ssh-"),
+  );
+  const configPath = path.join(configDir, "config");
+  await fs.promises.writeFile(configPath, String(params.configText || ""), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  try {
+    await fs.promises.chmod(configPath, 0o600);
+  } catch {}
+  return {
+    command: normalizeOptionalString(params.command) || "ssh",
+    configPath,
+    host,
+  };
+}
+
+async function disposeSshSandboxSession(session = {}) {
+  if (session.configPath) {
+    await fs.promises.rm(path.dirname(session.configPath), { recursive: true, force: true });
+  }
+}
+
+async function runSshSandboxCommand(params = {}) {
+  const argv = buildSshSandboxArgv(params);
+  return await new Promise((resolve, reject) => {
+    const child = spawn(argv[0], argv.slice(1), {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: sanitizeEnvVars(process.env).allowed,
+      signal: params.signal,
+      windowsHide: true,
+    });
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    child.stdout?.on("data", (chunk) => {
+      stdoutChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderrChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      const stdout = Buffer.concat(stdoutChunks);
+      const stderr = Buffer.concat(stderrChunks);
+      const exitCode = code ?? 0;
+      if (exitCode !== 0 && !params.allowFailure) {
+        const error = new Error(
+          stderr.toString("utf8").trim() || `ssh exited with code ${exitCode}`,
+        );
+        error.code = exitCode;
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr, code: exitCode });
+    });
+    if (params.stdin !== undefined) {
+      child.stdin.end(params.stdin);
+    } else {
+      child.stdin.end();
+    }
+  });
+}
+
+async function uploadDirectoryToSshTarget() {
+  throw new Error(
+    "SSH sandbox directory upload is unavailable in the native OpenZues plugin bridge.",
+  );
+}
+
+function resolveWritableRenameTargets(params = {}) {
+  const action = params.action || "rename files";
+  const from = params.resolveTarget({ filePath: params.from, cwd: params.cwd });
+  const to = params.resolveTarget({ filePath: params.to, cwd: params.cwd });
+  params.ensureWritable(from, action);
+  params.ensureWritable(to, action);
+  return { from, to };
+}
+
+function resolveWritableRenameTargetsForBridge(params = {}, resolveTarget, ensureWritable) {
+  return resolveWritableRenameTargets({ ...params, resolveTarget, ensureWritable });
+}
+
+function createWritableRenameTargetResolver(resolveTarget, ensureWritable) {
+  return (params = {}) =>
+    resolveWritableRenameTargetsForBridge(params, resolveTarget, ensureWritable);
+}
+
+function createRemoteShellSandboxFsBridge() {
+  throw new Error(
+    "Remote shell sandbox fs bridge is unavailable in the native OpenZues plugin bridge.",
+  );
+}
+
+const sandboxRuntime = {
+  buildExecRemoteCommand,
+  buildRemoteCommand,
+  buildSshSandboxArgv,
+  createRemoteShellSandboxFsBridge,
+  createSshSandboxSessionFromConfigText,
+  createSshSandboxSessionFromSettings,
+  createWritableRenameTargetResolver,
+  disposeSshSandboxSession,
+  getSandboxBackendFactory,
+  getSandboxBackendManager,
+  registerSandboxBackend,
+  requireSandboxBackendFactory,
+  resolvePreferredOpenClawTmpDir,
+  resolveWritableRenameTargets,
+  resolveWritableRenameTargetsForBridge,
+  runPluginCommandWithTimeout,
+  runSshSandboxCommand,
+  sanitizeEnvVars,
+  shellEscape,
+  uploadDirectoryToSshTarget,
+};
+
+const OPENCLAW_DEBUG_PROXY_ENABLED = "OPENCLAW_DEBUG_PROXY_ENABLED";
+const OPENCLAW_DEBUG_PROXY_URL = "OPENCLAW_DEBUG_PROXY_URL";
+const OPENCLAW_DEBUG_PROXY_DB_PATH = "OPENCLAW_DEBUG_PROXY_DB_PATH";
+const OPENCLAW_DEBUG_PROXY_BLOB_DIR = "OPENCLAW_DEBUG_PROXY_BLOB_DIR";
+const OPENCLAW_DEBUG_PROXY_CERT_DIR = "OPENCLAW_DEBUG_PROXY_CERT_DIR";
+const OPENCLAW_DEBUG_PROXY_SESSION_ID = "OPENCLAW_DEBUG_PROXY_SESSION_ID";
+const OPENCLAW_DEBUG_PROXY_REQUIRE = "OPENCLAW_DEBUG_PROXY_REQUIRE";
+const DEBUG_PROXY_FETCH_PATCH_KEY = Symbol.for("openclaw.debugProxy.fetchPatch");
+const REDACTED_CAPTURE_HEADER_VALUE = "[REDACTED]";
+const SENSITIVE_CAPTURE_HEADER_NAMES = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+  "api-key",
+  "apikey",
+  "x-auth-token",
+  "auth-token",
+  "x-access-token",
+  "access-token",
+]);
+const SENSITIVE_CAPTURE_HEADER_NAME_FRAGMENTS = [
+  "api-key",
+  "apikey",
+  "token",
+  "secret",
+  "password",
+  "credential",
+  "session",
+];
+let cachedDebugProxyImplicitSessionId;
+let cachedDebugProxyCaptureStore = null;
+let cachedDebugProxyCaptureStoreKey = "";
+let cachedDebugProxyCaptureStoreLeases = 0;
+
+function isDebugProxyTruthy(value) {
+  const normalized = normalizeLowercaseStringOrEmpty(value);
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function resolveDebugProxyRootDir(env = process.env) {
+  return path.join(resolveStateDir(env || process.env), "debug-proxy");
+}
+
+function resolveDebugProxyDbPath(env = process.env) {
+  return path.join(resolveDebugProxyRootDir(env), "capture.sqlite");
+}
+
+function resolveDebugProxyBlobDir(env = process.env) {
+  return path.join(resolveDebugProxyRootDir(env), "blobs");
+}
+
+function resolveDebugProxyCertDir(env = process.env) {
+  return path.join(resolveDebugProxyRootDir(env), "certs");
+}
+
+function resolveDebugProxySettings(env = process.env) {
+  const sourceEnv = env || process.env;
+  const explicitSessionId = normalizeOptionalString(sourceEnv[OPENCLAW_DEBUG_PROXY_SESSION_ID]);
+  const sessionId =
+    explicitSessionId || (cachedDebugProxyImplicitSessionId ||= crypto.randomUUID());
+  return {
+    enabled: isDebugProxyTruthy(sourceEnv[OPENCLAW_DEBUG_PROXY_ENABLED]),
+    required: isDebugProxyTruthy(sourceEnv[OPENCLAW_DEBUG_PROXY_REQUIRE]),
+    proxyUrl: normalizeOptionalString(sourceEnv[OPENCLAW_DEBUG_PROXY_URL]),
+    dbPath:
+      normalizeOptionalString(sourceEnv[OPENCLAW_DEBUG_PROXY_DB_PATH]) ||
+      resolveDebugProxyDbPath(sourceEnv),
+    blobDir:
+      normalizeOptionalString(sourceEnv[OPENCLAW_DEBUG_PROXY_BLOB_DIR]) ||
+      resolveDebugProxyBlobDir(sourceEnv),
+    certDir:
+      normalizeOptionalString(sourceEnv[OPENCLAW_DEBUG_PROXY_CERT_DIR]) ||
+      resolveDebugProxyCertDir(sourceEnv),
+    sessionId,
+    sourceProcess: "openclaw",
+  };
+}
+
+function applyDebugProxyEnv(env, params = {}) {
+  const sourceEnv = env || process.env;
+  return {
+    ...sourceEnv,
+    [OPENCLAW_DEBUG_PROXY_ENABLED]: "1",
+    [OPENCLAW_DEBUG_PROXY_REQUIRE]: "1",
+    [OPENCLAW_DEBUG_PROXY_URL]: params.proxyUrl,
+    [OPENCLAW_DEBUG_PROXY_DB_PATH]: params.dbPath || resolveDebugProxyDbPath(sourceEnv),
+    [OPENCLAW_DEBUG_PROXY_BLOB_DIR]: params.blobDir || resolveDebugProxyBlobDir(sourceEnv),
+    [OPENCLAW_DEBUG_PROXY_CERT_DIR]: params.certDir || resolveDebugProxyCertDir(sourceEnv),
+    [OPENCLAW_DEBUG_PROXY_SESSION_ID]: params.sessionId,
+    HTTP_PROXY: params.proxyUrl,
+    HTTPS_PROXY: params.proxyUrl,
+    ALL_PROXY: params.proxyUrl,
+  };
+}
+
+function createDebugProxyWebSocketAgent(settings = {}) {
+  if (!settings.enabled || !settings.proxyUrl) {
+    return undefined;
+  }
+  try {
+    const { HttpsProxyAgent } = require("https-proxy-agent");
+    return new HttpsProxyAgent(settings.proxyUrl);
+  } catch {
+    return { proxyUrl: settings.proxyUrl, __openzuesDebugProxyAgent: true };
+  }
+}
+
+function resolveEffectiveDebugProxyUrl(configuredProxyUrl) {
+  const explicit = normalizeOptionalString(configuredProxyUrl);
+  if (explicit) {
+    return explicit;
+  }
+  const settings = resolveDebugProxySettings();
+  return settings.enabled ? settings.proxyUrl : undefined;
+}
+
+function proxyCaptureSafeJsonString(value) {
+  if (value == null) {
+    return undefined;
+  }
+  return JSON.stringify(value);
+}
+
+function parseProxyCaptureMetaJson(metaJson) {
+  if (typeof metaJson !== "string" || !metaJson.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(metaJson);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeProxyCaptureObservedValue(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function sortProxyCaptureObservedCounts(counts) {
+  return [...counts.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((left, right) => right.count - left.count || left.value.localeCompare(right.value));
+}
+
+function ensureProxyCaptureParentDir(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+function writeProxyCaptureBlob(params = {}) {
+  const data = Buffer.isBuffer(params.data) ? params.data : Buffer.from(params.data || "");
+  fs.mkdirSync(params.blobDir, { recursive: true });
+  const sha256 = crypto.createHash("sha256").update(data).digest("hex");
+  const blobId = sha256.slice(0, 24);
+  const outputPath = path.join(params.blobDir, `${blobId}.bin.gz`);
+  if (!fs.existsSync(outputPath)) {
+    const { gzipSync } = require("zlib");
+    fs.writeFileSync(outputPath, gzipSync(data));
+  }
+  return {
+    blobId,
+    path: outputPath,
+    encoding: "gzip",
+    sizeBytes: data.byteLength,
+    sha256,
+    ...(params.contentType ? { contentType: params.contentType } : {}),
+  };
+}
+
+function readProxyCaptureBlobText(blobPath) {
+  const { gunzipSync } = require("zlib");
+  return gunzipSync(fs.readFileSync(blobPath)).toString("utf8");
+}
+
+function proxyCaptureGroupRows(rows, keyFn, valueName, includeRow) {
+  const grouped = new Map();
+  for (const row of rows) {
+    if (includeRow && !includeRow(row)) {
+      continue;
+    }
+    const key = keyFn(row);
+    const current = grouped.get(key.key) || { ...key.values, [valueName]: 0 };
+    current[valueName] += 1;
+    grouped.set(key.key, current);
+  }
+  return [...grouped.values()].sort((left, right) => {
+    const countDelta = Number(right[valueName] || 0) - Number(left[valueName] || 0);
+    return countDelta || String(left.host || "").localeCompare(String(right.host || ""));
+  });
+}
+
+class DebugProxyCaptureStore {
+  constructor(dbPath, blobDir) {
+    this.dbPath = dbPath;
+    this.blobDir = blobDir;
+    this.closed = false;
+    this.sessions = new Map();
+    this.events = [];
+    this.nextEventId = 1;
+    ensureProxyCaptureParentDir(dbPath);
+    fs.mkdirSync(blobDir, { recursive: true });
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  get isClosed() {
+    return this.closed;
+  }
+
+  upsertSession(session) {
+    const existing = this.sessions.get(session.id);
+    this.sessions.set(session.id, {
+      ...(existing || {}),
+      ...session,
+      startedAt: existing ? existing.startedAt : session.startedAt,
+      mode: existing ? existing.mode : session.mode,
+      sourceScope: "openclaw",
+      dbPath: session.dbPath || this.dbPath,
+      blobDir: session.blobDir || this.blobDir,
+    });
+  }
+
+  endSession(sessionId, endedAt = Date.now()) {
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      this.sessions.set(sessionId, { ...existing, endedAt });
+    }
+  }
+
+  persistPayload(data, contentType) {
+    return writeProxyCaptureBlob({ blobDir: this.blobDir, data, contentType });
+  }
+
+  recordEvent(event) {
+    this.events.push({ id: this.nextEventId, ...event });
+    this.nextEventId += 1;
+  }
+
+  listSessions(limit = 50) {
+    return [...this.sessions.values()]
+      .map((session) => ({
+        id: session.id,
+        startedAt: session.startedAt,
+        ...(session.endedAt == null ? {} : { endedAt: session.endedAt }),
+        mode: session.mode,
+        sourceProcess: session.sourceProcess,
+        ...(session.proxyUrl ? { proxyUrl: session.proxyUrl } : {}),
+        eventCount: this.events.filter((event) => event.sessionId === session.id).length,
+      }))
+      .sort((left, right) => Number(right.startedAt || 0) - Number(left.startedAt || 0))
+      .slice(0, limit);
+  }
+
+  getSessionEvents(sessionId, limit = 500) {
+    return this.events
+      .filter((event) => event.sessionId === sessionId)
+      .sort((left, right) => Number(right.ts || 0) - Number(left.ts || 0) || right.id - left.id)
+      .slice(0, limit);
+  }
+
+  summarizeSessionCoverage(sessionId) {
+    const rows = this.events.filter((event) => event.sessionId === sessionId);
+    const providers = new Map();
+    const apis = new Map();
+    const models = new Map();
+    const hosts = new Map();
+    const localPeers = new Map();
+    let unlabeledEventCount = 0;
+    for (const row of rows) {
+      const meta = parseProxyCaptureMetaJson(row.metaJson);
+      const provider = normalizeProxyCaptureObservedValue(meta && meta.provider);
+      const api = normalizeProxyCaptureObservedValue(meta && meta.api);
+      const model = normalizeProxyCaptureObservedValue(meta && meta.model);
+      const host = normalizeProxyCaptureObservedValue(row.host);
+      if (!provider && !api && !model) {
+        unlabeledEventCount += 1;
+      }
+      if (provider) {
+        providers.set(provider, (providers.get(provider) || 0) + 1);
+      }
+      if (api) {
+        apis.set(api, (apis.get(api) || 0) + 1);
+      }
+      if (model) {
+        models.set(model, (models.get(model) || 0) + 1);
+      }
+      if (host) {
+        hosts.set(host, (hosts.get(host) || 0) + 1);
+        if (
+          host === "127.0.0.1:11434" ||
+          host.startsWith("127.0.0.1:") ||
+          host.startsWith("localhost:")
+        ) {
+          localPeers.set(host, (localPeers.get(host) || 0) + 1);
+        }
+      }
+    }
+    return {
+      sessionId,
+      totalEvents: rows.length,
+      unlabeledEventCount,
+      providers: sortProxyCaptureObservedCounts(providers),
+      apis: sortProxyCaptureObservedCounts(apis),
+      models: sortProxyCaptureObservedCounts(models),
+      hosts: sortProxyCaptureObservedCounts(hosts),
+      localPeers: sortProxyCaptureObservedCounts(localPeers),
+    };
+  }
+
+  readBlob(blobId) {
+    const row = this.events.find((event) => event.dataBlobId === blobId);
+    if (!row) {
+      return null;
+    }
+    const blobPath = path.join(this.blobDir, `${blobId}.bin.gz`);
+    return fs.existsSync(blobPath) ? readProxyCaptureBlobText(blobPath) : null;
+  }
+
+  queryPreset(preset, sessionId) {
+    const rows = this.events.filter((event) => !sessionId || event.sessionId === sessionId);
+    switch (preset) {
+      case "double-sends":
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.host}:${row.path}:${row.method}:${row.dataSha256 || ""}`,
+            values: { host: row.host, path: row.path, method: row.method },
+          }),
+          "duplicateCount",
+          (row) => row.kind === "request",
+        ).filter((row) => row.duplicateCount > 1);
+      case "retry-storms":
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.host}:${row.path}`,
+            values: { host: row.host, path: row.path },
+          }),
+          "errorCount",
+          (row) => row.kind === "response" && Number(row.status || 0) >= 429,
+        ).filter((row) => row.errorCount > 1);
+      case "cache-busting":
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.host}:${row.path}`,
+            values: { host: row.host, path: row.path },
+          }),
+          "variantCount",
+          (row) =>
+            row.kind === "request" &&
+            (String(row.path || "").includes("?") ||
+              String(row.headersJson || "").includes("cache-control") ||
+              String(row.headersJson || "").includes("pragma")),
+        );
+      case "ws-duplicate-frames":
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.host}:${row.path}:${row.dataSha256 || ""}`,
+            values: { host: row.host, path: row.path },
+          }),
+          "duplicateFrames",
+          (row) => row.kind === "ws-frame" && row.direction === "outbound",
+        ).filter((row) => row.duplicateFrames > 1);
+      case "missing-ack": {
+        const inbound = new Set(
+          rows
+            .filter((row) => row.kind === "ws-frame" && row.direction === "inbound")
+            .map((row) => row.flowId),
+        );
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.flowId}:${row.host}:${row.path}`,
+            values: { flowId: row.flowId, host: row.host, path: row.path },
+          }),
+          "outboundFrames",
+          (row) =>
+            row.kind === "ws-frame" && row.direction === "outbound" && !inbound.has(row.flowId),
+        );
+      }
+      case "error-bursts":
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.host}:${row.path}`,
+            values: { host: row.host, path: row.path },
+          }),
+          "errorCount",
+          (row) => row.kind === "error",
+        );
+      default:
+        return [];
+    }
+  }
+
+  purgeAll() {
+    const sessions = this.sessions.size;
+    const events = this.events.length;
+    this.sessions.clear();
+    this.events = [];
+    let blobs = 0;
+    if (fs.existsSync(this.blobDir)) {
+      for (const entry of fs.readdirSync(this.blobDir)) {
+        fs.rmSync(path.join(this.blobDir, entry), { force: true });
+        blobs += 1;
+      }
+    }
+    return { sessions, events, blobs };
+  }
+
+  deleteSessions(sessionIds = []) {
+    const ids = new Set(sessionIds.map((id) => String(id || "").trim()).filter(Boolean));
+    if (ids.size === 0) {
+      return { sessions: 0, events: 0, blobs: 0 };
+    }
+    const sessions = [...ids].filter((id) => this.sessions.has(id)).length;
+    const removedEvents = this.events.filter((event) => ids.has(event.sessionId));
+    this.events = this.events.filter((event) => !ids.has(event.sessionId));
+    for (const id of ids) {
+      this.sessions.delete(id);
+    }
+    let blobs = 0;
+    const removedBlobIds = new Set(
+      removedEvents.map((event) => event.dataBlobId).filter((blobId) => Boolean(blobId)),
+    );
+    const remainingBlobIds = new Set(
+      this.events.map((event) => event.dataBlobId).filter((blobId) => Boolean(blobId)),
+    );
+    for (const blobId of removedBlobIds) {
+      if (remainingBlobIds.has(blobId)) {
+        continue;
+      }
+      const blobPath = path.join(this.blobDir, `${blobId}.bin.gz`);
+      if (fs.existsSync(blobPath)) {
+        fs.rmSync(blobPath, { force: true });
+        blobs += 1;
+      }
+    }
+    return { sessions, events: removedEvents.length, blobs };
+  }
+}
+
+function getDebugProxyCaptureStore(dbPath, blobDir) {
+  const key = `${dbPath}:${blobDir}`;
+  if (
+    !cachedDebugProxyCaptureStore ||
+    cachedDebugProxyCaptureStore.isClosed ||
+    cachedDebugProxyCaptureStoreKey !== key
+  ) {
+    cachedDebugProxyCaptureStore = new DebugProxyCaptureStore(dbPath, blobDir);
+    cachedDebugProxyCaptureStoreKey = key;
+    cachedDebugProxyCaptureStoreLeases = 0;
+  }
+  return cachedDebugProxyCaptureStore;
+}
+
+function closeDebugProxyCaptureStore() {
+  if (!cachedDebugProxyCaptureStore) {
+    return;
+  }
+  cachedDebugProxyCaptureStore.close();
+  cachedDebugProxyCaptureStore = null;
+  cachedDebugProxyCaptureStoreKey = "";
+  cachedDebugProxyCaptureStoreLeases = 0;
+}
+
+function acquireDebugProxyCaptureStore(dbPath, blobDir) {
+  const store = getDebugProxyCaptureStore(dbPath, blobDir);
+  const key = cachedDebugProxyCaptureStoreKey;
+  cachedDebugProxyCaptureStoreLeases += 1;
+  let released = false;
+  return {
+    store,
+    release: () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      cachedDebugProxyCaptureStoreLeases = Math.max(
+        0,
+        cachedDebugProxyCaptureStoreLeases - 1,
+      );
+      if (
+        cachedDebugProxyCaptureStoreLeases === 0 &&
+        cachedDebugProxyCaptureStore === store &&
+        cachedDebugProxyCaptureStoreKey === key
+      ) {
+        closeDebugProxyCaptureStore();
+      }
+    },
+  };
+}
+
+function persistEventPayload(store, params = {}) {
+  if (params.data == null) {
+    return {};
+  }
+  const buffer = Buffer.isBuffer(params.data) ? params.data : Buffer.from(params.data);
+  const previewLimit = params.previewLimit || 8192;
+  const blob = store.persistPayload(buffer, params.contentType);
+  return {
+    dataText: buffer.subarray(0, previewLimit).toString("utf8"),
+    dataBlobId: blob.blobId,
+    dataSha256: blob.sha256,
+  };
+}
+
+function resolveProxyCaptureRuntimeDeps(deps = {}) {
+  return {
+    getStore: deps.getStore || getDebugProxyCaptureStore,
+    closeStore: deps.closeStore || closeDebugProxyCaptureStore,
+    persistEventPayload:
+      deps.persistEventPayload ||
+      ((store, payload) => persistEventPayload(store, payload)),
+    safeJsonString: deps.safeJsonString || proxyCaptureSafeJsonString,
+    fetchTarget: deps.fetchTarget || globalThis,
+  };
+}
+
+function proxyCaptureProtocolFromUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol === "https:") {
+      return "https";
+    }
+    if (url.protocol === "wss:") {
+      return "wss";
+    }
+    if (url.protocol === "ws:") {
+      return "ws";
+    }
+    return "http";
+  } catch {
+    return "http";
+  }
+}
+
+function resolveProxyCaptureUrlString(input) {
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  if (typeof input === "string") {
+    return input;
+  }
+  if (typeof Request !== "undefined" && input instanceof Request) {
+    return input.url;
+  }
+  return null;
+}
+
+function isSensitiveCaptureHeaderName(name) {
+  const normalized = String(name || "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (SENSITIVE_CAPTURE_HEADER_NAMES.has(normalized)) {
+    return true;
+  }
+  return SENSITIVE_CAPTURE_HEADER_NAME_FRAGMENTS.some((fragment) =>
+    normalized.includes(fragment),
+  );
+}
+
+function redactedCaptureHeaders(headers) {
+  if (!headers) {
+    return undefined;
+  }
+  const entries =
+    typeof Headers !== "undefined" && headers instanceof Headers
+      ? Array.from(headers.entries())
+      : Object.entries(headers);
+  const redacted = {};
+  for (const [name, value] of entries) {
+    redacted[name] = isSensitiveCaptureHeaderName(name)
+      ? REDACTED_CAPTURE_HEADER_VALUE
+      : String(value);
+  }
+  return redacted;
+}
+
+function proxyCaptureContentTypeFromHeaders(headers) {
+  if (!headers) {
+    return undefined;
+  }
+  if (typeof headers.get === "function") {
+    return headers.get("content-type") || undefined;
+  }
+  return headers["content-type"] || headers["Content-Type"] || undefined;
+}
+
+function createHttpCaptureEventBase(params = {}) {
+  return {
+    sessionId: params.settings.sessionId,
+    ts: Date.now(),
+    sourceScope: "openclaw",
+    sourceProcess: params.settings.sourceProcess,
+    protocol: params.transport || proxyCaptureProtocolFromUrl(params.rawUrl),
+    direction: params.direction,
+    kind: params.kind,
+    flowId: params.flowId,
+    method: params.method,
+    host: params.url.host,
+    path: `${params.url.pathname}${params.url.search}`,
+  };
+}
+
+function installDebugProxyGlobalFetchPatch(settings, deps = {}) {
+  const runtime = resolveProxyCaptureRuntimeDeps(deps);
+  const fetchTarget = runtime.fetchTarget;
+  if (!fetchTarget || typeof fetchTarget.fetch !== "function") {
+    return;
+  }
+  if (fetchTarget[DEBUG_PROXY_FETCH_PATCH_KEY]) {
+    return;
+  }
+  const originalFetch = fetchTarget.fetch.bind(fetchTarget);
+  fetchTarget[DEBUG_PROXY_FETCH_PATCH_KEY] = { originalFetch };
+  fetchTarget.fetch = async (input, init) => {
+    const rawUrl = resolveProxyCaptureUrlString(input);
+    try {
+      const response = await originalFetch(input, init);
+      if (rawUrl && /^https?:/i.test(rawUrl)) {
+        captureHttpExchange(
+          {
+            url: rawUrl,
+            method:
+              (typeof Request !== "undefined" && input instanceof Request
+                ? input.method
+                : undefined) ||
+              (init && init.method) ||
+              "GET",
+            requestHeaders:
+              (typeof Request !== "undefined" && input instanceof Request
+                ? input.headers
+                : undefined) ||
+              (init && init.headers),
+            requestBody:
+              (typeof Request !== "undefined" && input instanceof Request
+                ? input.body
+                : undefined) ||
+              (init && init.body) ||
+              null,
+            response,
+            transport: "http",
+            meta: { captureOrigin: "global-fetch", source: settings.sourceProcess },
+          },
+          settings,
+          deps,
+        );
+      }
+      return response;
+    } catch (error) {
+      if (rawUrl && /^https?:/i.test(rawUrl)) {
+        const parsed = new URL(rawUrl);
+        runtime.getStore(settings.dbPath, settings.blobDir).recordEvent({
+          sessionId: settings.sessionId,
+          ts: Date.now(),
+          sourceScope: "openclaw",
+          sourceProcess: settings.sourceProcess,
+          protocol: proxyCaptureProtocolFromUrl(rawUrl),
+          direction: "local",
+          kind: "error",
+          flowId: crypto.randomUUID(),
+          method:
+            (typeof Request !== "undefined" && input instanceof Request
+              ? input.method
+              : undefined) ||
+            (init && init.method) ||
+            "GET",
+          host: parsed.host,
+          path: `${parsed.pathname}${parsed.search}`,
+          errorText: error instanceof Error ? error.message : String(error),
+          metaJson: runtime.safeJsonString({ captureOrigin: "global-fetch" }),
+        });
+      }
+      throw error;
+    }
+  };
+}
+
+function uninstallDebugProxyGlobalFetchPatch(deps = {}) {
+  const fetchTarget = resolveProxyCaptureRuntimeDeps(deps).fetchTarget;
+  const state = fetchTarget && fetchTarget[DEBUG_PROXY_FETCH_PATCH_KEY];
+  if (!state) {
+    return;
+  }
+  fetchTarget.fetch = state.originalFetch;
+  delete fetchTarget[DEBUG_PROXY_FETCH_PATCH_KEY];
+}
+
+function isDebugProxyGlobalFetchPatchInstalled() {
+  return Boolean(globalThis[DEBUG_PROXY_FETCH_PATCH_KEY]);
+}
+
+function initializeDebugProxyCapture(mode, resolved, deps = {}) {
+  const settings = resolved || resolveDebugProxySettings();
+  if (!settings.enabled) {
+    return;
+  }
+  resolveProxyCaptureRuntimeDeps(deps).getStore(settings.dbPath, settings.blobDir).upsertSession({
+    id: settings.sessionId,
+    startedAt: Date.now(),
+    mode,
+    sourceScope: "openclaw",
+    sourceProcess: settings.sourceProcess,
+    proxyUrl: settings.proxyUrl,
+    dbPath: settings.dbPath,
+    blobDir: settings.blobDir,
+  });
+  installDebugProxyGlobalFetchPatch(settings, deps);
+}
+
+function finalizeDebugProxyCapture(resolved, deps = {}) {
+  const settings = resolved || resolveDebugProxySettings();
+  if (!settings.enabled) {
+    return;
+  }
+  const runtime = resolveProxyCaptureRuntimeDeps(deps);
+  runtime.getStore(settings.dbPath, settings.blobDir).endSession(settings.sessionId);
+  uninstallDebugProxyGlobalFetchPatch(deps);
+  runtime.closeStore();
+}
+
+function captureHttpExchange(params = {}, resolved, deps = {}) {
+  const settings = resolved || resolveDebugProxySettings();
+  if (!settings.enabled) {
+    return;
+  }
+  const runtime = resolveProxyCaptureRuntimeDeps(deps);
+  const store = runtime.getStore(settings.dbPath, settings.blobDir);
+  const flowId = params.flowId || crypto.randomUUID();
+  const url = new URL(params.url);
+  const requestBody =
+    typeof params.requestBody === "string" || Buffer.isBuffer(params.requestBody)
+      ? params.requestBody
+      : null;
+  const requestPayload = runtime.persistEventPayload(store, {
+    data: requestBody,
+    contentType: proxyCaptureContentTypeFromHeaders(params.requestHeaders),
+  });
+  store.recordEvent({
+    ...createHttpCaptureEventBase({
+      settings,
+      rawUrl: params.url,
+      url,
+      transport: params.transport,
+      direction: "outbound",
+      kind: "request",
+      flowId,
+      method: params.method,
+    }),
+    contentType: proxyCaptureContentTypeFromHeaders(params.requestHeaders),
+    headersJson: runtime.safeJsonString(redactedCaptureHeaders(params.requestHeaders)),
+    metaJson: runtime.safeJsonString(params.meta),
+    ...requestPayload,
+  });
+  const cloneable =
+    params.response &&
+    typeof params.response.clone === "function" &&
+    typeof params.response.arrayBuffer === "function";
+  if (!cloneable) {
+    store.recordEvent({
+      ...createHttpCaptureEventBase({
+        settings,
+        rawUrl: params.url,
+        url,
+        transport: params.transport,
+        direction: "inbound",
+        kind: "response",
+        flowId,
+        method: params.method,
+      }),
+      status: params.response && params.response.status,
+      contentType: proxyCaptureContentTypeFromHeaders(params.response && params.response.headers),
+      metaJson: runtime.safeJsonString({ ...(params.meta || {}), bodyCapture: "unavailable" }),
+    });
+    return;
+  }
+  void params.response
+    .clone()
+    .arrayBuffer()
+    .then((buffer) => {
+      const responsePayload = runtime.persistEventPayload(store, {
+        data: Buffer.from(buffer),
+        contentType: proxyCaptureContentTypeFromHeaders(params.response.headers),
+      });
+      store.recordEvent({
+        ...createHttpCaptureEventBase({
+          settings,
+          rawUrl: params.url,
+          url,
+          transport: params.transport,
+          direction: "inbound",
+          kind: "response",
+          flowId,
+          method: params.method,
+        }),
+        status: params.response.status,
+        contentType: proxyCaptureContentTypeFromHeaders(params.response.headers),
+        headersJson: runtime.safeJsonString(redactedCaptureHeaders(params.response.headers)),
+        metaJson: runtime.safeJsonString(params.meta),
+        ...responsePayload,
+      });
+    })
+    .catch((error) => {
+      store.recordEvent({
+        ...createHttpCaptureEventBase({
+          settings,
+          rawUrl: params.url,
+          url,
+          transport: params.transport,
+          direction: "local",
+          kind: "error",
+          flowId,
+          method: params.method,
+        }),
+        errorText: error instanceof Error ? error.message : String(error),
+      });
+    });
+}
+
+function captureWsEvent(params = {}) {
+  const settings = resolveDebugProxySettings();
+  if (!settings.enabled) {
+    return;
+  }
+  const store = getDebugProxyCaptureStore(settings.dbPath, settings.blobDir);
+  const url = new URL(params.url);
+  const payload = persistEventPayload(store, {
+    data: params.payload,
+    contentType: "application/json",
+  });
+  store.recordEvent({
+    sessionId: settings.sessionId,
+    ts: Date.now(),
+    sourceScope: "openclaw",
+    sourceProcess: settings.sourceProcess,
+    protocol: proxyCaptureProtocolFromUrl(params.url),
+    direction: params.direction,
+    kind: params.kind,
+    flowId: params.flowId,
+    host: url.host,
+    path: `${url.pathname}${url.search}`,
+    closeCode: params.closeCode,
+    errorText: params.errorText,
+    metaJson: proxyCaptureSafeJsonString(params.meta),
+    ...payload,
+  });
+}
+
+const proxyCaptureRuntime = {
+  OPENCLAW_DEBUG_PROXY_BLOB_DIR,
+  OPENCLAW_DEBUG_PROXY_CERT_DIR,
+  OPENCLAW_DEBUG_PROXY_DB_PATH,
+  OPENCLAW_DEBUG_PROXY_ENABLED,
+  OPENCLAW_DEBUG_PROXY_REQUIRE,
+  OPENCLAW_DEBUG_PROXY_SESSION_ID,
+  OPENCLAW_DEBUG_PROXY_URL,
+  DebugProxyCaptureStore,
+  acquireDebugProxyCaptureStore,
+  applyDebugProxyEnv,
+  captureHttpExchange,
+  captureWsEvent,
+  closeDebugProxyCaptureStore,
+  createDebugProxyWebSocketAgent,
+  finalizeDebugProxyCapture,
+  getDebugProxyCaptureStore,
+  initializeDebugProxyCapture,
+  isDebugProxyGlobalFetchPatchInstalled,
+  resolveDebugProxySettings,
+  resolveEffectiveDebugProxyUrl,
+};
+
 const simpleCompletionRuntime = {
   extractAssistantText,
 };
@@ -46859,8 +58199,191 @@ const channelSetupRuntime = {
   splitSetupEntries,
 };
 
+const setupRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  createAccountScopedAllowFromSection,
+  createAccountScopedGroupAccessSection,
+  createAllowlistSetupWizardProxy,
+  createClackPrompter,
+  createCliPathTextInput,
+  createDelegatedSetupWizardProxy,
+  createDelegatedTextInputShouldPrompt,
+  createEnvPatchedAccountSetupAdapter,
+  createLegacyCompatChannelDmPolicy,
+  createPatchedAccountSetupAdapter,
+  createSetupInputPresenceValidator,
+  createStandardChannelSetupStatus,
+  createTopLevelChannelDmPolicy,
+  mergeAllowFromEntries,
+  noteChannelLookupFailure,
+  noteChannelLookupSummary,
+  parseMentionOrPrefixedId,
+  parseSetupEntriesAllowingWildcard,
+  patchChannelConfigForAccount,
+  promptLegacyChannelAllowFromForAccount,
+  promptParsedAllowFromForAccount,
+  promptResolvedAllowFrom,
+  resolveEntriesWithOptionalToken,
+  resolveSetupAccountId,
+  setAccountAllowFromForChannel,
+  setSetupChannelEnabled,
+  splitSetupEntries,
+};
+
 const setupAdapterRuntime = {
   createEnvPatchedAccountSetupAdapter,
+};
+
+function isSafeExecutableValue(value) {
+  const trimmed = String(value || "").trim();
+  return Boolean(trimmed) && !/[\0\r\n]/.test(trimmed);
+}
+
+function isSetupExecutablePath(filePath) {
+  try {
+    fs.accessSync(filePath, fs.constants.X_OK);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function resolveBrewFromPath(pathEnv = process.env.PATH) {
+  for (const dir of String(pathEnv || "").split(path.delimiter)) {
+    const trimmed = dir.trim();
+    if (!trimmed || !path.isAbsolute(trimmed)) {
+      continue;
+    }
+    const candidate = path.join(trimmed, "brew");
+    if (isSetupExecutablePath(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function resolveBrewPathDirs(opts = {}) {
+  const homeDir = opts.homeDir || os.homedir();
+  return [
+    path.join(homeDir, ".linuxbrew", "bin"),
+    path.join(homeDir, ".linuxbrew", "sbin"),
+    "/home/linuxbrew/.linuxbrew/bin",
+    "/home/linuxbrew/.linuxbrew/sbin",
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+  ];
+}
+
+function resolveBrewExecutable(opts = {}) {
+  const homeDir = opts.homeDir || os.homedir();
+  const pathBrew = resolveBrewFromPath();
+  if (pathBrew) {
+    return pathBrew;
+  }
+  const candidates = [
+    path.join(homeDir, ".linuxbrew", "bin", "brew"),
+    "/home/linuxbrew/.linuxbrew/bin/brew",
+    "/opt/homebrew/bin/brew",
+    "/usr/local/bin/brew",
+  ];
+  return candidates.find(isSetupExecutablePath);
+}
+
+async function detectBinary(name) {
+  const raw = String(name || "");
+  if (!raw.trim() || !isSafeExecutableValue(raw)) {
+    return false;
+  }
+  const resolved = raw.startsWith("~") ? resolveUserPath(raw) : raw;
+  if (
+    path.isAbsolute(resolved) ||
+    resolved.startsWith(".") ||
+    resolved.includes("/") ||
+    resolved.includes("\\")
+  ) {
+    try {
+      await fs.promises.access(resolved);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+  const argv = process.platform === "win32" ? ["where", raw] : ["/usr/bin/env", "which", raw];
+  try {
+    const result = await runCommandWithTimeout(argv, { timeoutMs: 2000 });
+    return result.code === 0 && String(result.stdout || "").trim().length > 0;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function resolveSetupArchiveKind(filePath) {
+  const lower = normalizeLowercaseStringOrEmpty(filePath);
+  if (lower.endsWith(".zip")) {
+    return "zip";
+  }
+  if (lower.endsWith(".tgz") || lower.endsWith(".tar.gz") || lower.endsWith(".tar")) {
+    return "tar";
+  }
+  return null;
+}
+
+function quotePowerShellLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+async function extractArchive(params = {}) {
+  const archivePath = normalizeOptionalString(params.archivePath);
+  const destDir = normalizeOptionalString(params.destDir);
+  const kind = params.kind || resolveSetupArchiveKind(archivePath);
+  if (!kind) {
+    throw new Error(`unsupported archive: ${archivePath}`);
+  }
+  if (!archivePath || !destDir) {
+    throw new Error("archivePath and destDir are required");
+  }
+  const timeoutMs = Number.isFinite(params.timeoutMs) ? Math.max(0, params.timeoutMs) : 60000;
+  await fs.promises.mkdir(destDir, { recursive: true });
+  if (kind === "zip" && process.platform === "win32") {
+    const command =
+      `Expand-Archive -LiteralPath ${quotePowerShellLiteral(archivePath)} ` +
+      `-DestinationPath ${quotePowerShellLiteral(destDir)} -Force`;
+    const result = await runCommandWithTimeout(
+      ["powershell.exe", "-NoProfile", "-Command", command],
+      { timeoutMs },
+    );
+    if (result.code !== 0) {
+      throw new Error(String(result.stderr || result.stdout || "extract zip failed").trim());
+    }
+    return;
+  }
+  const argv =
+    kind === "zip"
+      ? ["unzip", "-qq", archivePath, "-d", destDir]
+      : [
+          "tar",
+          "-xf",
+          archivePath,
+          "-C",
+          destDir,
+          ...(Number.isFinite(params.stripComponents)
+            ? ["--strip-components", String(Math.max(0, Math.floor(params.stripComponents)))]
+            : []),
+        ];
+  const result = await runCommandWithTimeout(argv, { timeoutMs });
+  if (result.code !== 0) {
+    throw new Error(String(result.stderr || result.stdout || "extract archive failed").trim());
+  }
+}
+
+const setupToolsRuntime = {
+  CONFIG_DIR,
+  detectBinary,
+  extractArchive,
+  formatCliCommand: formatOpenClawCliCommand,
+  formatDocsLink,
+  resolveBrewExecutable,
+  resolveBrewPathDirs,
 };
 
 const markdownTableRuntime = {
@@ -46985,6 +58508,1714 @@ const fileAccessRuntime = {
   writeFileWithinRoot,
 };
 
+const FILE_LOCK_TIMEOUT_ERROR_CODE = "file_lock_timeout";
+const FILE_LOCK_HELD_LOCKS_KEY = "__openzuesFileLockHeldLocks";
+const FILE_LOCK_CLEANUP_REGISTERED_KEY = "__openzuesFileLockCleanupRegistered";
+
+function getFileLockHeldLocks() {
+  return resolveGlobalMap(FILE_LOCK_HELD_LOCKS_KEY);
+}
+
+function releaseAllFileLocksSync() {
+  const locks = getFileLockHeldLocks();
+  for (const [normalizedFile, held] of locks) {
+    if (held && held.handle && typeof held.handle.close === "function") {
+      void held.handle.close().catch(() => undefined);
+    }
+    if (held && held.lockPath) {
+      try {
+        fs.rmSync(held.lockPath, { force: true });
+      } catch (_error) {
+        // Best-effort exit cleanup only.
+      }
+    }
+    locks.delete(normalizedFile);
+  }
+}
+
+async function drainFileLockStateForTest() {
+  const locks = getFileLockHeldLocks();
+  for (const [normalizedFile, held] of Array.from(locks.entries())) {
+    locks.delete(normalizedFile);
+    if (held && held.handle && typeof held.handle.close === "function") {
+      await held.handle.close().catch(() => undefined);
+    }
+    if (held && held.lockPath) {
+      await fs.promises.rm(held.lockPath, { force: true }).catch(() => undefined);
+    }
+  }
+}
+
+function resetFileLockStateForTest() {
+  releaseAllFileLocksSync();
+}
+
+function ensureFileLockExitCleanupRegistered() {
+  if (process[FILE_LOCK_CLEANUP_REGISTERED_KEY]) {
+    return;
+  }
+  process[FILE_LOCK_CLEANUP_REGISTERED_KEY] = true;
+  process.on("exit", releaseAllFileLocksSync);
+}
+
+function normalizeFileLockOptions(options = {}) {
+  const retries = options.retries || {};
+  return {
+    retries: {
+      retries: Math.max(0, Number.parseInt(String(retries.retries ?? 0), 10) || 0),
+      factor: Number.isFinite(Number(retries.factor)) ? Number(retries.factor) : 1,
+      minTimeout: Math.max(0, Number.parseInt(String(retries.minTimeout ?? 0), 10) || 0),
+      maxTimeout: Math.max(0, Number.parseInt(String(retries.maxTimeout ?? 0), 10) || 0),
+      randomize: retries.randomize === true,
+    },
+    stale: Math.max(0, Number.parseInt(String(options.stale ?? 0), 10) || 0),
+  };
+}
+
+function computeFileLockDelayMs(retries, attempt) {
+  const base = Math.min(
+    retries.maxTimeout,
+    Math.max(retries.minTimeout, retries.minTimeout * retries.factor ** attempt),
+  );
+  const jitter = retries.randomize ? 1 + Math.random() : 1;
+  return Math.min(retries.maxTimeout, Math.round(base * jitter));
+}
+
+async function readFileLockPayload(lockPath) {
+  try {
+    const raw = await fs.promises.readFile(lockPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.pid !== "number" || typeof parsed.createdAt !== "string") {
+      return null;
+    }
+    return { pid: parsed.pid, createdAt: parsed.createdAt };
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function resolveNormalizedFileLockPath(filePath) {
+  const resolved = path.resolve(filePath);
+  const dir = path.dirname(resolved);
+  await fs.promises.mkdir(dir, { recursive: true });
+  try {
+    const realDir = await fs.promises.realpath(dir);
+    return path.join(realDir, path.basename(resolved));
+  } catch (_error) {
+    return resolved;
+  }
+}
+
+function isFileLockPidAlive(pid) {
+  if (!pid || typeof pid !== "number") {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function isStaleFileLock(lockPath, staleMs) {
+  const payload = await readFileLockPayload(lockPath);
+  if (payload && payload.pid && !isFileLockPidAlive(payload.pid)) {
+    return true;
+  }
+  if (payload && payload.createdAt) {
+    const createdAt = Date.parse(payload.createdAt);
+    if (!Number.isFinite(createdAt) || Date.now() - createdAt > staleMs) {
+      return true;
+    }
+  }
+  try {
+    const stat = await fs.promises.stat(lockPath);
+    return Date.now() - stat.mtimeMs > staleMs;
+  } catch (_error) {
+    return true;
+  }
+}
+
+function createFileLockTimeoutError(normalizedFile, lockPath) {
+  const error = new Error(`file lock timeout for ${normalizedFile}`);
+  error.code = FILE_LOCK_TIMEOUT_ERROR_CODE;
+  error.lockPath = lockPath;
+  return error;
+}
+
+async function releaseHeldFileLock(normalizedFile) {
+  const locks = getFileLockHeldLocks();
+  const current = locks.get(normalizedFile);
+  if (!current) {
+    return;
+  }
+  current.count -= 1;
+  if (current.count > 0) {
+    return;
+  }
+  locks.delete(normalizedFile);
+  await current.handle.close().catch(() => undefined);
+  await fs.promises.rm(current.lockPath, { force: true }).catch(() => undefined);
+}
+
+async function acquireFileLock(filePath, rawOptions = {}) {
+  ensureFileLockExitCleanupRegistered();
+  const options = normalizeFileLockOptions(rawOptions);
+  const normalizedFile = await resolveNormalizedFileLockPath(filePath);
+  const lockPath = `${normalizedFile}.lock`;
+  const locks = getFileLockHeldLocks();
+  const held = locks.get(normalizedFile);
+  if (held) {
+    held.count += 1;
+    return {
+      lockPath,
+      release: () => releaseHeldFileLock(normalizedFile),
+    };
+  }
+  for (let attempt = 0; attempt <= options.retries.retries; attempt += 1) {
+    try {
+      const handle = await fs.promises.open(lockPath, "wx");
+      try {
+        await handle.writeFile(
+          JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }, null, 2),
+          "utf8",
+        );
+      } catch (writeError) {
+        await handle.close().catch(() => undefined);
+        await fs.promises.rm(lockPath, { force: true }).catch(() => undefined);
+        throw writeError;
+      }
+      locks.set(normalizedFile, { count: 1, handle, lockPath });
+      return {
+        lockPath,
+        release: () => releaseHeldFileLock(normalizedFile),
+      };
+    } catch (error) {
+      if (!error || error.code !== "EEXIST") {
+        throw error;
+      }
+      if (await isStaleFileLock(lockPath, options.stale)) {
+        await fs.promises.rm(lockPath, { force: true }).catch(() => undefined);
+        continue;
+      }
+      if (attempt >= options.retries.retries) {
+        break;
+      }
+      const delayMs = computeFileLockDelayMs(options.retries, attempt);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw createFileLockTimeoutError(normalizedFile, lockPath);
+}
+
+async function withFileLock(filePath, options, fn) {
+  const lock = await acquireFileLock(filePath, options);
+  try {
+    return await fn();
+  } finally {
+    await lock.release();
+  }
+}
+
+const fileLockRuntime = {
+  FILE_LOCK_TIMEOUT_ERROR_CODE,
+  acquireFileLock,
+  drainFileLockStateForTest,
+  resetFileLockStateForTest,
+  withFileLock,
+};
+
+function parseBrowserHttpUrl(raw, label) {
+  const trimmed = String(raw || "").trim();
+  const parsed = new URL(trimmed);
+  const allowed = ["http:", "https:", "ws:", "wss:"];
+  if (!allowed.includes(parsed.protocol)) {
+    throw new Error(
+      `${label} must be http(s) or ws(s), got: ${parsed.protocol.replace(":", "")}`,
+    );
+  }
+  const isSecure = parsed.protocol === "https:" || parsed.protocol === "wss:";
+  const port =
+    parsed.port && Number.parseInt(parsed.port, 10) > 0
+      ? Number.parseInt(parsed.port, 10)
+      : isSecure
+        ? 443
+        : 80;
+  if (Number.isNaN(port) || port <= 0 || port > 65535) {
+    throw new Error(`${label} has invalid port: ${parsed.port}`);
+  }
+  return {
+    parsed,
+    port,
+    normalized: parsed.toString().replace(/\/$/, ""),
+  };
+}
+
+function redactCdpUrl(cdpUrl) {
+  if (typeof cdpUrl !== "string") {
+    return cdpUrl;
+  }
+  const trimmed = cdpUrl.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    parsed.username = "";
+    parsed.password = "";
+    return redactSensitiveText(parsed.toString().replace(/\/$/, ""));
+  } catch (_error) {
+    return redactSensitiveText(trimmed);
+  }
+}
+
+const browserCdpRuntime = {
+  parseBrowserHttpUrl,
+  redactCdpUrl,
+};
+
+const DEFAULT_BROWSER_CDP_PORT_RANGE_START = 18800;
+const DEFAULT_BROWSER_CDP_PORT_RANGE_END = 18899;
+const DEFAULT_BROWSER_CDP_PORT_RANGE_SPAN =
+  DEFAULT_BROWSER_CDP_PORT_RANGE_END - DEFAULT_BROWSER_CDP_PORT_RANGE_START;
+const DEFAULT_BROWSER_CONTROL_PORT = 18791;
+const DEFAULT_OPENCLAW_BROWSER_ENABLED = true;
+const DEFAULT_BROWSER_EVALUATE_ENABLED = true;
+const DEFAULT_OPENCLAW_BROWSER_COLOR = "#FF4500";
+const DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME = "openclaw";
+const DEFAULT_BROWSER_DEFAULT_PROFILE_NAME = "openclaw";
+const DEFAULT_BROWSER_ACTION_TIMEOUT_MS = 60000;
+const DEFAULT_AI_SNAPSHOT_MAX_CHARS = 80000;
+const DEFAULT_UPLOAD_DIR = path.join(resolvePreferredOpenClawTmpDir(), "uploads");
+
+function isValidPort(port) {
+  return Number.isFinite(port) && port > 0 && port <= 65535;
+}
+
+function clampPort(port, fallback) {
+  return isValidPort(port) ? port : fallback;
+}
+
+function derivePort(base, offset, fallback) {
+  return clampPort(base + offset, fallback);
+}
+
+function deriveDefaultBrowserControlPort(gatewayPort) {
+  return derivePort(gatewayPort, 2, DEFAULT_BROWSER_CONTROL_PORT);
+}
+
+function deriveDefaultBrowserCdpPortRange(browserControlPort) {
+  const start = derivePort(browserControlPort, 9, DEFAULT_BROWSER_CDP_PORT_RANGE_START);
+  const end = start + DEFAULT_BROWSER_CDP_PORT_RANGE_SPAN;
+  if (end <= 65535) {
+    return { start, end };
+  }
+  return {
+    start: DEFAULT_BROWSER_CDP_PORT_RANGE_START,
+    end: DEFAULT_BROWSER_CDP_PORT_RANGE_END,
+  };
+}
+
+function stripLoopbackHostPort(host) {
+  if (host.startsWith("[") && host.endsWith("]")) {
+    return host.slice(1, -1);
+  }
+  const firstColon = host.indexOf(":");
+  const lastColon = host.lastIndexOf(":");
+  if (firstColon > 0 && firstColon === lastColon && host.includes(".")) {
+    return host.slice(0, firstColon);
+  }
+  return host;
+}
+
+function isLoopbackHost(host) {
+  const normalized = String(host || "").trim().toLowerCase().replace(/\.+$/, "");
+  if (!normalized) {
+    return false;
+  }
+  const unbracketedHost = stripLoopbackHostPort(normalized);
+  if (unbracketedHost === "localhost") {
+    return true;
+  }
+  if (unbracketedHost === "::1") {
+    return true;
+  }
+  if (/^127(?:\.\d{1,3}){3}$/.test(unbracketedHost)) {
+    return true;
+  }
+  return /^::ffff:127(?:\.\d{1,3}){3}$/.test(unbracketedHost);
+}
+
+const browserConfigSupportRuntime = {
+  CONFIG_DIR,
+  DEFAULT_BROWSER_CONTROL_PORT,
+  deriveDefaultBrowserCdpPortRange,
+  deriveDefaultBrowserControlPort,
+  escapeRegExp,
+  isLoopbackHost,
+  resolveGatewayPort,
+  resolveUserPath,
+  shortenHomePath,
+};
+
+function resolveConfigPath(env = process.env, stateDir) {
+  const configEnv = env && typeof env === "object" ? env : {};
+  const override = normalizeOptionalString(configEnv.OPENCLAW_CONFIG_PATH);
+  if (override) {
+    return resolveUserPath(override, configEnv);
+  }
+  const baseStateDir =
+    normalizeOptionalString(stateDir) ||
+    normalizeOptionalString(configEnv.OPENCLAW_STATE_DIR) ||
+    CONFIG_DIR;
+  return path.join(resolveUserPath(baseStateDir, configEnv), "openclaw.json");
+}
+
+function readJsonConfigFile(configPath) {
+  if (!fs.existsSync(configPath)) {
+    return {};
+  }
+  const raw = fs.readFileSync(configPath, "utf8").trim();
+  if (!raw) {
+    return {};
+  }
+  return JSON.parse(raw);
+}
+
+function createConfigIO(options = {}) {
+  const configPath = resolveConfigPath(
+    options.env || process.env,
+    normalizeOptionalString(options.stateDir),
+  );
+  const effectiveConfigPath = normalizeOptionalString(options.configPath)
+    ? path.resolve(options.configPath)
+    : configPath;
+  return {
+    configPath: effectiveConfigPath,
+    async loadConfig() {
+      return readJsonConfigFile(effectiveConfigPath);
+    },
+    async writeConfigFile(nextConfig) {
+      fs.mkdirSync(path.dirname(effectiveConfigPath), { recursive: true });
+      fs.writeFileSync(effectiveConfigPath, `${JSON.stringify(nextConfig || {}, null, 2)}\n`);
+      return { configPath: effectiveConfigPath };
+    },
+  };
+}
+
+async function loadConfig(options = {}) {
+  return await createConfigIO(options).loadConfig();
+}
+
+async function writeConfigFile(nextConfig, options = {}) {
+  return await createConfigIO(options).writeConfigFile(nextConfig);
+}
+
+function requireRuntimeConfig(config, contextLabel) {
+  if (config) {
+    return config;
+  }
+  throw new Error(
+    `${contextLabel} requires a resolved runtime config. ` +
+      "Load and resolve config at the command or gateway boundary, " +
+      "then pass cfg through the runtime path.",
+  );
+}
+
+function resolvePluginConfigObject(config, pluginId) {
+  const plugins =
+    config && config.plugins && typeof config.plugins === "object" && !Array.isArray(config.plugins)
+      ? config.plugins
+      : undefined;
+  const entries =
+    plugins &&
+    plugins.entries &&
+    typeof plugins.entries === "object" &&
+    !Array.isArray(plugins.entries)
+      ? plugins.entries
+      : undefined;
+  const entry = entries && entries[pluginId];
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return undefined;
+  }
+  const pluginConfig = entry.config;
+  return pluginConfig && typeof pluginConfig === "object" && !Array.isArray(pluginConfig)
+    ? pluginConfig
+    : undefined;
+}
+
+function resolveLivePluginConfigObject(runtimeConfigLoader, pluginId, startupPluginConfig) {
+  if (typeof runtimeConfigLoader !== "function") {
+    return startupPluginConfig;
+  }
+  return resolvePluginConfigObject(runtimeConfigLoader(), pluginId);
+}
+
+function hashConfigRaw(raw) {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  return crypto.createHash("sha256").update(raw).digest("hex");
+}
+
+function resolveConfigSnapshotHash(snapshot = {}) {
+  const hash = normalizeOptionalString(snapshot.hash);
+  if (hash) {
+    return hash;
+  }
+  return hashConfigRaw(snapshot.raw);
+}
+
+async function readConfigFileSnapshotForWrite(options = {}) {
+  const configIO = createConfigIO(options);
+  const configPath = configIO.configPath;
+  let raw = null;
+  let parsed = {};
+  let valid = true;
+  let issues = [];
+  try {
+    if (fs.existsSync(configPath)) {
+      raw = fs.readFileSync(configPath, "utf8");
+      parsed = raw.trim() ? JSON.parse(raw) : {};
+    }
+  } catch (error) {
+    valid = false;
+    issues = [{ message: formatErrorMessage(error) }];
+    parsed = {};
+  }
+  const sourceConfig = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  const snapshot = {
+    path: configPath,
+    raw,
+    hash: resolveConfigSnapshotHash({ raw }),
+    config: sourceConfig,
+    parsed: sourceConfig,
+    sourceConfig,
+    runtimeConfig: sourceConfig,
+    valid,
+    issues,
+  };
+  return {
+    snapshot,
+    writeOptions: { expectedConfigPath: configPath },
+  };
+}
+
+function cloneConfigForMutation(config) {
+  if (typeof structuredClone === "function") {
+    return structuredClone(config || {});
+  }
+  return JSON.parse(JSON.stringify(config || {}));
+}
+
+function assertConfigBaseHashMatches(snapshot, expectedHash) {
+  const currentHash = resolveConfigSnapshotHash(snapshot) ?? null;
+  if (expectedHash !== undefined && expectedHash !== currentHash) {
+    const error = new Error("config changed since last load");
+    error.name = "ConfigMutationConflictError";
+    error.currentHash = currentHash;
+    throw error;
+  }
+  return currentHash;
+}
+
+function resolveConfigWriteAfterWrite(afterWrite) {
+  return normalizeOptionalString(afterWrite) || "none";
+}
+
+function resolveConfigWriteFollowUp(afterWrite) {
+  switch (afterWrite) {
+    case "restart":
+      return "restart";
+    case "reload":
+      return "reload";
+    default:
+      return "none";
+  }
+}
+
+async function replaceConfigFile(params = {}) {
+  const io = params.io || {};
+  const prepared =
+    params.snapshot && params.writeOptions
+      ? { snapshot: params.snapshot, writeOptions: params.writeOptions }
+      : await (
+          typeof io.readConfigFileSnapshotForWrite === "function"
+            ? io.readConfigFileSnapshotForWrite()
+            : readConfigFileSnapshotForWrite(params.writeOptions || {})
+        );
+  const snapshot = prepared.snapshot;
+  const writeOptions = prepared.writeOptions || {};
+  const previousHash = assertConfigBaseHashMatches(snapshot, params.baseHash);
+  const afterWrite = resolveConfigWriteAfterWrite(params.afterWrite || writeOptions.afterWrite);
+  const write = typeof io.writeConfigFile === "function" ? io.writeConfigFile : writeConfigFile;
+  await write(params.nextConfig || {}, {
+    ...writeOptions,
+    ...(params.writeOptions || {}),
+    afterWrite,
+  });
+  return {
+    path: snapshot.path,
+    previousHash,
+    snapshot,
+    nextConfig: params.nextConfig || {},
+    afterWrite,
+    followUp: resolveConfigWriteFollowUp(afterWrite),
+  };
+}
+
+async function mutateConfigFile(params = {}) {
+  const io = params.io || {};
+  const prepared = await (
+    typeof io.readConfigFileSnapshotForWrite === "function"
+      ? io.readConfigFileSnapshotForWrite()
+      : readConfigFileSnapshotForWrite(params.writeOptions || {})
+  );
+  const snapshot = prepared.snapshot;
+  const writeOptions = prepared.writeOptions || {};
+  const previousHash = assertConfigBaseHashMatches(snapshot, params.baseHash);
+  const baseConfig = params.base === "runtime" ? snapshot.runtimeConfig : snapshot.sourceConfig;
+  const draft = cloneConfigForMutation(baseConfig || snapshot.config || {});
+  const result =
+    typeof params.mutate === "function"
+      ? await params.mutate(draft, { snapshot, previousHash })
+      : undefined;
+  const afterWrite = resolveConfigWriteAfterWrite(params.afterWrite || writeOptions.afterWrite);
+  const write = typeof io.writeConfigFile === "function" ? io.writeConfigFile : writeConfigFile;
+  await write(draft, {
+    ...writeOptions,
+    ...(params.writeOptions || {}),
+    afterWrite,
+  });
+  return {
+    path: snapshot.path,
+    previousHash,
+    snapshot,
+    nextConfig: draft,
+    result,
+    afterWrite,
+    followUp: resolveConfigWriteFollowUp(afterWrite),
+  };
+}
+
+async function updateConfig(mutator, options = {}) {
+  const { snapshot } = await readConfigFileSnapshotForWrite(options);
+  if (!snapshot.valid) {
+    throw new Error(`Invalid config at ${snapshot.path}`);
+  }
+  const next = typeof mutator === "function"
+    ? mutator(cloneConfigForMutation(snapshot.sourceConfig || snapshot.config || {}))
+    : cloneConfigForMutation(snapshot.sourceConfig || snapshot.config || {});
+  await replaceConfigFile({
+    nextConfig: next,
+    baseHash: snapshot.hash,
+    writeOptions: options,
+  });
+  return next;
+}
+
+function logConfigUpdated(runtime, opts = {}) {
+  if (!runtime || typeof runtime.log !== "function") {
+    return;
+  }
+  const configPath = normalizeOptionalString(opts.path) || createConfigIO().configPath;
+  const suffix = normalizeOptionalString(opts.suffix);
+  runtime.log(`Updated ${configPath}${suffix ? ` ${suffix}` : ""}`);
+}
+
+function parseBooleanValue(value, options = {}) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = normalizeOptionalLowercaseString(value);
+  if (!normalized) {
+    return undefined;
+  }
+  const truthy = Array.isArray(options.truthy)
+    ? options.truthy.map((entry) => normalizeLowercaseStringOrEmpty(entry)).filter(Boolean)
+    : ["true", "1", "yes", "on"];
+  const falsy = Array.isArray(options.falsy)
+    ? options.falsy.map((entry) => normalizeLowercaseStringOrEmpty(entry)).filter(Boolean)
+    : ["false", "0", "no", "off"];
+  if (truthy.includes(normalized)) {
+    return true;
+  }
+  if (falsy.includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
+const BUILT_IN_PLUGIN_ALIAS_LOOKUP = new Map([
+  ["openai-codex", "openai"],
+  ["google-gemini-cli", "google"],
+  ["minimax-portal", "minimax"],
+  ["minimax-portal-auth", "minimax"],
+]);
+
+function normalizeBrowserRuntimePluginId(id) {
+  const trimmed = normalizeOptionalString(id) || "";
+  const normalized = normalizeOptionalLowercaseString(trimmed) || "";
+  return BUILT_IN_PLUGIN_ALIAS_LOOKUP.get(normalized) || trimmed;
+}
+
+function normalizeBrowserRuntimeStringList(value, normalizer = normalizeBrowserRuntimePluginId) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => (typeof entry === "string" ? normalizer(entry) : ""))
+    .filter(Boolean);
+}
+
+function normalizeBrowserRuntimeSlotValue(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  if (normalizeOptionalLowercaseString(trimmed) === "none") {
+    return null;
+  }
+  return trimmed;
+}
+
+function normalizeBrowserRuntimePluginEntries(entries) {
+  if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+    return {};
+  }
+  const normalized = {};
+  for (const [key, value] of Object.entries(entries)) {
+    const normalizedKey = normalizeBrowserRuntimePluginId(key);
+    if (!normalizedKey) {
+      continue;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      normalized[normalizedKey] = {};
+      continue;
+    }
+    const entry = value;
+    const next = {};
+    if (typeof entry.enabled === "boolean") {
+      next.enabled = entry.enabled;
+    }
+    if (entry.hooks && typeof entry.hooks === "object" && !Array.isArray(entry.hooks)) {
+      const hooks = {};
+      if (typeof entry.hooks.allowPromptInjection === "boolean") {
+        hooks.allowPromptInjection = entry.hooks.allowPromptInjection;
+      }
+      if (typeof entry.hooks.allowConversationAccess === "boolean") {
+        hooks.allowConversationAccess = entry.hooks.allowConversationAccess;
+      }
+      if (Object.keys(hooks).length > 0) {
+        next.hooks = hooks;
+      }
+    }
+    if (entry.subagent && typeof entry.subagent === "object" && !Array.isArray(entry.subagent)) {
+      const subagent = {};
+      if (typeof entry.subagent.allowModelOverride === "boolean") {
+        subagent.allowModelOverride = entry.subagent.allowModelOverride;
+      }
+      if (Array.isArray(entry.subagent.allowedModels)) {
+        subagent.hasAllowedModelsConfig = true;
+        const allowedModels = entry.subagent.allowedModels
+          .map((model) => normalizeOptionalString(model))
+          .filter(Boolean);
+        if (allowedModels.length > 0) {
+          subagent.allowedModels = allowedModels;
+        }
+      }
+      if (Object.keys(subagent).length > 0) {
+        next.subagent = subagent;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(entry, "config")) {
+      next.config = entry.config;
+    }
+    normalized[normalizedKey] = next;
+  }
+  return normalized;
+}
+
+function normalizePluginsConfig(config = {}) {
+  const pluginsConfig = config && typeof config === "object" ? config : {};
+  const memorySlot = normalizeBrowserRuntimeSlotValue(
+    pluginsConfig.slots && pluginsConfig.slots.memory,
+  );
+  const contextEngineSlot = normalizeBrowserRuntimeSlotValue(
+    pluginsConfig.slots && pluginsConfig.slots.contextEngine,
+  );
+  return {
+    enabled: pluginsConfig.enabled !== false,
+    allow: normalizeBrowserRuntimeStringList(pluginsConfig.allow),
+    deny: normalizeBrowserRuntimeStringList(pluginsConfig.deny),
+    loadPaths: normalizeBrowserRuntimeStringList(
+      pluginsConfig.load && pluginsConfig.load.paths,
+      (entry) => normalizeOptionalString(entry) || "",
+    ),
+    slots: {
+      memory: memorySlot === undefined ? "memory-core" : memorySlot,
+      ...(contextEngineSlot !== undefined ? { contextEngine: contextEngineSlot } : {}),
+    },
+    entries: normalizeBrowserRuntimePluginEntries(pluginsConfig.entries),
+  };
+}
+
+function pluginActivationReasonForCause(cause, reason) {
+  if (reason) {
+    return reason;
+  }
+  const reasons = {
+    "plugins-disabled": "plugins disabled",
+    "blocked-by-denylist": "blocked by denylist",
+    "disabled-in-config": "disabled in config",
+    "workspace-disabled-by-default": "workspace plugin (disabled by default)",
+    "not-in-allowlist": "not in allowlist",
+    "enabled-by-effective-config": "enabled by effective config",
+    "bundled-default-enablement": "bundled default enablement",
+    "bundled-disabled-by-default": "bundled (disabled by default)",
+    "selected-memory-slot": "selected memory slot",
+    "selected-context-engine-slot": "selected context engine slot",
+    "selected-in-allowlist": "selected in allowlist",
+    "enabled-in-config": "enabled in config",
+  };
+  return reasons[cause];
+}
+
+function toEnableStateResult(state) {
+  return state.enabled
+    ? { enabled: true }
+    : { enabled: false, reason: pluginActivationReasonForCause(state.cause, state.reason) };
+}
+
+function resolveEffectiveEnableState(params = {}) {
+  const id = normalizeBrowserRuntimePluginId(params.id || "");
+  const origin = normalizeOptionalString(params.origin) || "workspace";
+  const config = params.config || normalizePluginsConfig();
+  const entry = config.entries && config.entries[id];
+  if (!config.enabled) {
+    return toEnableStateResult({ enabled: false, cause: "plugins-disabled" });
+  }
+  if (Array.isArray(config.deny) && config.deny.includes(id)) {
+    return toEnableStateResult({ enabled: false, cause: "blocked-by-denylist" });
+  }
+  if (entry && entry.enabled === false) {
+    return toEnableStateResult({ enabled: false, cause: "disabled-in-config" });
+  }
+  const explicitlyAllowed = Array.isArray(config.allow) && config.allow.includes(id);
+  if (origin === "workspace" && !explicitlyAllowed && (!entry || entry.enabled !== true)) {
+    return toEnableStateResult({ enabled: false, cause: "workspace-disabled-by-default" });
+  }
+  if (config.slots && config.slots.memory === id) {
+    return { enabled: true };
+  }
+  if (config.slots && config.slots.contextEngine === id) {
+    return { enabled: true };
+  }
+  if (Array.isArray(config.allow) && config.allow.length > 0 && !explicitlyAllowed) {
+    return toEnableStateResult({ enabled: false, cause: "not-in-allowlist" });
+  }
+  if (explicitlyAllowed || (entry && entry.enabled === true) || params.enabledByDefault === true) {
+    return { enabled: true };
+  }
+  if (origin === "bundled") {
+    return toEnableStateResult({ enabled: false, cause: "bundled-disabled-by-default" });
+  }
+  return { enabled: true };
+}
+
+function resolveBrowserConfig(cfg = {}, rootConfig = {}) {
+  const browserConfig = cfg && typeof cfg === "object" ? cfg : {};
+  const gatewayPort = resolveGatewayPort(rootConfig || {});
+  const controlPort =
+    typeof browserConfig.controlPort === "number" && browserConfig.controlPort > 0
+      ? browserConfig.controlPort
+      : deriveDefaultBrowserControlPort(gatewayPort);
+  const cdpRange = deriveDefaultBrowserCdpPortRange(controlPort);
+  const cdpHost =
+    typeof browserConfig.cdpHost === "string" && browserConfig.cdpHost.trim()
+      ? browserConfig.cdpHost.trim()
+      : "127.0.0.1";
+  const profiles =
+    browserConfig.profiles && typeof browserConfig.profiles === "object"
+      ? browserConfig.profiles
+      : {
+          [DEFAULT_BROWSER_DEFAULT_PROFILE_NAME]: {
+            cdpPort: cdpRange.start,
+            color: DEFAULT_OPENCLAW_BROWSER_COLOR,
+          },
+        };
+  return {
+    enabled: browserConfig.enabled !== false,
+    evaluateEnabled: browserConfig.evaluateEnabled !== false,
+    controlPort,
+    cdpPortRangeStart: cdpRange.start,
+    cdpPortRangeEnd: cdpRange.end,
+    cdpProtocol: browserConfig.cdpProtocol === "https" ? "https" : "http",
+    cdpHost,
+    cdpIsLoopback: isLoopbackHost(cdpHost),
+    actionTimeoutMs:
+      typeof browserConfig.actionTimeoutMs === "number"
+        ? browserConfig.actionTimeoutMs
+        : DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
+    color:
+      typeof browserConfig.color === "string" && browserConfig.color.trim()
+        ? browserConfig.color
+        : DEFAULT_OPENCLAW_BROWSER_COLOR,
+    headless: browserConfig.headless === true,
+    noSandbox: browserConfig.noSandbox === true,
+    attachOnly: browserConfig.attachOnly === true,
+    defaultProfile:
+      typeof browserConfig.defaultProfile === "string" && browserConfig.defaultProfile.trim()
+        ? browserConfig.defaultProfile
+        : DEFAULT_BROWSER_DEFAULT_PROFILE_NAME,
+    profiles,
+    tabCleanup: {
+      enabled: true,
+      idleMinutes: 60,
+      maxTabsPerSession: 20,
+      sweepMinutes: 10,
+    },
+    extraArgs: Array.isArray(browserConfig.extraArgs) ? browserConfig.extraArgs : [],
+  };
+}
+
+function resolveProfile(resolved, profileName) {
+  if (!resolved || typeof resolved !== "object") {
+    return null;
+  }
+  const requestedName =
+    typeof profileName === "string" && profileName.trim()
+      ? profileName.trim()
+      : resolved.defaultProfile || DEFAULT_BROWSER_DEFAULT_PROFILE_NAME;
+  const profile =
+    resolved.profiles && typeof resolved.profiles === "object"
+      ? resolved.profiles[requestedName]
+      : undefined;
+  if (!profile || typeof profile !== "object") {
+    return null;
+  }
+  const cdpPort =
+    typeof profile.cdpPort === "number" && profile.cdpPort > 0
+      ? profile.cdpPort
+      : resolved.cdpPortRangeStart;
+  const cdpHost =
+    typeof profile.cdpHost === "string" && profile.cdpHost.trim()
+      ? profile.cdpHost.trim()
+      : resolved.cdpHost || "127.0.0.1";
+  const cdpProtocol = profile.cdpProtocol || resolved.cdpProtocol || "http";
+  return {
+    name: requestedName,
+    cdpPort,
+    cdpUrl:
+      typeof profile.cdpUrl === "string" && profile.cdpUrl.trim()
+        ? profile.cdpUrl.trim()
+        : `${cdpProtocol}://${cdpHost}:${cdpPort}`,
+    cdpHost,
+    cdpIsLoopback: isLoopbackHost(cdpHost),
+    ...(profile.userDataDir ? { userDataDir: profile.userDataDir } : {}),
+    color: profile.color || resolved.color || DEFAULT_OPENCLAW_BROWSER_COLOR,
+    driver: profile.driver === "existing-session" ? "existing-session" : "openclaw",
+    headless: profile.headless === true,
+    attachOnly: profile.attachOnly === true || resolved.attachOnly === true,
+  };
+}
+
+function resolveBrowserControlAuth(cfg = {}, env = process.env) {
+  const gatewayConfig = cfg && cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : {};
+  const authConfig =
+    gatewayConfig.auth && typeof gatewayConfig.auth === "object" ? gatewayConfig.auth : {};
+  const token =
+    normalizeOptionalString(authConfig.token) ||
+    normalizeOptionalString(env && env.OPENCLAW_GATEWAY_TOKEN);
+  const password =
+    normalizeOptionalString(authConfig.password) ||
+    normalizeOptionalString(env && env.OPENCLAW_GATEWAY_PASSWORD);
+  const mode =
+    normalizeOptionalString(authConfig.mode) ||
+    (password ? "password" : token ? "token" : "token");
+  switch (mode) {
+    case "password":
+    case "trusted-proxy":
+      return {
+        ...(password ? { password } : {}),
+      };
+    case "token":
+    case "none":
+      return {
+        ...(token ? { token } : {}),
+      };
+    default:
+      return {};
+  }
+}
+
+function shouldAutoGenerateBrowserAuth(env = process.env) {
+  const nodeEnv = normalizeLowercaseStringOrEmpty(env && env.NODE_ENV);
+  if (nodeEnv === "test") {
+    return false;
+  }
+  const vitest = normalizeLowercaseStringOrEmpty(env && env.VITEST);
+  if (vitest && vitest !== "0" && vitest !== "false" && vitest !== "off") {
+    return false;
+  }
+  return true;
+}
+
+async function ensureBrowserControlAuth(params = {}) {
+  const env = params.env || process.env;
+  const auth = resolveBrowserControlAuth(params.cfg || {}, env);
+  if (auth.token || auth.password) {
+    return { auth };
+  }
+  if (!shouldAutoGenerateBrowserAuth(env)) {
+    return { auth };
+  }
+  const latestConfig = getRuntimeConfig() || params.cfg || {};
+  const latestAuth = resolveBrowserControlAuth(latestConfig, env);
+  if (latestAuth.token || latestAuth.password) {
+    return { auth: latestAuth };
+  }
+  const latestMode =
+    latestConfig &&
+    latestConfig.gateway &&
+    latestConfig.gateway.auth &&
+    normalizeOptionalString(latestConfig.gateway.auth.mode);
+  if (latestMode === "password") {
+    return { auth: latestAuth };
+  }
+  const generatedToken = crypto.randomBytes(24).toString("hex");
+  if (latestMode === "trusted-proxy") {
+    return { auth: { password: generatedToken }, generatedToken };
+  }
+  return { auth: { token: generatedToken }, generatedToken };
+}
+
+function assertTrashTargetAllowed(targetPath, allowedRoots) {
+  const roots = Array.from(allowedRoots || [os.homedir(), os.tmpdir()]).map((root) => {
+    try {
+      return path.resolve(fs.realpathSync.native(String(root)));
+    } catch (_error) {
+      return path.resolve(String(root));
+    }
+  });
+  let resolvedTarget = path.resolve(targetPath);
+  try {
+    resolvedTarget = path.resolve(fs.realpathSync.native(targetPath));
+  } catch (_error) {
+    // The later move will surface missing or inaccessible targets.
+  }
+  if (
+    !roots.some(
+      (root) => resolvedTarget !== root && resolvedTarget.startsWith(`${root}${path.sep}`),
+    )
+  ) {
+    throw new Error(`Refusing to trash path outside allowed roots: ${targetPath}`);
+  }
+}
+
+function resolveBrowserTrashDir() {
+  const homeDir = os.homedir();
+  const trashDir = path.join(homeDir, ".Trash");
+  fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+  const trashDirStat = fs.lstatSync(trashDir);
+  if (!trashDirStat.isDirectory() || trashDirStat.isSymbolicLink()) {
+    throw new Error(`Refusing to use non-directory/symlink trash directory: ${trashDir}`);
+  }
+  const realHome = path.resolve(fs.realpathSync.native(homeDir));
+  const resolvedTrashDir = path.resolve(fs.realpathSync.native(trashDir));
+  if (
+    resolvedTrashDir === realHome ||
+    !resolvedTrashDir.startsWith(`${realHome}${path.sep}`)
+  ) {
+    throw new Error(`Trash directory escaped home directory: ${trashDir}`);
+  }
+  return resolvedTrashDir;
+}
+
+function resolveContainedBrowserTrashPath(root, leaf) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedPath = path.resolve(resolvedRoot, leaf);
+  if (!resolvedPath.startsWith(`${resolvedRoot}${path.sep}`) || resolvedPath === resolvedRoot) {
+    throw new Error(`Trash destination escaped trash directory: ${resolvedPath}`);
+  }
+  return resolvedPath;
+}
+
+function reserveBrowserTrashDestination(trashDir, base, timestamp) {
+  const containerPrefix = resolveContainedBrowserTrashPath(trashDir, `${base}-${timestamp}-`);
+  const container = fs.mkdtempSync(containerPrefix);
+  return resolveContainedBrowserTrashPath(container, base);
+}
+
+function movePathToBrowserTrashDestination(targetPath, destination) {
+  try {
+    fs.renameSync(targetPath, destination);
+    return true;
+  } catch (error) {
+    if (!error || error.code !== "EXDEV") {
+      if (error && ["EEXIST", "ENOTEMPTY", "ERR_FS_CP_EEXIST"].includes(error.code)) {
+        return false;
+      }
+      throw error;
+    }
+  }
+  try {
+    fs.cpSync(targetPath, destination, { recursive: true, force: false, errorOnExist: true });
+    fs.rmSync(targetPath, { recursive: true, force: false });
+    return true;
+  } catch (error) {
+    if (error && ["EEXIST", "ENOTEMPTY", "ERR_FS_CP_EEXIST"].includes(error.code)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function movePathToTrash(targetPath, options = {}) {
+  assertTrashTargetAllowed(targetPath, options.allowedRoots);
+  const trashDir = resolveBrowserTrashDir();
+  const base = path.basename(path.resolve(targetPath)).replace(/[\\/]+/g, "");
+  if (!base) {
+    throw new Error(`Unable to derive safe trash basename for: ${targetPath}`);
+  }
+  const timestamp = Date.now();
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const destination = reserveBrowserTrashDestination(trashDir, base, timestamp);
+    if (movePathToBrowserTrashDestination(targetPath, destination)) {
+      return destination;
+    }
+  }
+  throw new Error(`Unable to choose a unique trash destination for ${targetPath}`);
+}
+
+const browserConfigRuntime = {
+  DEFAULT_AI_SNAPSHOT_MAX_CHARS,
+  DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
+  DEFAULT_BROWSER_DEFAULT_PROFILE_NAME,
+  DEFAULT_BROWSER_EVALUATE_ENABLED,
+  DEFAULT_OPENCLAW_BROWSER_COLOR,
+  DEFAULT_OPENCLAW_BROWSER_ENABLED,
+  DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME,
+  DEFAULT_UPLOAD_DIR,
+  ensureBrowserControlAuth,
+  movePathToTrash,
+  parseBrowserHttpUrl,
+  redactCdpUrl,
+  resolveBrowserConfig,
+  resolveBrowserControlAuth,
+  resolveProfile,
+};
+
+const browserControlAuthRuntime = {
+  ensureBrowserControlAuth,
+  resolveBrowserControlAuth,
+  shouldAutoGenerateBrowserAuth,
+};
+
+const browserProfilesRuntime = {
+  DEFAULT_AI_SNAPSHOT_MAX_CHARS,
+  DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
+  DEFAULT_BROWSER_DEFAULT_PROFILE_NAME,
+  DEFAULT_BROWSER_EVALUATE_ENABLED,
+  DEFAULT_OPENCLAW_BROWSER_COLOR,
+  DEFAULT_OPENCLAW_BROWSER_ENABLED,
+  DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME,
+  DEFAULT_UPLOAD_DIR,
+  resolveBrowserConfig,
+  resolveProfile,
+};
+
+const browserConfigRuntimeSdk = {
+  CONFIG_DIR,
+  DEFAULT_BROWSER_CONTROL_PORT,
+  createConfigIO,
+  deriveDefaultBrowserCdpPortRange,
+  deriveDefaultBrowserControlPort,
+  escapeRegExp,
+  getRuntimeConfigSnapshot,
+  loadConfig,
+  normalizePluginsConfig,
+  parseBooleanValue,
+  resolveConfigPath,
+  resolveEffectiveEnableState,
+  resolveGatewayPort,
+  resolveUserPath,
+  shortenHomePath,
+  writeConfigFile,
+};
+
+const browserTrashRuntime = {
+  movePathToTrash,
+};
+
+async function closeTrackedBrowserTabsForSessions(params = {}) {
+  const sessionKeys = Array.isArray(params.sessionKeys) ? params.sessionKeys : [];
+  if (!sessionKeys.some((key) => normalizeOptionalString(key))) {
+    return 0;
+  }
+  if (typeof params.onWarn === "function") {
+    params.onWarn("browser cleanup unavailable: browser maintenance runtime facade unavailable");
+  }
+  return 0;
+}
+
+const browserMaintenanceRuntime = {
+  closeTrackedBrowserTabsForSessions,
+  movePathToTrash,
+};
+
+const CHROME_VERSION_RE = /\b(\d+)(?:\.\d+){1,3}\b/g;
+
+function browserExecutableExists(filePath) {
+  try {
+    return fs.existsSync(filePath);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function findFirstChromeExecutable(candidates) {
+  for (const candidate of candidates) {
+    if (browserExecutableExists(candidate)) {
+      return { kind: "chrome", path: candidate };
+    }
+  }
+  return null;
+}
+
+function resolveGoogleChromeExecutableForPlatform(platformName = process.platform) {
+  const platform = normalizeOptionalString(platformName);
+  if (platform === "darwin") {
+    return findFirstChromeExecutable([
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+      path.join(os.homedir(), "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    ]);
+  }
+  if (platform === "linux") {
+    return findFirstChromeExecutable([
+      "/usr/bin/google-chrome",
+      "/usr/bin/google-chrome-stable",
+      "/usr/bin/google-chrome-beta",
+      "/usr/bin/google-chrome-unstable",
+      "/snap/bin/chromium",
+    ]);
+  }
+  if (platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA || "";
+    const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+    const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    const joinWin = path.win32.join;
+    const candidates = [];
+    if (localAppData) {
+      candidates.push(joinWin(localAppData, "Google", "Chrome", "Application", "chrome.exe"));
+      candidates.push(joinWin(localAppData, "Google", "Chrome SxS", "Application", "chrome.exe"));
+    }
+    candidates.push(joinWin(programFiles, "Google", "Chrome", "Application", "chrome.exe"));
+    candidates.push(joinWin(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"));
+    return findFirstChromeExecutable(candidates);
+  }
+  return null;
+}
+
+function readBrowserVersion(executablePath) {
+  const executable = normalizeOptionalString(executablePath);
+  if (!executable) {
+    return null;
+  }
+  try {
+    const output = execFileSync(executable, ["--version"], {
+      timeout: 2000,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+    });
+    return normalizeOptionalString(String(output).replace(/\s+/g, " ")) || null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function parseBrowserMajorVersion(rawVersion) {
+  const matches = Array.from(String(rawVersion ?? "").matchAll(CHROME_VERSION_RE));
+  const match = matches[matches.length - 1];
+  if (!match || !match[1]) {
+    return null;
+  }
+  const major = Number.parseInt(match[1], 10);
+  return Number.isFinite(major) ? major : null;
+}
+
+const browserHostInspectionRuntime = {
+  parseBrowserMajorVersion,
+  readBrowserVersion,
+  resolveGoogleChromeExecutableForPlatform,
+};
+
+const ErrorCodes = {
+  NOT_LINKED: "NOT_LINKED",
+  NOT_PAIRED: "NOT_PAIRED",
+  AGENT_TIMEOUT: "AGENT_TIMEOUT",
+  INVALID_REQUEST: "INVALID_REQUEST",
+  APPROVAL_NOT_FOUND: "APPROVAL_NOT_FOUND",
+  UNAVAILABLE: "UNAVAILABLE",
+};
+
+function errorShape(code, message, opts = {}) {
+  return {
+    code,
+    message,
+    ...(opts || {}),
+  };
+}
+
+function safeParseJson(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch (_error) {
+    return { payloadJSON: value };
+  }
+}
+
+function resolveGatewayAuth(params = {}) {
+  const baseConfig = params.authConfig || {};
+  const override = params.authOverride || {};
+  const authConfig = { ...baseConfig, ...override };
+  const env = params.env || process.env;
+  const token =
+    normalizeOptionalString(authConfig.token) ||
+    normalizeOptionalString(env && env.OPENCLAW_GATEWAY_TOKEN);
+  const password =
+    normalizeOptionalString(authConfig.password) ||
+    normalizeOptionalString(env && env.OPENCLAW_GATEWAY_PASSWORD);
+  let mode = "token";
+  let modeSource = "default";
+  if (override.mode !== undefined) {
+    mode = override.mode;
+    modeSource = "override";
+  } else if (authConfig.mode) {
+    mode = authConfig.mode;
+    modeSource = "config";
+  } else if (password) {
+    mode = "password";
+    modeSource = "password";
+  } else if (token) {
+    mode = "token";
+    modeSource = "token";
+  }
+  const allowTailscale =
+    authConfig.allowTailscale !== undefined
+      ? Boolean(authConfig.allowTailscale)
+      : params.tailscaleMode === "serve" && mode !== "password" && mode !== "trusted-proxy";
+  return {
+    mode,
+    modeSource,
+    ...(token ? { token } : {}),
+    ...(password ? { password } : {}),
+    allowTailscale,
+    ...(authConfig.trustedProxy ? { trustedProxy: authConfig.trustedProxy } : {}),
+  };
+}
+
+async function ensureGatewayStartupAuth(params = {}) {
+  return {
+    cfg: params.cfg || {},
+    auth: resolveGatewayAuth({
+      authConfig: params.cfg && params.cfg.gateway && params.cfg.gateway.auth,
+      authOverride: params.authOverride,
+      env: params.env,
+      tailscaleMode:
+        params.tailscaleOverride && params.tailscaleOverride.mode
+          ? params.tailscaleOverride.mode
+          : params.cfg &&
+              params.cfg.gateway &&
+              params.cfg.gateway.tailscale &&
+              params.cfg.gateway.tailscale.mode,
+    }),
+    persistedGeneratedToken: false,
+  };
+}
+
+function resolveNodeCommandAllowlist(cfg = {}) {
+  const nodes = cfg && cfg.gateway && cfg.gateway.nodes ? cfg.gateway.nodes : {};
+  const allow = new Set(
+    Array.isArray(nodes.allowCommands)
+      ? nodes.allowCommands.map((cmd) => String(cmd || "").trim()).filter(Boolean)
+      : [],
+  );
+  const deny = Array.isArray(nodes.denyCommands)
+    ? nodes.denyCommands.map((cmd) => String(cmd || "").trim()).filter(Boolean)
+    : [];
+  for (const blocked of deny) {
+    allow.delete(blocked);
+  }
+  return allow;
+}
+
+function isNodeCommandAllowed(params = {}) {
+  const command = String(params.command || "").trim();
+  if (!command) {
+    return { ok: false, reason: "command required" };
+  }
+  if (!params.allowlist || !params.allowlist.has(command)) {
+    return { ok: false, reason: "command not allowlisted" };
+  }
+  if (Array.isArray(params.declaredCommands) && params.declaredCommands.length > 0) {
+    if (!params.declaredCommands.includes(command)) {
+      return { ok: false, reason: "command not declared by node" };
+    }
+  } else {
+    return { ok: false, reason: "node did not declare commands" };
+  }
+  return { ok: true };
+}
+
+function respondUnavailableOnNodeInvokeError(respond, res) {
+  if (res && res.ok) {
+    return true;
+  }
+  const nodeError = res && res.error && typeof res.error === "object" ? res.error : null;
+  const nodeCode = normalizeOptionalString(nodeError && nodeError.code) || "";
+  const nodeMessage =
+    normalizeOptionalString(nodeError && nodeError.message) || "node invoke failed";
+  const message = nodeCode ? `${nodeCode}: ${nodeMessage}` : nodeMessage;
+  respond(
+    false,
+    undefined,
+    errorShape(ErrorCodes.UNAVAILABLE, message, {
+      details: { nodeError: (res && res.error) || null },
+    }),
+  );
+  return false;
+}
+
+function rawDataToString(data, encoding = "utf8") {
+  if (typeof data === "string") {
+    return data;
+  }
+  if (Buffer.isBuffer(data)) {
+    return data.toString(encoding);
+  }
+  if (Array.isArray(data)) {
+    return Buffer.concat(data).toString(encoding);
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString(encoding);
+  }
+  return Buffer.from(String(data)).toString(encoding);
+}
+
+function addGatewayClientOptions(command) {
+  return command;
+}
+
+async function callGatewayFromCli() {
+  throw new Error("UNAVAILABLE: gateway RPC unavailable in OpenZues plugin runtime");
+}
+
+async function startLazyPluginServiceModule() {
+  throw new Error("UNAVAILABLE: lazy plugin service unavailable in OpenZues plugin runtime");
+}
+
+async function withAbortableTimeout(work, timeoutMs, label) {
+  const resolved =
+    typeof timeoutMs === "number" && Number.isFinite(timeoutMs)
+      ? Math.max(1, Math.floor(timeoutMs))
+      : undefined;
+  if (!resolved) {
+    return await work(undefined);
+  }
+  const abortCtrl = new AbortController();
+  const timeoutError = new Error(`${label || "request"} timed out`);
+  const timer = setTimeout(() => abortCtrl.abort(timeoutError), resolved);
+  let abortListener;
+  const abortPromise = abortCtrl.signal.aborted
+    ? Promise.reject(abortCtrl.signal.reason || timeoutError)
+    : new Promise((_resolve, reject) => {
+        abortListener = () => reject(abortCtrl.signal.reason || timeoutError);
+        abortCtrl.signal.addEventListener("abort", abortListener, { once: true });
+      });
+  try {
+    return await Promise.race([work(abortCtrl.signal), abortPromise]);
+  } finally {
+    clearTimeout(timer);
+    if (abortListener) {
+      abortCtrl.signal.removeEventListener("abort", abortListener);
+    }
+  }
+}
+
+const browserNodeRuntime = {
+  ErrorCodes,
+  addGatewayClientOptions,
+  callGatewayFromCli,
+  defaultRuntime,
+  ensureGatewayStartupAuth,
+  errorShape,
+  isLoopbackHost,
+  isNodeCommandAllowed,
+  rawDataToString,
+  respondUnavailableOnNodeInvokeError,
+  resolveGatewayAuth,
+  resolveNodeCommandAllowlist,
+  runCommandWithRuntime,
+  runExec,
+  safeParseJson,
+  startLazyPluginServiceModule,
+  withTimeout: withAbortableTimeout,
+};
+
+const IMAGE_REDUCE_QUALITY_STEPS = [85, 75, 65, 55, 45, 35];
+
+async function callGatewayTool() {
+  throw new Error("UNAVAILABLE: gateway tool calls unavailable in OpenZues plugin runtime");
+}
+
+async function listNodes() {
+  return [];
+}
+
+function hasNodeCapability(node, capability) {
+  return !capability || !Array.isArray(node.caps) || node.caps.includes(capability);
+}
+
+function isLocalMacNode(node) {
+  return (
+    normalizeLowercaseStringOrEmpty(node && node.platform).startsWith("mac") &&
+    typeof (node && node.nodeId) === "string" &&
+    node.nodeId.startsWith("mac-")
+  );
+}
+
+function compareDefaultNodeOrder(a, b) {
+  const aConnectedAt = Number.isFinite(a && a.connectedAtMs) ? a.connectedAtMs : -1;
+  const bConnectedAt = Number.isFinite(b && b.connectedAtMs) ? b.connectedAtMs : -1;
+  if (aConnectedAt !== bConnectedAt) {
+    return bConnectedAt - aConnectedAt;
+  }
+  return String((a && a.nodeId) || "").localeCompare(String((b && b.nodeId) || ""));
+}
+
+function selectDefaultNodeFromList(nodes = [], options = {}) {
+  const capability = normalizeOptionalString(options.capability);
+  const withCapability = (Array.isArray(nodes) ? nodes : []).filter((node) =>
+    hasNodeCapability(node, capability),
+  );
+  if (withCapability.length === 0) {
+    return null;
+  }
+  const connected = withCapability.filter((node) => node && node.connected);
+  const candidates = connected.length > 0 ? connected : withCapability;
+  if (candidates.length === 1) {
+    return candidates[0];
+  }
+  if (options.preferLocalMac !== false) {
+    const local = candidates.filter(isLocalMacNode);
+    if (local.length === 1) {
+      return local[0];
+    }
+  }
+  if ((options.fallback || "none") === "none") {
+    return null;
+  }
+  return [...candidates].sort(compareDefaultNodeOrder)[0] || null;
+}
+
+function resolveNodeIdFromList(nodes = [], query, allowDefault = false) {
+  const normalized = normalizeLowercaseStringOrEmpty(query);
+  if (normalized) {
+    const match = (Array.isArray(nodes) ? nodes : []).find((node) => {
+      const nodeId = normalizeLowercaseStringOrEmpty(node && node.nodeId);
+      const displayName = normalizeLowercaseStringOrEmpty(node && node.displayName);
+      return nodeId === normalized || displayName === normalized ||
+        nodeId.includes(normalized) || displayName.includes(normalized);
+    });
+    if (match && match.nodeId) {
+      return match.nodeId;
+    }
+    throw new Error(`node not found: ${query}`);
+  }
+  if (allowDefault) {
+    const fallback = selectDefaultNodeFromList(nodes, { fallback: "first" });
+    if (fallback && fallback.nodeId) {
+      return fallback.nodeId;
+    }
+  }
+  throw new Error("node required");
+}
+
+function buildImageResizeSideGrid(maxSide, sideStart) {
+  return [sideStart, 1800, 1600, 1400, 1200, 1000, 800]
+    .map((value) => Math.min(maxSide, value))
+    .filter((value, index, values) => value > 0 && values.indexOf(value) === index)
+    .sort((a, b) => b - a);
+}
+
+async function getImageMetadata() {
+  return null;
+}
+
+async function resizeToJpeg(params = {}) {
+  if (Buffer.isBuffer(params.buffer)) {
+    return params.buffer;
+  }
+  throw new Error("UNAVAILABLE: image resize unavailable in OpenZues plugin runtime");
+}
+
+async function ensureMediaDir() {
+  const mediaDir = resolveMediaDir();
+  await fs.promises.mkdir(mediaDir, { recursive: true, mode: 0o700 });
+  return mediaDir;
+}
+
+async function imageResultFromFile(filePath, opts = {}) {
+  const buffer = await fs.promises.readFile(filePath);
+  const mimeType =
+    normalizeOptionalString(opts.mimeType) ||
+    (await detectMime({ buffer, filePath })) ||
+    "application/octet-stream";
+  return {
+    content: [{ type: "image", mimeType, data: buffer.toString("base64") }],
+    details: { path: filePath, mimeType },
+  };
+}
+
+function captureEnv(keys = []) {
+  const snapshot = new Map();
+  for (const key of keys) {
+    snapshot.set(key, process.env[key]);
+  }
+  return {
+    restore() {
+      for (const [key, value] of snapshot) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    },
+  };
+}
+
+function applyEnvValues(env = {}) {
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+}
+
+function withEnv(env, fn) {
+  const snapshot = captureEnv(Object.keys(env || {}));
+  try {
+    applyEnvValues(env || {});
+    return fn();
+  } finally {
+    snapshot.restore();
+  }
+}
+
+async function withEnvAsync(env, fn) {
+  const snapshot = captureEnv(Object.keys(env || {}));
+  try {
+    applyEnvValues(env || {});
+    return await fn();
+  } finally {
+    snapshot.restore();
+  }
+}
+
+function withFetchPreconnect(fn) {
+  return Object.assign(fn, {
+    preconnect: () => {},
+    __openclawAcceptsDispatcher: true,
+  });
+}
+
+async function createTempHomeEnv(prefix = "openzues-browser-setup-") {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const snapshot = captureEnv([
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "OPENCLAW_STATE_DIR",
+  ]);
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.env.OPENCLAW_STATE_DIR = path.join(home, ".openclaw");
+  await fs.promises.mkdir(process.env.OPENCLAW_STATE_DIR, { recursive: true, mode: 0o700 });
+  return {
+    home,
+    restore: async () => {
+      snapshot.restore();
+      await fs.promises.rm(home, { recursive: true, force: true });
+    },
+  };
+}
+
+const browserSetupToolsRuntime = {
+  IMAGE_REDUCE_QUALITY_STEPS,
+  buildImageResizeSideGrid,
+  callGatewayTool,
+  captureEnv,
+  createTempHomeEnv,
+  danger: identityTheme,
+  detectMime,
+  ensureMediaDir,
+  formatCliCommand: formatOpenClawCliCommand,
+  formatDocsLink,
+  formatHelpExamples,
+  getImageMetadata,
+  imageResultFromFile,
+  info: identityTheme,
+  inheritOptionFromParent,
+  jsonResult,
+  listNodes,
+  note,
+  optionalStringEnum,
+  readStringParam,
+  resizeToJpeg,
+  resolveNodeIdFromList,
+  saveMediaBuffer,
+  selectDefaultNodeFromList,
+  stringEnum,
+  theme: cliTheme,
+  withEnv,
+  withEnvAsync,
+  withFetchPreconnect,
+};
+
+function decodeBrowserProxyParams(paramsJSON) {
+  if (!paramsJSON) {
+    throw new Error("INVALID_REQUEST: paramsJSON required");
+  }
+  return JSON.parse(paramsJSON);
+}
+
+async function runBrowserProxyCommand(paramsJSON) {
+  const params = decodeBrowserProxyParams(paramsJSON);
+  const pathValue = typeof params.path === "string" ? params.path.trim() : "";
+  if (!pathValue) {
+    throw new Error("INVALID_REQUEST: path required");
+  }
+  throw new Error("UNAVAILABLE: node browser proxy disabled");
+}
+
+const browserNodeHostRuntime = {
+  runBrowserProxyCommand,
+};
+
 const browserSecurityRuntime = {
   SafeOpenError,
   SsrFBlockedError,
@@ -47008,6 +60239,26 @@ const browserSecurityRuntime = {
   safeEqualSecret,
   wrapExternalContent,
   writeFileFromPathWithinRoot,
+};
+
+const browserSupportRuntime = {
+  ...browserConfigRuntimeSdk,
+  ...browserNodeRuntime,
+  ...browserSecurityRuntime,
+  ...browserSetupToolsRuntime,
+};
+
+async function startBrowserBridgeServer() {
+  throw new Error("UNAVAILABLE: browser bridge runtime unavailable");
+}
+
+async function stopBrowserBridgeServer() {
+  throw new Error("UNAVAILABLE: browser bridge runtime unavailable");
+}
+
+const browserBridgeRuntime = {
+  startBrowserBridgeServer,
+  stopBrowserBridgeServer,
 };
 
 const secretRefRuntime = {
@@ -48259,6 +61510,3065 @@ function resolveSessionAgentId(params = {}) {
   return parsed && parsed.agentId ? normalizeAgentId(parsed.agentId) : defaultAgentId;
 }
 
+const AGENT_RUNTIME_DEFAULT_PROVIDER = "openai";
+const AGENT_RUNTIME_DEFAULT_MODEL = "gpt-5.5";
+const AGENT_RUNTIME_DEFAULT_CONTEXT_TOKENS = 200000;
+const MINIMAX_OAUTH_MARKER = "minimax-oauth";
+const OAUTH_API_KEY_MARKER_PREFIX = "oauth:";
+const OLLAMA_LOCAL_AUTH_MARKER = "ollama-local";
+const CUSTOM_LOCAL_AUTH_MARKER = "custom-local";
+const GCP_VERTEX_CREDENTIALS_MARKER = "gcp-vertex-credentials";
+const NON_ENV_SECRETREF_MARKER = "secretref-managed";
+const SECRETREF_ENV_HEADER_MARKER_PREFIX = "secretref-env:";
+const AGENT_RUNTIME_AWS_SDK_ENV_MARKERS = new Set([
+  "AWS_BEARER_TOKEN_BEDROCK",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_PROFILE",
+]);
+const AGENT_RUNTIME_LEGACY_ENV_API_KEY_MARKERS = new Set([
+  "GOOGLE_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "PERPLEXITY_API_KEY",
+  "FIREWORKS_API_KEY",
+  "NOVITA_API_KEY",
+  "AZURE_OPENAI_API_KEY",
+  "AZURE_API_KEY",
+  "MINIMAX_CODE_PLAN_KEY",
+]);
+const AGENT_RUNTIME_UNICODE_SPACES_RE = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+const AGENT_RUNTIME_PUBLIC_AVATAR_SOURCE_MAX_CHARS = 256;
+const AGENT_RUNTIME_PUBLIC_DATA_AVATAR_HEADER_MAX_CHARS = 64;
+
+function agentRuntimeNormalizeProviderId(provider) {
+  const normalized = normalizeLowercaseStringOrEmpty(provider);
+  if (normalized === "modelstudio" || normalized === "qwencloud") {
+    return "qwen";
+  }
+  if (normalized === "z.ai" || normalized === "z-ai") {
+    return "zai";
+  }
+  if (normalized === "opencode-zen") {
+    return "opencode";
+  }
+  if (normalized === "opencode-go-auth") {
+    return "opencode-go";
+  }
+  if (normalized === "kimi" || normalized === "kimi-code" || normalized === "kimi-coding") {
+    return "kimi";
+  }
+  if (normalized === "bedrock" || normalized === "aws-bedrock") {
+    return "amazon-bedrock";
+  }
+  if (normalized === "bytedance" || normalized === "doubao") {
+    return "volcengine";
+  }
+  return normalized;
+}
+
+function agentRuntimeFindNormalizedProviderValue(entries, provider) {
+  if (!entries || typeof entries !== "object") {
+    return undefined;
+  }
+  const providerKey = agentRuntimeNormalizeProviderId(provider);
+  for (const [key, value] of Object.entries(entries)) {
+    if (agentRuntimeNormalizeProviderId(key) === providerKey) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function agentRuntimeFindNormalizedProviderKey(entries, provider) {
+  if (!entries || typeof entries !== "object") {
+    return undefined;
+  }
+  const providerKey = agentRuntimeNormalizeProviderId(provider);
+  return Object.keys(entries).find((key) => agentRuntimeNormalizeProviderId(key) === providerKey);
+}
+
+function agentRuntimeListAgentEntries(cfg = {}) {
+  const list = cfg && cfg.agents && cfg.agents.list;
+  return Array.isArray(list)
+    ? list.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+    : [];
+}
+
+function agentRuntimeListAgentIds(cfg = {}) {
+  const entries = agentRuntimeListAgentEntries(cfg);
+  if (entries.length === 0) {
+    return [DEFAULT_AGENT_ID];
+  }
+  const seen = new Set();
+  const ids = [];
+  for (const entry of entries) {
+    const id = normalizeAgentId(entry && entry.id);
+    if (seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids.length > 0 ? ids : [DEFAULT_AGENT_ID];
+}
+
+function agentRuntimeResolveDefaultAgentId(cfg = {}) {
+  const entries = agentRuntimeListAgentEntries(cfg);
+  if (entries.length === 0) {
+    return DEFAULT_AGENT_ID;
+  }
+  const chosen = entries.find((entry) => entry && entry.default) || entries[0] || {};
+  return normalizeAgentId(chosen.id || DEFAULT_AGENT_ID);
+}
+
+function agentRuntimeResolveAgentEntry(cfg = {}, agentId) {
+  const id = normalizeAgentId(agentId);
+  return agentRuntimeListAgentEntries(cfg).find((entry) => normalizeAgentId(entry.id) === id);
+}
+
+function agentRuntimeResolveAgentConfig(cfg = {}, agentId) {
+  const entry = agentRuntimeResolveAgentEntry(cfg, agentId);
+  if (!entry) {
+    return undefined;
+  }
+  const defaults = cfg && cfg.agents && cfg.agents.defaults ? cfg.agents.defaults : {};
+  const entryContextLimits =
+    entry.contextLimits &&
+    typeof entry.contextLimits === "object" &&
+    !Array.isArray(entry.contextLimits)
+      ? entry.contextLimits
+      : undefined;
+  const defaultContextLimits =
+    defaults.contextLimits &&
+    typeof defaults.contextLimits === "object" &&
+    !Array.isArray(defaults.contextLimits)
+      ? defaults.contextLimits
+      : undefined;
+  return {
+    name: readStringValue(entry.name),
+    workspace: readStringValue(entry.workspace),
+    agentDir: readStringValue(entry.agentDir),
+    systemPromptOverride: readStringValue(entry.systemPromptOverride),
+    model:
+      typeof entry.model === "string" || (entry.model && typeof entry.model === "object")
+        ? entry.model
+        : undefined,
+    thinkingDefault: entry.thinkingDefault,
+    verboseDefault: entry.verboseDefault ?? defaults.verboseDefault,
+    reasoningDefault: entry.reasoningDefault,
+    fastModeDefault: entry.fastModeDefault,
+    skills: Array.isArray(entry.skills) ? entry.skills : undefined,
+    memorySearch: entry.memorySearch,
+    humanDelay: entry.humanDelay,
+    tts: entry.tts,
+    contextLimits: entryContextLimits
+      ? { ...(defaultContextLimits || {}), ...entryContextLimits }
+      : defaultContextLimits,
+    heartbeat: entry.heartbeat,
+    identity: entry.identity,
+    groupChat: entry.groupChat,
+    subagents:
+      entry.subagents && typeof entry.subagents === "object" && !Array.isArray(entry.subagents)
+        ? entry.subagents
+        : undefined,
+    embeddedPi:
+      entry.embeddedPi && typeof entry.embeddedPi === "object" && !Array.isArray(entry.embeddedPi)
+        ? entry.embeddedPi
+        : undefined,
+    sandbox: entry.sandbox,
+    tools: entry.tools,
+  };
+}
+
+function agentRuntimeResolveAgentContextLimits(cfg, agentId) {
+  const defaults = cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.contextLimits;
+  if (!cfg || !agentId) {
+    return defaults;
+  }
+  const resolved = agentRuntimeResolveAgentConfig(cfg, agentId);
+  return (resolved && resolved.contextLimits) || defaults;
+}
+
+function agentRuntimeResolveAgentWorkspaceDir(cfg = {}, agentId, env = process.env) {
+  const id = normalizeAgentId(agentId);
+  const configured = normalizeOptionalString(
+    (agentRuntimeResolveAgentConfig(cfg, id) || {}).workspace,
+  );
+  if (configured) {
+    return resolveUserPath(configured, env);
+  }
+  const fallback = normalizeOptionalString(
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.workspace,
+  );
+  if (id === agentRuntimeResolveDefaultAgentId(cfg)) {
+    return fallback
+      ? resolveUserPath(fallback, env)
+      : path.join(resolveRequiredHomeDir(env), ".openclaw", "workspace");
+  }
+  if (fallback) {
+    return path.join(resolveUserPath(fallback, env), id);
+  }
+  return path.join(resolveStateDir(env), `workspace-${id}`);
+}
+
+function agentRuntimeResolveAgentDir(cfg = {}, agentId, env = process.env) {
+  const id = normalizeAgentId(agentId);
+  const configured = normalizeOptionalString(
+    (agentRuntimeResolveAgentConfig(cfg, id) || {}).agentDir,
+  );
+  if (configured) {
+    return resolveUserPath(configured, env);
+  }
+  return path.join(resolveStateDir(env), "agents", id, "agent");
+}
+
+function agentRuntimeReadModelPrimaryValue(raw) {
+  if (typeof raw === "string") {
+    return normalizeOptionalString(raw);
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return normalizeOptionalString(raw.primary);
+  }
+  return undefined;
+}
+
+function agentRuntimeResolveAgentExplicitModelPrimary(cfg, agentId) {
+  return agentRuntimeReadModelPrimaryValue(
+    (agentRuntimeResolveAgentConfig(cfg || {}, agentId) || {}).model,
+  );
+}
+
+function agentRuntimeResolveAgentEffectiveModelPrimary(cfg, agentId) {
+  return (
+    agentRuntimeResolveAgentExplicitModelPrimary(cfg, agentId) ||
+    agentRuntimeReadModelPrimaryValue(
+      cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.model,
+    )
+  );
+}
+
+function agentRuntimeResolveAgentModelFallbacksOverride(cfg, agentId) {
+  const raw = (agentRuntimeResolveAgentConfig(cfg || {}, agentId) || {}).model;
+  if (!raw) {
+    return undefined;
+  }
+  if (typeof raw === "string") {
+    return agentRuntimeReadModelPrimaryValue(raw) ? [] : undefined;
+  }
+  if (!Object.prototype.hasOwnProperty.call(raw, "fallbacks")) {
+    return Object.prototype.hasOwnProperty.call(raw, "primary") &&
+      agentRuntimeReadModelPrimaryValue(raw)
+      ? []
+      : undefined;
+  }
+  return Array.isArray(raw.fallbacks) ? raw.fallbacks : undefined;
+}
+
+function agentRuntimeTrimStringValue(value) {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return String(value).trim();
+}
+
+function agentRuntimeListKnownNonSecretApiKeyMarkers() {
+  return [CUSTOM_LOCAL_AUTH_MARKER, OLLAMA_LOCAL_AUTH_MARKER, NON_ENV_SECRETREF_MARKER];
+}
+
+function agentRuntimeIsAwsSdkAuthMarker(value) {
+  return AGENT_RUNTIME_AWS_SDK_ENV_MARKERS.has(agentRuntimeTrimStringValue(value));
+}
+
+function agentRuntimeIsKnownEnvApiKeyMarker(value) {
+  const trimmed = agentRuntimeTrimStringValue(value);
+  return AGENT_RUNTIME_LEGACY_ENV_API_KEY_MARKERS.has(trimmed) &&
+    !agentRuntimeIsAwsSdkAuthMarker(trimmed);
+}
+
+function agentRuntimeResolveOAuthApiKeyMarker(providerId) {
+  return `${OAUTH_API_KEY_MARKER_PREFIX}${agentRuntimeTrimStringValue(providerId)}`;
+}
+
+function agentRuntimeIsOAuthApiKeyMarker(value) {
+  return agentRuntimeTrimStringValue(value).startsWith(OAUTH_API_KEY_MARKER_PREFIX);
+}
+
+function agentRuntimeResolveNonEnvSecretRefApiKeyMarker() {
+  return NON_ENV_SECRETREF_MARKER;
+}
+
+function agentRuntimeResolveNonEnvSecretRefHeaderValueMarker() {
+  return NON_ENV_SECRETREF_MARKER;
+}
+
+function agentRuntimeResolveEnvSecretRefHeaderValueMarker(envVarName) {
+  return `${SECRETREF_ENV_HEADER_MARKER_PREFIX}${agentRuntimeTrimStringValue(envVarName)}`;
+}
+
+function agentRuntimeIsSecretRefHeaderValueMarker(value) {
+  const trimmed = agentRuntimeTrimStringValue(value);
+  return trimmed === NON_ENV_SECRETREF_MARKER ||
+    trimmed.startsWith(SECRETREF_ENV_HEADER_MARKER_PREFIX);
+}
+
+function agentRuntimeIsNonSecretApiKeyMarker(value, opts = {}) {
+  const trimmed = agentRuntimeTrimStringValue(value);
+  if (!trimmed) {
+    return false;
+  }
+  if (
+    agentRuntimeIsOAuthApiKeyMarker(trimmed) ||
+    agentRuntimeListKnownNonSecretApiKeyMarkers().includes(trimmed) ||
+    agentRuntimeIsAwsSdkAuthMarker(trimmed)
+  ) {
+    return true;
+  }
+  if (opts && opts.includeEnvVarName === false) {
+    return false;
+  }
+  return agentRuntimeIsKnownEnvApiKeyMarker(trimmed);
+}
+
+function agentRuntimeResolveProviderConfig(cfg = {}, provider) {
+  const providers = cfg && cfg.models && cfg.models.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(providers, provider)) {
+    return providers[provider];
+  }
+  const normalized = agentRuntimeNormalizeProviderId(provider);
+  if (Object.prototype.hasOwnProperty.call(providers, normalized)) {
+    return providers[normalized];
+  }
+  const match = Object.entries(providers).find(
+    ([key]) => agentRuntimeNormalizeProviderId(key) === normalized,
+  );
+  return match ? match[1] : undefined;
+}
+
+function agentRuntimeGetCustomProviderApiKey(cfg, provider) {
+  const entry = agentRuntimeResolveProviderConfig(cfg, provider);
+  const literal = normalizeSecretInputString(entry && entry.apiKey);
+  if (literal) {
+    return literal;
+  }
+  const ref = coerceSecretRef(entry && entry.apiKey);
+  if (!ref) {
+    return undefined;
+  }
+  if (ref.source === "env") {
+    const envId = agentRuntimeTrimStringValue(ref.id);
+    return envId || NON_ENV_SECRETREF_MARKER;
+  }
+  return NON_ENV_SECRETREF_MARKER;
+}
+
+function agentRuntimeResolveDefaultSecretProviderAlias(_cfg = {}, _source = "env") {
+  return DEFAULT_SECRET_PROVIDER_ALIAS;
+}
+
+function agentRuntimeCanResolveEnvSecretRefInReadOnlyPath(params = {}) {
+  const provider = agentRuntimeTrimStringValue(params.provider);
+  const id = agentRuntimeTrimStringValue(params.id);
+  const secretProviders = params.cfg && params.cfg.secrets && params.cfg.secrets.providers;
+  const providerConfig = secretProviders && secretProviders[provider];
+  if (!providerConfig) {
+    return provider === agentRuntimeResolveDefaultSecretProviderAlias(params.cfg || {}, "env");
+  }
+  if (providerConfig.source !== "env") {
+    return false;
+  }
+  const allowlist = providerConfig.allowlist;
+  return !Array.isArray(allowlist) || allowlist.includes(id);
+}
+
+function agentRuntimeResolveEnvSourceLabel(params = {}) {
+  return `env: ${params.label || ""}`;
+}
+
+function agentRuntimeResolveUsableCustomProviderApiKey(params = {}) {
+  const provider = agentRuntimeTrimStringValue(params.provider);
+  const cfg = params.cfg;
+  const env = params.env || process.env;
+  const customProviderConfig = agentRuntimeResolveProviderConfig(cfg, provider);
+  const apiKeyRef = coerceSecretRef(customProviderConfig && customProviderConfig.apiKey);
+  if (apiKeyRef) {
+    if (apiKeyRef.source !== "env") {
+      return null;
+    }
+    const envVarName = agentRuntimeTrimStringValue(apiKeyRef.id);
+    if (!envVarName) {
+      return null;
+    }
+    if (
+      !agentRuntimeCanResolveEnvSecretRefInReadOnlyPath({
+        cfg,
+        provider: apiKeyRef.provider,
+        id: envVarName,
+      })
+    ) {
+      return null;
+    }
+    const envValue = normalizeSecretInputString(env && env[envVarName]);
+    if (!envValue) {
+      return null;
+    }
+    return {
+      apiKey: envValue,
+      source: agentRuntimeResolveEnvSourceLabel({
+        envVars: [envVarName],
+        label: `${envVarName} (models.json secretref)`,
+      }),
+    };
+  }
+
+  const customKey = agentRuntimeGetCustomProviderApiKey(cfg, provider);
+  if (!customKey) {
+    return null;
+  }
+  if (!agentRuntimeIsNonSecretApiKeyMarker(customKey)) {
+    return { apiKey: customKey, source: "models.json" };
+  }
+  if (agentRuntimeIsKnownEnvApiKeyMarker(customKey)) {
+    const envValue = normalizeSecretInputString(env && env[customKey]);
+    if (!envValue) {
+      return null;
+    }
+    return {
+      apiKey: envValue,
+      source: agentRuntimeResolveEnvSourceLabel({
+        envVars: [customKey],
+        label: `${customKey} (models.json marker)`,
+      }),
+    };
+  }
+  if (
+    customProviderConfig &&
+    agentRuntimeIsCustomLocalProviderConfig(customProviderConfig) &&
+    (customProviderConfig.api === "openai-completions" || customProviderConfig.api === "ollama") &&
+    customProviderConfig.baseUrl &&
+    agentRuntimeIsLocalBaseUrl(customProviderConfig.baseUrl)
+  ) {
+    return {
+      apiKey: customProviderConfig.api === "ollama" ? customKey : CUSTOM_LOCAL_AUTH_MARKER,
+      source: "models.json (local marker)",
+    };
+  }
+  return null;
+}
+
+function agentRuntimeHasUsableCustomProviderApiKey(cfg, provider, env = process.env) {
+  return Boolean(agentRuntimeResolveUsableCustomProviderApiKey({ cfg, provider, env }));
+}
+
+function agentRuntimeResolveProviderAuthOverride(cfg, provider) {
+  const entry = agentRuntimeResolveProviderConfig(cfg, provider);
+  const auth = entry && entry.auth;
+  return auth === "api-key" || auth === "aws-sdk" || auth === "oauth" || auth === "token"
+    ? auth
+    : undefined;
+}
+
+function agentRuntimeHasExplicitProviderApiKeyConfig(providerConfig) {
+  return (
+    normalizeSecretInputString(providerConfig && providerConfig.apiKey) !== undefined ||
+    coerceSecretRef(providerConfig && providerConfig.apiKey) !== null
+  );
+}
+
+function agentRuntimeShouldPreferExplicitConfigApiKeyAuth(cfg, provider) {
+  const providerConfig = agentRuntimeResolveProviderConfig(cfg, provider);
+  return (
+    agentRuntimeResolveProviderAuthOverride(cfg, provider) === "api-key" &&
+    providerConfig !== undefined &&
+    agentRuntimeHasExplicitProviderApiKeyConfig(providerConfig)
+  );
+}
+
+function agentRuntimeIsPrivateIpv4Host(host) {
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    return false;
+  }
+  const octets = host.split(".").map((part) => Number.parseInt(part, 10));
+  if (octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  const [a, b] = octets;
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+function agentRuntimeIsLocalBaseUrl(baseUrl) {
+  try {
+    let host = normalizeLowercaseStringOrEmpty(new URL(baseUrl).hostname);
+    if (host.startsWith("[") && host.endsWith("]")) {
+      host = host.slice(1, -1);
+    }
+    return (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      host === "::ffff:7f00:1" ||
+      host === "::ffff:127.0.0.1" ||
+      host.endsWith(".local") ||
+      agentRuntimeIsPrivateIpv4Host(host)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function agentRuntimeIsCustomLocalProviderConfig(providerConfig) {
+  return (
+    typeof (providerConfig && providerConfig.baseUrl) === "string" &&
+    providerConfig.baseUrl.trim().length > 0 &&
+    typeof providerConfig.api === "string" &&
+    providerConfig.api.trim().length > 0 &&
+    Array.isArray(providerConfig.models) &&
+    providerConfig.models.length > 0
+  );
+}
+
+function agentRuntimeHasSyntheticLocalProviderAuthConfig(params = {}) {
+  const providerConfig = agentRuntimeResolveProviderConfig(params.cfg, params.provider);
+  if (!providerConfig) {
+    return false;
+  }
+  const hasApiConfig =
+    Boolean(agentRuntimeTrimStringValue(providerConfig.api)) ||
+    Boolean(agentRuntimeTrimStringValue(providerConfig.baseUrl)) ||
+    (Array.isArray(providerConfig.models) && providerConfig.models.length > 0);
+  if (!hasApiConfig) {
+    return false;
+  }
+  const authOverride = agentRuntimeResolveProviderAuthOverride(params.cfg, params.provider);
+  if (authOverride && authOverride !== "api-key") {
+    return false;
+  }
+  if (!agentRuntimeIsCustomLocalProviderConfig(providerConfig)) {
+    return false;
+  }
+  if (agentRuntimeHasExplicitProviderApiKeyConfig(providerConfig)) {
+    return false;
+  }
+  return Boolean(providerConfig.baseUrl && agentRuntimeIsLocalBaseUrl(providerConfig.baseUrl));
+}
+
+function agentRuntimeResolveEnvApiKey(provider, env = process.env, options = {}) {
+  return resolveEnvApiKey(provider, env, options);
+}
+
+function agentRuntimeHasRuntimeAvailableProviderAuth(params = {}) {
+  const provider = agentRuntimeNormalizeProviderId(params.provider);
+  const authOverride = agentRuntimeResolveProviderAuthOverride(params.cfg, provider);
+  if (authOverride === "aws-sdk") {
+    return true;
+  }
+  if (authOverride === undefined && provider === "amazon-bedrock") {
+    return true;
+  }
+  if (
+    agentRuntimeResolveEnvApiKey(provider, params.env || process.env, {
+      config: params.cfg,
+      workspaceDir: params.workspaceDir,
+    })
+  ) {
+    return true;
+  }
+  if (
+    agentRuntimeResolveUsableCustomProviderApiKey({
+      cfg: params.cfg,
+      provider,
+      env: params.env || process.env,
+    })
+  ) {
+    return true;
+  }
+  return agentRuntimeHasSyntheticLocalProviderAuthConfig({ cfg: params.cfg, provider });
+}
+
+function agentRuntimeListProfilesForProvider(store = {}, provider) {
+  const normalized = agentRuntimeNormalizeProviderId(provider);
+  const profiles = store && store.profiles && typeof store.profiles === "object"
+    ? store.profiles
+    : {};
+  return Object.entries(profiles)
+    .filter(
+      ([, profile]) => agentRuntimeNormalizeProviderId(profile && profile.provider) === normalized,
+    )
+    .map(([profileId]) => profileId);
+}
+
+function agentRuntimeResolveAuthProfileOrder(params = {}) {
+  const store = params.store || {};
+  const provider = agentRuntimeNormalizeProviderId(params.provider);
+  const order = store.order && typeof store.order === "object" ? store.order : {};
+  const direct = Array.isArray(order[provider]) ? order[provider] : undefined;
+  const matched = direct ||
+    Object.entries(order).find(([key]) => agentRuntimeNormalizeProviderId(key) === provider)?.[1];
+  const ordered = Array.isArray(matched)
+    ? matched
+    : agentRuntimeListProfilesForProvider(store, provider);
+  const preferred = agentRuntimeTrimStringValue(params.preferredProfile);
+  return preferred && !ordered.includes(preferred) ? [preferred, ...ordered] : ordered;
+}
+
+async function agentRuntimeResolveApiKeyForProfile(params = {}) {
+  const profileId = agentRuntimeTrimStringValue(params.profileId);
+  const profile = params.store && params.store.profiles && params.store.profiles[profileId];
+  if (!profile || typeof profile !== "object") {
+    return null;
+  }
+  const env = params.env || process.env;
+  if (profile.type === "api_key" || profile.type === "api-key") {
+    const literal = normalizeSecretInputString(profile.key);
+    if (literal) {
+      return { apiKey: literal };
+    }
+    const ref = coerceSecretRef(profile.keyRef || profile.key);
+    if (ref && ref.source === "env") {
+      const value = normalizeSecretInputString(env && env[ref.id]);
+      return value ? { apiKey: value } : null;
+    }
+  }
+  if (profile.type === "oauth") {
+    const token = normalizeSecretInputString(
+      profile.token || profile.accessToken || profile.apiKey,
+    );
+    return token ? { apiKey: token } : null;
+  }
+  if (profile.type === "token") {
+    const token = normalizeSecretInputString(profile.token || profile.key || profile.apiKey);
+    return token ? { apiKey: token } : null;
+  }
+  return null;
+}
+
+function agentRuntimeResolveAwsSdkAuthInfo(env = process.env) {
+  if (normalizeSecretInputString(env && env.AWS_BEARER_TOKEN_BEDROCK)) {
+    return { mode: "aws-sdk", source: "env: AWS_BEARER_TOKEN_BEDROCK" };
+  }
+  if (
+    normalizeSecretInputString(env && env.AWS_ACCESS_KEY_ID) &&
+    normalizeSecretInputString(env && env.AWS_SECRET_ACCESS_KEY)
+  ) {
+    return { mode: "aws-sdk", source: "env: AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY" };
+  }
+  if (normalizeSecretInputString(env && env.AWS_PROFILE)) {
+    return { mode: "aws-sdk", source: "env: AWS_PROFILE" };
+  }
+  return { mode: "aws-sdk", source: "aws-sdk default chain" };
+}
+
+async function agentRuntimeResolveApiKeyForProvider(params = {}) {
+  const provider = agentRuntimeNormalizeProviderId(params.provider);
+  const cfg = params.cfg;
+  const env = params.env || process.env;
+  if (params.profileId) {
+    const resolved = await agentRuntimeResolveApiKeyForProfile({
+      store: params.store || { profiles: {}, order: {} },
+      profileId: params.profileId,
+      env,
+    });
+    if (!resolved) {
+      throw new Error(`No credentials found for profile "${params.profileId}".`);
+    }
+    const profile =
+      params.store && params.store.profiles && params.store.profiles[params.profileId];
+    const type = profile && profile.type;
+    return {
+      apiKey: resolved.apiKey,
+      profileId: params.profileId,
+      source: `profile:${params.profileId}`,
+      mode: type === "oauth" ? "oauth" : type === "token" ? "token" : "api-key",
+    };
+  }
+  const authOverride = agentRuntimeResolveProviderAuthOverride(cfg, provider);
+  if (authOverride === "aws-sdk" || (authOverride === undefined && provider === "amazon-bedrock")) {
+    return agentRuntimeResolveAwsSdkAuthInfo(env);
+  }
+  if (agentRuntimeShouldPreferExplicitConfigApiKeyAuth(cfg, provider)) {
+    const explicitKey = agentRuntimeResolveUsableCustomProviderApiKey({ cfg, provider, env });
+    if (explicitKey) {
+      return { apiKey: explicitKey.apiKey, source: explicitKey.source, mode: "api-key" };
+    }
+  }
+  if (params.credentialPrecedence === "env-first") {
+    const envResolved = agentRuntimeResolveEnvApiKey(provider, env, {
+      config: cfg,
+      workspaceDir: params.workspaceDir,
+    });
+    if (envResolved) {
+      return {
+        apiKey: envResolved.apiKey,
+        source: envResolved.source,
+        mode: envResolved.source.includes("OAUTH_TOKEN") ? "oauth" : "api-key",
+      };
+    }
+  }
+  if (params.store) {
+    for (const candidate of agentRuntimeResolveAuthProfileOrder({
+      store: params.store,
+      provider,
+      preferredProfile: params.preferredProfile,
+    })) {
+      const resolved = await agentRuntimeResolveApiKeyForProfile({
+        store: params.store,
+        profileId: candidate,
+        env,
+      });
+      if (resolved) {
+        const profile = params.store.profiles && params.store.profiles[candidate];
+        const type = profile && profile.type;
+        return {
+          apiKey: resolved.apiKey,
+          profileId: candidate,
+          source: `profile:${candidate}`,
+          mode: type === "oauth" ? "oauth" : type === "token" ? "token" : "api-key",
+        };
+      }
+    }
+  }
+  const envResolved = agentRuntimeResolveEnvApiKey(provider, env, {
+    config: cfg,
+    workspaceDir: params.workspaceDir,
+  });
+  if (envResolved) {
+    return {
+      apiKey: envResolved.apiKey,
+      source: envResolved.source,
+      mode: envResolved.source.includes("OAUTH_TOKEN") ? "oauth" : "api-key",
+    };
+  }
+  const customKey = agentRuntimeResolveUsableCustomProviderApiKey({ cfg, provider, env });
+  if (customKey) {
+    return { apiKey: customKey.apiKey, source: customKey.source, mode: "api-key" };
+  }
+  if (agentRuntimeHasSyntheticLocalProviderAuthConfig({ cfg, provider })) {
+    return {
+      apiKey: CUSTOM_LOCAL_AUTH_MARKER,
+      source: `models.providers.${provider} (synthetic local key)`,
+      mode: "api-key",
+    };
+  }
+  throw new Error(`No API key found for provider "${provider}".`);
+}
+
+function agentRuntimeResolveModelAuthMode(provider, cfg, store, options = {}) {
+  const resolved = agentRuntimeTrimStringValue(provider);
+  if (!resolved) {
+    return undefined;
+  }
+  const normalized = agentRuntimeNormalizeProviderId(resolved);
+  const authOverride = agentRuntimeResolveProviderAuthOverride(cfg, normalized);
+  if (authOverride === "aws-sdk") {
+    return "aws-sdk";
+  }
+  const profiles = agentRuntimeListProfilesForProvider(store || { profiles: {} }, normalized);
+  if (profiles.length > 0) {
+    const modes = new Set(
+      profiles
+        .map((id) => store && store.profiles && store.profiles[id] && store.profiles[id].type)
+        .filter(Boolean),
+    );
+    const distinct = ["oauth", "token", "api_key", "api-key"].filter((mode) => modes.has(mode));
+    if (distinct.length >= 2) {
+      return "mixed";
+    }
+    if (modes.has("oauth")) {
+      return "oauth";
+    }
+    if (modes.has("token")) {
+      return "token";
+    }
+    if (modes.has("api_key") || modes.has("api-key")) {
+      return "api-key";
+    }
+  }
+  if (authOverride === undefined && normalized === "amazon-bedrock") {
+    return "aws-sdk";
+  }
+  const envKey = agentRuntimeResolveEnvApiKey(normalized, options.env || process.env, {
+    config: cfg,
+    workspaceDir: options.workspaceDir,
+  });
+  if (envKey && envKey.apiKey) {
+    return envKey.source.includes("OAUTH_TOKEN") ? "oauth" : "api-key";
+  }
+  if (agentRuntimeHasUsableCustomProviderApiKey(cfg, normalized, options.env || process.env)) {
+    return "api-key";
+  }
+  return "unknown";
+}
+
+async function agentRuntimeHasAvailableAuthForProvider(params = {}) {
+  try {
+    await agentRuntimeResolveApiKeyForProvider(params);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function agentRuntimeGetApiKeyForModel(params = {}) {
+  return agentRuntimeResolveApiKeyForProvider({
+    provider: params.model && params.model.provider,
+    cfg: params.cfg,
+    profileId: params.profileId,
+    preferredProfile: params.preferredProfile,
+    store: params.store,
+    agentDir: params.agentDir,
+    workspaceDir: params.workspaceDir,
+    lockedProfile: params.lockedProfile,
+    credentialPrecedence: params.credentialPrecedence,
+    env: params.env,
+  });
+}
+
+function agentRuntimeApplyLocalNoAuthHeaderOverride(model, auth) {
+  if (
+    !auth ||
+    auth.apiKey !== CUSTOM_LOCAL_AUTH_MARKER ||
+    !model ||
+    model.api !== "openai-completions"
+  ) {
+    return model;
+  }
+  return {
+    ...model,
+    headers: {
+      ...(model.headers || {}),
+      Authorization: null,
+    },
+  };
+}
+
+function agentRuntimeApplyAuthHeaderOverride(model, auth, cfg) {
+  if (!model || !auth || !auth.apiKey || agentRuntimeIsNonSecretApiKeyMarker(auth.apiKey)) {
+    return model;
+  }
+  const providerConfig = agentRuntimeResolveProviderConfig(cfg, model.provider);
+  if (!providerConfig || providerConfig.authHeader !== true) {
+    return model;
+  }
+  const headers = {};
+  if (model.headers && typeof model.headers === "object") {
+    for (const [key, value] of Object.entries(model.headers)) {
+      if (normalizeOptionalLowercaseString(key) !== "authorization") {
+        headers[key] = value;
+      }
+    }
+  }
+  headers.Authorization = `Bearer ${auth.apiKey}`;
+  return { ...model, headers };
+}
+
+function agentRuntimeModelKey(provider, model) {
+  const providerId = agentRuntimeTrimStringValue(provider);
+  const modelId = agentRuntimeTrimStringValue(model);
+  if (!providerId) {
+    return modelId;
+  }
+  if (!modelId) {
+    return providerId;
+  }
+  const normalizedProvider = normalizeLowercaseStringOrEmpty(providerId);
+  const normalizedModel = normalizeLowercaseStringOrEmpty(modelId);
+  return normalizedModel.startsWith(`${normalizedProvider}/`)
+    ? modelId
+    : `${providerId}/${modelId}`;
+}
+
+function agentRuntimeLegacyModelKey(provider, model) {
+  const providerId = agentRuntimeTrimStringValue(provider);
+  const modelId = agentRuntimeTrimStringValue(model);
+  if (!providerId || !modelId) {
+    return null;
+  }
+  const rawKey = `${providerId}/${modelId}`;
+  const canonicalKey = agentRuntimeModelKey(providerId, modelId);
+  return rawKey === canonicalKey ? null : rawKey;
+}
+
+function agentRuntimeNormalizeModelRef(provider, model) {
+  return {
+    provider: agentRuntimeNormalizeProviderId(provider),
+    model: agentRuntimeTrimStringValue(model),
+  };
+}
+
+function agentRuntimeParseModelRef(raw, defaultProvider) {
+  const trimmed = agentRuntimeTrimStringValue(raw);
+  if (!trimmed) {
+    return null;
+  }
+  if (normalizeLowercaseStringOrEmpty(trimmed) === "openrouter:auto") {
+    return agentRuntimeNormalizeModelRef("openrouter", "auto");
+  }
+  const slash = trimmed.indexOf("/");
+  if (slash === -1) {
+    return agentRuntimeNormalizeModelRef(defaultProvider, trimmed);
+  }
+  const providerRaw = trimmed.slice(0, slash).trim();
+  const model = trimmed.slice(slash + 1).trim();
+  if (!providerRaw || !model) {
+    return null;
+  }
+  return agentRuntimeNormalizeModelRef(providerRaw, model);
+}
+
+function agentRuntimeResolvePersistedOverrideModelRef(params = {}) {
+  const defaultProvider = agentRuntimeTrimStringValue(params.defaultProvider);
+  const overrideProvider = agentRuntimeTrimStringValue(params.overrideProvider);
+  const overrideModel = agentRuntimeTrimStringValue(params.overrideModel);
+  if (!overrideModel) {
+    return null;
+  }
+  const encodedOverride = overrideProvider
+    ? `${overrideProvider}/${overrideModel}`
+    : overrideModel;
+  return (
+    agentRuntimeParseModelRef(encodedOverride, defaultProvider) || {
+      provider: overrideProvider || defaultProvider,
+      model: overrideModel,
+    }
+  );
+}
+
+function agentRuntimeResolvePersistedModelRef(params = {}) {
+  const defaultProvider = agentRuntimeTrimStringValue(params.defaultProvider);
+  const runtimeProvider = agentRuntimeTrimStringValue(params.runtimeProvider);
+  const runtimeModel = agentRuntimeTrimStringValue(params.runtimeModel);
+  if (runtimeModel) {
+    if (runtimeProvider) {
+      return { provider: runtimeProvider, model: runtimeModel };
+    }
+    return (
+      agentRuntimeParseModelRef(runtimeModel, defaultProvider) || {
+        provider: defaultProvider,
+        model: runtimeModel,
+      }
+    );
+  }
+  return agentRuntimeResolvePersistedOverrideModelRef({
+    defaultProvider,
+    overrideProvider: params.overrideProvider,
+    overrideModel: params.overrideModel,
+  });
+}
+
+function agentRuntimeResolvePersistedSelectedModelRef(params = {}) {
+  const override = agentRuntimeResolvePersistedOverrideModelRef({
+    defaultProvider: params.defaultProvider,
+    overrideProvider: params.overrideProvider,
+    overrideModel: params.overrideModel,
+  });
+  if (override) {
+    return override;
+  }
+  return agentRuntimeResolvePersistedModelRef({
+    defaultProvider: params.defaultProvider,
+    runtimeProvider: params.runtimeProvider,
+    runtimeModel: params.runtimeModel,
+  });
+}
+
+function agentRuntimeNormalizeStoredOverrideModel(params = {}) {
+  const providerOverride = normalizeOptionalString(params.providerOverride);
+  const modelOverride = normalizeOptionalString(params.modelOverride);
+  if (!providerOverride || !modelOverride) {
+    return { providerOverride, modelOverride };
+  }
+  const providerPrefix = `${providerOverride.toLowerCase()}/`;
+  return {
+    providerOverride,
+    modelOverride: modelOverride.toLowerCase().startsWith(providerPrefix)
+      ? modelOverride.slice(providerOverride.length + 1).trim() || modelOverride
+      : modelOverride,
+  };
+}
+
+function agentRuntimeNormalizeUnicodeSpaces(value) {
+  return String(value || "").replace(AGENT_RUNTIME_UNICODE_SPACES_RE, " ");
+}
+
+function agentRuntimeNormalizeAtPrefix(filePath) {
+  const normalized = agentRuntimeNormalizeUnicodeSpaces(filePath);
+  return normalized.startsWith("@") ? normalized.slice(1) : normalized;
+}
+
+function agentRuntimeIsWindowsDrivePath(value) {
+  return /^[A-Za-z]:[\\/]/.test(String(value || ""));
+}
+
+function agentRuntimeResolveSandboxInputPath(filePath, cwd) {
+  const expandedRaw = agentRuntimeNormalizeAtPrefix(filePath);
+  const expanded =
+    expandedRaw === "~"
+      ? os.homedir()
+      : expandedRaw.startsWith("~/")
+        ? os.homedir() + expandedRaw.slice(1)
+        : expandedRaw;
+  if (agentRuntimeIsWindowsDrivePath(expanded)) {
+    return path.win32.normalize(expanded);
+  }
+  if (path.isAbsolute(expanded)) {
+    return expanded;
+  }
+  return path.resolve(cwd, expanded);
+}
+
+function agentRuntimeResolveSandboxPath(params = {}) {
+  const resolved = agentRuntimeResolveSandboxInputPath(params.filePath, params.cwd);
+  const rootResolved = path.resolve(params.root);
+  const relative = path.relative(rootResolved, resolved);
+  if (!relative || relative === "") {
+    return { resolved, relative: "" };
+  }
+  if (
+    relative.startsWith("..") ||
+    path.isAbsolute(relative) ||
+    agentRuntimeIsWindowsDrivePath(relative)
+  ) {
+    throw new Error(`Path escapes sandbox root (${rootResolved}): ${params.filePath}`);
+  }
+  return { resolved, relative };
+}
+
+function agentRuntimeIsAvatarDataUrl(source) {
+  return /^data:/i.test(agentRuntimeTrimStringValue(source));
+}
+
+function agentRuntimeIsAvatarHttpUrl(source) {
+  return /^https?:\/\//i.test(agentRuntimeTrimStringValue(source));
+}
+
+function agentRuntimeHasAvatarUriScheme(source) {
+  return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(agentRuntimeTrimStringValue(source));
+}
+
+function agentRuntimeIsWindowsAbsolutePath(source) {
+  return /^[A-Za-z]:[\\/]/.test(agentRuntimeTrimStringValue(source)) ||
+    /^\\\\/.test(agentRuntimeTrimStringValue(source));
+}
+
+function agentRuntimeIsSafeRelativeAvatarSource(source) {
+  const raw = agentRuntimeTrimStringValue(source);
+  if (
+    raw.length > AGENT_RUNTIME_PUBLIC_AVATAR_SOURCE_MAX_CHARS ||
+    raw.startsWith("~") ||
+    path.isAbsolute(raw) ||
+    agentRuntimeIsWindowsAbsolutePath(raw) ||
+    (agentRuntimeHasAvatarUriScheme(raw) && !agentRuntimeIsWindowsAbsolutePath(raw)) ||
+    raw.includes("\0")
+  ) {
+    return false;
+  }
+  return raw.replace(/\\/g, "/").split("/").every((part) => part !== "..");
+}
+
+function agentRuntimeResolvePublicAgentAvatarSource(resolved = {}) {
+  const source = normalizeOptionalString(resolved.source);
+  if (!source) {
+    return undefined;
+  }
+  if (agentRuntimeIsAvatarDataUrl(source)) {
+    const commaIndex = source.indexOf(",");
+    const header = commaIndex > 0
+      ? source.slice(0, Math.min(commaIndex, AGENT_RUNTIME_PUBLIC_DATA_AVATAR_HEADER_MAX_CHARS))
+      : source.slice(0, AGENT_RUNTIME_PUBLIC_DATA_AVATAR_HEADER_MAX_CHARS);
+    return `${header},...`;
+  }
+  if (agentRuntimeIsAvatarHttpUrl(source)) {
+    return "remote URL";
+  }
+  return agentRuntimeIsSafeRelativeAvatarSource(source) ? source : undefined;
+}
+
+function agentRuntimeConfiguredModels(cfg = {}) {
+  const models = cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.models;
+  return models && typeof models === "object" && !Array.isArray(models) ? models : {};
+}
+
+function agentRuntimeResolveConfiguredOpenRouterCompatAlias(params = {}) {
+  const normalized = normalizeLowercaseStringOrEmpty(params.raw);
+  if (normalized === "openrouter:auto") {
+    return agentRuntimeNormalizeModelRef("openrouter", "auto");
+  }
+  if (normalized !== "openrouter:free" || !params.cfg) {
+    return null;
+  }
+  const rawModels = agentRuntimeConfiguredModels(params.cfg);
+  for (const raw of Object.keys(rawModels)) {
+    if (!raw.includes("/")) {
+      continue;
+    }
+    const parsed = agentRuntimeParseModelRef(raw, params.defaultProvider);
+    if (
+      parsed &&
+      parsed.provider === "openrouter" &&
+      parsed.model.includes("/") &&
+      parsed.model.endsWith(":free")
+    ) {
+      return parsed;
+    }
+  }
+  const providerConfig = agentRuntimeFindNormalizedProviderValue(
+    params.cfg.models && params.cfg.models.providers,
+    "openrouter",
+  );
+  const providerModels = providerConfig && Array.isArray(providerConfig.models)
+    ? providerConfig.models
+    : [];
+  for (const entry of providerModels) {
+    const modelId = normalizeOptionalString(entry && entry.id);
+    if (modelId && modelId.includes("/") && modelId.endsWith(":free")) {
+      return agentRuntimeNormalizeModelRef("openrouter", modelId);
+    }
+  }
+  return null;
+}
+
+function agentRuntimeParseModelRefWithCompatAlias(params = {}) {
+  return (
+    agentRuntimeResolveConfiguredOpenRouterCompatAlias(params) ||
+    agentRuntimeParseModelRef(params.raw, params.defaultProvider)
+  );
+}
+
+function agentRuntimeResolveAllowlistModelKey(raw, defaultProvider, cfg) {
+  const parsed = agentRuntimeParseModelRefWithCompatAlias({
+    cfg,
+    raw,
+    defaultProvider,
+  });
+  return parsed ? agentRuntimeModelKey(parsed.provider, parsed.model) : null;
+}
+
+function agentRuntimeBuildConfiguredAllowlistKeys(params = {}) {
+  const rawAllowlist = Object.keys(agentRuntimeConfiguredModels(params.cfg));
+  if (rawAllowlist.length === 0) {
+    return null;
+  }
+  const keys = new Set();
+  for (const raw of rawAllowlist) {
+    const key = agentRuntimeResolveAllowlistModelKey(
+      raw,
+      params.defaultProvider,
+      params.cfg,
+    );
+    if (key) {
+      keys.add(key);
+    }
+  }
+  return keys.size > 0 ? keys : null;
+}
+
+function agentRuntimeBuildModelAliasIndex(params = {}) {
+  const byAlias = new Map();
+  const byKey = new Map();
+  const rawModels = agentRuntimeConfiguredModels(params.cfg);
+  for (const [keyRaw, entryRaw] of Object.entries(rawModels)) {
+    const parsed = agentRuntimeParseModelRefWithCompatAlias({
+      cfg: params.cfg,
+      raw: keyRaw,
+      defaultProvider: params.defaultProvider,
+    });
+    if (!parsed) {
+      continue;
+    }
+    const alias = normalizeOptionalString(entryRaw && entryRaw.alias) || "";
+    if (!alias) {
+      continue;
+    }
+    const aliasKey = normalizeLowercaseStringOrEmpty(alias);
+    byAlias.set(aliasKey, { alias, ref: parsed });
+    const key = agentRuntimeModelKey(parsed.provider, parsed.model);
+    const existing = byKey.get(key) || [];
+    existing.push(alias);
+    byKey.set(key, existing);
+  }
+  return { byAlias, byKey };
+}
+
+function agentRuntimeBuildConfiguredModelCatalog(params = {}) {
+  const providers = params.cfg && params.cfg.models && params.cfg.models.providers;
+  if (!providers || typeof providers !== "object") {
+    return [];
+  }
+  const catalog = [];
+  for (const [providerRaw, providerConfig] of Object.entries(providers)) {
+    const providerId = agentRuntimeNormalizeProviderId(providerRaw);
+    const models = providerConfig && Array.isArray(providerConfig.models)
+      ? providerConfig.models
+      : [];
+    if (!providerId || models.length === 0) {
+      continue;
+    }
+    for (const model of models) {
+      const id = normalizeOptionalString(model && model.id) || "";
+      if (!id) {
+        continue;
+      }
+      const entry = {
+        provider: providerId,
+        id,
+        name: normalizeOptionalString(model && model.name) || id,
+      };
+      if (typeof (model && model.contextWindow) === "number" && model.contextWindow > 0) {
+        entry.contextWindow = model.contextWindow;
+      }
+      if (typeof (model && model.reasoning) === "boolean") {
+        entry.reasoning = model.reasoning;
+      }
+      if (Array.isArray(model && model.input)) {
+        entry.input = model.input;
+      }
+      if (model && model.compat && typeof model.compat === "object") {
+        entry.compat = model.compat;
+      }
+      catalog.push(entry);
+    }
+  }
+  return catalog;
+}
+
+function agentRuntimeInferUniqueProviderFromConfiguredModels(params = {}) {
+  const model = agentRuntimeTrimStringValue(params.model);
+  if (!model) {
+    return undefined;
+  }
+  const normalizedModel = normalizeLowercaseStringOrEmpty(model);
+  const providers = new Set();
+  const addProvider = (provider) => {
+    const normalizedProvider = agentRuntimeNormalizeProviderId(provider);
+    if (normalizedProvider) {
+      providers.add(normalizedProvider);
+    }
+  };
+  const configuredModels = agentRuntimeConfiguredModels(params.cfg);
+  for (const key of Object.keys(configuredModels)) {
+    const ref = key.trim();
+    if (!ref || !ref.includes("/")) {
+      continue;
+    }
+    const parsed = agentRuntimeParseModelRef(ref, AGENT_RUNTIME_DEFAULT_PROVIDER);
+    if (
+      parsed &&
+      (parsed.model === model ||
+        normalizeLowercaseStringOrEmpty(parsed.model) === normalizedModel)
+    ) {
+      addProvider(parsed.provider);
+      if (providers.size > 1) {
+        return undefined;
+      }
+    }
+  }
+  const configuredProviders =
+    params.cfg && params.cfg.models && params.cfg.models.providers
+      ? params.cfg.models.providers
+      : {};
+  for (const [providerId, providerConfig] of Object.entries(configuredProviders)) {
+    const models = providerConfig && Array.isArray(providerConfig.models)
+      ? providerConfig.models
+      : [];
+    for (const entry of models) {
+      const modelId = normalizeOptionalString(entry && entry.id);
+      if (
+        modelId &&
+        (modelId === model || normalizeLowercaseStringOrEmpty(modelId) === normalizedModel)
+      ) {
+        addProvider(providerId);
+      }
+    }
+    if (providers.size > 1) {
+      return undefined;
+    }
+  }
+  return providers.size === 1 ? providers.values().next().value : undefined;
+}
+
+function agentRuntimeInferUniqueProviderFromCatalog(params = {}) {
+  const model = agentRuntimeTrimStringValue(params.model);
+  const catalog = Array.isArray(params.catalog) ? params.catalog : [];
+  if (!model) {
+    return undefined;
+  }
+  const normalizedModel = normalizeLowercaseStringOrEmpty(model);
+  const providers = new Set();
+  for (const entry of catalog) {
+    const id = normalizeOptionalString(entry && entry.id);
+    if (!id || (id !== model && normalizeLowercaseStringOrEmpty(id) !== normalizedModel)) {
+      continue;
+    }
+    const provider = agentRuntimeNormalizeProviderId(entry && entry.provider);
+    if (provider) {
+      providers.add(provider);
+    }
+    if (providers.size > 1) {
+      return undefined;
+    }
+  }
+  return providers.size === 1 ? providers.values().next().value : undefined;
+}
+
+function agentRuntimeResolveModelRefFromString(params = {}) {
+  const model = agentRuntimeTrimStringValue(params.raw);
+  if (!model) {
+    return null;
+  }
+  const aliasKey = normalizeLowercaseStringOrEmpty(model);
+  const aliasMatch = params.aliasIndex && params.aliasIndex.byAlias
+    ? params.aliasIndex.byAlias.get(aliasKey)
+    : undefined;
+  if (aliasMatch) {
+    return { ref: aliasMatch.ref, alias: aliasMatch.alias };
+  }
+  const parsed = agentRuntimeParseModelRefWithCompatAlias({
+    cfg: params.cfg,
+    raw: model,
+    defaultProvider: params.defaultProvider,
+  });
+  return parsed ? { ref: parsed } : null;
+}
+
+function agentRuntimeResolveConfiguredModelRef(params = {}) {
+  const cfg = params.cfg || {};
+  const defaultProvider = params.defaultProvider || AGENT_RUNTIME_DEFAULT_PROVIDER;
+  const defaultModel = params.defaultModel || AGENT_RUNTIME_DEFAULT_MODEL;
+  const rawModel = agentRuntimeReadModelPrimaryValue(
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.model,
+  ) || "";
+  if (rawModel) {
+    const trimmed = rawModel.trim();
+    const aliasIndex = agentRuntimeBuildModelAliasIndex({
+      cfg,
+      defaultProvider,
+    });
+    const aliasMatch = aliasIndex.byAlias.get(normalizeLowercaseStringOrEmpty(trimmed));
+    if (aliasMatch) {
+      return aliasMatch.ref;
+    }
+    if (!trimmed.includes("/")) {
+      const openrouterCompatRef = agentRuntimeResolveConfiguredOpenRouterCompatAlias({
+        cfg,
+        raw: trimmed,
+        defaultProvider,
+      });
+      if (openrouterCompatRef) {
+        return openrouterCompatRef;
+      }
+      const inferredProvider = agentRuntimeInferUniqueProviderFromConfiguredModels({
+        cfg,
+        model: trimmed,
+      });
+      return { provider: inferredProvider || defaultProvider, model: trimmed };
+    }
+    const resolved = agentRuntimeResolveModelRefFromString({
+      cfg,
+      raw: trimmed,
+      defaultProvider,
+      aliasIndex,
+    });
+    if (resolved) {
+      return resolved.ref;
+    }
+  }
+  return { provider: defaultProvider, model: defaultModel };
+}
+
+function agentRuntimeResolveDefaultModelForAgent(params = {}) {
+  const cfg = params.cfg || {};
+  const agentModelOverride = params.agentId
+    ? agentRuntimeResolveAgentEffectiveModelPrimary(cfg, params.agentId)
+    : undefined;
+  if (!agentModelOverride) {
+    return agentRuntimeResolveConfiguredModelRef({
+      cfg,
+      defaultProvider: AGENT_RUNTIME_DEFAULT_PROVIDER,
+      defaultModel: AGENT_RUNTIME_DEFAULT_MODEL,
+    });
+  }
+  const agents = cfg.agents && typeof cfg.agents === "object" ? cfg.agents : {};
+  const defaults = agents.defaults && typeof agents.defaults === "object"
+    ? agents.defaults
+    : {};
+  const defaultModelRaw = defaults.model;
+  const defaultModelConfig =
+    defaultModelRaw && typeof defaultModelRaw === "object" && !Array.isArray(defaultModelRaw)
+      ? { ...defaultModelRaw }
+      : {};
+  defaultModelConfig.primary = agentModelOverride;
+  const nextCfg = {
+    ...cfg,
+    agents: {
+      ...agents,
+      defaults: {
+        ...defaults,
+        model: defaultModelConfig,
+      },
+    },
+  };
+  return agentRuntimeResolveConfiguredModelRef({
+    cfg: nextCfg,
+    defaultProvider: AGENT_RUNTIME_DEFAULT_PROVIDER,
+    defaultModel: AGENT_RUNTIME_DEFAULT_MODEL,
+  });
+}
+
+function agentRuntimeNormalizeModelSelection(value) {
+  if (typeof value === "string") {
+    return normalizeOptionalString(value);
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return normalizeOptionalString(value.primary);
+}
+
+function agentRuntimeResolveSubagentConfiguredModelSelection(params = {}) {
+  const agentConfig = agentRuntimeResolveAgentConfig(params.cfg || {}, params.agentId);
+  const defaults = params.cfg &&
+    params.cfg.agents &&
+    params.cfg.agents.defaults &&
+    params.cfg.agents.defaults.subagents;
+  const agentSubagentModel =
+    agentConfig && agentConfig.subagents && agentConfig.subagents.model;
+  return (
+    agentRuntimeNormalizeModelSelection(agentSubagentModel) ||
+    agentRuntimeNormalizeModelSelection(agentConfig && agentConfig.model) ||
+    agentRuntimeNormalizeModelSelection(defaults && defaults.model)
+  );
+}
+
+function agentRuntimeResolveModelThroughAliases(value, aliasIndex) {
+  if (value.includes("/")) {
+    return value;
+  }
+  const aliasMatch = aliasIndex.byAlias.get(normalizeLowercaseStringOrEmpty(value));
+  return aliasMatch ? `${aliasMatch.ref.provider}/${aliasMatch.ref.model}` : value;
+}
+
+function agentRuntimeResolveSubagentSpawnModelSelection(params = {}) {
+  const runtimeDefault = agentRuntimeResolveDefaultModelForAgent({
+    cfg: params.cfg || {},
+    agentId: params.agentId,
+  });
+  const raw =
+    agentRuntimeNormalizeModelSelection(params.modelOverride) ||
+    agentRuntimeResolveSubagentConfiguredModelSelection({
+      cfg: params.cfg || {},
+      agentId: params.agentId,
+    }) ||
+    agentRuntimeNormalizeModelSelection(
+      params.cfg &&
+        params.cfg.agents &&
+        params.cfg.agents.defaults &&
+        params.cfg.agents.defaults.model,
+    ) ||
+    `${runtimeDefault.provider}/${runtimeDefault.model}`;
+  const aliasIndex = agentRuntimeBuildModelAliasIndex({
+    cfg: params.cfg || {},
+    defaultProvider: runtimeDefault.provider,
+  });
+  return agentRuntimeResolveModelThroughAliases(raw, aliasIndex);
+}
+
+function agentRuntimeSplitTrailingAuthProfile(raw) {
+  const trimmed = agentRuntimeTrimStringValue(raw);
+  if (!trimmed) {
+    return { model: "" };
+  }
+  const lastSlash = trimmed.lastIndexOf("/");
+  let profileDelimiter = trimmed.indexOf("@", lastSlash + 1);
+  if (profileDelimiter <= 0) {
+    return { model: trimmed };
+  }
+  const suffix = () => trimmed.slice(profileDelimiter + 1);
+  if (/^\d{8}(?:@|$)/.test(suffix())) {
+    const nextDelimiter = trimmed.indexOf("@", profileDelimiter + 9);
+    if (nextDelimiter < 0) {
+      return { model: trimmed };
+    }
+    profileDelimiter = nextDelimiter;
+  }
+  if (/^(?:i?q\d+(?:_[a-z0-9]+)*|\d+bit)(?:@|$)/i.test(suffix())) {
+    const nextDelimiter = trimmed.indexOf("@", profileDelimiter + 1);
+    if (nextDelimiter < 0) {
+      return { model: trimmed };
+    }
+    profileDelimiter = nextDelimiter;
+  }
+  const model = trimmed.slice(0, profileDelimiter).trim();
+  const profile = trimmed.slice(profileDelimiter + 1).trim();
+  if (!model || !profile) {
+    return { model: trimmed };
+  }
+  return { model, profile };
+}
+
+function agentRuntimeResolveSimpleCompletionSelectionForAgent(params = {}) {
+  const cfg = params.cfg || {};
+  const fallbackRef = agentRuntimeResolveDefaultModelForAgent({
+    cfg,
+    agentId: params.agentId,
+  });
+  const modelRef =
+    agentRuntimeTrimStringValue(params.modelRef) ||
+    agentRuntimeResolveAgentEffectiveModelPrimary(cfg, params.agentId);
+  const split = modelRef ? agentRuntimeSplitTrailingAuthProfile(modelRef) : null;
+  const aliasIndex = agentRuntimeBuildModelAliasIndex({
+    cfg,
+    defaultProvider: fallbackRef.provider || AGENT_RUNTIME_DEFAULT_PROVIDER,
+  });
+  const resolved = split
+    ? agentRuntimeResolveModelRefFromString({
+        raw: split.model,
+        defaultProvider: fallbackRef.provider || AGENT_RUNTIME_DEFAULT_PROVIDER,
+        aliasIndex,
+      })
+    : null;
+  const provider = (resolved && resolved.ref.provider) || fallbackRef.provider;
+  const modelId = (resolved && resolved.ref.model) || fallbackRef.model;
+  if (!provider || !modelId) {
+    return null;
+  }
+  const selection = {
+    provider,
+    modelId,
+    agentDir: agentRuntimeResolveAgentDir(cfg, params.agentId),
+  };
+  if (split && split.profile) {
+    selection.profileId = split.profile;
+  }
+  return selection;
+}
+
+function agentRuntimeResolveAgentModelFallbackValues(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return [];
+  }
+  return Array.isArray(raw.fallbacks) ? raw.fallbacks : [];
+}
+
+function agentRuntimeResolveAllowedFallbacks(params = {}) {
+  if (params.agentId) {
+    const override = agentRuntimeResolveAgentModelFallbacksOverride(
+      params.cfg || {},
+      params.agentId,
+    );
+    if (override !== undefined) {
+      return override;
+    }
+  }
+  return agentRuntimeResolveAgentModelFallbackValues(
+    params.cfg &&
+      params.cfg.agents &&
+      params.cfg.agents.defaults &&
+      params.cfg.agents.defaults.model,
+  );
+}
+
+function agentRuntimeModelSupportsInput(entry, input) {
+  return Boolean(entry && Array.isArray(entry.input) && entry.input.includes(input));
+}
+
+function agentRuntimeFindModelInCatalog(catalog, provider, modelId) {
+  const normalizedProvider = agentRuntimeNormalizeProviderId(provider);
+  const normalizedModelId = agentRuntimeTrimStringValue(modelId).toLowerCase();
+  if (!normalizedProvider || !normalizedModelId) {
+    return undefined;
+  }
+  return (Array.isArray(catalog) ? catalog : []).find((entry) => {
+    if (!entry) {
+      return false;
+    }
+    return (
+      agentRuntimeNormalizeProviderId(entry.provider) === normalizedProvider &&
+      agentRuntimeTrimStringValue(entry.id).toLowerCase() === normalizedModelId
+    );
+  });
+}
+
+function agentRuntimeFindModelCatalogEntry(catalog, params = {}) {
+  const modelId = agentRuntimeTrimStringValue(
+    Object.prototype.hasOwnProperty.call(params, "modelId") ? params.modelId : params.model,
+  );
+  if (!modelId) {
+    return undefined;
+  }
+  const provider = agentRuntimeTrimStringValue(params.provider);
+  if (provider) {
+    return agentRuntimeFindModelInCatalog(catalog, provider, modelId);
+  }
+  const normalizedModelId = modelId.toLowerCase();
+  const matches = (Array.isArray(catalog) ? catalog : []).filter((entry) => {
+    if (!entry) {
+      return false;
+    }
+    return agentRuntimeTrimStringValue(entry.id).toLowerCase() === normalizedModelId;
+  });
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function agentRuntimeModelSupportsVision(entry) {
+  return agentRuntimeModelSupportsInput(entry, "image");
+}
+
+function agentRuntimeModelSupportsDocument(entry) {
+  return agentRuntimeModelSupportsInput(entry, "document");
+}
+
+function agentRuntimeBuildAllowedModelSetWithFallbacks(params = {}) {
+  const configuredCatalog = agentRuntimeBuildConfiguredModelCatalog({ cfg: params.cfg });
+  const catalog = [...(Array.isArray(params.catalog) ? params.catalog : [])];
+  const seen = new Set(catalog.map((entry) => agentRuntimeModelKey(entry.provider, entry.id)));
+  for (const entry of configuredCatalog) {
+    const key = agentRuntimeModelKey(entry.provider, entry.id);
+    if (!seen.has(key)) {
+      catalog.push(entry);
+      seen.add(key);
+    }
+  }
+  const rawAllowlist = Object.keys(agentRuntimeConfiguredModels(params.cfg));
+  const allowAny = rawAllowlist.length === 0;
+  const allowedKeys = new Set();
+  const addAllowedModelRef = (raw) => {
+    const trimmed = agentRuntimeTrimStringValue(raw);
+    if (!trimmed) {
+      return;
+    }
+    const defaultProvider = !trimmed.includes("/")
+      ? (
+          agentRuntimeInferUniqueProviderFromConfiguredModels({
+            cfg: params.cfg,
+            model: trimmed,
+          }) ||
+          agentRuntimeInferUniqueProviderFromCatalog({
+            catalog,
+            model: trimmed,
+          }) ||
+          params.defaultProvider
+        )
+      : params.defaultProvider;
+    const parsed = agentRuntimeParseModelRefWithCompatAlias({
+      cfg: params.cfg,
+      raw: trimmed,
+      defaultProvider,
+    });
+    if (parsed) {
+      allowedKeys.add(agentRuntimeModelKey(parsed.provider, parsed.model));
+    }
+  };
+  for (const raw of rawAllowlist) {
+    addAllowedModelRef(raw);
+  }
+  for (const fallback of params.fallbackModels || []) {
+    addAllowedModelRef(fallback);
+  }
+  if (params.defaultModel) {
+    addAllowedModelRef(params.defaultModel);
+  }
+  if (allowAny) {
+    for (const entry of catalog) {
+      allowedKeys.add(agentRuntimeModelKey(entry.provider, entry.id));
+    }
+  }
+  return { allowAny, allowedCatalog: catalog, allowedKeys };
+}
+
+function agentRuntimeBuildAllowedModelSet(params = {}) {
+  return agentRuntimeBuildAllowedModelSetWithFallbacks({
+    cfg: params.cfg,
+    catalog: params.catalog,
+    defaultProvider: params.defaultProvider,
+    defaultModel: params.defaultModel,
+    fallbackModels: agentRuntimeResolveAllowedFallbacks({
+      cfg: params.cfg,
+      agentId: params.agentId,
+    }),
+  });
+}
+
+function agentRuntimeGetModelRefStatus(params = {}) {
+  const ref = params.ref || {};
+  const allowed = agentRuntimeBuildAllowedModelSet(params);
+  const key = agentRuntimeModelKey(ref.provider, ref.model);
+  return {
+    key,
+    inCatalog: Boolean(agentRuntimeFindModelCatalogEntry(params.catalog, ref)),
+    allowAny: allowed.allowAny,
+    allowed: allowed.allowAny || allowed.allowedKeys.has(key),
+  };
+}
+
+function agentRuntimeResolveAllowedModelRefFromAliasIndex(params = {}) {
+  const trimmed = agentRuntimeTrimStringValue(params.raw);
+  if (!trimmed) {
+    return { error: "invalid model: empty" };
+  }
+  const effectiveDefaultProvider = !trimmed.includes("/")
+    ? (
+        agentRuntimeInferUniqueProviderFromConfiguredModels({
+          cfg: params.cfg,
+          model: trimmed,
+        }) || params.defaultProvider
+      )
+    : params.defaultProvider;
+  const resolved = agentRuntimeResolveModelRefFromString({
+    cfg: params.cfg,
+    raw: trimmed,
+    defaultProvider: effectiveDefaultProvider,
+    aliasIndex: params.aliasIndex,
+  });
+  if (!resolved) {
+    return { error: `invalid model: ${trimmed}` };
+  }
+  const status = params.getStatus(resolved.ref);
+  if (!status.allowed) {
+    return { error: `model not allowed: ${status.key}` };
+  }
+  return { ref: resolved.ref, key: status.key };
+}
+
+function agentRuntimeResolveAllowedModelRef(params = {}) {
+  const trimmed = agentRuntimeTrimStringValue(params.raw);
+  if (!trimmed) {
+    return { error: "invalid model: empty" };
+  }
+  const aliasIndex = agentRuntimeBuildModelAliasIndex({
+    cfg: params.cfg,
+    defaultProvider: params.defaultProvider,
+  });
+  const openrouterCompatRef = agentRuntimeResolveConfiguredOpenRouterCompatAlias({
+    cfg: params.cfg,
+    raw: trimmed,
+    defaultProvider: params.defaultProvider,
+  });
+  if (openrouterCompatRef) {
+    const status = agentRuntimeGetModelRefStatus({
+      cfg: params.cfg,
+      catalog: params.catalog,
+      ref: openrouterCompatRef,
+      defaultProvider: params.defaultProvider,
+      defaultModel: params.defaultModel,
+    });
+    if (!status.allowed) {
+      return { error: `model not allowed: ${status.key}` };
+    }
+    return { ref: openrouterCompatRef, key: status.key };
+  }
+  return agentRuntimeResolveAllowedModelRefFromAliasIndex({
+    cfg: params.cfg,
+    raw: trimmed,
+    defaultProvider: params.defaultProvider,
+    aliasIndex,
+    getStatus: (ref) =>
+      agentRuntimeGetModelRefStatus({
+        cfg: params.cfg,
+        catalog: params.catalog,
+        ref,
+        defaultProvider: params.defaultProvider,
+        defaultModel: params.defaultModel,
+      }),
+  });
+}
+
+function agentRuntimeResolveReasoningDefault(params = {}) {
+  const key = agentRuntimeModelKey(params.provider, params.model);
+  const catalog = Array.isArray(params.catalog) ? params.catalog : [];
+  const candidate = catalog.find((entry) => {
+    if (!entry) {
+      return false;
+    }
+    return (
+      (entry.provider === params.provider && entry.id === params.model) ||
+      (entry.provider === key && entry.id === params.model)
+    );
+  });
+  return candidate && candidate.reasoning === true ? "on" : "off";
+}
+
+function agentRuntimeResolveSessionAgentIds(params = {}) {
+  const defaultAgentId = agentRuntimeResolveDefaultAgentId(params.config || {});
+  const explicitAgentIdRaw = normalizeLowercaseStringOrEmpty(params.agentId);
+  const explicitAgentId = explicitAgentIdRaw ? normalizeAgentId(explicitAgentIdRaw) : null;
+  const rawSessionKey = normalizeOptionalString(params.sessionKey);
+  const parsed = rawSessionKey ? parseAgentSessionKey(rawSessionKey) : null;
+  return {
+    defaultAgentId,
+    sessionAgentId:
+      explicitAgentId ||
+      (parsed && parsed.agentId ? normalizeAgentId(parsed.agentId) : defaultAgentId),
+  };
+}
+
+function agentRuntimeResolveSessionAgentId(params = {}) {
+  return agentRuntimeResolveSessionAgentIds(params).sessionAgentId;
+}
+
+function agentRuntimeResolveAgentIdentity(cfg, agentId) {
+  const resolved = agentRuntimeResolveAgentConfig(cfg || {}, agentId);
+  return resolved && resolved.identity && typeof resolved.identity === "object"
+    ? resolved.identity
+    : undefined;
+}
+
+function agentRuntimeResolveAckReaction(cfg = {}, agentId, opts = {}) {
+  if (opts.channel && opts.accountId) {
+    const channelCfg = getChannelConfig(cfg, opts.channel);
+    const accounts =
+      channelCfg && channelCfg.accounts && typeof channelCfg.accounts === "object"
+        ? channelCfg.accounts
+        : {};
+    const accountCfg = accounts[opts.accountId];
+    if (accountCfg && Object.prototype.hasOwnProperty.call(accountCfg, "ackReaction")) {
+      return String(accountCfg.ackReaction || "").trim();
+    }
+  }
+  if (opts.channel) {
+    const channelCfg = getChannelConfig(cfg, opts.channel);
+    if (channelCfg && Object.prototype.hasOwnProperty.call(channelCfg, "ackReaction")) {
+      return String(channelCfg.ackReaction || "").trim();
+    }
+  }
+  const messages = cfg && cfg.messages && typeof cfg.messages === "object" ? cfg.messages : {};
+  if (Object.prototype.hasOwnProperty.call(messages, "ackReaction")) {
+    return String(messages.ackReaction || "").trim();
+  }
+  const emoji = normalizeOptionalString(
+    agentRuntimeResolveAgentIdentity(cfg, agentId) &&
+      agentRuntimeResolveAgentIdentity(cfg, agentId).emoji,
+  );
+  return emoji || "\ud83d\udc40";
+}
+
+function agentRuntimeResolveIdentityNamePrefix(cfg, agentId) {
+  const identity = agentRuntimeResolveAgentIdentity(cfg, agentId);
+  const name = normalizeOptionalString(identity && identity.name);
+  return name ? `[${name}]` : undefined;
+}
+
+function agentRuntimeResolveMessagePrefix(cfg = {}, agentId, opts = {}) {
+  const messages = cfg && cfg.messages && typeof cfg.messages === "object" ? cfg.messages : {};
+  const configured = opts.configured !== undefined ? opts.configured : messages.messagePrefix;
+  if (configured !== undefined) {
+    return configured;
+  }
+  if (opts.hasAllowFrom === true) {
+    return "";
+  }
+  return agentRuntimeResolveIdentityNamePrefix(cfg, agentId) || opts.fallback || "[openclaw]";
+}
+
+function agentRuntimeResolveResponsePrefix(cfg = {}, agentId, opts = {}) {
+  if (opts.channel && opts.accountId) {
+    const channelCfg = getChannelConfig(cfg, opts.channel);
+    const accounts =
+      channelCfg && channelCfg.accounts && typeof channelCfg.accounts === "object"
+        ? channelCfg.accounts
+        : {};
+    const accountCfg = accounts[opts.accountId];
+    if (accountCfg && Object.prototype.hasOwnProperty.call(accountCfg, "responsePrefix")) {
+      return accountCfg.responsePrefix === "auto"
+        ? agentRuntimeResolveIdentityNamePrefix(cfg, agentId)
+        : accountCfg.responsePrefix;
+    }
+  }
+  if (opts.channel) {
+    const channelCfg = getChannelConfig(cfg, opts.channel);
+    if (channelCfg && Object.prototype.hasOwnProperty.call(channelCfg, "responsePrefix")) {
+      return channelCfg.responsePrefix === "auto"
+        ? agentRuntimeResolveIdentityNamePrefix(cfg, agentId)
+        : channelCfg.responsePrefix;
+    }
+  }
+  const messages = cfg && cfg.messages && typeof cfg.messages === "object" ? cfg.messages : {};
+  if (Object.prototype.hasOwnProperty.call(messages, "responsePrefix")) {
+    return messages.responsePrefix === "auto"
+      ? agentRuntimeResolveIdentityNamePrefix(cfg, agentId)
+      : messages.responsePrefix;
+  }
+  return undefined;
+}
+
+function agentRuntimeResolveEffectiveMessagesConfig(cfg = {}, agentId, opts = {}) {
+  return {
+    messagePrefix: agentRuntimeResolveMessagePrefix(cfg, agentId, {
+      hasAllowFrom: opts.hasAllowFrom,
+      fallback: opts.fallbackMessagePrefix,
+    }),
+    responsePrefix: agentRuntimeResolveResponsePrefix(cfg, agentId, {
+      channel: opts.channel,
+      accountId: opts.accountId,
+    }),
+  };
+}
+
+function appendCronStyleCurrentTimeLine(text, cfg = {}, nowMs) {
+  const base = String(text || "").trimEnd();
+  if (!base || base.includes("Current time:")) {
+    return base;
+  }
+  return `${base}\n${resolveCronStyleNow(cfg, nowMs).timeLine}`;
+}
+
+function resolveOpenClawAgentDir(env = process.env) {
+  const sourceEnv = env || process.env;
+  const override = normalizeOptionalString(sourceEnv.OPENCLAW_AGENT_DIR) ||
+    normalizeOptionalString(sourceEnv.PI_CODING_AGENT_DIR);
+  if (override) {
+    return resolveUserPath(override, sourceEnv);
+  }
+  return resolveUserPath(
+    path.join(resolveStateDir(sourceEnv), "agents", DEFAULT_AGENT_ID, "agent"),
+    sourceEnv,
+  );
+}
+
+const DEFAULT_TTS_MAX_LENGTH = 4000;
+const DEFAULT_TTS_SUMMARIZE = true;
+const DEFAULT_TTS_TIMEOUT_MS = 30_000;
+let lastTtsAttempt;
+
+function normalizeConfiguredSpeechProviderId(providerId) {
+  const normalized = normalizeSpeechProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized === "edge" ? "microsoft" : normalized;
+}
+
+function normalizeTtsPersonaId(personaId) {
+  return normalizeOptionalLowercaseString(personaId == null ? undefined : personaId);
+}
+
+function resolveConfiguredTtsAutoMode(raw = {}) {
+  return normalizeTtsAutoMode(raw.auto) || (raw.enabled ? "always" : "off");
+}
+
+function resolveTtsPrefsPathValue(prefsPath, env = process.env) {
+  const explicit = normalizeOptionalString(prefsPath);
+  if (explicit) {
+    return resolveUserPath(explicit, env);
+  }
+  const envPath = normalizeOptionalString(env && env.OPENCLAW_TTS_PREFS);
+  if (envPath) {
+    return resolveUserPath(envPath, env);
+  }
+  return path.join(resolveStateDir(env), "settings", "tts.json");
+}
+
+function resolveModelOverridePolicy(overrides = {}) {
+  const enabled = overrides && Object.prototype.hasOwnProperty.call(overrides, "enabled")
+    ? overrides.enabled !== false
+    : true;
+  if (!enabled) {
+    return {
+      enabled: false,
+      allowText: false,
+      allowProvider: false,
+      allowVoice: false,
+      allowModelId: false,
+      allowVoiceSettings: false,
+      allowNormalization: false,
+      allowSeed: false,
+    };
+  }
+  const allow = (value, defaultValue = true) =>
+    typeof value === "boolean" ? value : defaultValue;
+  return {
+    enabled: true,
+    allowText: allow(overrides && overrides.allowText),
+    allowProvider: allow(overrides && overrides.allowProvider, false),
+    allowVoice: allow(overrides && overrides.allowVoice),
+    allowModelId: allow(overrides && overrides.allowModelId),
+    allowVoiceSettings: allow(overrides && overrides.allowVoiceSettings),
+    allowNormalization: allow(overrides && overrides.allowNormalization),
+    allowSeed: allow(overrides && overrides.allowSeed),
+  };
+}
+
+function ttsAsObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeTtsProviderConfigMap(value) {
+  const rawMap = ttsAsObject(value);
+  const out = {};
+  for (const [providerId, providerConfig] of Object.entries(rawMap)) {
+    const normalized = normalizeConfiguredSpeechProviderId(providerId) || providerId;
+    out[normalized] = ttsAsObject(providerConfig);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function collectTtsPersonas(raw = {}) {
+  const rawPersonas = ttsAsObject(raw.personas);
+  const personas = {};
+  for (const [id, value] of Object.entries(rawPersonas)) {
+    const normalizedId = normalizeTtsPersonaId(id);
+    if (!normalizedId || !value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    const persona = value;
+    personas[normalizedId] = {
+      ...persona,
+      id: normalizedId,
+      provider: normalizeConfiguredSpeechProviderId(persona.provider) || persona.provider,
+      providers: normalizeTtsProviderConfigMap(persona.providers),
+    };
+  }
+  return personas;
+}
+
+function collectDirectTtsProviderConfigEntries(raw = {}) {
+  const entries = {};
+  const rawProviders = ttsAsObject(raw.providers);
+  for (const [providerId, value] of Object.entries(rawProviders)) {
+    const normalized = normalizeConfiguredSpeechProviderId(providerId) || providerId;
+    entries[normalized] = ttsAsObject(value);
+  }
+  const reservedKeys = new Set([
+    "auto",
+    "enabled",
+    "maxTextLength",
+    "mode",
+    "modelOverrides",
+    "persona",
+    "personas",
+    "prefsPath",
+    "provider",
+    "providers",
+    "summaryModel",
+    "timeoutMs",
+  ]);
+  for (const [key, value] of Object.entries(raw)) {
+    if (reservedKeys.has(key) || !value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    const normalized = normalizeConfiguredSpeechProviderId(key) || key;
+    if (!Object.prototype.hasOwnProperty.call(entries, normalized)) {
+      entries[normalized] = ttsAsObject(value);
+    }
+  }
+  return entries;
+}
+
+function resolveTtsConfig(cfg = {}, contextOrAgentId = {}) {
+  const raw = resolveEffectiveTtsConfig(cfg, contextOrAgentId) || {};
+  const providerSource = raw.provider ? "config" : "default";
+  const provider =
+    normalizeConfiguredSpeechProviderId(raw.provider) ||
+    (providerSource === "config" ? normalizeOptionalLowercaseString(raw.provider) || "" : "");
+  return {
+    auto: resolveConfiguredTtsAutoMode(raw),
+    mode: raw.mode || "final",
+    provider,
+    providerSource,
+    persona: normalizeTtsPersonaId(raw.persona),
+    personas: collectTtsPersonas(raw),
+    summaryModel: normalizeOptionalString(raw.summaryModel),
+    modelOverrides: resolveModelOverridePolicy(raw.modelOverrides),
+    providerConfigs: collectDirectTtsProviderConfigEntries(raw),
+    prefsPath: raw.prefsPath,
+    maxTextLength:
+      typeof raw.maxTextLength === "number" && Number.isFinite(raw.maxTextLength)
+        ? raw.maxTextLength
+        : DEFAULT_TTS_MAX_LENGTH,
+    timeoutMs:
+      typeof raw.timeoutMs === "number" && Number.isFinite(raw.timeoutMs)
+        ? raw.timeoutMs
+        : DEFAULT_TTS_TIMEOUT_MS,
+    rawConfig: raw,
+    sourceConfig: cfg,
+  };
+}
+
+function resolveTtsPrefsPath(config = {}) {
+  return resolveTtsPrefsPathValue(config.prefsPath);
+}
+
+function readTtsPrefs(prefsPath) {
+  try {
+    if (!prefsPath || !fs.existsSync(prefsPath)) {
+      return {};
+    }
+    return JSON.parse(fs.readFileSync(prefsPath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeTtsPrefs(prefsPath, prefs) {
+  fs.mkdirSync(path.dirname(prefsPath), { recursive: true });
+  fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2), { mode: 0o600 });
+}
+
+function updateTtsPrefs(prefsPath, update) {
+  const prefs = readTtsPrefs(prefsPath);
+  update(prefs);
+  writeTtsPrefs(prefsPath, prefs);
+}
+
+function resolveTtsAutoModeFromPrefs(prefs) {
+  const auto = normalizeTtsAutoMode(prefs && prefs.tts && prefs.tts.auto);
+  if (auto) {
+    return auto;
+  }
+  if (prefs && prefs.tts && typeof prefs.tts.enabled === "boolean") {
+    return prefs.tts.enabled ? "always" : "off";
+  }
+  return undefined;
+}
+
+function resolveTtsAutoMode(params = {}) {
+  const sessionAuto = normalizeTtsAutoMode(params.sessionAuto);
+  if (sessionAuto) {
+    return sessionAuto;
+  }
+  const prefsAuto = resolveTtsAutoModeFromPrefs(readTtsPrefs(params.prefsPath));
+  if (prefsAuto) {
+    return prefsAuto;
+  }
+  return (params.config && params.config.auto) || "off";
+}
+
+function isTtsEnabled(config, prefsPath, sessionAuto) {
+  return resolveTtsAutoMode({ config, prefsPath, sessionAuto }) !== "off";
+}
+
+function setTtsAutoMode(prefsPath, mode) {
+  const normalized = normalizeTtsAutoMode(mode) || "off";
+  updateTtsPrefs(prefsPath, (prefs) => {
+    const next = { ...(prefs.tts || {}) };
+    delete next.enabled;
+    next.auto = normalized;
+    prefs.tts = next;
+  });
+}
+
+function setTtsEnabled(prefsPath, enabled) {
+  setTtsAutoMode(prefsPath, enabled ? "always" : "off");
+}
+
+function getTtsPersona(config = {}, prefsPath) {
+  const prefs = readTtsPrefs(prefsPath);
+  let personaId;
+  if (prefs.tts && Object.prototype.hasOwnProperty.call(prefs.tts, "persona")) {
+    personaId = normalizeTtsPersonaId(prefs.tts.persona);
+  } else {
+    personaId = normalizeTtsPersonaId(config.persona);
+  }
+  return personaId && config.personas ? config.personas[personaId] : undefined;
+}
+
+function getTtsProvider(config = {}, prefsPath) {
+  const prefs = readTtsPrefs(prefsPath);
+  const prefsProvider =
+    normalizeConfiguredSpeechProviderId(prefs.tts && prefs.tts.provider) ||
+    normalizeSpeechProviderId(prefs.tts && prefs.tts.provider);
+  if (prefsProvider) {
+    return prefsProvider;
+  }
+  const persona = getTtsPersona(config, prefsPath);
+  const personaProvider =
+    normalizeConfiguredSpeechProviderId(persona && persona.provider) ||
+    normalizeSpeechProviderId(persona && persona.provider);
+  if (personaProvider) {
+    return personaProvider;
+  }
+  if (config.providerSource === "config") {
+    return normalizeConfiguredSpeechProviderId(config.provider) || config.provider;
+  }
+  return config.provider || "";
+}
+
+function listTtsPersonas(config = {}) {
+  return Object.values(config.personas || {}).sort((left, right) =>
+    String(left.id || "").localeCompare(String(right.id || "")),
+  );
+}
+
+function setTtsPersona(prefsPath, persona) {
+  updateTtsPrefs(prefsPath, (prefs) => {
+    prefs.tts = { ...(prefs.tts || {}), persona: normalizeTtsPersonaId(persona) || null };
+  });
+}
+
+function setTtsProvider(prefsPath, provider) {
+  updateTtsPrefs(prefsPath, (prefs) => {
+    prefs.tts = {
+      ...(prefs.tts || {}),
+      provider: normalizeConfiguredSpeechProviderId(provider) || provider,
+    };
+  });
+}
+
+function getTtsMaxLength(prefsPath) {
+  const prefs = readTtsPrefs(prefsPath);
+  return prefs.tts && typeof prefs.tts.maxLength === "number"
+    ? prefs.tts.maxLength
+    : DEFAULT_TTS_MAX_LENGTH;
+}
+
+function setTtsMaxLength(prefsPath, maxLength) {
+  updateTtsPrefs(prefsPath, (prefs) => {
+    prefs.tts = { ...(prefs.tts || {}), maxLength };
+  });
+}
+
+function isSummarizationEnabled(prefsPath) {
+  const prefs = readTtsPrefs(prefsPath);
+  return prefs.tts && typeof prefs.tts.summarize === "boolean"
+    ? prefs.tts.summarize
+    : DEFAULT_TTS_SUMMARIZE;
+}
+
+function setSummarizationEnabled(prefsPath, enabled) {
+  updateTtsPrefs(prefsPath, (prefs) => {
+    prefs.tts = { ...(prefs.tts || {}), summarize: Boolean(enabled) };
+  });
+}
+
+function getLastTtsAttempt() {
+  return lastTtsAttempt;
+}
+
+function setLastTtsAttempt(entry) {
+  lastTtsAttempt = entry;
+}
+
+function getResolvedSpeechProviderConfig(config = {}, providerId) {
+  const canonical =
+    normalizeConfiguredSpeechProviderId(providerId) ||
+    normalizeSpeechProviderId(providerId) ||
+    String(providerId || "");
+  const existing = (config.providerConfigs || {})[canonical];
+  if (existing) {
+    return existing;
+  }
+  const raw = config.rawConfig || {};
+  return (
+    (ttsAsObject(raw.providers)[canonical] && ttsAsObject(ttsAsObject(raw.providers)[canonical])) ||
+    ttsAsObject(raw[canonical])
+  );
+}
+
+function resolveExplicitTtsOverrides(params = {}) {
+  const cfg = params.cfg || {};
+  const providerInput = normalizeOptionalString(params.provider);
+  const config = resolveTtsConfig(cfg, {
+    agentId: params.agentId,
+    channelId: params.channelId,
+    accountId: params.accountId,
+  });
+  const prefsPath = params.prefsPath || resolveTtsPrefsPath(config);
+  const selectedProvider =
+    normalizeConfiguredSpeechProviderId(providerInput) ||
+    (params.modelId || params.voiceId ? getTtsProvider(config, prefsPath) : undefined);
+  if (providerInput && !selectedProvider) {
+    throw new Error(`Unknown TTS provider "${providerInput}".`);
+  }
+  if (!params.modelId && !params.voiceId) {
+    return selectedProvider ? { provider: selectedProvider } : {};
+  }
+  if (!selectedProvider) {
+    throw new Error("TTS model or voice overrides require a resolved provider.");
+  }
+  throw new Error(`TTS provider "${selectedProvider}" does not support model or voice overrides.`);
+}
+
+function resolveTtsProviderOrder(primary, _cfg) {
+  const normalized =
+    normalizeConfiguredSpeechProviderId(primary) || normalizeSpeechProviderId(primary);
+  return normalized ? [normalized] : [];
+}
+
+function isTtsProviderConfigured(_config, _provider, _cfg) {
+  return false;
+}
+
+async function listSpeechVoices(_params = {}) {
+  return [];
+}
+
+function buildTtsSystemPromptHint(cfg = {}, agentId) {
+  const config = resolveTtsConfig(cfg, agentId);
+  const prefsPath = resolveTtsPrefsPath(config);
+  const autoMode = resolveTtsAutoMode({ config, prefsPath });
+  if (autoMode === "off") {
+    return undefined;
+  }
+  const persona = getTtsPersona(config, prefsPath);
+  const maxLength = getTtsMaxLength(prefsPath);
+  const summarize = isSummarizationEnabled(prefsPath) ? "on" : "off";
+  const autoHint =
+    autoMode === "inbound"
+      ? "Only use TTS when the user's last message includes audio/voice."
+      : autoMode === "tagged"
+        ? [
+            "Only use TTS when you include [[tts:key=value]] directives",
+            "or a [[tts:text]]...[[/tts:text]] block.",
+          ].join(" ")
+        : undefined;
+  const personaHint =
+    persona && `Active TTS persona: ${persona.label || persona.id}${
+      persona.description ? ` - ${persona.description}` : ""
+    }.`;
+  return [
+    "Voice (TTS) is enabled.",
+    autoHint,
+    personaHint,
+    `Keep spoken text ${maxLength} chars to avoid auto-summary (summary ${summarize}).`,
+    "Use [[tts:...]] and optional [[tts:text]]...[[/tts:text]] to control voice/expressiveness.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function supportsNativeVoiceNoteTts(channel) {
+  return resolveChannelTtsVoiceDelivery(channel) !== undefined;
+}
+
+function supportsTranscodedVoiceNoteTts(channel) {
+  const delivery = resolveChannelTtsVoiceDelivery(channel);
+  return Boolean(delivery && delivery.synthesisTarget === "voice-note" && delivery.transcodesAudio);
+}
+
+function resolveTtsSynthesisTarget(channel) {
+  const delivery = resolveChannelTtsVoiceDelivery(channel);
+  return (delivery && delivery.synthesisTarget) || "audio-file";
+}
+
+function shouldDeliverTtsAsVoice(params = {}) {
+  const delivery = resolveChannelTtsVoiceDelivery(params.channel);
+  if (!delivery) {
+    return false;
+  }
+  if (delivery.synthesisTarget === "audio-file") {
+    const formats = new Set(
+      (delivery.audioFileFormats || []).map((format) => String(format).toLowerCase()),
+    );
+    const extension = normalizeOptionalLowercaseString(params.fileExtension || "");
+    const outputFormat = normalizeOptionalLowercaseString(params.outputFormat || "");
+    return (
+      params.target === "audio-file" &&
+      (formats.has((extension || "").replace(/^\./, "")) || formats.has(outputFormat || ""))
+    );
+  }
+  return params.target === "voice-note" &&
+    (params.voiceCompatible === true || delivery.transcodesAudio === true);
+}
+
+function formatTtsProviderError(provider, err) {
+  const error = err instanceof Error ? err : new Error(String(err));
+  if (error.name === "AbortError") {
+    return `${provider}: request timed out`;
+  }
+  return `${provider}: ${redactSensitiveText(error.message)}`;
+}
+
+function sanitizeTtsErrorForLog(err) {
+  return redactSensitiveText(formatErrorMessage(err))
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/\t/g, "\\t");
+}
+
+async function synthesizeSpeech(_params = {}) {
+  return {
+    success: false,
+    error: "TTS conversion failed: no providers available",
+  };
+}
+
+async function textToSpeech(params = {}) {
+  return synthesizeSpeech(params);
+}
+
+async function textToSpeechTelephony(_params = {}) {
+  return {
+    success: false,
+    error: "TTS conversion failed: no providers available",
+  };
+}
+
+async function maybeApplyTtsToPayload(params = {}) {
+  return params.payload;
+}
+
+const ttsRuntimeTestFacade = {
+  parseTtsDirectives,
+  resolveModelOverridePolicy,
+  supportsNativeVoiceNoteTts,
+  supportsTranscodedVoiceNoteTts,
+  resolveTtsSynthesisTarget,
+  shouldDeliverTtsAsVoice,
+  summarizeText,
+  getResolvedSpeechProviderConfig,
+  formatTtsProviderError,
+  sanitizeTtsErrorForLog,
+};
+
+const ttsRuntime = {
+  _test: ttsRuntimeTestFacade,
+  buildTtsSystemPromptHint,
+  getLastTtsAttempt,
+  getResolvedSpeechProviderConfig,
+  getTtsMaxLength,
+  getTtsPersona,
+  getTtsProvider,
+  isSummarizationEnabled,
+  isTtsEnabled,
+  isTtsProviderConfigured,
+  listSpeechVoices,
+  listTtsPersonas,
+  maybeApplyTtsToPayload,
+  resolveExplicitTtsOverrides,
+  resolveTtsAutoMode,
+  resolveTtsConfig,
+  resolveTtsPrefsPath,
+  resolveTtsProviderOrder,
+  setLastTtsAttempt,
+  setSummarizationEnabled,
+  setTtsAutoMode,
+  setTtsEnabled,
+  setTtsMaxLength,
+  setTtsPersona,
+  setTtsProvider,
+  synthesizeSpeech,
+  textToSpeech,
+  textToSpeechTelephony,
+};
+
+const AGENT_COMMAND_UNAVAILABLE_CODE = "agent_command_unavailable";
+
+function agentCommandRuntimeAsConfig(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+async function agentCommandResolveAgentRuntimeConfig(runtime = {}, params = {}) {
+  const loadedRaw = agentCommandRuntimeAsConfig(runtime.loadedRaw || runtime.config || runtime.cfg);
+  const sourceConfig = agentCommandRuntimeAsConfig(runtime.sourceConfig || loadedRaw);
+  let cfg = agentCommandRuntimeAsConfig(runtime.cfg || loadedRaw);
+  if (
+    params &&
+    params.runtimeTargetsChannelSecrets === true &&
+    typeof runtime.resolveCommandConfigWithSecrets === "function"
+  ) {
+    const resolved = await runtime.resolveCommandConfigWithSecrets({
+      config: loadedRaw,
+      commandName: "agent",
+      runtime,
+    });
+    cfg = agentCommandRuntimeAsConfig(
+      resolved && (resolved.resolvedConfig || resolved.cfg || resolved.config),
+    );
+  }
+  return { loadedRaw, sourceConfig, cfg };
+}
+
+function readAgentCommandMessage(opts = {}) {
+  return opts.message == null ? "" : String(opts.message);
+}
+
+function readAgentCommandId(value) {
+  return normalizeOptionalString(value);
+}
+
+function parseAgentCommandTimeoutMs(opts = {}) {
+  if (opts.timeout === undefined) {
+    return undefined;
+  }
+  const timeoutSeconds = Number.parseInt(String(opts.timeout), 10);
+  if (Number.isNaN(timeoutSeconds) || timeoutSeconds < 0) {
+    throw new Error("--timeout must be a non-negative integer (seconds; 0 means no timeout)");
+  }
+  return timeoutSeconds * 1000;
+}
+
+async function agentCommandPrepareAgentCommandExecution(opts = {}, runtime = {}) {
+  const isRawModelRun = opts.modelRun === true || opts.promptMode === "none";
+  const message = readAgentCommandMessage(opts);
+  if (!message.trim()) {
+    throw new Error("Message (--message) is required");
+  }
+  if (!opts.to && !opts.sessionId && !opts.sessionKey && !opts.agentId) {
+    throw new Error("Pass --to <E.164>, --session-id, or --agent to choose a session");
+  }
+  const { cfg } = await agentCommandResolveAgentRuntimeConfig(runtime, {
+    runtimeTargetsChannelSecrets: opts.deliver === true,
+  });
+  const agentIdOverrideRaw = readAgentCommandId(opts.agentId);
+  const agentIdOverride = agentIdOverrideRaw ? normalizeAgentId(agentIdOverrideRaw) : undefined;
+  if (agentIdOverride) {
+    const knownAgents = agentRuntimeListAgentIds(cfg);
+    if (!knownAgents.includes(agentIdOverride)) {
+      throw new Error(
+        [
+          `Unknown agent id "${agentIdOverrideRaw}".`,
+          'Use "openclaw agents list" to see configured agents.',
+        ].join(" "),
+      );
+    }
+  }
+  const sessionKey = readAgentCommandId(opts.sessionKey);
+  if (agentIdOverride && sessionKey) {
+    const sessionAgentId = resolveAgentIdFromSessionKey(sessionKey);
+    if (sessionAgentId !== agentIdOverride) {
+      throw new Error(
+        `Agent id "${agentIdOverrideRaw}" does not match session key agent "${sessionAgentId}".`,
+      );
+    }
+  }
+  const sessionAgentId =
+    agentIdOverride || resolveSessionAgentId({ sessionKey, config: cfg });
+  const timeoutMs = parseAgentCommandTimeoutMs(opts);
+  const workspaceDir =
+    readAgentCommandId(opts.workspaceDir) ||
+    agentRuntimeResolveAgentWorkspaceDir(cfg, sessionAgentId);
+  const sessionId = readAgentCommandId(opts.sessionId);
+  const runId =
+    readAgentCommandId(opts.runId) || sessionId || sessionKey || `agent:${sessionAgentId}`;
+  return {
+    body: message,
+    transcriptBody: opts.transcriptMessage ?? message,
+    cfg,
+    normalizedSpawned: {
+      spawnedBy: readAgentCommandId(opts.spawnedBy),
+      groupId: readAgentCommandId(opts.groupId),
+      groupChannel: readAgentCommandId(opts.groupChannel),
+      groupSpace: readAgentCommandId(opts.groupSpace),
+      workspaceDir,
+    },
+    agentCfg: agentRuntimeResolveAgentConfig(cfg, sessionAgentId),
+    timeoutMs,
+    sessionId,
+    sessionKey,
+    sessionAgentId,
+    agentIdOverride,
+    workspaceDir,
+    agentDir: agentRuntimeResolveAgentDir(cfg, sessionAgentId),
+    runId,
+    isRawModelRun,
+    senderIsOwner: opts.senderIsOwner,
+    allowModelOverride: opts.allowModelOverride,
+  };
+}
+
+function createAgentCommandUnavailableError(entrypoint, opts = {}) {
+  const error = new Error(
+    "OpenClaw agent command runtime is unavailable in the native OpenZues plugin bridge.",
+  );
+  error.code = AGENT_COMMAND_UNAVAILABLE_CODE;
+  error.entrypoint = entrypoint;
+  error.senderIsOwner = opts.senderIsOwner;
+  error.allowModelOverride = opts.allowModelOverride;
+  return error;
+}
+
+async function agentCommandInternal(opts = {}, runtime = {}, deps, entrypoint = "agentCommand") {
+  const prepared = await agentCommandPrepareAgentCommandExecution(opts, runtime);
+  const runner =
+    runtime &&
+    (runtime.agentCommandRunner ||
+      runtime.runAgentCommand ||
+      runtime.agentCommand ||
+      (deps && deps.agentCommandRunner));
+  if (typeof runner === "function") {
+    return await runner({ opts, prepared, runtime, deps, entrypoint });
+  }
+  throw createAgentCommandUnavailableError(entrypoint, opts);
+}
+
+async function agentCommand(opts = {}, runtime = {}, deps) {
+  return await agentCommandInternal(
+    {
+      ...opts,
+      senderIsOwner: opts.senderIsOwner ?? true,
+      allowModelOverride: opts.allowModelOverride ?? true,
+    },
+    runtime,
+    deps,
+    "agentCommand",
+  );
+}
+
+async function agentCommandFromIngress(opts = {}, runtime = {}, deps) {
+  if (typeof opts.senderIsOwner !== "boolean") {
+    throw new Error("senderIsOwner must be explicitly set for ingress agent runs.");
+  }
+  if (typeof opts.allowModelOverride !== "boolean") {
+    throw new Error("allowModelOverride must be explicitly set for ingress agent runs.");
+  }
+  return await agentCommandInternal(opts, runtime, deps, "agentCommandFromIngress");
+}
+
+const agentCommandTestingFacade = {
+  prepareAgentCommandExecution: agentCommandPrepareAgentCommandExecution,
+  resolveAgentRuntimeConfig: agentCommandResolveAgentRuntimeConfig,
+};
+
+const agentRuntime = {
+  ...ttsRuntime,
+  __testing: agentCommandTestingFacade,
+  DEFAULT_CACHE_TTL_MINUTES,
+  DEFAULT_CONTEXT_TOKENS: AGENT_RUNTIME_DEFAULT_CONTEXT_TOKENS,
+  DEFAULT_MODEL: AGENT_RUNTIME_DEFAULT_MODEL,
+  DEFAULT_PROVIDER: AGENT_RUNTIME_DEFAULT_PROVIDER,
+  DEFAULT_TIMEOUT_SECONDS,
+  CUSTOM_LOCAL_AUTH_MARKER,
+  EmbeddedBlockChunker,
+  GCP_VERTEX_CREDENTIALS_MARKER,
+  MINIMAX_OAUTH_MARKER,
+  NON_ENV_SECRETREF_MARKER,
+  OAUTH_API_KEY_MARKER_PREFIX,
+  OLLAMA_LOCAL_AUTH_MARKER,
+  OWNER_ONLY_TOOL_ERROR,
+  SECRETREF_ENV_HEADER_MARKER_PREFIX,
+  ToolAuthorizationError,
+  ToolInputError,
+  ToolPlanContractError,
+  appendCronStyleCurrentTimeLine,
+  applyAuthHeaderOverride: agentRuntimeApplyAuthHeaderOverride,
+  applyLocalNoAuthHeaderOverride: agentRuntimeApplyLocalNoAuthHeaderOverride,
+  agentCommand,
+  agentCommandFromIngress,
+  assertMediaNotDataUrl,
+  asToolParamsRecord,
+  buildAllowedModelSet: agentRuntimeBuildAllowedModelSet,
+  buildConfiguredAllowlistKeys: agentRuntimeBuildConfiguredAllowlistKeys,
+  buildConfiguredModelCatalog: agentRuntimeBuildConfiguredModelCatalog,
+  buildModelAliasIndex: agentRuntimeBuildModelAliasIndex,
+  buildToolPlan,
+  channelTargetSchema,
+  channelTargetsSchema,
+  createActionGate,
+  defineToolDescriptor,
+  defineToolDescriptors,
+  evaluateToolAvailability,
+  extractBasicHtmlContent,
+  extractAssistantText,
+  extractAssistantThinking,
+  extractAssistantVisibleText,
+  extractThinkingFromTaggedStream,
+  extractThinkingFromTaggedText,
+  failedTextResult,
+  findModelCatalogEntry: agentRuntimeFindModelCatalogEntry,
+  findModelInCatalog: agentRuntimeFindModelInCatalog,
+  findNormalizedProviderKey: agentRuntimeFindNormalizedProviderKey,
+  findNormalizedProviderValue: agentRuntimeFindNormalizedProviderValue,
+  fetchWithWebToolsNetworkGuard,
+  formatReasoningMessage,
+  formatToolExecutorRef,
+  formatUserTime,
+  getApiKeyForModel: agentRuntimeGetApiKeyForModel,
+  getCustomProviderApiKey: agentRuntimeGetCustomProviderApiKey,
+  getModelRefStatus: agentRuntimeGetModelRefStatus,
+  hasAvailableAuthForProvider: agentRuntimeHasAvailableAuthForProvider,
+  hasRuntimeAvailableProviderAuth: agentRuntimeHasRuntimeAvailableProviderAuth,
+  hasSyntheticLocalProviderAuthConfig: agentRuntimeHasSyntheticLocalProviderAuthConfig,
+  hasUsableCustomProviderApiKey: agentRuntimeHasUsableCustomProviderApiKey,
+  htmlToMarkdown,
+  isAssistantMessage,
+  isAwsSdkAuthMarker: agentRuntimeIsAwsSdkAuthMarker,
+  isKnownEnvApiKeyMarker: agentRuntimeIsKnownEnvApiKeyMarker,
+  isNonSecretApiKeyMarker: agentRuntimeIsNonSecretApiKeyMarker,
+  isOAuthApiKeyMarker: agentRuntimeIsOAuthApiKeyMarker,
+  isSecretRefHeaderValueMarker: agentRuntimeIsSecretRefHeaderValueMarker,
+  jsonResult,
+  legacyModelKey: agentRuntimeLegacyModelKey,
+  listKnownNonSecretApiKeyMarkers: agentRuntimeListKnownNonSecretApiKeyMarkers,
+  listAgentEntries: agentRuntimeListAgentEntries,
+  listAgentIds: agentRuntimeListAgentIds,
+  markdownToText,
+  modelKey: agentRuntimeModelKey,
+  modelSupportsDocument: agentRuntimeModelSupportsDocument,
+  modelSupportsInput: agentRuntimeModelSupportsInput,
+  modelSupportsVision: agentRuntimeModelSupportsVision,
+  normalizeModelRef: agentRuntimeNormalizeModelRef,
+  normalizeModelSelection: agentRuntimeNormalizeModelSelection,
+  normalizeProviderId: agentRuntimeNormalizeProviderId,
+  normalizeProviderIdForAuth: agentRuntimeNormalizeProviderId,
+  normalizeStoredOverrideModel: agentRuntimeNormalizeStoredOverrideModel,
+  normalizeTimestamp,
+  normalizeCacheKey,
+  normalizeWhitespace,
+  parseAvailableTags,
+  parseModelRef: agentRuntimeParseModelRef,
+  payloadTextResult,
+  promoteThinkingTagsToBlocks,
+  readNumberParam,
+  readReactionParams,
+  readStringArrayParam,
+  readStringOrNumberParam,
+  readStringParam,
+  resolveAckReaction: agentRuntimeResolveAckReaction,
+  resolveAgentConfig: agentRuntimeResolveAgentConfig,
+  resolveAgentContextLimits: agentRuntimeResolveAgentContextLimits,
+  resolveAgentDir: agentRuntimeResolveAgentDir,
+  resolveAgentEffectiveModelPrimary: agentRuntimeResolveAgentEffectiveModelPrimary,
+  resolveAgentExplicitModelPrimary: agentRuntimeResolveAgentExplicitModelPrimary,
+  resolveAgentIdFromSessionKey,
+  resolveAgentModelFallbacksOverride: agentRuntimeResolveAgentModelFallbacksOverride,
+  resolveAgentWorkspaceDir: agentRuntimeResolveAgentWorkspaceDir,
+  resolveAllowedModelRef: agentRuntimeResolveAllowedModelRef,
+  resolveAllowlistModelKey: agentRuntimeResolveAllowlistModelKey,
+  resolveApiKeyForProvider: agentRuntimeResolveApiKeyForProvider,
+  resolveConfiguredModelRef: agentRuntimeResolveConfiguredModelRef,
+  resolveCronStyleNow,
+  resolveDefaultAgentId: agentRuntimeResolveDefaultAgentId,
+  resolveDefaultModelForAgent: agentRuntimeResolveDefaultModelForAgent,
+  resolveEffectiveMessagesConfig: agentRuntimeResolveEffectiveMessagesConfig,
+  resolveEnvApiKey: agentRuntimeResolveEnvApiKey,
+  resolveIdentityNamePrefix: agentRuntimeResolveIdentityNamePrefix,
+  resolveMessagePrefix: agentRuntimeResolveMessagePrefix,
+  resolveModelAuthMode: agentRuntimeResolveModelAuthMode,
+  resolveModelRefFromString: agentRuntimeResolveModelRefFromString,
+  resolveEnvSecretRefHeaderValueMarker: agentRuntimeResolveEnvSecretRefHeaderValueMarker,
+  readCache,
+  readResponseText,
+  resolveNonEnvSecretRefApiKeyMarker: agentRuntimeResolveNonEnvSecretRefApiKeyMarker,
+  resolveNonEnvSecretRefHeaderValueMarker: agentRuntimeResolveNonEnvSecretRefHeaderValueMarker,
+  resolveOAuthApiKeyMarker: agentRuntimeResolveOAuthApiKeyMarker,
+  resolveOpenClawAgentDir,
+  resolvePersistedModelRef: agentRuntimeResolvePersistedModelRef,
+  resolvePersistedOverrideModelRef: agentRuntimeResolvePersistedOverrideModelRef,
+  resolvePersistedSelectedModelRef: agentRuntimeResolvePersistedSelectedModelRef,
+  resolveProviderAuthAliasMap,
+  resolveProviderIdForAuth,
+  resolvePublicAgentAvatarSource: agentRuntimeResolvePublicAgentAvatarSource,
+  resolveReasoningDefault: agentRuntimeResolveReasoningDefault,
+  resolveSandboxInputPath: agentRuntimeResolveSandboxInputPath,
+  resolveSandboxPath: agentRuntimeResolveSandboxPath,
+  resolveResponsePrefix: agentRuntimeResolveResponsePrefix,
+  resolveSessionAgentId: agentRuntimeResolveSessionAgentId,
+  resolveSessionAgentIds: agentRuntimeResolveSessionAgentIds,
+  resolveSimpleCompletionSelectionForAgent: agentRuntimeResolveSimpleCompletionSelectionForAgent,
+  resolveSubagentConfiguredModelSelection: agentRuntimeResolveSubagentConfiguredModelSelection,
+  resolveSubagentSpawnModelSelection: agentRuntimeResolveSubagentSpawnModelSelection,
+  resolveCacheTtlMs,
+  resolveTimeoutSeconds,
+  resolveUsableCustomProviderApiKey: agentRuntimeResolveUsableCustomProviderApiKey,
+  resolveUserTimeFormat,
+  resolveUserTimezone,
+  resetProviderAuthAliasMapCacheForTest,
+  shouldPreferExplicitConfigApiKeyAuth: agentRuntimeShouldPreferExplicitConfigApiKeyAuth,
+  stringifyToolPayload,
+  optionalStringEnum,
+  splitThinkingTaggedText,
+  stripDowngradedToolCallText,
+  stripMinimaxToolCallXml,
+  stripThinkingTagsFromText,
+  stringEnum,
+  textResult,
+  truncateText,
+  toToolProtocolDescriptor,
+  toToolProtocolDescriptors,
+  withSelfHostedWebToolsEndpoint,
+  withStrictWebToolsEndpoint,
+  withTrustedWebToolsEndpoint,
+  writeCache,
+  withNormalizedTimestamp,
+  wrapOwnerOnlyToolExecution,
+};
+
+const TOOL_PROGRESS_OUTPUT_MAX_CHARS = 8000;
+const AGENT_HARNESS_DETAIL_LABEL_OVERRIDES = {
+  agentId: "agent",
+  channelId: "channel",
+  guildId: "guild",
+  includeTools: "tools",
+  maxChars: "max chars",
+  messageId: "message",
+  nodeId: "node",
+  pollQuestion: "poll",
+  requestId: "request",
+  runTimeoutSeconds: "timeout",
+  sessionKey: "session",
+  targetId: "target",
+  targetUrl: "url",
+  threadId: "thread",
+  timeoutSeconds: "timeout",
+  userId: "user",
+};
+
+function agentHarnessFormatDetailKey(raw) {
+  const parts = String(raw || "").split(".").filter(Boolean);
+  const last = parts.length > 0 ? parts[parts.length - 1] : String(raw || "");
+  const override = AGENT_HARNESS_DETAIL_LABEL_OVERRIDES[last];
+  if (override) {
+    return override;
+  }
+  return normalizeLowercaseStringOrEmpty(
+    last
+      .replace(/_/g, " ")
+      .replace(/-/g, " ")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2"),
+  );
+}
+
+function agentHarnessAsRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function agentHarnessLookupValueByPath(value, rawPath) {
+  const segments = String(rawPath || "").split(".").filter(Boolean);
+  let current = value;
+  for (const segment of segments) {
+    if (current === null || current === undefined) {
+      return undefined;
+    }
+    if (Array.isArray(current)) {
+      const index = Number.parseInt(segment, 10);
+      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+        return undefined;
+      }
+      current = current[index];
+      continue;
+    }
+    if (typeof current !== "object" || !(segment in current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function agentHarnessCoerceDisplayValue(value) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    const entries = value
+      .map((entry) => agentHarnessCoerceDisplayValue(entry))
+      .filter(Boolean);
+    return entries.length > 0 ? entries.join(", ") : undefined;
+  }
+  return undefined;
+}
+
+function agentHarnessResolvePathArg(args) {
+  const record = agentHarnessAsRecord(args);
+  if (!record) {
+    return undefined;
+  }
+  for (const key of ["path", "file_path", "filePath"]) {
+    const value = agentHarnessCoerceDisplayValue(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function agentHarnessResolveReadDetail(args) {
+  const record = agentHarnessAsRecord(args);
+  if (!record) {
+    return undefined;
+  }
+  const pathValue = agentHarnessResolvePathArg(record);
+  if (!pathValue) {
+    return undefined;
+  }
+  const offsetRaw =
+    typeof record.offset === "number" && Number.isFinite(record.offset)
+      ? Math.floor(record.offset)
+      : undefined;
+  const limitRaw =
+    typeof record.limit === "number" && Number.isFinite(record.limit)
+      ? Math.floor(record.limit)
+      : undefined;
+  const offset = offsetRaw !== undefined ? Math.max(1, offsetRaw) : undefined;
+  const limit = limitRaw !== undefined ? Math.max(1, limitRaw) : undefined;
+  if (offset !== undefined && limit !== undefined) {
+    return `${limit === 1 ? "line" : "lines"} ${offset}-${offset + limit - 1} from ${pathValue}`;
+  }
+  if (offset !== undefined) {
+    return `from line ${offset} in ${pathValue}`;
+  }
+  if (limit !== undefined) {
+    return `first ${limit} ${limit === 1 ? "line" : "lines"} of ${pathValue}`;
+  }
+  return `from ${pathValue}`;
+}
+
+function agentHarnessResolveWriteDetail(toolKey, args) {
+  const record = agentHarnessAsRecord(args);
+  if (!record) {
+    return undefined;
+  }
+  const pathValue = agentHarnessResolvePathArg(record) || normalizeOptionalString(record.url);
+  if (!pathValue) {
+    return undefined;
+  }
+  if (toolKey === "attach") {
+    return `from ${pathValue}`;
+  }
+  const content =
+    typeof record.content === "string"
+      ? record.content
+      : typeof record.newText === "string"
+        ? record.newText
+        : typeof record.new_string === "string"
+          ? record.new_string
+          : undefined;
+  const prefix = toolKey === "edit" ? "in" : "to";
+  return content && content.length > 0
+    ? `${prefix} ${pathValue} (${content.length} chars)`
+    : `${prefix} ${pathValue}`;
+}
+
+function agentHarnessResolveWebSearchDetail(args) {
+  const record = agentHarnessAsRecord(args);
+  if (!record) {
+    return undefined;
+  }
+  const query = normalizeOptionalString(record.query);
+  if (!query) {
+    return undefined;
+  }
+  const count =
+    typeof record.count === "number" && Number.isFinite(record.count) && record.count > 0
+      ? Math.floor(record.count)
+      : undefined;
+  return count !== undefined ? `for "${query}" (top ${count})` : `for "${query}"`;
+}
+
+function agentHarnessResolveWebFetchDetail(args) {
+  const record = agentHarnessAsRecord(args);
+  if (!record) {
+    return undefined;
+  }
+  const url = normalizeOptionalString(record.url);
+  if (!url) {
+    return undefined;
+  }
+  const suffix = [
+    normalizeOptionalString(record.extractMode)
+      ? `mode ${normalizeOptionalString(record.extractMode)}`
+      : undefined,
+    typeof record.maxChars === "number" && Number.isFinite(record.maxChars) && record.maxChars > 0
+      ? `max ${Math.floor(record.maxChars)} chars`
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return suffix ? `from ${url} (${suffix})` : `from ${url}`;
+}
+
+function agentHarnessResolveDetailFromKeys(args, keys) {
+  const entries = [];
+  for (const key of keys) {
+    const display = agentHarnessCoerceDisplayValue(agentHarnessLookupValueByPath(args, key));
+    if (display) {
+      entries.push({ label: agentHarnessFormatDetailKey(key), value: display });
+    }
+  }
+  if (entries.length === 0) {
+    return undefined;
+  }
+  if (entries.length === 1) {
+    return entries[0].value;
+  }
+  const seen = new Set();
+  return entries
+    .filter((entry) => {
+      const token = `${entry.label}:${entry.value}`;
+      if (seen.has(token)) {
+        return false;
+      }
+      seen.add(token);
+      return true;
+    })
+    .slice(0, 8)
+    .map((entry) => `${entry.label} ${entry.value}`)
+    .join(", ");
+}
+
+function inferToolMetaFromArgs(toolName, args) {
+  const toolKey = normalizeLowercaseStringOrEmpty(toolName);
+  if (toolKey === "read") {
+    return agentHarnessResolveReadDetail(args);
+  }
+  if (toolKey === "write" || toolKey === "edit" || toolKey === "attach") {
+    return agentHarnessResolveWriteDetail(toolKey, args);
+  }
+  if (toolKey === "web_search") {
+    return agentHarnessResolveWebSearchDetail(args);
+  }
+  if (toolKey === "web_fetch") {
+    return agentHarnessResolveWebFetchDetail(args);
+  }
+  return agentHarnessResolveDetailFromKeys(args, [
+    "path",
+    "paths",
+    "url",
+    "urls",
+    "prompt",
+    "query",
+    "message",
+    "task",
+    "command",
+    "sessionKey",
+    "agentId",
+    "targetId",
+    "targetUrl",
+  ]);
+}
+
+function formatToolProgressOutput(output, options = {}) {
+  const normalized = String(output || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!normalized) {
+    return undefined;
+  }
+  const maxRaw = options && typeof options.maxChars === "number" ? options.maxChars : undefined;
+  const maxChars =
+    maxRaw !== undefined && Number.isFinite(maxRaw) && maxRaw >= 0
+      ? Math.floor(maxRaw)
+      : TOOL_PROGRESS_OUTPUT_MAX_CHARS;
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${truncateUtf16Safe(normalized, maxChars)}\n...(truncated)...`;
+}
+
+function classifyAgentHarnessTerminalOutcome(params = {}) {
+  if (
+    !params.turnCompleted ||
+    (params.promptError !== undefined && params.promptError !== null) ||
+    (Array.isArray(params.assistantTexts) &&
+      params.assistantTexts.some((text) => String(text || "").trim().length > 0))
+  ) {
+    return undefined;
+  }
+  if (normalizeOptionalString(params.planText)) {
+    return "planning-only";
+  }
+  if (normalizeOptionalString(params.reasoningText)) {
+    return "reasoning-only";
+  }
+  return "empty";
+}
+
+function createOpenClawCodingTools() {
+  throw new Error("OpenClaw coding tools are unavailable in the native OpenZues plugin bridge.");
+}
+
+const agentHarnessRuntime = {
+  ...agentRuntime,
+  TOOL_PROGRESS_OUTPUT_MAX_CHARS,
+  classifyAgentHarnessTerminalOutcome,
+  createOpenClawCodingTools,
+  formatToolProgressOutput,
+  inferToolMetaFromArgs,
+};
+
 function resolveMemorySearchConfig(cfg = {}, agentId) {
   return memoryRuntimeResolveMemorySearchConfig(cfg, agentId);
 }
@@ -48403,6 +64713,121 @@ const memoryCoreHostRuntimeCoreRuntime = {
   resolveStateDir,
 };
 
+const memoryHostSdkRuntimeRuntime = {
+  ...memoryCoreHostRuntimeCoreRuntime,
+  ...memoryCoreHostRuntimeCliRuntime,
+  ...memoryCoreHostRuntimeFilesRuntime,
+};
+
+const memoryCoreHostFoundationTranscriptListeners = new Set();
+
+function resolveMemoryCoreHostFoundationAgentDir(cfg = {}, agentId, env = process.env) {
+  const id = normalizeAgentId(agentId);
+  const configured = normalizeOptionalString(
+    (memoryRuntimeResolveAgentConfig(cfg, id) || {}).agentDir,
+  );
+  if (configured) {
+    return resolveUserPath(configured, env);
+  }
+  return path.join(resolveStateDir(env), "agents", id, "agent");
+}
+
+function resolveMemoryCoreHostFoundationSearchSyncConfig(cfg = {}, agentId) {
+  const defaults = cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.memorySearch;
+  const overrides = (memoryRuntimeResolveAgentConfig(cfg, agentId) || {}).memorySearch;
+  const enabled =
+    (overrides && overrides.enabled !== undefined ? overrides.enabled : undefined) ??
+    (defaults && defaults.enabled !== undefined ? defaults.enabled : undefined) ??
+    true;
+  if (!enabled) {
+    return null;
+  }
+  const defaultSync = (defaults && defaults.sync) || {};
+  const overrideSync = (overrides && overrides.sync) || {};
+  const defaultSessions = defaultSync.sessions || {};
+  const overrideSessions = overrideSync.sessions || {};
+  return {
+    onSessionStart:
+      overrideSync.onSessionStart ?? defaultSync.onSessionStart ?? true,
+    onSearch: overrideSync.onSearch ?? defaultSync.onSearch ?? true,
+    watch: overrideSync.watch ?? defaultSync.watch ?? true,
+    watchDebounceMs:
+      overrideSync.watchDebounceMs ?? defaultSync.watchDebounceMs ?? 1500,
+    intervalMinutes:
+      overrideSync.intervalMinutes ?? defaultSync.intervalMinutes ?? 0,
+    embeddingBatchTimeoutSeconds:
+      overrideSync.embeddingBatchTimeoutSeconds ??
+      defaultSync.embeddingBatchTimeoutSeconds,
+    sessions: {
+      deltaBytes:
+        overrideSessions.deltaBytes ?? defaultSessions.deltaBytes ?? 100000,
+      deltaMessages:
+        overrideSessions.deltaMessages ?? defaultSessions.deltaMessages ?? 50,
+      postCompactionForce:
+        overrideSessions.postCompactionForce ??
+        defaultSessions.postCompactionForce ??
+        true,
+    },
+  };
+}
+
+function onMemoryCoreHostFoundationSessionTranscriptUpdate(listener) {
+  if (typeof listener !== "function") {
+    return () => {};
+  }
+  memoryCoreHostFoundationTranscriptListeners.add(listener);
+  return () => {
+    memoryCoreHostFoundationTranscriptListeners.delete(listener);
+  };
+}
+
+function truncateUtf16Safe(input, maxLen) {
+  const value = String(input || "");
+  const limit = Math.max(0, Math.floor(maxLen));
+  if (value.length <= limit) {
+    return value;
+  }
+  let end = limit;
+  if (
+    end > 0 &&
+    end < value.length &&
+    value.charCodeAt(end - 1) >= 0xd800 &&
+    value.charCodeAt(end - 1) <= 0xdbff &&
+    value.charCodeAt(end) >= 0xdc00 &&
+    value.charCodeAt(end) <= 0xdfff
+  ) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+const memoryCoreHostEngineFoundationRuntime = {
+  createSubsystemLogger,
+  detectMime,
+  hasConfiguredSecretInput,
+  loadConfig: getRuntimeConfig,
+  normalizeResolvedSecretInputString,
+  onSessionTranscriptUpdate: onMemoryCoreHostFoundationSessionTranscriptUpdate,
+  parseDurationMs,
+  resolveAgentContextLimits: memoryRuntimeResolveAgentContextLimits,
+  resolveAgentDir: resolveMemoryCoreHostFoundationAgentDir,
+  resolveAgentWorkspaceDir: memoryRuntimeResolveAgentWorkspaceDir,
+  resolveDefaultAgentId,
+  resolveGlobalSingleton,
+  resolveMemorySearchConfig,
+  resolveMemorySearchSyncConfig: resolveMemoryCoreHostFoundationSearchSyncConfig,
+  resolveSessionAgentId,
+  resolveSessionTranscriptsDirForAgent,
+  resolveStateDir,
+  resolveUserPath,
+  runTasksWithConcurrency,
+  shortenHomeInString,
+  shortenHomePath,
+  splitShellArgs: splitMemoryRuntimeShellArgs,
+  truncateUtf16Safe,
+  writeFileWithinRoot,
+};
+
 function getMemoryHostSearchRuntime() {
   const registration = getMemoryRuntimeCoreState().capability;
   return registration &&
@@ -48463,6 +64888,735 @@ const memoryCoreEngineRuntime = {
   },
   repairDreamingArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
   repairShortTermPromotionArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
+};
+
+const MEMORY_CORE_HOST_ENGINE_DEFAULT_LOCAL_MODEL =
+  "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf";
+const MEMORY_CORE_HOST_ENGINE_BATCH_ENDPOINT = "/v1/embeddings";
+const memoryCoreHostEngineEmbeddingProviders = new Map();
+const MEMORY_CORE_HOST_ENGINE_TERMINAL_BATCH_STATES = new Set([
+  "failed",
+  "expired",
+  "cancelled",
+  "canceled",
+]);
+const MEMORY_CORE_HOST_ENGINE_MULTIMODAL_SPECS = {
+  image: {
+    extensions: [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif"],
+  },
+  audio: {
+    extensions: [".mp3", ".wav", ".ogg", ".opus", ".m4a", ".aac", ".flac"],
+  },
+};
+
+function memoryCoreHostEngineUnavailableError(label) {
+  return new Error(`${label} unavailable in OpenZues plugin runtime.`);
+}
+
+function estimateMemoryCoreHostEngineUtf8Bytes(text) {
+  const value = String(text || "");
+  return value ? Buffer.byteLength(value, "utf8") : 0;
+}
+
+function estimateMemoryCoreHostEngineStructuredEmbeddingInputBytes(input = {}) {
+  const parts = Array.isArray(input.parts) ? input.parts : [];
+  if (parts.length === 0) {
+    return estimateMemoryCoreHostEngineUtf8Bytes(input.text);
+  }
+  return parts.reduce((total, part) => {
+    if (part && part.type === "text") {
+      return total + estimateMemoryCoreHostEngineUtf8Bytes(part.text);
+    }
+    if (part && part.type === "inline-data") {
+      return (
+        total +
+        estimateMemoryCoreHostEngineUtf8Bytes(part.mimeType) +
+        estimateMemoryCoreHostEngineUtf8Bytes(part.data)
+      );
+    }
+    return total;
+  }, 0);
+}
+
+function hasMemoryCoreHostEngineNonTextEmbeddingParts(input) {
+  return Array.isArray(input && input.parts)
+    ? input.parts.some((part) => part && part.type === "inline-data")
+    : false;
+}
+
+function sanitizeAndNormalizeMemoryCoreHostEngineEmbedding(vector = []) {
+  const sanitized = Array.from(vector, (value) => (Number.isFinite(value) ? value : 0));
+  const magnitude = Math.sqrt(
+    sanitized.reduce((sum, value) => sum + value * value, 0)
+  );
+  if (magnitude < 1e-10) {
+    return sanitized;
+  }
+  return sanitized.map((value) => value / magnitude);
+}
+
+function normalizeMemoryCoreHostEngineEmbeddingModelWithPrefixes(params = {}) {
+  const trimmed = String(params.model || "").trim();
+  if (!trimmed) {
+    return params.defaultModel;
+  }
+  for (const prefix of Array.isArray(params.prefixes) ? params.prefixes : []) {
+    if (trimmed.startsWith(prefix)) {
+      return trimmed.slice(prefix.length);
+    }
+  }
+  return trimmed;
+}
+
+async function createMemoryCoreHostEngineLocalEmbeddingProvider(_options = {}) {
+  throw memoryCoreHostEngineUnavailableError("local memory embedding provider");
+}
+
+function clearMemoryCoreHostEngineEmbeddingProviders() {
+  memoryCoreHostEngineEmbeddingProviders.clear();
+}
+
+function registerMemoryCoreHostEngineEmbeddingProvider(adapter, options = {}) {
+  if (!adapter || typeof adapter.id !== "string" || !adapter.id.trim()) {
+    throw new TypeError("memory embedding provider adapter id is required");
+  }
+  memoryCoreHostEngineEmbeddingProviders.set(adapter.id, {
+    adapter,
+    ownerPluginId: normalizeOptionalString(options.ownerPluginId),
+  });
+}
+
+function listRegisteredMemoryCoreHostEngineEmbeddingProviders() {
+  return Array.from(memoryCoreHostEngineEmbeddingProviders.values());
+}
+
+function listRegisteredMemoryCoreHostEngineEmbeddingProviderAdapters() {
+  return listRegisteredMemoryCoreHostEngineEmbeddingProviders().map((entry) => entry.adapter);
+}
+
+function resolveMemoryCoreHostEngineConfiguredProviderApiId(providerId, cfg) {
+  const providers = cfg && cfg.models && cfg.models.providers;
+  if (!providers || typeof providers !== "object") {
+    return undefined;
+  }
+  const normalized = normalizeProviderId(providerId);
+  const providerConfig =
+    providers[providerId] ||
+    Object.entries(providers).find(
+      ([candidateId]) => normalizeProviderId(candidateId) === normalized
+    )?.[1];
+  const api = normalizeOptionalString(providerConfig && providerConfig.api);
+  const normalizedApi = normalizeProviderId(api);
+  return normalizedApi && normalizedApi !== normalized ? normalizedApi : undefined;
+}
+
+function resolveMemoryCoreHostEngineEmbeddingProviderLookupIds(id, cfg) {
+  const ids = [id];
+  const apiId = resolveMemoryCoreHostEngineConfiguredProviderApiId(id, cfg);
+  if (apiId && !ids.some((candidateId) => normalizeProviderId(candidateId) === apiId)) {
+    ids.push(apiId);
+  }
+  return ids;
+}
+
+function getMemoryCoreHostEngineEmbeddingProvider(id, cfg) {
+  for (const candidateId of resolveMemoryCoreHostEngineEmbeddingProviderLookupIds(id, cfg)) {
+    const registered = memoryCoreHostEngineEmbeddingProviders.get(candidateId);
+    if (registered) {
+      return registered.adapter;
+    }
+  }
+  return undefined;
+}
+
+function listMemoryCoreHostEngineEmbeddingProviders(_cfg) {
+  return listRegisteredMemoryCoreHostEngineEmbeddingProviderAdapters();
+}
+
+function extractMemoryCoreHostEngineBatchErrorMessage(lines = []) {
+  for (const line of lines) {
+    if (line && line.error && typeof line.error.message === "string") {
+      return line.error.message;
+    }
+    const body = line && line.response && line.response.body;
+    if (typeof body === "string" && body) {
+      return body;
+    }
+    if (body && typeof body === "object" && body.error && typeof body.error.message === "string") {
+      return body.error.message;
+    }
+  }
+  return undefined;
+}
+
+function formatMemoryCoreHostEngineUnavailableBatchError(error) {
+  const message = formatErrorMessage(error);
+  return message ? `error file unavailable: ${message}` : undefined;
+}
+
+function applyMemoryCoreHostEngineEmbeddingBatchOutputLine(params = {}) {
+  const line = params.line || {};
+  const customId = line.custom_id;
+  if (!customId) {
+    return;
+  }
+  params.remaining && params.remaining.delete(customId);
+  const errorMessage = line.error && line.error.message;
+  if (errorMessage) {
+    params.errors && params.errors.push(`${customId}: ${errorMessage}`);
+    return;
+  }
+  const response = line.response;
+  const statusCode = (response && response.status_code) || 0;
+  if (statusCode >= 400) {
+    const body = response && response.body;
+    const messageFromObject =
+      body && typeof body === "object" && body.error ? body.error.message : undefined;
+    const messageFromString = typeof body === "string" ? body : undefined;
+    params.errors &&
+      params.errors.push(
+        `${customId}: ${messageFromObject || messageFromString || "unknown error"}`
+      );
+    return;
+  }
+  const body = response && response.body;
+  const data = body && typeof body === "object" && Array.isArray(body.data) ? body.data : [];
+  const embedding = (data[0] && data[0].embedding) || [];
+  if (embedding.length === 0) {
+    params.errors && params.errors.push(`${customId}: empty embedding`);
+    return;
+  }
+  params.byCustomId && params.byCustomId.set(customId, embedding);
+}
+
+function normalizeMemoryCoreHostEngineBatchBaseUrl(client = {}) {
+  return client.baseUrl ? String(client.baseUrl).replace(/\/$/, "") : "";
+}
+
+function buildMemoryCoreHostEngineBatchHeaders(client = {}, params = {}) {
+  const headers = { ...(client.headers || {}) };
+  if (params.json) {
+    if (!headers["Content-Type"] && !headers["content-type"]) {
+      headers["Content-Type"] = "application/json";
+    }
+  } else {
+    delete headers["Content-Type"];
+    delete headers["content-type"];
+  }
+  return headers;
+}
+
+function isMissingMemoryCoreHostEngineEmbeddingApiKeyError(error) {
+  return error instanceof Error && error.message.includes("No API key found for provider");
+}
+
+function sanitizeMemoryCoreHostEngineEmbeddingCacheHeaders(headers = {}, excludedHeaderNames = []) {
+  const excluded = new Set(
+    excludedHeaderNames.map((name) => normalizeLowercaseStringOrEmpty(name))
+  );
+  return Object.entries(headers)
+    .filter(([key]) => !excluded.has(normalizeLowercaseStringOrEmpty(key)))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => [key, value]);
+}
+
+function mapMemoryCoreHostEngineBatchEmbeddingsByIndex(byCustomId, count) {
+  const embeddings = [];
+  for (let index = 0; index < count; index += 1) {
+    embeddings.push((byCustomId && byCustomId.get(String(index))) || []);
+  }
+  return embeddings;
+}
+
+function resolveMemoryCoreHostEngineBatchCompletionFromStatus(params = {}) {
+  const status = params.status || {};
+  const outputFileId = status.output_file_id;
+  if (!outputFileId) {
+    throw new Error(
+      `${params.provider} batch ${params.batchId} completed without output file`
+    );
+  }
+  return {
+    outputFileId,
+    ...(status.error_file_id ? { errorFileId: status.error_file_id } : {}),
+  };
+}
+
+async function throwIfMemoryCoreHostEngineBatchTerminalFailure(params = {}) {
+  const status = params.status || {};
+  const state = status.status || "unknown";
+  if (!MEMORY_CORE_HOST_ENGINE_TERMINAL_BATCH_STATES.has(state)) {
+    return;
+  }
+  const detail =
+    status.error_file_id && typeof params.readError === "function"
+      ? await params.readError(status.error_file_id)
+      : undefined;
+  throw new Error(
+    `${params.provider} batch ${status.id || "<unknown>"} ${state}${detail ? `: ${detail}` : ""}`
+  );
+}
+
+async function resolveMemoryCoreHostEngineCompletedBatchResult(params = {}) {
+  const status = params.status || {};
+  const batchId = status.id || "<unknown>";
+  if (!params.wait && status.status !== "completed") {
+    throw new Error(
+      `${params.provider} batch ${batchId} submitted; enable remote.batch.wait to await completion`
+    );
+  }
+  const completed =
+    status.status === "completed"
+      ? resolveMemoryCoreHostEngineBatchCompletionFromStatus({
+          provider: params.provider,
+          batchId,
+          status,
+        })
+      : await params.waitForBatch();
+  if (!completed || !completed.outputFileId) {
+    throw new Error(`${params.provider} batch ${batchId} completed without output file`);
+  }
+  return completed;
+}
+
+function splitMemoryCoreHostEngineBatchRequests(requests, maxRequests) {
+  if (requests.length <= maxRequests) {
+    return [requests];
+  }
+  const groups = [];
+  for (let index = 0; index < requests.length; index += maxRequests) {
+    groups.push(requests.slice(index, index + maxRequests));
+  }
+  return groups;
+}
+
+async function runMemoryCoreHostEngineEmbeddingBatchGroups(params = {}) {
+  const requests = Array.isArray(params.requests) ? params.requests : [];
+  if (requests.length === 0) {
+    return new Map();
+  }
+  const maxRequests =
+    Number.isFinite(params.maxRequests) && params.maxRequests > 0
+      ? Math.floor(params.maxRequests)
+      : requests.length;
+  const groups = splitMemoryCoreHostEngineBatchRequests(requests, maxRequests);
+  const byCustomId = new Map();
+  const tasks = groups.map((group, groupIndex) => async () => {
+    await params.runGroup({ group, groupIndex, groups: groups.length, byCustomId });
+  });
+  const concurrency =
+    Number.isFinite(params.concurrency) && params.concurrency > 0
+      ? Math.min(tasks.length, Math.floor(params.concurrency))
+      : 1;
+  params.debug &&
+    params.debug(params.debugLabel, {
+      requests: requests.length,
+      groups: groups.length,
+      wait: Boolean(params.wait),
+      concurrency,
+      pollIntervalMs: params.pollIntervalMs,
+      timeoutMs: params.timeoutMs,
+    });
+  let cursor = 0;
+  async function worker() {
+    while (cursor < tasks.length) {
+      const task = tasks[cursor];
+      cursor += 1;
+      await task();
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return byCustomId;
+}
+
+function buildMemoryCoreHostEngineEmbeddingBatchGroupOptions(params = {}, options = {}) {
+  return {
+    requests: params.requests,
+    maxRequests: options.maxRequests,
+    wait: params.wait,
+    pollIntervalMs: params.pollIntervalMs,
+    timeoutMs: params.timeoutMs,
+    concurrency: params.concurrency,
+    debug: params.debug,
+    debugLabel: options.debugLabel,
+  };
+}
+
+function buildMemoryCoreHostEngineRemoteBaseUrlPolicy(baseUrl) {
+  try {
+    const parsed = new URL(baseUrl);
+    return { allowedHostname: parsed.hostname.toLowerCase().replace(/\.+$/, "") };
+  } catch {
+    return undefined;
+  }
+}
+
+async function withMemoryCoreHostEngineRemoteHttpResponse(params = {}) {
+  const fetchImpl = params.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    throw memoryCoreHostEngineUnavailableError("remote memory embedding fetch");
+  }
+  const response = await fetchImpl(params.url, params.init);
+  return await params.onResponse(response);
+}
+
+async function postMemoryCoreHostEngineJson(params = {}) {
+  return await withMemoryCoreHostEngineRemoteHttpResponse({
+    url: params.url,
+    ssrfPolicy: params.ssrfPolicy,
+    fetchImpl: params.fetchImpl,
+    init: {
+      method: "POST",
+      headers: params.headers,
+      body: JSON.stringify(params.body),
+    },
+    onResponse: async (response) => {
+      if (!response || !response.ok) {
+        const text =
+          response && typeof response.text === "function" ? await response.text() : "";
+        const error = new Error(`${params.errorPrefix}: ${response?.status || 0} ${text}`);
+        if (params.attachStatus) {
+          error.status = response && response.status;
+        }
+        throw error;
+      }
+      const payload = await response.json();
+      return typeof params.parse === "function" ? await params.parse(payload) : payload;
+    },
+  });
+}
+
+async function postMemoryCoreHostEngineJsonWithRetry(params = {}) {
+  const retry = params.retryImpl;
+  const run = async () =>
+    await postMemoryCoreHostEngineJson({
+      ...params,
+      attachStatus: true,
+      parse: async (payload) => payload,
+    });
+  if (typeof retry === "function") {
+    return await retry(run, {
+      attempts: 3,
+      minDelayMs: 300,
+      maxDelayMs: 2000,
+      jitter: 0.2,
+      shouldRetry: (error) => error && (error.status === 429 || error.status >= 500),
+    });
+  }
+  return await run();
+}
+
+async function fetchMemoryCoreHostEngineRemoteEmbeddingVectors(params = {}) {
+  return await postMemoryCoreHostEngineJson({
+    url: params.url,
+    headers: params.headers,
+    ssrfPolicy: params.ssrfPolicy,
+    fetchImpl: params.fetchImpl,
+    body: params.body,
+    errorPrefix: params.errorPrefix,
+    parse: (payload) => {
+      const data = Array.isArray(payload && payload.data) ? payload.data : [];
+      return data.map((entry) => entry.embedding || []);
+    },
+  });
+}
+
+function createMemoryCoreHostEngineRemoteEmbeddingProvider(params = {}) {
+  const client = params.client || {};
+  const url = `${String(client.baseUrl || "").replace(/\/$/, "")}/embeddings`;
+  const embed = async (input) => {
+    if (!Array.isArray(input) || input.length === 0) {
+      return [];
+    }
+    return await fetchMemoryCoreHostEngineRemoteEmbeddingVectors({
+      url,
+      headers: client.headers || {},
+      ssrfPolicy: client.ssrfPolicy,
+      fetchImpl: client.fetchImpl,
+      body: { model: client.model, input },
+      errorPrefix: params.errorPrefix,
+    });
+  };
+  return {
+    id: params.id,
+    model: client.model,
+    ...(typeof params.maxInputTokens === "number"
+      ? { maxInputTokens: params.maxInputTokens }
+      : {}),
+    embedQuery: async (text) => {
+      const vectors = await embed([text]);
+      return vectors[0] || [];
+    },
+    embedBatch: embed,
+  };
+}
+
+function resolveMemoryCoreHostEngineSecretInputString(value) {
+  if (typeof value === "string") {
+    return normalizeOptionalString(value);
+  }
+  if (value && typeof value === "object") {
+    return normalizeOptionalString(value.value || value.literal || value.env);
+  }
+  return undefined;
+}
+
+function resolveMemoryCoreHostEngineProviderConfig(provider, config = {}) {
+  const providers = config.models && config.models.providers;
+  if (!providers || typeof providers !== "object") {
+    return undefined;
+  }
+  const normalized = normalizeProviderId(provider);
+  return (
+    providers[provider] ||
+    Object.entries(providers).find(
+      ([candidateId]) => normalizeProviderId(candidateId) === normalized
+    )?.[1]
+  );
+}
+
+async function resolveMemoryCoreHostEngineRemoteEmbeddingBearerClient(params = {}) {
+  const options = params.options || {};
+  const remote = options.remote || {};
+  const providerConfig = resolveMemoryCoreHostEngineProviderConfig(
+    params.provider,
+    options.config || {}
+  );
+  const apiKey =
+    resolveMemoryCoreHostEngineSecretInputString(remote.apiKey) ||
+    normalizeOptionalString(providerConfig && providerConfig.apiKey);
+  if (!apiKey) {
+    throw new Error(`No API key found for provider ${params.provider}`);
+  }
+  const baseUrl =
+    normalizeOptionalString(remote.baseUrl) ||
+    normalizeOptionalString(providerConfig && providerConfig.baseUrl) ||
+    params.defaultBaseUrl;
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+    ...((providerConfig && providerConfig.headers) || {}),
+    ...(remote.headers || {}),
+  };
+  try {
+    const parsed = new URL(baseUrl);
+    if (
+      normalizeProviderId(params.provider) === "openai" &&
+      parsed.hostname.toLowerCase().replace(/\.+$/, "") === "api.openai.com"
+    ) {
+      headers.originator = "openclaw";
+      headers["User-Agent"] = process.env.OPENCLAW_VERSION
+        ? `openclaw/${process.env.OPENCLAW_VERSION}`
+        : "openclaw";
+      if (process.env.OPENCLAW_VERSION) {
+        headers.version = process.env.OPENCLAW_VERSION;
+      }
+    }
+  } catch {
+    // Leave non-URL base strings to the eventual fetch path, matching the loose SDK boundary.
+  }
+  return {
+    baseUrl,
+    headers,
+    ssrfPolicy: buildMemoryCoreHostEngineRemoteBaseUrlPolicy(baseUrl),
+  };
+}
+
+async function resolveMemoryCoreHostEngineRemoteEmbeddingClient(params = {}) {
+  const bearer = await resolveMemoryCoreHostEngineRemoteEmbeddingBearerClient({
+    provider: params.provider,
+    options: params.options,
+    defaultBaseUrl: params.defaultBaseUrl,
+  });
+  return {
+    ...bearer,
+    model: params.normalizeModel(params.options.model),
+  };
+}
+
+async function uploadMemoryCoreHostEngineBatchJsonlFile(_params = {}) {
+  throw memoryCoreHostEngineUnavailableError("memory embedding batch upload");
+}
+
+function debugMemoryCoreHostEngineEmbeddingsLog(message, meta) {
+  const value = normalizeLowercaseStringOrEmpty(process.env.OPENCLAW_DEBUG_MEMORY_EMBEDDINGS);
+  if (!["1", "on", "true", "yes"].includes(value)) {
+    return;
+  }
+  const suffix = meta ? ` ${JSON.stringify(meta)}` : "";
+  process.stderr.write(`${message}${suffix}\n`);
+}
+
+function resolveMemoryCoreHostEngineProviderMaxInputTokens(provider = {}) {
+  return typeof provider.maxInputTokens === "number" && provider.maxInputTokens > 0
+    ? Math.floor(provider.maxInputTokens)
+    : 8192;
+}
+
+function splitMemoryCoreHostEngineTextToUtf8Limit(text, maxUtf8Bytes) {
+  const value = String(text || "");
+  if (maxUtf8Bytes <= 0 || estimateMemoryCoreHostEngineUtf8Bytes(value) <= maxUtf8Bytes) {
+    return [value];
+  }
+  const parts = [];
+  let cursor = 0;
+  while (cursor < value.length) {
+    let low = cursor + 1;
+    let high = Math.min(value.length, cursor + maxUtf8Bytes);
+    let best = cursor;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const bytes = estimateMemoryCoreHostEngineUtf8Bytes(value.slice(cursor, mid));
+      if (bytes <= maxUtf8Bytes) {
+        best = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    if (best <= cursor) {
+      best = Math.min(value.length, cursor + 1);
+    }
+    if (
+      best < value.length &&
+      best > cursor &&
+      value.charCodeAt(best - 1) >= 0xd800 &&
+      value.charCodeAt(best - 1) <= 0xdbff &&
+      value.charCodeAt(best) >= 0xdc00 &&
+      value.charCodeAt(best) <= 0xdfff
+    ) {
+      best -= 1;
+    }
+    const part = value.slice(cursor, best);
+    if (!part) {
+      break;
+    }
+    parts.push(part);
+    cursor = best;
+  }
+  return parts;
+}
+
+function hashMemoryCoreHostEngineText(text) {
+  return crypto.createHash("sha256").update(String(text || "")).digest("hex");
+}
+
+function enforceMemoryCoreHostEngineEmbeddingMaxInputTokens(
+  provider,
+  chunks = [],
+  hardMaxInputTokens
+) {
+  const providerMaxInputTokens = resolveMemoryCoreHostEngineProviderMaxInputTokens(provider);
+  const maxInputTokens =
+    typeof hardMaxInputTokens === "number" && hardMaxInputTokens > 0
+      ? Math.min(providerMaxInputTokens, hardMaxInputTokens)
+      : providerMaxInputTokens;
+  const out = [];
+  for (const chunk of chunks) {
+    if (hasMemoryCoreHostEngineNonTextEmbeddingParts(chunk && chunk.embeddingInput)) {
+      out.push(chunk);
+      continue;
+    }
+    const text = String((chunk && chunk.text) || "");
+    if (estimateMemoryCoreHostEngineUtf8Bytes(text) <= maxInputTokens) {
+      out.push(chunk);
+      continue;
+    }
+    for (const part of splitMemoryCoreHostEngineTextToUtf8Limit(text, maxInputTokens)) {
+      out.push({
+        startLine: chunk.startLine,
+        endLine: chunk.endLine,
+        text: part,
+        hash: hashMemoryCoreHostEngineText(part),
+        embeddingInput: { text: part },
+      });
+    }
+  }
+  return out;
+}
+
+function getMemoryCoreHostEngineMultimodalExtensions(modality) {
+  const spec = MEMORY_CORE_HOST_ENGINE_MULTIMODAL_SPECS[modality];
+  return spec ? spec.extensions : [];
+}
+
+function buildMemoryCoreHostEngineCaseInsensitiveExtensionGlob(extension) {
+  const normalized = normalizeLowercaseStringOrEmpty(extension).replace(/^\./, "");
+  if (!normalized) {
+    return "*";
+  }
+  const parts = Array.from(
+    normalized,
+    (char) => `[${char.toLowerCase()}${char.toUpperCase()}]`
+  );
+  return `*.${parts.join("")}`;
+}
+
+function classifyMemoryCoreHostEngineMultimodalPath(filePath, settings = {}) {
+  if (
+    !settings.enabled ||
+    !Array.isArray(settings.modalities) ||
+    settings.modalities.length === 0
+  ) {
+    return null;
+  }
+  const lower = normalizeLowercaseStringOrEmpty(filePath);
+  for (const modality of settings.modalities) {
+    for (const extension of getMemoryCoreHostEngineMultimodalExtensions(modality)) {
+      if (lower.endsWith(extension)) {
+        return modality;
+      }
+    }
+  }
+  return null;
+}
+
+const memoryCoreHostEngineEmbeddingsRuntime = {
+  DEFAULT_LOCAL_MODEL: MEMORY_CORE_HOST_ENGINE_DEFAULT_LOCAL_MODEL,
+  EMBEDDING_BATCH_ENDPOINT: MEMORY_CORE_HOST_ENGINE_BATCH_ENDPOINT,
+  applyEmbeddingBatchOutputLine: applyMemoryCoreHostEngineEmbeddingBatchOutputLine,
+  buildBatchHeaders: buildMemoryCoreHostEngineBatchHeaders,
+  buildCaseInsensitiveExtensionGlob: buildMemoryCoreHostEngineCaseInsensitiveExtensionGlob,
+  buildEmbeddingBatchGroupOptions: buildMemoryCoreHostEngineEmbeddingBatchGroupOptions,
+  buildRemoteBaseUrlPolicy: buildMemoryCoreHostEngineRemoteBaseUrlPolicy,
+  classifyMemoryMultimodalPath: classifyMemoryCoreHostEngineMultimodalPath,
+  clearMemoryEmbeddingProviders: clearMemoryCoreHostEngineEmbeddingProviders,
+  createLocalEmbeddingProvider: createMemoryCoreHostEngineLocalEmbeddingProvider,
+  createRemoteEmbeddingProvider: createMemoryCoreHostEngineRemoteEmbeddingProvider,
+  debugEmbeddingsLog: debugMemoryCoreHostEngineEmbeddingsLog,
+  enforceEmbeddingMaxInputTokens: enforceMemoryCoreHostEngineEmbeddingMaxInputTokens,
+  estimateStructuredEmbeddingInputBytes:
+    estimateMemoryCoreHostEngineStructuredEmbeddingInputBytes,
+  estimateUtf8Bytes: estimateMemoryCoreHostEngineUtf8Bytes,
+  extractBatchErrorMessage: extractMemoryCoreHostEngineBatchErrorMessage,
+  fetchRemoteEmbeddingVectors: fetchMemoryCoreHostEngineRemoteEmbeddingVectors,
+  formatUnavailableBatchError: formatMemoryCoreHostEngineUnavailableBatchError,
+  getMemoryEmbeddingProvider: getMemoryCoreHostEngineEmbeddingProvider,
+  getMemoryMultimodalExtensions: getMemoryCoreHostEngineMultimodalExtensions,
+  hasNonTextEmbeddingParts: hasMemoryCoreHostEngineNonTextEmbeddingParts,
+  isMissingEmbeddingApiKeyError: isMissingMemoryCoreHostEngineEmbeddingApiKeyError,
+  listMemoryEmbeddingProviders: listMemoryCoreHostEngineEmbeddingProviders,
+  listRegisteredMemoryEmbeddingProviderAdapters:
+    listRegisteredMemoryCoreHostEngineEmbeddingProviderAdapters,
+  listRegisteredMemoryEmbeddingProviders:
+    listRegisteredMemoryCoreHostEngineEmbeddingProviders,
+  mapBatchEmbeddingsByIndex: mapMemoryCoreHostEngineBatchEmbeddingsByIndex,
+  normalizeBatchBaseUrl: normalizeMemoryCoreHostEngineBatchBaseUrl,
+  normalizeEmbeddingModelWithPrefixes:
+    normalizeMemoryCoreHostEngineEmbeddingModelWithPrefixes,
+  postJsonWithRetry: postMemoryCoreHostEngineJsonWithRetry,
+  registerMemoryEmbeddingProvider: registerMemoryCoreHostEngineEmbeddingProvider,
+  resolveBatchCompletionFromStatus: resolveMemoryCoreHostEngineBatchCompletionFromStatus,
+  resolveCompletedBatchResult: resolveMemoryCoreHostEngineCompletedBatchResult,
+  resolveRemoteEmbeddingBearerClient:
+    resolveMemoryCoreHostEngineRemoteEmbeddingBearerClient,
+  resolveRemoteEmbeddingClient: resolveMemoryCoreHostEngineRemoteEmbeddingClient,
+  runEmbeddingBatchGroups: runMemoryCoreHostEngineEmbeddingBatchGroups,
+  sanitizeAndNormalizeEmbedding: sanitizeAndNormalizeMemoryCoreHostEngineEmbedding,
+  sanitizeEmbeddingCacheHeaders: sanitizeMemoryCoreHostEngineEmbeddingCacheHeaders,
+  throwIfBatchTerminalFailure: throwIfMemoryCoreHostEngineBatchTerminalFailure,
+  uploadBatchJsonlFile: uploadMemoryCoreHostEngineBatchJsonlFile,
+  withRemoteHttpResponse: withMemoryCoreHostEngineRemoteHttpResponse,
 };
 
 const MEMORY_QUERY_STOP_WORDS = new Set([
@@ -48658,6 +65812,3499 @@ function extractKeywords(query, opts = {}) {
 const memoryCoreHostQueryRuntime = {
   extractKeywords,
   isQueryStopWordToken,
+};
+
+const QMD_NO_RESULTS_RE =
+  /^(?:\[[^\]]+\]\s*)?(?:(?:warn(?:ing)?|info|error|qmd)\s*:\s*)+no results found\.?$/;
+const SESSION_ARCHIVE_TIMESTAMP_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:\.\d{3})?Z$/;
+const LEGACY_SESSION_STORE_BACKUP_RE = /^sessions\.json\.bak\.\d+$/;
+const COMPACTION_CHECKPOINT_TRANSCRIPT_RE =
+  /^(.+)\.checkpoint\.([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.jsonl$/i;
+const STRUCTURED_QMD_EXEC_COMPLETION_EVENT_RE =
+  /^exec (completed|failed) \(([a-z0-9_-]{1,64}), (code -?\d+|signal [^)]+)\)(?: :: ([\s\S]*))?$/i;
+const QMD_DREAMING_NARRATIVE_RUN_PREFIX = "dreaming-narrative-";
+const SESSION_EXPORT_CONTENT_WRAP_CHARS = 800;
+const DIRECT_CRON_PROMPT_RE = /^\[cron:[^\]]+\]\s*/;
+
+function isQmdNoResultsLine(line) {
+  return (
+    line === "no results found" ||
+    line === "no results found." ||
+    QMD_NO_RESULTS_RE.test(line)
+  );
+}
+
+function isQmdNoResultsOutput(raw) {
+  return String(raw || "")
+    .split(/\r?\n/)
+    .map((line) => normalizeLowercaseStringOrEmpty(line).replace(/\s+/g, " "))
+    .filter(Boolean)
+    .some(isQmdNoResultsLine);
+}
+
+function summarizeQmdStderr(raw) {
+  const value = String(raw || "");
+  return value.length <= 120 ? value : `${value.slice(0, 117)}...`;
+}
+
+function warnQmdQueryParseError(message) {
+  if (process.env.VITEST || process.env.NODE_ENV === "test") {
+    return;
+  }
+  process.stderr.write(`qmd query returned invalid JSON: ${message}\n`);
+}
+
+function parseQmdLineNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function parseQmdQueryResultArray(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return item;
+      }
+      return {
+        docid: typeof item.docid === "string" ? item.docid : undefined,
+        score:
+          typeof item.score === "number" && Number.isFinite(item.score)
+            ? item.score
+            : undefined,
+        collection: typeof item.collection === "string" ? item.collection : undefined,
+        file: typeof item.file === "string" ? item.file : undefined,
+        snippet: typeof item.snippet === "string" ? item.snippet : undefined,
+        body: typeof item.body === "string" ? item.body : undefined,
+        startLine: parseQmdLineNumber(item.start_line ?? item.startLine),
+        endLine: parseQmdLineNumber(item.end_line ?? item.endLine),
+      };
+    });
+  } catch {
+    return null;
+  }
+}
+
+function extractFirstQmdJsonArray(raw) {
+  const start = String(raw || "").indexOf("[");
+  if (start < 0) {
+    return null;
+  }
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+    } else if (char === "[") {
+      depth += 1;
+    } else if (char === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return raw.slice(start, index + 1);
+      }
+    }
+  }
+  return null;
+}
+
+function parseQmdQueryJson(stdout, stderr = "") {
+  const trimmedStdout = String(stdout || "").trim();
+  const trimmedStderr = String(stderr || "").trim();
+  const stdoutIsMarker = trimmedStdout.length > 0 && isQmdNoResultsOutput(trimmedStdout);
+  const stderrIsMarker = trimmedStderr.length > 0 && isQmdNoResultsOutput(trimmedStderr);
+  if (stdoutIsMarker || (!trimmedStdout && stderrIsMarker)) {
+    return [];
+  }
+  if (!trimmedStdout) {
+    const context = trimmedStderr ? ` (stderr: ${summarizeQmdStderr(trimmedStderr)})` : "";
+    const message = `stdout empty${context}`;
+    warnQmdQueryParseError(message);
+    throw new Error(`qmd query returned invalid JSON: ${message}`);
+  }
+  try {
+    const parsed = parseQmdQueryResultArray(trimmedStdout);
+    if (parsed !== null) {
+      return parsed;
+    }
+    const noisyPayload = extractFirstQmdJsonArray(trimmedStdout);
+    if (!noisyPayload) {
+      throw new Error("qmd query JSON response was not an array");
+    }
+    const fallback = parseQmdQueryResultArray(noisyPayload);
+    if (fallback !== null) {
+      return fallback;
+    }
+    throw new Error("qmd query JSON response was not an array");
+  } catch (err) {
+    const message = formatErrorMessage(err);
+    warnQmdQueryParseError(message);
+    throw new Error(`qmd query returned invalid JSON: ${message}`);
+  }
+}
+
+function parseQmdAgentSessionKey(sessionKey) {
+  const raw = normalizeOptionalLowercaseString(sessionKey);
+  if (!raw) {
+    return null;
+  }
+  const parts = raw.split(":").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "agent") {
+    return null;
+  }
+  const rest = parts.slice(2).join(":");
+  return rest ? { rest } : null;
+}
+
+function normalizeQmdSessionKey(key) {
+  const trimmed = normalizeOptionalString(key);
+  if (!trimmed) {
+    return undefined;
+  }
+  const parsed = parseQmdAgentSessionKey(trimmed);
+  const normalized = normalizeLowercaseStringOrEmpty((parsed && parsed.rest) || trimmed);
+  return normalized.startsWith("subagent:") ? undefined : normalized;
+}
+
+function parseQmdSessionScope(key) {
+  const normalized = normalizeQmdSessionKey(key);
+  if (!normalized) {
+    return {};
+  }
+  const parts = normalized.split(":").filter(Boolean);
+  let chatType;
+  if (
+    parts.length >= 2 &&
+    (parts[1] === "group" ||
+      parts[1] === "channel" ||
+      parts[1] === "direct" ||
+      parts[1] === "dm")
+  ) {
+    if (parts.includes("group")) {
+      chatType = "group";
+    } else if (parts.includes("channel")) {
+      chatType = "channel";
+    }
+    return {
+      normalizedKey: normalized,
+      channel: normalizeOptionalLowercaseString(parts[0]),
+      chatType: chatType || "direct",
+    };
+  }
+  if (normalized.includes(":group:")) {
+    return { normalizedKey: normalized, chatType: "group" };
+  }
+  if (normalized.includes(":channel:")) {
+    return { normalizedKey: normalized, chatType: "channel" };
+  }
+  return { normalizedKey: normalized, chatType: "direct" };
+}
+
+function isQmdScopeAllowed(scope, sessionKey) {
+  if (!scope) {
+    return true;
+  }
+  const parsed = parseQmdSessionScope(sessionKey);
+  const channel = parsed.channel;
+  const chatType = parsed.chatType;
+  const normalizedKey = parsed.normalizedKey || "";
+  const rawKey = normalizeLowercaseStringOrEmpty(sessionKey || "");
+  for (const rule of scope.rules || []) {
+    if (!rule) {
+      continue;
+    }
+    const match = rule.match || {};
+    if (match.channel && match.channel !== channel) {
+      continue;
+    }
+    if (match.chatType && match.chatType !== chatType) {
+      continue;
+    }
+    const normalizedPrefix = normalizeOptionalLowercaseString(match.keyPrefix) || undefined;
+    const rawPrefix = normalizeOptionalLowercaseString(match.rawKeyPrefix) || undefined;
+    if (rawPrefix && !rawKey.startsWith(rawPrefix)) {
+      continue;
+    }
+    if (normalizedPrefix) {
+      if (normalizedPrefix.startsWith("agent:")) {
+        if (!rawKey.startsWith(normalizedPrefix)) {
+          continue;
+        }
+      } else if (!normalizedKey.startsWith(normalizedPrefix)) {
+        continue;
+      }
+    }
+    return rule.action === "allow";
+  }
+  const fallback = scope.default || "allow";
+  return fallback === "allow";
+}
+
+function deriveQmdScopeChannel(key) {
+  return parseQmdSessionScope(key).channel;
+}
+
+function deriveQmdScopeChatType(key) {
+  return parseQmdSessionScope(key).chatType;
+}
+
+function qmdHasArchiveSuffix(fileName, reason) {
+  const marker = `.${reason}.`;
+  const index = String(fileName || "").lastIndexOf(marker);
+  if (index < 0) {
+    return false;
+  }
+  const raw = fileName.slice(index + marker.length);
+  return SESSION_ARCHIVE_TIMESTAMP_RE.test(raw);
+}
+
+function isSessionArchiveArtifactName(fileName) {
+  return (
+    LEGACY_SESSION_STORE_BACKUP_RE.test(fileName) ||
+    qmdHasArchiveSuffix(fileName, "deleted") ||
+    qmdHasArchiveSuffix(fileName, "reset") ||
+    qmdHasArchiveSuffix(fileName, "bak")
+  );
+}
+
+function isCompactionCheckpointTranscriptFileName(fileName) {
+  return COMPACTION_CHECKPOINT_TRANSCRIPT_RE.test(fileName);
+}
+
+function isQmdTrajectoryRuntimeArtifactName(fileName) {
+  return String(fileName || "").endsWith(".trajectory.jsonl");
+}
+
+function isPrimarySessionTranscriptFileName(fileName) {
+  const name = String(fileName || "");
+  if (name === "sessions.json" || !name.endsWith(".jsonl")) {
+    return false;
+  }
+  if (isQmdTrajectoryRuntimeArtifactName(name) || isCompactionCheckpointTranscriptFileName(name)) {
+    return false;
+  }
+  return !isSessionArchiveArtifactName(name);
+}
+
+function isUsageCountedSessionTranscriptFileName(fileName) {
+  return (
+    isPrimarySessionTranscriptFileName(fileName) ||
+    qmdHasArchiveSuffix(fileName, "reset") ||
+    qmdHasArchiveSuffix(fileName, "deleted")
+  );
+}
+
+function parseUsageCountedSessionIdFromFileName(fileName) {
+  const name = String(fileName || "");
+  if (isPrimarySessionTranscriptFileName(name)) {
+    return name.slice(0, -".jsonl".length);
+  }
+  for (const reason of ["reset", "deleted"]) {
+    const marker = `.jsonl.${reason}.`;
+    const index = name.lastIndexOf(marker);
+    if (index > 0 && qmdHasArchiveSuffix(name, reason)) {
+      return name.slice(0, index);
+    }
+  }
+  return null;
+}
+
+function normalizeSessionTranscriptPathForComparison(pathname) {
+  const resolved = path.resolve(String(pathname || ""));
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function resolveQmdSessionStoreTranscriptPath(sessionsDir, entry) {
+  if (typeof (entry && entry.sessionFile) === "string" && entry.sessionFile.trim()) {
+    const sessionFile = entry.sessionFile.trim();
+    return normalizeSessionTranscriptPathForComparison(
+      path.isAbsolute(sessionFile) ? sessionFile : path.resolve(sessionsDir, sessionFile),
+    );
+  }
+  if (typeof (entry && entry.sessionId) === "string" && entry.sessionId.trim()) {
+    return normalizeSessionTranscriptPathForComparison(
+      path.join(sessionsDir, `${entry.sessionId.trim()}.jsonl`),
+    );
+  }
+  return null;
+}
+
+function readQmdSessionTranscriptClassificationStore(storePath) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function hasQmdDreamingNarrativeRunId(value) {
+  return (
+    typeof value === "string" && value.startsWith(QMD_DREAMING_NARRATIVE_RUN_PREFIX)
+  );
+}
+
+function isQmdDreamingNarrativeSessionStoreKey(sessionKey) {
+  const trimmed = String(sessionKey || "").trim();
+  if (!trimmed) {
+    return false;
+  }
+  const firstSeparator = trimmed.indexOf(":");
+  if (firstSeparator < 0) {
+    return trimmed.startsWith(QMD_DREAMING_NARRATIVE_RUN_PREFIX);
+  }
+  const secondSeparator = trimmed.indexOf(":", firstSeparator + 1);
+  const sessionSegment = secondSeparator < 0 ? trimmed : trimmed.slice(secondSeparator + 1);
+  return sessionSegment.startsWith(QMD_DREAMING_NARRATIVE_RUN_PREFIX);
+}
+
+function isQmdCronRunSessionKey(sessionKey) {
+  const parsed = parseAgentSessionKey(sessionKey);
+  return Boolean(parsed && /^cron:[^:]+:run:[^:]+$/.test(parsed.rest));
+}
+
+function loadSessionTranscriptClassificationForSessionsDir(sessionsDir) {
+  const store = readQmdSessionTranscriptClassificationStore(
+    path.join(sessionsDir, "sessions.json"),
+  );
+  const dreamingTranscriptPaths = new Set();
+  const cronRunTranscriptPaths = new Set();
+  for (const [sessionKey, entry] of Object.entries(store)) {
+    const transcriptPath = resolveQmdSessionStoreTranscriptPath(sessionsDir, entry);
+    if (!transcriptPath) {
+      continue;
+    }
+    if (isQmdDreamingNarrativeSessionStoreKey(sessionKey)) {
+      dreamingTranscriptPaths.add(transcriptPath);
+    }
+    if (isQmdCronRunSessionKey(sessionKey)) {
+      cronRunTranscriptPaths.add(transcriptPath);
+    }
+  }
+  return {
+    dreamingNarrativeTranscriptPaths: dreamingTranscriptPaths,
+    cronRunTranscriptPaths,
+  };
+}
+
+function loadSessionTranscriptClassificationForAgent(agentId) {
+  return loadSessionTranscriptClassificationForSessionsDir(
+    resolveSessionTranscriptsDirForAgent(agentId),
+  );
+}
+
+function loadDreamingNarrativeTranscriptPathSetForAgent(agentId) {
+  return loadSessionTranscriptClassificationForAgent(agentId).dreamingNarrativeTranscriptPaths;
+}
+
+async function listSessionFilesForAgent(agentId) {
+  const dir = resolveSessionTranscriptsDirForAgent(agentId);
+  try {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => isUsageCountedSessionTranscriptFileName(name))
+      .map((name) => path.join(dir, name));
+  } catch {
+    return [];
+  }
+}
+
+function sessionPathForFile(absPath) {
+  return path.join("sessions", path.basename(absPath)).replace(/\\/g, "/");
+}
+
+function isQmdDreamingNarrativeBootstrapRecord(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return false;
+  }
+  return (
+    record.type === "custom" &&
+    record.customType === "openclaw:bootstrap-context:full" &&
+    record.data &&
+    typeof record.data === "object" &&
+    !Array.isArray(record.data) &&
+    hasQmdDreamingNarrativeRunId(record.data.runId)
+  );
+}
+
+function isQmdDreamingNarrativeGeneratedRecord(record) {
+  if (isQmdDreamingNarrativeBootstrapRecord(record)) {
+    return true;
+  }
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return false;
+  }
+  if (
+    hasQmdDreamingNarrativeRunId(record.runId) ||
+    hasQmdDreamingNarrativeRunId(record.sessionKey)
+  ) {
+    return true;
+  }
+  const data = record.data;
+  return (
+    data &&
+    typeof data === "object" &&
+    !Array.isArray(data) &&
+    (hasQmdDreamingNarrativeRunId(data.runId) || hasQmdDreamingNarrativeRunId(data.sessionKey))
+  );
+}
+
+function shouldSkipTranscriptFileForDreaming(absPath) {
+  const fileName = path.basename(absPath);
+  return (
+    isSessionArchiveArtifactName(fileName) ||
+    isCompactionCheckpointTranscriptFileName(fileName)
+  );
+}
+
+function normalizeSessionText(value) {
+  return String(value || "")
+    .replace(/\s*\n+\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function collectRawSessionText(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  const parts = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    if (block.type === "text" && typeof block.text === "string") {
+      parts.push(block.text);
+    }
+  }
+  return parts.length > 0 ? parts.join("\n") : null;
+}
+
+function splitLongSessionLine(text, maxChars = SESSION_EXPORT_CONTENT_WRAP_CHARS) {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return [];
+  }
+  if (normalized.length <= maxChars) {
+    return [normalized];
+  }
+  const segments = [];
+  let cursor = 0;
+  while (cursor < normalized.length) {
+    const remaining = normalized.length - cursor;
+    if (remaining <= maxChars) {
+      segments.push(normalized.slice(cursor).trim());
+      break;
+    }
+    const limit = cursor + maxChars;
+    let splitAt = limit;
+    for (let index = limit; index > cursor; index -= 1) {
+      if (normalized[index] === " ") {
+        splitAt = index;
+        break;
+      }
+    }
+    if (
+      splitAt < normalized.length &&
+      splitAt > cursor &&
+      normalized.charCodeAt(splitAt - 1) >= 0xd800 &&
+      normalized.charCodeAt(splitAt - 1) <= 0xdbff &&
+      normalized.charCodeAt(splitAt) >= 0xdc00 &&
+      normalized.charCodeAt(splitAt) <= 0xdfff
+    ) {
+      splitAt -= 1;
+    }
+    segments.push(normalized.slice(cursor, splitAt).trim());
+    cursor = splitAt;
+    while (cursor < normalized.length && normalized[cursor] === " ") {
+      cursor += 1;
+    }
+  }
+  return segments.filter(Boolean);
+}
+
+function renderSessionExportLines(label, text) {
+  return splitLongSessionLine(text).map((segment) => `${label}: ${segment}`);
+}
+
+function hasQmdInterSessionUserProvenance(message) {
+  return (
+    message &&
+    message.role === "user" &&
+    message.provenance &&
+    typeof message.provenance === "object" &&
+    message.provenance.kind === "inter_session"
+  );
+}
+
+function isQmdExecCompletionEvent(evt) {
+  const trimmed = String(evt || "").trimStart();
+  const normalized = normalizeLowercaseStringOrEmpty(trimmed);
+  return (
+    /^exec finished(?::|\s*\()/.test(normalized) ||
+    STRUCTURED_QMD_EXEC_COMPLETION_EVENT_RE.test(trimmed)
+  );
+}
+
+function sanitizeQmdSessionText(text, role) {
+  const strippedInbound = role === "user" ? stripInboundMetadata(text) : text;
+  const normalized = normalizeSessionText(strippedInbound);
+  if (!normalized) {
+    return null;
+  }
+  if (role === "user" && /^System(?: \(untrusted\))?: \[[^\]]+\]\s*/.test(normalized)) {
+    return null;
+  }
+  if (role === "user" && DIRECT_CRON_PROMPT_RE.test(normalized)) {
+    return null;
+  }
+  if (isSilentReplyPayloadText(normalized)) {
+    return null;
+  }
+  if (role === "assistant" && normalized === SILENT_REPLY_TOKEN) {
+    return null;
+  }
+  if (isQmdExecCompletionEvent(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function parseSessionTimestampMs(record, message) {
+  for (const value of [message && message.timestamp, record && record.timestamp]) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const ms = value > 0 && value < 1e11 ? value * 1000 : value;
+      if (Number.isFinite(ms) && ms > 0) {
+        return ms;
+      }
+    }
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+  }
+  return 0;
+}
+
+function hashQmdSessionText(text) {
+  return crypto.createHash("sha256").update(String(text || "")).digest("hex");
+}
+
+function classifySessionTranscriptFromSessionStore(absPath) {
+  const sessionsDir = path.dirname(absPath);
+  const normalizedAbsPath = normalizeSessionTranscriptPathForComparison(absPath);
+  const classification = loadSessionTranscriptClassificationForSessionsDir(sessionsDir);
+  return {
+    generatedByDreamingNarrative:
+      classification.dreamingNarrativeTranscriptPaths.has(normalizedAbsPath),
+    generatedByCronRun: classification.cronRunTranscriptPaths.has(normalizedAbsPath),
+  };
+}
+
+async function buildSessionEntry(absPath, opts = {}) {
+  try {
+    const stat = await fs.promises.stat(absPath);
+    if (shouldSkipTranscriptFileForDreaming(absPath)) {
+      return {
+        path: sessionPathForFile(absPath),
+        absPath,
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        hash: hashQmdSessionText("\n\n"),
+        content: "",
+        lineMap: [],
+        messageTimestampsMs: [],
+      };
+    }
+    const raw = await fs.promises.readFile(absPath, "utf8");
+    const lines = raw.split("\n");
+    const collected = [];
+    const lineMap = [];
+    const messageTimestampsMs = [];
+    const sessionStoreClassification =
+      opts.generatedByDreamingNarrative === undefined || opts.generatedByCronRun === undefined
+        ? classifySessionTranscriptFromSessionStore(absPath)
+        : null;
+    let generatedByDreamingNarrative =
+      opts.generatedByDreamingNarrative ??
+      (sessionStoreClassification && sessionStoreClassification.generatedByDreamingNarrative) ??
+      false;
+    const generatedByCronRun =
+      opts.generatedByCronRun ??
+      (sessionStoreClassification && sessionStoreClassification.generatedByCronRun) ??
+      false;
+    for (let jsonlIdx = 0; jsonlIdx < lines.length; jsonlIdx += 1) {
+      const line = lines[jsonlIdx];
+      if (!line.trim()) {
+        continue;
+      }
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!generatedByDreamingNarrative && isQmdDreamingNarrativeGeneratedRecord(record)) {
+        generatedByDreamingNarrative = true;
+      }
+      if (!record || typeof record !== "object" || record.type !== "message") {
+        continue;
+      }
+      const message = record.message;
+      if (!message || typeof message.role !== "string") {
+        continue;
+      }
+      if (message.role !== "user" && message.role !== "assistant") {
+        continue;
+      }
+      if (message.role === "user" && hasQmdInterSessionUserProvenance(message)) {
+        continue;
+      }
+      const rawText = collectRawSessionText(message.content);
+      if (rawText === null) {
+        continue;
+      }
+      const text = sanitizeQmdSessionText(rawText, message.role);
+      if (!text) {
+        continue;
+      }
+      if (generatedByDreamingNarrative || generatedByCronRun) {
+        continue;
+      }
+      const safe = redactSensitiveText(text);
+      const label = message.role === "user" ? "User" : "Assistant";
+      const renderedLines = renderSessionExportLines(label, safe);
+      const timestampMs = parseSessionTimestampMs(record, message);
+      collected.push(...renderedLines);
+      lineMap.push(...renderedLines.map(() => jsonlIdx + 1));
+      messageTimestampsMs.push(...renderedLines.map(() => timestampMs));
+    }
+    const content = collected.join("\n");
+    return {
+      path: sessionPathForFile(absPath),
+      absPath,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      hash: hashQmdSessionText(
+        `${content}\n${lineMap.join(",")}\n${messageTimestampsMs.join(",")}`,
+      ),
+      content,
+      lineMap,
+      messageTimestampsMs,
+      ...(generatedByDreamingNarrative ? { generatedByDreamingNarrative: true } : {}),
+      ...(generatedByCronRun ? { generatedByCronRun: true } : {}),
+    };
+  } catch (err) {
+    createSubsystemLogger("memory").debug(`Failed reading session file ${absPath}: ${String(err)}`);
+    return null;
+  }
+}
+
+function resolveCliSpawnInvocation(params) {
+  const program = resolveWindowsSpawnProgram({
+    command: params.command,
+    platform: process.platform,
+    env: params.env,
+    execPath: process.execPath,
+    packageName: params.packageName,
+    allowShellFallback: false,
+  });
+  return materializeWindowsSpawnProgram(program, params.args || []);
+}
+
+function formatQmdAvailabilityError(err) {
+  return err && err.message ? err.message : String(err);
+}
+
+async function checkQmdBinaryAvailability(params) {
+  let spawnInvocation;
+  try {
+    spawnInvocation = resolveCliSpawnInvocation({
+      command: params.command,
+      args: [],
+      env: params.env,
+      packageName: "qmd",
+    });
+  } catch (err) {
+    return { available: false, error: formatQmdAvailabilityError(err) };
+  }
+  return await new Promise((resolve) => {
+    let settled = false;
+    let didSpawn = false;
+    let timer;
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      resolve(result);
+    };
+    const child = spawn(spawnInvocation.command, spawnInvocation.argv, {
+      env: params.env,
+      cwd: params.cwd || process.cwd(),
+      shell: spawnInvocation.shell,
+      windowsHide: spawnInvocation.windowsHide,
+      stdio: "ignore",
+    });
+    timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish({
+        available: false,
+        error: `spawn ${params.command} timed out after ${params.timeoutMs || 2000}ms`,
+      });
+    }, params.timeoutMs || 2000);
+    child.once("error", (err) => {
+      finish({ available: false, error: formatQmdAvailabilityError(err) });
+    });
+    child.once("spawn", () => {
+      didSpawn = true;
+      child.kill();
+      finish({ available: true });
+    });
+    child.once("close", () => {
+      if (didSpawn) {
+        finish({ available: true });
+      }
+    });
+  });
+}
+
+function appendQmdOutputWithCap(current, chunk, maxChars) {
+  const appended = current + chunk;
+  if (appended.length <= maxChars) {
+    return { text: appended, truncated: false };
+  }
+  return { text: appended.slice(-maxChars), truncated: true };
+}
+
+async function runCliCommand(params) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(params.spawnInvocation.command, params.spawnInvocation.argv, {
+      env: params.env,
+      cwd: params.cwd,
+      shell: params.spawnInvocation.shell,
+      windowsHide: params.spawnInvocation.windowsHide,
+    });
+    let stdout = "";
+    let stderr = "";
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
+    const discardStdout = params.discardStdout === true;
+    const timer = params.timeoutMs
+      ? setTimeout(() => {
+          child.kill("SIGKILL");
+          reject(new Error(`${params.commandSummary} timed out after ${params.timeoutMs}ms`));
+        }, params.timeoutMs)
+      : null;
+    child.stdout.on("data", (data) => {
+      if (discardStdout) {
+        return;
+      }
+      const next = appendQmdOutputWithCap(stdout, data.toString("utf8"), params.maxOutputChars);
+      stdout = next.text;
+      stdoutTruncated = stdoutTruncated || next.truncated;
+    });
+    child.stderr.on("data", (data) => {
+      const next = appendQmdOutputWithCap(stderr, data.toString("utf8"), params.maxOutputChars);
+      stderr = next.text;
+      stderrTruncated = stderrTruncated || next.truncated;
+    });
+    child.on("error", (err) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      reject(err);
+    });
+    child.on("close", (code) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      if (!discardStdout && (stdoutTruncated || stderrTruncated)) {
+        reject(
+          new Error(
+            `${params.commandSummary} produced too much output ` +
+              `(limit ${params.maxOutputChars} chars)`,
+          ),
+        );
+        return;
+      }
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(new Error(`${params.commandSummary} failed (code ${code}): ${stderr || stdout}`));
+      }
+    });
+  });
+}
+
+const memoryCoreHostEngineQmdRuntime = {
+  buildSessionEntry,
+  checkQmdBinaryAvailability,
+  deriveQmdScopeChannel,
+  deriveQmdScopeChatType,
+  extractKeywords,
+  isQmdScopeAllowed,
+  isQueryStopWordToken,
+  listSessionFilesForAgent,
+  loadDreamingNarrativeTranscriptPathSetForAgent,
+  loadSessionTranscriptClassificationForAgent,
+  normalizeSessionTranscriptPathForComparison,
+  parseQmdQueryJson,
+  parseUsageCountedSessionIdFromFileName,
+  resolveCliSpawnInvocation,
+  runCliCommand,
+  sessionPathForFile,
+};
+
+const CHARS_PER_TOKEN_ESTIMATE = 4;
+const memorySqliteWalMaintenanceByDb = new WeakMap();
+
+function hashText(text) {
+  return crypto.createHash("sha256").update(String(text || "")).digest("hex");
+}
+
+function ensureDir(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {}
+  return dir;
+}
+
+function estimateStringChars(text) {
+  let codePointLength = 0;
+  let nonLatinCount = 0;
+  const cjkCharRe =
+    /[\u2e80-\u2eff\u3000-\u303f\u3040-\u30ff\u3130-\u318f\u31f0-\u31ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/u;
+  for (const char of String(text || "")) {
+    codePointLength += char.length;
+    if (cjkCharRe.test(char)) {
+      nonLatinCount += 1;
+    }
+  }
+  return codePointLength + nonLatinCount * (CHARS_PER_TOKEN_ESTIMATE - 1);
+}
+
+function buildTextEmbeddingInput(text) {
+  return { text };
+}
+
+function buildMemoryMultimodalLabel(modality, normalizedPath) {
+  const prefix = modality === "audio" ? "Audio file" : "Image file";
+  return `${prefix}: ${normalizedPath}`;
+}
+
+function isFileMissingError(err) {
+  return Boolean(err && typeof err === "object" && err.code === "ENOENT");
+}
+
+async function statRegularFile(absPath) {
+  let stat;
+  try {
+    stat = await fs.promises.lstat(absPath);
+  } catch (err) {
+    if (isFileMissingError(err)) {
+      return { missing: true };
+    }
+    throw err;
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error("path required");
+  }
+  return { missing: false, stat };
+}
+
+async function buildFileEntry(absPath, workspaceDir, multimodal) {
+  let stat;
+  try {
+    stat = await fs.promises.stat(absPath);
+  } catch (err) {
+    if (isFileMissingError(err)) {
+      return null;
+    }
+    throw err;
+  }
+  const normalizedPath = path.relative(workspaceDir, absPath).replace(/\\/g, "/");
+  const multimodalSettings = multimodal || { enabled: false, modalities: [], maxFileBytes: 0 };
+  const modality = classifyMemoryMultimodalPath(absPath, multimodalSettings);
+  if (modality) {
+    if (stat.size > multimodalSettings.maxFileBytes) {
+      return null;
+    }
+    let buffer;
+    try {
+      buffer = await fs.promises.readFile(absPath);
+    } catch (err) {
+      if (isFileMissingError(err)) {
+        return null;
+      }
+      throw err;
+    }
+    const mimeType = await detectMime({ buffer: buffer.subarray(0, 512), filePath: absPath });
+    if (!mimeType || !mimeType.startsWith(`${modality}/`)) {
+      return null;
+    }
+    const contentText = buildMemoryMultimodalLabel(modality, normalizedPath);
+    const dataHash = crypto.createHash("sha256").update(buffer).digest("hex");
+    const chunkHash = hashText(
+      JSON.stringify({
+        path: normalizedPath,
+        contentText,
+        mimeType,
+        dataHash,
+      }),
+    );
+    return {
+      path: normalizedPath,
+      absPath,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      hash: chunkHash,
+      dataHash,
+      kind: "multimodal",
+      contentText,
+      modality,
+      mimeType,
+    };
+  }
+  let content;
+  try {
+    content = await fs.promises.readFile(absPath, "utf8");
+  } catch (err) {
+    if (isFileMissingError(err)) {
+      return null;
+    }
+    throw err;
+  }
+  return {
+    path: normalizedPath,
+    absPath,
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    hash: hashText(content),
+    kind: "markdown",
+  };
+}
+
+async function loadMultimodalEmbeddingInput(entry) {
+  if (!entry || entry.kind !== "multimodal" || !entry.contentText || !entry.mimeType) {
+    return null;
+  }
+  let stat;
+  try {
+    stat = await fs.promises.stat(entry.absPath);
+  } catch (err) {
+    if (isFileMissingError(err)) {
+      return null;
+    }
+    throw err;
+  }
+  if (stat.size !== entry.size) {
+    return null;
+  }
+  let buffer;
+  try {
+    buffer = await fs.promises.readFile(entry.absPath);
+  } catch (err) {
+    if (isFileMissingError(err)) {
+      return null;
+    }
+    throw err;
+  }
+  const dataHash = crypto.createHash("sha256").update(buffer).digest("hex");
+  if (entry.dataHash && entry.dataHash !== dataHash) {
+    return null;
+  }
+  return {
+    text: entry.contentText,
+    parts: [
+      { type: "text", text: entry.contentText },
+      {
+        type: "inline-data",
+        mimeType: entry.mimeType,
+        data: buffer.toString("base64"),
+      },
+    ],
+  };
+}
+
+async function buildMultimodalChunkForIndexing(entry) {
+  const embeddingInput = await loadMultimodalEmbeddingInput(entry);
+  if (!embeddingInput) {
+    return null;
+  }
+  return {
+    chunk: {
+      startLine: 1,
+      endLine: 1,
+      text: entry.contentText || embeddingInput.text,
+      hash: entry.hash,
+      embeddingInput,
+    },
+    structuredInputBytes:
+      estimateMemoryCoreHostEngineStructuredEmbeddingInputBytes(embeddingInput),
+  };
+}
+
+function chunkMarkdown(content, chunking) {
+  const lines = String(content || "").split("\n");
+  if (lines.length === 0) {
+    return [];
+  }
+  const maxChars = Math.max(32, chunking.tokens * CHARS_PER_TOKEN_ESTIMATE);
+  const overlapChars = Math.max(0, chunking.overlap * CHARS_PER_TOKEN_ESTIMATE);
+  const chunks = [];
+  let current = [];
+  let currentChars = 0;
+
+  const flush = () => {
+    if (current.length === 0) {
+      return;
+    }
+    const firstEntry = current[0];
+    const lastEntry = current[current.length - 1];
+    if (!firstEntry || !lastEntry) {
+      return;
+    }
+    const text = current.map((entry) => entry.line).join("\n");
+    chunks.push({
+      startLine: firstEntry.lineNo,
+      endLine: lastEntry.lineNo,
+      text,
+      hash: hashText(text),
+      embeddingInput: buildTextEmbeddingInput(text),
+    });
+  };
+
+  const carryOverlap = () => {
+    if (overlapChars <= 0 || current.length === 0) {
+      current = [];
+      currentChars = 0;
+      return;
+    }
+    let acc = 0;
+    const kept = [];
+    for (let index = current.length - 1; index >= 0; index -= 1) {
+      const entry = current[index];
+      if (!entry) {
+        continue;
+      }
+      acc += estimateStringChars(entry.line) + 1;
+      kept.unshift(entry);
+      if (acc >= overlapChars) {
+        break;
+      }
+    }
+    current = kept;
+    currentChars = acc;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] || "";
+    const lineNo = index + 1;
+    const segments = [];
+    if (line.length === 0) {
+      segments.push("");
+    } else {
+      for (let start = 0; start < line.length; start += maxChars) {
+        const coarse = line.slice(start, start + maxChars);
+        if (estimateStringChars(coarse) > maxChars) {
+          const fineStep = Math.max(1, chunking.tokens);
+          for (let cursor = 0; cursor < coarse.length; ) {
+            let end = Math.min(cursor + fineStep, coarse.length);
+            if (end < coarse.length) {
+              const code = coarse.charCodeAt(end - 1);
+              if (code >= 0xd800 && code <= 0xdbff) {
+                end += 1;
+              }
+            }
+            segments.push(coarse.slice(cursor, end));
+            cursor = end;
+          }
+        } else {
+          segments.push(coarse);
+        }
+      }
+    }
+    for (const segment of segments) {
+      const lineSize = estimateStringChars(segment) + 1;
+      if (currentChars + lineSize > maxChars && current.length > 0) {
+        flush();
+        carryOverlap();
+      }
+      current.push({ line: segment, lineNo });
+      currentChars += lineSize;
+    }
+  }
+  flush();
+  return chunks;
+}
+
+function remapChunkLines(chunks, lineMap) {
+  if (!Array.isArray(lineMap) || lineMap.length === 0) {
+    return;
+  }
+  for (const chunk of chunks) {
+    chunk.startLine = lineMap[chunk.startLine - 1] || chunk.startLine;
+    chunk.endLine = lineMap[chunk.endLine - 1] || chunk.endLine;
+  }
+}
+
+function parseEmbedding(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function cosineSimilarity(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || b.length === 0) {
+    return 0;
+  }
+  const len = Math.min(a.length, b.length);
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let index = 0; index < len; index += 1) {
+    const av = a[index] || 0;
+    const bv = b[index] || 0;
+    dot += av * bv;
+    normA += av * av;
+    normB += bv * bv;
+  }
+  if (normA === 0 || normB === 0) {
+    return 0;
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+async function runWithConcurrency(tasks, limit) {
+  const { results, firstError, hasError } = await runTasksWithConcurrency({
+    tasks,
+    limit,
+    errorMode: "stop",
+  });
+  if (hasError) {
+    throw firstError;
+  }
+  return results;
+}
+
+function ensureMemoryIndexSchema(params) {
+  params.db.exec(`
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  params.db.exec(`
+    CREATE TABLE IF NOT EXISTS files (
+      path TEXT PRIMARY KEY,
+      source TEXT NOT NULL DEFAULT 'memory',
+      hash TEXT NOT NULL,
+      mtime INTEGER NOT NULL,
+      size INTEGER NOT NULL
+    );
+  `);
+  params.db.exec(`
+    CREATE TABLE IF NOT EXISTS chunks (
+      id TEXT PRIMARY KEY,
+      path TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'memory',
+      start_line INTEGER NOT NULL,
+      end_line INTEGER NOT NULL,
+      hash TEXT NOT NULL,
+      model TEXT NOT NULL,
+      text TEXT NOT NULL,
+      embedding TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  if (params.cacheEnabled) {
+    params.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${params.embeddingCacheTable} (
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        provider_key TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        embedding TEXT NOT NULL,
+        dims INTEGER,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, model, provider_key, hash)
+      );
+    `);
+    params.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_embedding_cache_updated_at ` +
+        `ON ${params.embeddingCacheTable}(updated_at);`,
+    );
+  }
+  let ftsAvailable = false;
+  let ftsError;
+  if (params.ftsEnabled) {
+    try {
+      const tokenizer = params.ftsTokenizer || "unicode61";
+      const tokenizeClause =
+        tokenizer === "trigram" ? `, tokenize='trigram case_sensitive 0'` : "";
+      params.db.exec(
+        `CREATE VIRTUAL TABLE IF NOT EXISTS ${params.ftsTable} USING fts5(\n` +
+          `  text,\n` +
+          `  id UNINDEXED,\n` +
+          `  path UNINDEXED,\n` +
+          `  source UNINDEXED,\n` +
+          `  model UNINDEXED,\n` +
+          `  start_line UNINDEXED,\n` +
+          `  end_line UNINDEXED\n` +
+          `${tokenizeClause});`,
+      );
+      ftsAvailable = true;
+    } catch (err) {
+      ftsAvailable = false;
+      ftsError = formatErrorMessage(err);
+    }
+  }
+  ensureMemoryStorageColumn(params.db, "files", "source", "TEXT NOT NULL DEFAULT 'memory'");
+  ensureMemoryStorageColumn(params.db, "chunks", "source", "TEXT NOT NULL DEFAULT 'memory'");
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);`);
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source);`);
+  return { ftsAvailable, ...(ftsError ? { ftsError } : {}) };
+}
+
+function ensureMemoryStorageColumn(db, table, column, definition) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (rows.some((row) => row.name === column)) {
+    return;
+  }
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+async function loadSqliteVecExtension(params) {
+  try {
+    const resolvedPath = normalizeOptionalString(params.extensionPath);
+    params.db.enableLoadExtension(true);
+    if (resolvedPath) {
+      params.db.loadExtension(resolvedPath);
+      return { ok: true, extensionPath: resolvedPath };
+    }
+    return { ok: false, error: "sqlite-vec module unavailable in OpenZues plugin runtime." };
+  } catch (err) {
+    return { ok: false, error: formatErrorMessage(err) };
+  }
+}
+
+function requireNodeSqlite() {
+  try {
+    return require("node:sqlite");
+  } catch (err) {
+    const message = formatErrorMessage(err);
+    throw new Error(
+      `SQLite support is unavailable in this Node runtime (missing node:sqlite). ${message}`,
+    );
+  }
+}
+
+function configureMemorySqliteWalMaintenance(db, options = {}) {
+  const existing = memorySqliteWalMaintenanceByDb.get(db);
+  if (existing) {
+    return existing;
+  }
+  try {
+    db.exec("PRAGMA journal_mode=WAL;");
+  } catch {}
+  const maintenance = {
+    options: { ...options },
+    close() {
+      return true;
+    },
+  };
+  memorySqliteWalMaintenanceByDb.set(db, maintenance);
+  return maintenance;
+}
+
+function closeMemorySqliteWalMaintenance(db) {
+  const maintenance = memorySqliteWalMaintenanceByDb.get(db);
+  if (!maintenance) {
+    return true;
+  }
+  memorySqliteWalMaintenanceByDb.delete(db);
+  return maintenance.close();
+}
+
+const memoryCoreHostEngineStorageRuntime = {
+  DEFAULT_MEMORY_READ_LINES,
+  DEFAULT_MEMORY_READ_MAX_CHARS,
+  buildFileEntry,
+  buildMemoryReadResult,
+  buildMemoryReadResultFromSlice,
+  buildMultimodalChunkForIndexing,
+  chunkMarkdown,
+  closeMemorySqliteWalMaintenance,
+  configureMemorySqliteWalMaintenance,
+  cosineSimilarity,
+  ensureDir,
+  ensureMemoryIndexSchema,
+  hashText,
+  isFileMissingError,
+  listMemoryFiles,
+  loadSqliteVecExtension,
+  normalizeExtraMemoryPaths,
+  parseEmbedding,
+  readMemoryFile,
+  remapChunkLines,
+  requireNodeSqlite,
+  resolveMemoryBackendConfig,
+  runWithConcurrency,
+  statRegularFile,
+};
+
+const memoryHostSdkEngineRuntime = {
+  ...memoryCoreHostEngineFoundationRuntime,
+  ...memoryCoreHostEngineStorageRuntime,
+  ...memoryCoreHostEngineEmbeddingsRuntime,
+  ...memoryCoreHostEngineQmdRuntime,
+};
+
+const TTS_AUTO_MODES = new Set(["off", "always", "inbound", "tagged"]);
+
+function requireInRange(value, min, max, label) {
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`${label} must be between ${min} and ${max}`);
+  }
+}
+
+function normalizeLanguageCode(code) {
+  const normalized = normalizeOptionalLowercaseString(code);
+  if (!normalized) {
+    return undefined;
+  }
+  if (!/^[a-z]{2}$/.test(normalized)) {
+    throw new Error("languageCode must be a 2-letter ISO 639-1 code (e.g. en, de, fr)");
+  }
+  return normalized;
+}
+
+function normalizeApplyTextNormalization(mode) {
+  const normalized = normalizeOptionalLowercaseString(mode);
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "auto" || normalized === "on" || normalized === "off") {
+    return normalized;
+  }
+  throw new Error("applyTextNormalization must be one of: auto, on, off");
+}
+
+function normalizeSeed(seed) {
+  if (seed == null) {
+    return undefined;
+  }
+  const next = Math.floor(seed);
+  if (!Number.isFinite(next) || next < 0 || next > 4294967295) {
+    throw new Error("seed must be between 0 and 4294967295");
+  }
+  return next;
+}
+
+function scheduleCleanup(tempDir, delayMs = 5 * 60 * 1000) {
+  const timer = setTimeout(() => {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  }, delayMs);
+  if (timer && typeof timer.unref === "function") {
+    timer.unref();
+  }
+}
+
+function normalizeTtsAutoMode(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = normalizeOptionalLowercaseString(value);
+  return TTS_AUTO_MODES.has(normalized) ? normalized : undefined;
+}
+
+function normalizeSpeechProviderId(providerId) {
+  return normalizeOptionalLowercaseString(providerId);
+}
+
+function listSpeechProviders(_cfg) {
+  return [];
+}
+
+function getSpeechProvider(_providerId, _cfg) {
+  return undefined;
+}
+
+function canonicalizeSpeechProviderId(providerId, cfg) {
+  const normalized = normalizeSpeechProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const provider = getSpeechProvider(normalized, cfg);
+  return provider && provider.id ? provider.id : normalized;
+}
+
+function sortSpeechDirectiveProviders(providers) {
+  return [...(Array.isArray(providers) ? providers : [])].sort((left, right) => {
+    const leftOrder = Number.isFinite(left && left.autoSelectOrder)
+      ? left.autoSelectOrder
+      : Number.MAX_SAFE_INTEGER;
+    const rightOrder = Number.isFinite(right && right.autoSelectOrder)
+      ? right.autoSelectOrder
+      : Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return String((left && left.id) || "").localeCompare(String((right && right.id) || ""));
+  });
+}
+
+function resolveSpeechDirectiveProvider(providers, providerId) {
+  const normalized = normalizeOptionalLowercaseString(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  return providers.find(
+    (provider) =>
+      provider &&
+      (provider.id === normalized ||
+        (Array.isArray(provider.aliases) &&
+          provider.aliases.some(
+            (alias) => normalizeOptionalLowercaseString(alias) === normalized,
+          ))),
+  );
+}
+
+function prioritizeSpeechDirectiveProvider(providers, providerId) {
+  const preferred = resolveSpeechDirectiveProvider(providers, providerId);
+  if (!preferred) {
+    return [...providers];
+  }
+  return [preferred, ...providers.filter((provider) => provider !== preferred)];
+}
+
+function parseTtsDirectives(text, policy = {}, options = {}) {
+  if (!policy.enabled) {
+    return { cleanedText: text, overrides: {}, warnings: [], hasDirective: false };
+  }
+  if (!/\[\[\s*\/?\s*tts(?:\s*:|\s*\]\])/iu.test(text)) {
+    return { cleanedText: text, overrides: {}, warnings: [], hasDirective: false };
+  }
+  const providers = sortSpeechDirectiveProviders(
+    options.providers || listSpeechProviders(options.cfg),
+  );
+  const overrides = {};
+  const warnings = [];
+  let cleanedText = String(text);
+  let hasDirective = false;
+
+  cleanedText = cleanedText.replace(
+    /\[\[\s*tts\s*:\s*text\s*\]\]([\s\S]*?)\[\[\s*\/\s*tts\s*:\s*text\s*\]\]/gi,
+    (_match, inner = "") => {
+      hasDirective = true;
+      if (policy.allowText && overrides.ttsText == null) {
+        overrides.ttsText = String(inner).trim();
+      }
+      return "";
+    },
+  );
+  cleanedText = cleanedText.replace(
+    /\[\[\s*tts\s*\]\]([\s\S]*?)\[\[\s*\/\s*tts\s*\]\]/gi,
+    (_match, inner = "") => {
+      hasDirective = true;
+      const visible = String(inner).trim();
+      if (policy.allowText && overrides.ttsText == null) {
+        overrides.ttsText = visible;
+      }
+      return visible;
+    },
+  );
+  cleanedText = cleanedText.replace(/\[\[\s*tts\s*:\s*([^\]]+)\]\]/gi, (_match, body = "") => {
+    hasDirective = true;
+    const tokens = String(body).split(/\s+/).filter(Boolean);
+    let declaredProviderId;
+    if (policy.allowProvider) {
+      for (const token of tokens) {
+        const eqIndex = token.indexOf("=");
+        if (eqIndex < 0) {
+          continue;
+        }
+        const key = normalizeOptionalLowercaseString(token.slice(0, eqIndex));
+        const value = normalizeOptionalLowercaseString(token.slice(eqIndex + 1));
+        if (key === "provider" && value) {
+          declaredProviderId = value;
+          overrides.provider = value;
+        }
+      }
+    }
+    const directiveProviders = declaredProviderId
+      ? [resolveSpeechDirectiveProvider(providers, declaredProviderId)].filter(Boolean)
+      : prioritizeSpeechDirectiveProvider(providers, options.preferredProviderId);
+    if (declaredProviderId && directiveProviders.length === 0) {
+      warnings.push(`unknown provider "${declaredProviderId}"`);
+    }
+    for (const token of tokens) {
+      const eqIndex = token.indexOf("=");
+      if (eqIndex < 0) {
+        continue;
+      }
+      const key = normalizeOptionalLowercaseString(token.slice(0, eqIndex));
+      const value = token.slice(eqIndex + 1).trim();
+      if (!key || !value || key === "provider") {
+        continue;
+      }
+      let handled = false;
+      for (const provider of directiveProviders) {
+        if (typeof provider.parseDirectiveToken !== "function") {
+          continue;
+        }
+        const parsed = provider.parseDirectiveToken({
+          key,
+          value,
+          policy,
+          selectedProvider: declaredProviderId ? provider.id : undefined,
+          providerConfig: options.providerConfigs && options.providerConfigs[provider.id],
+          currentOverrides:
+            overrides.providerOverrides && overrides.providerOverrides[provider.id],
+        });
+        if (!parsed || !parsed.handled) {
+          continue;
+        }
+        if (parsed.overrides) {
+          overrides.providerOverrides = {
+            ...(overrides.providerOverrides || {}),
+            [provider.id]: {
+              ...((overrides.providerOverrides || {})[provider.id] || {}),
+              ...parsed.overrides,
+            },
+          };
+        }
+        if (Array.isArray(parsed.warnings) && parsed.warnings.length > 0) {
+          warnings.push(...parsed.warnings);
+        }
+        handled = true;
+        break;
+      }
+      if (!handled && declaredProviderId && directiveProviders.length > 0) {
+        warnings.push(`unsupported ${declaredProviderId} directive key "${key}"`);
+      }
+    }
+    return "";
+  });
+  cleanedText = cleanedText
+    .replace(/\[\[\s*tts\s*\]\]/gi, () => {
+      hasDirective = true;
+      return "";
+    })
+    .replace(/\[\[\s*\/\s*tts(?:\s*:\s*[^\]]*)?\]\]/gi, () => {
+      hasDirective = true;
+      return "";
+    });
+  return {
+    cleanedText,
+    ttsText: overrides.ttsText,
+    hasDirective,
+    overrides,
+    warnings,
+  };
+}
+
+function speechCoreIsPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function speechCoreDeepMergeDefined(base, override) {
+  if (!speechCoreIsPlainObject(base) || !speechCoreIsPlainObject(override)) {
+    return override === undefined ? base : override;
+  }
+  const result = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    if (["__proto__", "prototype", "constructor"].includes(key) || value === undefined) {
+      continue;
+    }
+    result[key] =
+      key in result ? speechCoreDeepMergeDefined(result[key], value) : value;
+  }
+  return result;
+}
+
+function resolveSpeechCoreRecordEntry(entries, id, normalize) {
+  const normalizedId = normalizeOptionalString(id);
+  if (!entries || !normalizedId) {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(entries, normalizedId)) {
+    return entries[normalizedId];
+  }
+  const normalized = normalize(normalizedId);
+  const key = Object.keys(entries).find((candidate) => normalize(candidate) === normalized);
+  return key ? entries[key] : undefined;
+}
+
+function resolveSpeechCoreChannelConfig(cfg, channelId) {
+  if (!speechCoreIsPlainObject(cfg && cfg.channels)) {
+    return undefined;
+  }
+  return speechCoreAsObject(
+    resolveSpeechCoreRecordEntry(
+      cfg.channels,
+      channelId,
+      normalizeLowercaseStringOrEmpty,
+    ),
+  );
+}
+
+function resolveEffectiveTtsConfig(cfg = {}, contextOrAgentId = {}) {
+  const context =
+    typeof contextOrAgentId === "string" ? { agentId: contextOrAgentId } : contextOrAgentId || {};
+  let merged = (cfg.messages && cfg.messages.tts) || {};
+  const agentId = normalizeOptionalString(context.agentId);
+  if (agentId && Array.isArray(cfg.agents && cfg.agents.list)) {
+    const normalized = normalizeAgentId(agentId);
+    const agent = cfg.agents.list.find(
+      (entry) => normalizeAgentId(entry && entry.id) === normalized,
+    );
+    merged = speechCoreDeepMergeDefined(merged, (agent && agent.tts) || {});
+  }
+  const channelConfig = resolveSpeechCoreChannelConfig(cfg, context.channelId);
+  merged = speechCoreDeepMergeDefined(merged, (channelConfig && channelConfig.tts) || {});
+  const accountTts =
+    channelConfig && speechCoreIsPlainObject(channelConfig.accounts)
+      ? speechCoreAsObject(
+          resolveSpeechCoreRecordEntry(
+            channelConfig.accounts,
+            context.accountId,
+            normalizeAccountId,
+          ),
+        )?.tts
+      : undefined;
+  merged = speechCoreDeepMergeDefined(merged, accountTts || {});
+  return merged || {};
+}
+
+async function summarizeText(params = {}, deps = {}) {
+  const targetLength = Number(params.targetLength);
+  if (targetLength < 100 || targetLength > 10000) {
+    throw new Error(`Invalid targetLength: ${params.targetLength}`);
+  }
+  if (
+    typeof deps.completeSimple !== "function" ||
+    typeof deps.resolveModelAsync !== "function" ||
+    typeof deps.prepareModelForSimpleCompletion !== "function" ||
+    typeof deps.getApiKeyForModel !== "function" ||
+    typeof deps.requireApiKey !== "function"
+  ) {
+    throw new Error("speech summarization unavailable in OpenZues plugin runtime.");
+  }
+  const startTime = Date.now();
+  const ref = { provider: "default", model: params.config && params.config.summaryModel };
+  const resolved = await deps.resolveModelAsync(ref.provider, ref.model, undefined, params.cfg);
+  if (!resolved || !resolved.model) {
+    throw new Error(
+      (resolved && resolved.error) || `Unknown summary model: ${ref.provider}/${ref.model}`,
+    );
+  }
+  const completionModel = deps.prepareModelForSimpleCompletion({
+    model: resolved.model,
+    cfg: params.cfg,
+  });
+  const apiKey = deps.requireApiKey(
+    await deps.getApiKeyForModel({ model: completionModel, cfg: params.cfg }),
+    ref.provider,
+  );
+  const response = await deps.completeSimple(
+    completionModel,
+    { messages: [{ role: "user", content: String(params.text || ""), timestamp: Date.now() }] },
+    { apiKey, maxTokens: Math.ceil(targetLength / 2), temperature: 0.3 },
+  );
+  const summary = (Array.isArray(response && response.content) ? response.content : [])
+    .filter((block) => block && block.type === "text")
+    .map((block) => String(block.text || "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  if (!summary) {
+    throw new Error("No summary returned");
+  }
+  return {
+    summary,
+    latencyMs: Date.now() - startTime,
+    inputLength: String(params.text || "").length,
+    outputLength: summary.length,
+  };
+}
+
+function speechCoreAsObject(value) {
+  return speechCoreIsPlainObject(value) ? value : undefined;
+}
+
+function truncateErrorDetail(detail, limit = 220) {
+  const text = String(detail || "");
+  return text.length <= limit ? text : `${text.slice(0, limit - 1)}...`;
+}
+
+async function readResponseTextLimited(response, limitBytes = 16 * 1024) {
+  if (limitBytes <= 0 || !response || typeof response.text !== "function") {
+    return "";
+  }
+  const text = await response.text();
+  return Buffer.byteLength(text, "utf8") <= limitBytes
+    ? text
+    : Buffer.from(text, "utf8").subarray(0, limitBytes).toString("utf8");
+}
+
+function formatProviderErrorPayload(payload) {
+  const root = speechCoreAsObject(payload);
+  const detailObject = speechCoreAsObject(root && root.detail);
+  const subject = speechCoreAsObject(root && root.error) || detailObject || root;
+  if (!subject) {
+    return undefined;
+  }
+  const message =
+    normalizeOptionalString(subject.message) ||
+    normalizeOptionalString(subject.detail) ||
+    normalizeOptionalString(root && root.message) ||
+    normalizeOptionalString(root && root.error) ||
+    normalizeOptionalString(root && root.detail);
+  const type = normalizeOptionalString(subject.type);
+  const code = normalizeOptionalString(subject.code) || normalizeOptionalString(subject.status);
+  const metadata = [
+    type ? `type=${type}` : undefined,
+    code ? `code=${code}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  if (message && metadata) {
+    return `${truncateErrorDetail(message)} [${metadata}]`;
+  }
+  if (message) {
+    return truncateErrorDetail(message);
+  }
+  return metadata ? `[${metadata}]` : undefined;
+}
+
+async function extractProviderErrorDetail(response) {
+  const rawBody = normalizeOptionalString(await readResponseTextLimited(response));
+  if (!rawBody) {
+    return undefined;
+  }
+  try {
+    return formatProviderErrorPayload(JSON.parse(rawBody)) || truncateErrorDetail(rawBody);
+  } catch {
+    return truncateErrorDetail(rawBody);
+  }
+}
+
+function extractProviderRequestId(response) {
+  return (
+    (response &&
+      response.headers &&
+      normalizeOptionalString(response.headers.get("x-request-id"))) ||
+    (response && response.headers && normalizeOptionalString(response.headers.get("request-id"))) ||
+    undefined
+  );
+}
+
+function formatProviderHttpErrorMessage(params = {}) {
+  const statusPrefix = params.statusPrefix || "";
+  return (
+    `${params.label} (${statusPrefix}${params.status})` +
+    (params.detail ? `: ${params.detail}` : "") +
+    (params.requestId ? ` [request_id=${params.requestId}]` : "")
+  );
+}
+
+async function createProviderHttpError(response, label, options = {}) {
+  const detail = await extractProviderErrorDetail(response);
+  const requestId = extractProviderRequestId(response);
+  return new Error(
+    formatProviderHttpErrorMessage({
+      label,
+      status: response && response.status,
+      detail,
+      requestId,
+      statusPrefix: options.statusPrefix,
+    }),
+  );
+}
+
+async function assertOkOrThrowProviderError(response, label) {
+  if (response && response.ok) {
+    return;
+  }
+  throw await createProviderHttpError(response, label);
+}
+
+const speechCoreRuntime = {
+  TTS_AUTO_MODES,
+  asBoolean,
+  asFiniteNumber,
+  asObject: speechCoreAsObject,
+  assertOkOrThrowProviderError,
+  canonicalizeSpeechProviderId,
+  createProviderHttpError,
+  extractProviderErrorDetail,
+  extractProviderRequestId,
+  formatProviderErrorPayload,
+  formatProviderHttpErrorMessage,
+  getSpeechProvider,
+  listSpeechProviders,
+  normalizeApplyTextNormalization,
+  normalizeLanguageCode,
+  normalizeSeed,
+  normalizeSpeechProviderId,
+  normalizeTtsAutoMode,
+  parseTtsDirectives,
+  readResponseTextLimited,
+  requireInRange,
+  resolveEffectiveTtsConfig,
+  scheduleCleanup,
+  summarizeText,
+  trimToUndefined: normalizeOptionalString,
+  truncateErrorDetail,
+};
+
+function normalizeSpeechResponseFormat(params) {
+  const next = normalizeOptionalLowercaseString(params.value);
+  if (!next) {
+    return undefined;
+  }
+  if (params.responseFormats.includes(next)) {
+    return next;
+  }
+  throw new Error(`Invalid ${params.providerLabel} speech responseFormat: ${next}`);
+}
+
+function speechResponseFormatToFileExtension(format) {
+  return `.${format}`;
+}
+
+function trimTrailingSpeechBaseUrl(value, fallback) {
+  return (normalizeOptionalString(value) || fallback).replace(/\/+$/u, "");
+}
+
+function normalizeOpenAiCompatibleSpeechBaseUrl(params) {
+  const normalized = trimTrailingSpeechBaseUrl(params.value, params.fallback);
+  if (!params.policy || params.policy.kind !== "canonical") {
+    return normalized;
+  }
+  const canonical = trimTrailingSpeechBaseUrl(params.fallback, params.fallback);
+  const aliases = new Set(
+    [canonical, ...((params.policy && params.policy.aliases) || [])].map((entry) =>
+      trimTrailingSpeechBaseUrl(entry, canonical),
+    ),
+  );
+  return aliases.has(normalized) || !params.policy.allowCustom ? canonical : normalized;
+}
+
+function resolveSpeechProviderConfigRecord(rawConfig, providerConfigKey) {
+  const root = speechCoreAsObject(rawConfig) || {};
+  const providers = speechCoreAsObject(root.providers);
+  return speechCoreAsObject(providers && providers[providerConfigKey]) ||
+    speechCoreAsObject(root[providerConfigKey]);
+}
+
+function readSpeechModelProviderConfig(cfg, providerConfigKey) {
+  const root = speechCoreAsObject(cfg);
+  const models = speechCoreAsObject(root && root.models);
+  const providers = speechCoreAsObject(models && models.providers);
+  return speechCoreAsObject(providers && providers[providerConfigKey]);
+}
+
+function readSpeechProviderOverrides(overrides) {
+  if (!overrides) {
+    return {};
+  }
+  return {
+    model: normalizeOptionalString(overrides.model || overrides.modelId),
+    voice: normalizeOptionalString(overrides.voice || overrides.voiceId),
+    speed: asFiniteNumber(overrides.speed),
+  };
+}
+
+function parseOpenAiCompatibleSpeechDirectiveToken(ctx, providerConfigKey) {
+  const compactProviderKey = providerConfigKey.replace(/[^a-z0-9]+/giu, "").toLowerCase();
+  switch (ctx.key) {
+    case "voice":
+    case "voice_id":
+    case "voiceid":
+    case `${providerConfigKey}_voice`:
+    case `${compactProviderKey}voice`:
+      if (!ctx.policy || !ctx.policy.allowVoice) {
+        return { handled: true };
+      }
+      return { handled: true, overrides: { voice: ctx.value } };
+    case "model":
+    case "model_id":
+    case "modelid":
+    case `${providerConfigKey}_model`:
+    case `${compactProviderKey}model`:
+      if (!ctx.policy || !ctx.policy.allowModelId) {
+        return { handled: true };
+      }
+      return { handled: true, overrides: { model: ctx.value } };
+    default:
+      return { handled: false };
+  }
+}
+
+function buildOpenAiCompatibleSpeechExtraJsonBodyFields(config, fields) {
+  const body = {};
+  for (const field of fields || []) {
+    const value = config[field.configKey];
+    if (value != null) {
+      body[field.requestKey || field.configKey] = value;
+    }
+  }
+  return body;
+}
+
+function createOpenAiCompatibleSpeechProvider(options) {
+  const providerConfigKey = options.configKey || options.id;
+  const normalizeModel =
+    options.normalizeModel ||
+    ((value, fallback) => normalizeOptionalString(value) || fallback);
+  const readExtraConfig = options.readExtraConfig || (() => ({}));
+
+  function normalizeConfig(rawConfig) {
+    const raw = resolveSpeechProviderConfigRecord(rawConfig, providerConfigKey) || {};
+    return {
+      apiKey: normalizeResolvedSecretInputString({
+        value: raw.apiKey,
+        path: `messages.tts.providers.${providerConfigKey}.apiKey`,
+      }),
+      baseUrl:
+        normalizeOptionalString(raw.baseUrl) == null
+          ? undefined
+          : normalizeOpenAiCompatibleSpeechBaseUrl({
+              value: raw.baseUrl,
+              fallback: options.defaultBaseUrl,
+              policy: options.baseUrlPolicy,
+            }),
+      model: normalizeModel(
+        normalizeOptionalString(raw.model || raw.modelId),
+        options.defaultModel,
+      ),
+      voice: normalizeOptionalString(raw.voice || raw.voiceId) || options.defaultVoice,
+      speed: asFiniteNumber(raw.speed),
+      responseFormat: normalizeSpeechResponseFormat({
+        providerLabel: options.label,
+        responseFormats: options.responseFormats,
+        value: raw.responseFormat,
+      }),
+      ...readExtraConfig(raw),
+    };
+  }
+
+  function readProviderConfig(config) {
+    const normalized = normalizeConfig({});
+    const rawConfig = config || {};
+    return {
+      apiKey: normalizeOptionalString(rawConfig.apiKey) || normalized.apiKey,
+      baseUrl:
+        normalizeOptionalString(rawConfig.baseUrl) == null
+          ? normalized.baseUrl
+          : normalizeOpenAiCompatibleSpeechBaseUrl({
+              value: rawConfig.baseUrl,
+              fallback: options.defaultBaseUrl,
+              policy: options.baseUrlPolicy,
+            }),
+      model: normalizeModel(
+        normalizeOptionalString(rawConfig.model || rawConfig.modelId),
+        normalized.model,
+      ),
+      voice: normalizeOptionalString(rawConfig.voice || rawConfig.voiceId) || normalized.voice,
+      speed: asFiniteNumber(rawConfig.speed) ?? normalized.speed,
+      responseFormat:
+        normalizeSpeechResponseFormat({
+          providerLabel: options.label,
+          responseFormats: options.responseFormats,
+          value: rawConfig.responseFormat,
+        }) || normalized.responseFormat,
+      ...readExtraConfig(rawConfig),
+    };
+  }
+
+  function resolveApiKey(params) {
+    return (
+      params.providerConfig.apiKey ||
+      normalizeResolvedSecretInputString({
+        value: (
+          readSpeechModelProviderConfig(params.cfg, providerConfigKey) || {}
+        ).apiKey,
+        path: `models.providers.${providerConfigKey}.apiKey`,
+      }) ||
+      normalizeOptionalString(process.env[options.envKey])
+    );
+  }
+
+  function resolveBaseUrl(params) {
+    const modelProviderConfig =
+      readSpeechModelProviderConfig(params.cfg, providerConfigKey) || {};
+    return normalizeOpenAiCompatibleSpeechBaseUrl({
+      value: params.providerConfig.baseUrl || modelProviderConfig.baseUrl,
+      fallback: options.defaultBaseUrl,
+      policy: options.baseUrlPolicy,
+    });
+  }
+
+  return {
+    id: options.id,
+    label: options.label,
+    autoSelectOrder: options.autoSelectOrder,
+    models: [...options.models],
+    voices: [...options.voices],
+    resolveConfig: ({ rawConfig }) => normalizeConfig(rawConfig),
+    parseDirectiveToken: (ctx) =>
+      parseOpenAiCompatibleSpeechDirectiveToken(ctx, providerConfigKey),
+    resolveTalkConfig: ({ baseTtsConfig, talkProviderConfig }) => {
+      const base = normalizeConfig(baseTtsConfig);
+      const talkConfig = talkProviderConfig || {};
+      const responseFormat = normalizeSpeechResponseFormat({
+        providerLabel: options.label,
+        responseFormats: options.responseFormats,
+        value: talkConfig.responseFormat,
+      });
+      const next = { ...base };
+      if (talkConfig.apiKey !== undefined) {
+        next.apiKey = normalizeResolvedSecretInputString({
+          value: talkConfig.apiKey,
+          path: `talk.providers.${providerConfigKey}.apiKey`,
+        });
+      }
+      const baseUrl = normalizeOptionalString(talkConfig.baseUrl);
+      if (baseUrl !== undefined) {
+        next.baseUrl = normalizeOpenAiCompatibleSpeechBaseUrl({
+          value: baseUrl,
+          fallback: options.defaultBaseUrl,
+          policy: options.baseUrlPolicy,
+        });
+      }
+      const modelId = normalizeOptionalString(talkConfig.modelId);
+      if (modelId !== undefined) {
+        next.model = normalizeModel(modelId, options.defaultModel);
+      }
+      const voiceId = normalizeOptionalString(talkConfig.voiceId);
+      if (voiceId !== undefined) {
+        next.voice = voiceId;
+      }
+      const speed = asFiniteNumber(talkConfig.speed);
+      if (speed !== undefined) {
+        next.speed = speed;
+      }
+      if (responseFormat !== undefined) {
+        next.responseFormat = responseFormat;
+      }
+      return next;
+    },
+    resolveTalkOverrides: ({ params }) => ({
+      ...(normalizeOptionalString(params.voiceId || params.voice) == null
+        ? {}
+        : { voice: normalizeOptionalString(params.voiceId || params.voice) }),
+      ...(normalizeOptionalString(params.modelId || params.model) == null
+        ? {}
+        : { model: normalizeOptionalString(params.modelId || params.model) }),
+      ...(asFiniteNumber(params.speed) == null ? {} : { speed: asFiniteNumber(params.speed) }),
+    }),
+    listVoices: async () => options.voices.map((voice) => ({ id: voice, name: voice })),
+    isConfigured: ({ cfg, providerConfig }) =>
+      Boolean(resolveApiKey({ cfg, providerConfig: readProviderConfig(providerConfig) })),
+    synthesize: async (req) => {
+      const config = readProviderConfig(req.providerConfig);
+      const overrides = readSpeechProviderOverrides(req.providerOverrides);
+      const apiKey = resolveApiKey({ cfg: req.cfg, providerConfig: config });
+      if (!apiKey) {
+        throw new Error(options.missingApiKeyError || `${options.label} API key missing`);
+      }
+      const baseUrl = resolveBaseUrl({ cfg: req.cfg, providerConfig: config });
+      const responseFormat = config.responseFormat || options.defaultResponseFormat;
+      const speed = overrides.speed ?? config.speed;
+      const requestConfig = resolveProviderHttpRequestConfig({
+        baseUrl,
+        defaultBaseUrl: options.defaultBaseUrl,
+        allowPrivateNetwork: false,
+        defaultHeaders: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          ...(options.extraHeaders || {}),
+        },
+        provider: options.id,
+        capability: "audio",
+        transport: "http",
+      });
+      const postResult = await postJsonRequest({
+        url: `${baseUrl}/audio/speech`,
+        headers: requestConfig.headers,
+        body: {
+          model: normalizeModel(overrides.model || config.model, options.defaultModel),
+          input: req.text,
+          voice: overrides.voice || config.voice,
+          response_format: responseFormat,
+          ...(speed == null ? {} : { speed }),
+          ...buildOpenAiCompatibleSpeechExtraJsonBodyFields(
+            config,
+            options.extraJsonBodyFields,
+          ),
+        },
+        timeoutMs: req.timeoutMs,
+        fetchFn: globalThis.fetch,
+        allowPrivateNetwork: requestConfig.allowPrivateNetwork,
+        dispatcherPolicy: requestConfig.dispatcherPolicy,
+      });
+      try {
+        await assertOkOrThrowHttpError(
+          postResult.response,
+          options.apiErrorLabel || `${options.label} TTS API error`,
+        );
+        return {
+          audioBuffer: Buffer.from(await postResult.response.arrayBuffer()),
+          outputFormat: responseFormat,
+          fileExtension: speechResponseFormatToFileExtension(responseFormat),
+          voiceCompatible: options.voiceCompatibleResponseFormats.includes(responseFormat),
+        };
+      } finally {
+        await postResult.release();
+      }
+    },
+  };
+}
+
+const speechRuntime = {
+  TTS_AUTO_MODES,
+  asBoolean,
+  asFiniteNumber,
+  asObject: speechCoreAsObject,
+  assertOkOrThrowProviderError,
+  canonicalizeSpeechProviderId,
+  createOpenAiCompatibleSpeechProvider,
+  createProviderHttpError,
+  extractProviderErrorDetail,
+  extractProviderRequestId,
+  formatProviderErrorPayload,
+  formatProviderHttpErrorMessage,
+  getSpeechProvider,
+  listSpeechProviders,
+  normalizeApplyTextNormalization,
+  normalizeLanguageCode,
+  normalizeSeed,
+  normalizeSpeechProviderId,
+  normalizeTtsAutoMode,
+  parseTtsDirectives,
+  readResponseTextLimited,
+  requireInRange,
+  scheduleCleanup,
+  trimToUndefined: normalizeOptionalString,
+  truncateErrorDetail,
+};
+
+async function assertOkOrThrowHttpError(response, label) {
+  if (response && response.ok) {
+    return;
+  }
+  throw await createProviderHttpError(response, label, { statusPrefix: "HTTP " });
+}
+
+function resolveAudioTranscriptionUploadFileName(fileName, mime) {
+  const trimmed = normalizeOptionalString(fileName);
+  const baseName = trimmed ? path.basename(trimmed) : "audio";
+  const lowerMime = normalizeOptionalLowercaseString(mime);
+  if (/\.aac$/i.test(baseName)) {
+    return `${baseName.slice(0, -4) || "audio"}.m4a`;
+  }
+  if (!path.extname(baseName) && lowerMime === "audio/aac") {
+    return `${baseName || "audio"}.m4a`;
+  }
+  return baseName;
+}
+
+function buildAudioTranscriptionFormData(params = {}) {
+  const form = new FormData();
+  const buffer = Buffer.isBuffer(params.buffer) ? params.buffer : Buffer.from(params.buffer || []);
+  const bytes = new Uint8Array(buffer);
+  const blob = new Blob([bytes], {
+    type: params.mime || "application/octet-stream",
+  });
+  form.append("file", blob, resolveAudioTranscriptionUploadFileName(params.fileName, params.mime));
+  for (const [name, value] of Object.entries(params.fields || {})) {
+    const text = typeof value === "string" ? value.trim() : value == null ? "" : String(value);
+    if (text) {
+      form.append(name, text);
+    }
+  }
+  return form;
+}
+
+function createProviderOperationDeadline(params = {}) {
+  if (
+    typeof params.timeoutMs !== "number" ||
+    !Number.isFinite(params.timeoutMs) ||
+    params.timeoutMs <= 0
+  ) {
+    return { label: params.label };
+  }
+  const timeoutMs = Math.floor(params.timeoutMs);
+  return {
+    deadlineAtMs: Date.now() + timeoutMs,
+    label: params.label,
+    timeoutMs,
+  };
+}
+
+function resolveProviderOperationTimeoutMs(params = {}) {
+  const deadline = params.deadline || {};
+  const deadlineAtMs = deadline.deadlineAtMs;
+  if (typeof deadlineAtMs !== "number") {
+    return params.defaultTimeoutMs;
+  }
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new Error(`${deadline.label} timed out after ${deadline.timeoutMs}ms`);
+  }
+  return Math.max(1, Math.min(params.defaultTimeoutMs, remainingMs));
+}
+
+async function waitProviderOperationPollInterval(params = {}) {
+  const deadline = params.deadline || {};
+  const deadlineAtMs = deadline.deadlineAtMs;
+  if (typeof deadlineAtMs !== "number") {
+    await sleepMs(params.pollIntervalMs || 0);
+    return;
+  }
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new Error(`${deadline.label} timed out after ${deadline.timeoutMs}ms`);
+  }
+  await sleepMs(Math.min(params.pollIntervalMs || 0, remainingMs));
+}
+
+async function fetchWithTimeout(url, init = {}, timeoutMs = 60000, fetchFn = fetch) {
+  const controller = new AbortController();
+  const resolvedTimeoutMs = Math.max(1, Math.floor(timeoutMs || 1));
+  const timer = setTimeout(() => controller.abort(), resolvedTimeoutMs);
+  try {
+    return await fetchFn(url, { ...(init || {}), signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function pollProviderOperationJson(params = {}) {
+  for (let attempt = 0; attempt < params.maxAttempts; attempt += 1) {
+    const response = await fetchWithTimeout(
+      params.url,
+      {
+        method: "GET",
+        headers: params.headers,
+      },
+      resolveProviderOperationTimeoutMs({
+        deadline: params.deadline,
+        defaultTimeoutMs: params.defaultTimeoutMs,
+      }),
+      params.fetchFn,
+    );
+    await assertOkOrThrowHttpError(response, params.requestFailedMessage);
+    const payload = await response.json();
+    if (params.isComplete(payload)) {
+      return payload;
+    }
+    const failureMessage =
+      typeof params.getFailureMessage === "function"
+        ? params.getFailureMessage(payload)
+        : undefined;
+    if (failureMessage) {
+      throw new Error(failureMessage);
+    }
+    await waitProviderOperationPollInterval({
+      deadline: params.deadline,
+      pollIntervalMs: params.pollIntervalMs,
+    });
+  }
+  throw new Error(params.timeoutMessage);
+}
+
+const OPENCLAW_ATTRIBUTION_PRODUCT = "OpenClaw";
+const OPENCLAW_ATTRIBUTION_ORIGINATOR = "openclaw";
+const LOCAL_ENDPOINT_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const OPENAI_RESPONSES_APIS = new Set([
+  "openai-responses",
+  "azure-openai-responses",
+  "openai-codex-responses",
+]);
+const OPENAI_RESPONSES_PROVIDERS = new Set(["openai", "azure-openai", "azure-openai-responses"]);
+const FORBIDDEN_PROVIDER_REQUEST_HEADER_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const FORBIDDEN_INSECURE_TLS_MESSAGE =
+  "Provider transport overrides do not allow insecureSkipVerify";
+const FORBIDDEN_RUNTIME_TRANSPORT_OVERRIDE_MESSAGE =
+  "Runtime auth request overrides do not allow proxy or TLS transport settings";
+
+function normalizeProviderId(provider) {
+  const normalized = normalizeLowercaseStringOrEmpty(provider);
+  if (normalized === "modelstudio" || normalized === "qwencloud") {
+    return "qwen";
+  }
+  if (normalized === "z.ai" || normalized === "z-ai") {
+    return "zai";
+  }
+  if (normalized === "opencode-zen") {
+    return "opencode";
+  }
+  if (normalized === "opencode-go-auth") {
+    return "opencode-go";
+  }
+  if (normalized === "kimi" || normalized === "kimi-code" || normalized === "kimi-coding") {
+    return "kimi";
+  }
+  if (normalized === "bedrock" || normalized === "aws-bedrock") {
+    return "amazon-bedrock";
+  }
+  if (normalized === "bytedance" || normalized === "doubao") {
+    return "volcengine";
+  }
+  return normalized;
+}
+
+function tryParseHostname(value) {
+  try {
+    return normalizeOptionalLowercaseString(new URL(value).hostname);
+  } catch {
+    return undefined;
+  }
+}
+
+function isSchemelessHostnameCandidate(value) {
+  return /^[a-z0-9.[\]-]+(?::\d+)?(?:[/?#].*)?$/i.test(value);
+}
+
+function resolveUrlHostname(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  const parsedHostname = tryParseHostname(trimmed);
+  if (parsedHostname) {
+    return parsedHostname;
+  }
+  if (!isSchemelessHostnameCandidate(trimmed)) {
+    return undefined;
+  }
+  return tryParseHostname(`https://${trimmed}`);
+}
+
+function normalizeComparableBaseUrl(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  const parsedValue =
+    tryParseHostname(trimmed) || !isSchemelessHostnameCandidate(trimmed)
+      ? trimmed
+      : `https://${trimmed}`;
+  try {
+    const url = new URL(parsedValue);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return undefined;
+    }
+    url.hash = "";
+    url.search = "";
+    return normalizeOptionalLowercaseString(url.toString().replace(/\/+$/, ""));
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveKnownProviderEndpointClass(host, normalizedBaseUrl) {
+  if (host === "api.openai.com") {
+    return "openai-public";
+  }
+  if (host === "openrouter.ai" || host === "api.openrouter.ai") {
+    return "openrouter";
+  }
+  if (host === "api.anthropic.com") {
+    return "anthropic-public";
+  }
+  if (host === "api.moonshot.ai") {
+    return "moonshot-native";
+  }
+  if (host === "dashscope.aliyuncs.com" || host.endsWith(".dashscope.aliyuncs.com")) {
+    return "modelstudio-native";
+  }
+  if (host === "generativelanguage.googleapis.com") {
+    return "google-generative-ai";
+  }
+  if (host.endsWith("-aiplatform.googleapis.com")) {
+    return "google-vertex";
+  }
+  if (host === "api.x.ai") {
+    return "xai-native";
+  }
+  if (host === "api.z.ai") {
+    return "zai-native";
+  }
+  if (host === "api.groq.com") {
+    return "groq-native";
+  }
+  if (host === "api.mistral.ai") {
+    return "mistral-public";
+  }
+  if (host === "api.cerebras.ai") {
+    return "cerebras-native";
+  }
+  if (host === "api.deepseek.com") {
+    return "deepseek-native";
+  }
+  if (normalizedBaseUrl && normalizedBaseUrl.includes("/openai/deployments/")) {
+    return "azure-openai";
+  }
+  return undefined;
+}
+
+function isLocalEndpointHost(host) {
+  return (
+    LOCAL_ENDPOINT_HOSTS.has(host) ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal")
+  );
+}
+
+function resolveProviderEndpoint(baseUrl) {
+  if (typeof baseUrl !== "string" || !baseUrl.trim()) {
+    return { endpointClass: "default" };
+  }
+  const host = resolveUrlHostname(baseUrl);
+  if (!host) {
+    return { endpointClass: "invalid" };
+  }
+  const normalizedBaseUrl = normalizeComparableBaseUrl(baseUrl);
+  const knownEndpointClass = resolveKnownProviderEndpointClass(host, normalizedBaseUrl);
+  if (knownEndpointClass) {
+    const googleVertexRegion =
+      knownEndpointClass === "google-vertex"
+        ? host.slice(0, -"-aiplatform.googleapis.com".length)
+        : undefined;
+    return {
+      endpointClass: knownEndpointClass,
+      hostname: host,
+      ...(googleVertexRegion ? { googleVertexRegion } : {}),
+    };
+  }
+  if (isLocalEndpointHost(host)) {
+    return { endpointClass: "local", hostname: host };
+  }
+  return { endpointClass: "custom", hostname: host };
+}
+
+function resolveKnownProviderFamily(provider) {
+  switch (provider) {
+    case "openai":
+    case "openai-codex":
+    case "azure-openai":
+    case "azure-openai-responses":
+      return "openai-family";
+    default:
+      return provider || "unknown";
+  }
+}
+
+function isOpenAIResponsesApi(api) {
+  const normalizedApi = normalizeOptionalLowercaseString(api);
+  return normalizedApi !== undefined && OPENAI_RESPONSES_APIS.has(normalizedApi);
+}
+
+function resolveProviderAttributionIdentity(env = process.env) {
+  return {
+    product: OPENCLAW_ATTRIBUTION_PRODUCT,
+    version:
+      normalizeOptionalString(env.OPENCLAW_RUNTIME_VERSION) ||
+      normalizeOptionalString(env.OPENZUES_VERSION) ||
+      normalizeOptionalString(env.npm_package_version) ||
+      "0.0.0",
+  };
+}
+
+function formatOpenClawUserAgent(version) {
+  return `${OPENCLAW_ATTRIBUTION_ORIGINATOR}/${version}`;
+}
+
+function buildOpenRouterAttributionPolicy(env = process.env) {
+  const identity = resolveProviderAttributionIdentity(env);
+  return {
+    provider: "openrouter",
+    enabledByDefault: true,
+    verification: "vendor-documented",
+    hook: "request-headers",
+    docsUrl: "https://openrouter.ai/docs/app-attribution",
+    reviewNote: "Documented app attribution headers. Verified in OpenClaw runtime wrapper.",
+    ...identity,
+    headers: {
+      "HTTP-Referer": "https://openclaw.ai",
+      "X-OpenRouter-Title": identity.product,
+      "X-OpenRouter-Categories": "cli-agent",
+    },
+  };
+}
+
+function buildOpenAIAttributionPolicy(provider, env = process.env) {
+  const identity = resolveProviderAttributionIdentity(env);
+  const reviewNote =
+    provider === "openai-codex"
+      ? [
+          "OpenAI Codex ChatGPT-backed traffic supports the same hidden",
+          "originator/User-Agent attribution contract.",
+        ].join(" ")
+      : [
+          "OpenAI native traffic supports hidden originator/User-Agent attribution.",
+          "Verified against the Codex wire contract.",
+        ].join(" ");
+  return {
+    provider,
+    enabledByDefault: true,
+    verification: "vendor-hidden-api-spec",
+    hook: "request-headers",
+    reviewNote,
+    ...identity,
+    headers: {
+      originator: OPENCLAW_ATTRIBUTION_ORIGINATOR,
+      version: identity.version,
+      "User-Agent": formatOpenClawUserAgent(identity.version),
+    },
+  };
+}
+
+function buildSdkHookOnlyPolicy(provider, hook, reviewNote, env = process.env) {
+  return {
+    provider,
+    enabledByDefault: false,
+    verification: "vendor-sdk-hook-only",
+    hook,
+    reviewNote,
+    ...resolveProviderAttributionIdentity(env),
+  };
+}
+
+function listProviderAttributionPolicies(env = process.env) {
+  return [
+    buildOpenRouterAttributionPolicy(env),
+    buildOpenAIAttributionPolicy("openai", env),
+    buildOpenAIAttributionPolicy("openai-codex", env),
+    buildSdkHookOnlyPolicy(
+      "anthropic",
+      "default-headers",
+      "Anthropic JS SDK exposes defaultHeaders, but app attribution is not yet verified.",
+      env,
+    ),
+    buildSdkHookOnlyPolicy(
+      "google",
+      "user-agent-extra",
+      [
+        "Google GenAI JS SDK exposes userAgentExtra/httpOptions, but provider-side",
+        "attribution is not yet verified.",
+      ].join(" "),
+      env,
+    ),
+    buildSdkHookOnlyPolicy(
+      "groq",
+      "default-headers",
+      "Groq JS SDK exposes defaultHeaders, but app attribution is not yet verified.",
+      env,
+    ),
+    buildSdkHookOnlyPolicy(
+      "mistral",
+      "custom-user-agent",
+      "Mistral JS SDK exposes a custom userAgent option, but app attribution is not yet verified.",
+      env,
+    ),
+    buildSdkHookOnlyPolicy(
+      "together",
+      "default-headers",
+      "Together JS SDK exposes defaultHeaders, but app attribution is not yet verified.",
+      env,
+    ),
+  ];
+}
+
+function resolveProviderAttributionPolicy(provider, env = process.env) {
+  const normalized = normalizeProviderId(provider || "");
+  return listProviderAttributionPolicies(env).find((policy) => policy.provider === normalized);
+}
+
+function resolveProviderAttributionHeaders(provider, env = process.env) {
+  const policy = resolveProviderAttributionPolicy(provider, env);
+  if (!policy || policy.enabledByDefault !== true) {
+    return undefined;
+  }
+  return policy.headers;
+}
+
+function resolveProviderRequestPolicy(input = {}, env = process.env) {
+  const provider = normalizeProviderId(input.provider || "");
+  const policy = resolveProviderAttributionPolicy(provider, env);
+  const endpointResolution = resolveProviderEndpoint(input.baseUrl);
+  const endpointClass = endpointResolution.endpointClass;
+  const usesConfiguredBaseUrl = endpointClass !== "default";
+  const usesKnownNativeOpenAIEndpoint =
+    endpointClass === "openai-public" ||
+    endpointClass === "openai-codex" ||
+    endpointClass === "azure-openai";
+  const usesOpenAIPublicAttributionHost = endpointClass === "openai-public";
+  const usesOpenAICodexAttributionHost = endpointClass === "openai-codex";
+  const usesVerifiedOpenAIAttributionHost =
+    usesOpenAIPublicAttributionHost || usesOpenAICodexAttributionHost;
+  const usesExplicitProxyLikeEndpoint = usesConfiguredBaseUrl && !usesKnownNativeOpenAIEndpoint;
+  let attributionProvider;
+  if (provider === "openai" && usesOpenAIPublicAttributionHost) {
+    attributionProvider = "openai";
+  } else if (provider === "openai-codex" && usesOpenAICodexAttributionHost) {
+    attributionProvider = "openai-codex";
+  } else if (provider === "openrouter" && policy && policy.enabledByDefault) {
+    if (endpointClass === "openrouter" || endpointClass === "default") {
+      attributionProvider = "openrouter";
+    }
+  }
+  const attributionHeaders = attributionProvider
+    ? resolveProviderAttributionHeaders(attributionProvider, env)
+    : undefined;
+  return {
+    provider: provider || undefined,
+    policy,
+    endpointClass,
+    usesConfiguredBaseUrl,
+    knownProviderFamily: resolveKnownProviderFamily(provider || undefined),
+    attributionProvider,
+    attributionHeaders,
+    allowsHiddenAttribution:
+      attributionProvider !== undefined &&
+      policy &&
+      policy.verification === "vendor-hidden-api-spec",
+    usesKnownNativeOpenAIEndpoint,
+    usesKnownNativeOpenAIRoute:
+      endpointClass === "default" ? provider === "openai" : usesKnownNativeOpenAIEndpoint,
+    usesVerifiedOpenAIAttributionHost,
+    usesExplicitProxyLikeEndpoint,
+  };
+}
+
+function resolveProviderRequestAttributionHeaders(input = {}, env = process.env) {
+  return resolveProviderRequestPolicy(input, env).attributionHeaders;
+}
+
+function readCompatBoolean(compat, key) {
+  if (!compat || typeof compat !== "object") {
+    return undefined;
+  }
+  const value = compat[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function resolveProviderRequestCapabilities(input = {}, env = process.env) {
+  const policy = resolveProviderRequestPolicy(input, env);
+  const provider = policy.provider;
+  const api = normalizeOptionalLowercaseString(input.api);
+  const endpointClass = policy.endpointClass;
+  const isKnownNativeEndpoint = [
+    "anthropic-public",
+    "cerebras-native",
+    "chutes-native",
+    "deepseek-native",
+    "github-copilot-native",
+    "groq-native",
+    "mistral-public",
+    "moonshot-native",
+    "modelstudio-native",
+    "openai-public",
+    "openai-codex",
+    "opencode-native",
+    "azure-openai",
+    "openrouter",
+    "xai-native",
+    "zai-native",
+    "google-generative-ai",
+    "google-vertex",
+  ].includes(endpointClass);
+  const isResponsesApi = isOpenAIResponsesApi(api);
+  const promptCacheKeySupport = readCompatBoolean(input.compat, "supportsPromptCacheKey");
+  const shouldStripResponsesPromptCache =
+    promptCacheKeySupport === true
+      ? false
+      : promptCacheKeySupport === false
+        ? isResponsesApi
+        : isResponsesApi && policy.usesExplicitProxyLikeEndpoint;
+  return {
+    ...policy,
+    isKnownNativeEndpoint,
+    allowsOpenAIServiceTier:
+      (provider === "openai" && api === "openai-responses" && endpointClass === "openai-public") ||
+      (provider === "openai-codex" &&
+        (api === "openai-codex-responses" || api === "openai-responses") &&
+        endpointClass === "openai-codex"),
+    supportsOpenAIReasoningCompatPayload:
+      provider !== undefined &&
+      api !== undefined &&
+      !policy.usesExplicitProxyLikeEndpoint &&
+      (provider === "openai" ||
+        provider === "openai-codex" ||
+        provider === "azure-openai" ||
+        provider === "azure-openai-responses") &&
+      (api === "openai-completions" ||
+        api === "openai-responses" ||
+        api === "openai-codex-responses" ||
+        api === "azure-openai-responses"),
+    allowsAnthropicServiceTier:
+      provider === "anthropic" &&
+      api === "anthropic-messages" &&
+      (endpointClass === "default" || endpointClass === "anthropic-public"),
+    supportsResponsesStoreField:
+      readCompatBoolean(input.compat, "supportsStore") !== false && isResponsesApi,
+    allowsResponsesStore:
+      readCompatBoolean(input.compat, "supportsStore") !== false &&
+      provider !== undefined &&
+      isResponsesApi &&
+      OPENAI_RESPONSES_PROVIDERS.has(provider) &&
+      policy.usesKnownNativeOpenAIEndpoint,
+    shouldStripResponsesPromptCache,
+    supportsNativeStreamingUsageCompat:
+      endpointClass === "moonshot-native" || endpointClass === "modelstudio-native",
+    supportsOpenAICompletionsStreamingUsageCompat: false,
+  };
+}
+
+function describeProviderRequestRoutingPolicy(policy) {
+  if (!policy.attributionProvider) {
+    return "none";
+  }
+  switch (policy.policy && policy.policy.verification) {
+    case "vendor-hidden-api-spec":
+      return "hidden";
+    case "vendor-documented":
+      return "documented";
+    case "vendor-sdk-hook-only":
+      return "sdk-hook-only";
+    default:
+      return "none";
+  }
+}
+
+function describeProviderRequestRouteClass(policy) {
+  if (policy.endpointClass === "default") {
+    return "default";
+  }
+  if (policy.endpointClass === "invalid") {
+    return "invalid";
+  }
+  if (policy.endpointClass === "local") {
+    return "local";
+  }
+  if (policy.endpointClass === "custom" || policy.endpointClass === "openrouter") {
+    return "proxy-like";
+  }
+  return "native";
+}
+
+function describeProviderRequestRoutingSummary(input = {}, env = process.env) {
+  const policy = resolveProviderRequestPolicy(input, env);
+  const api = normalizeOptionalLowercaseString(input.api) || "unknown";
+  const provider = policy.provider || "unknown";
+  return [
+    `provider=${provider}`,
+    `api=${api}`,
+    `endpoint=${policy.endpointClass}`,
+    `route=${describeProviderRequestRouteClass(policy)}`,
+    `policy=${describeProviderRequestRoutingPolicy(policy)}`,
+  ].join(" ");
+}
+
+function normalizeBaseUrl(baseUrl, fallback) {
+  const raw =
+    (typeof baseUrl === "string" && baseUrl.trim()) ||
+    (typeof fallback === "string" && fallback.trim()) ||
+    "";
+  if (!raw) {
+    return undefined;
+  }
+  return raw.replace(/\/+$/, "");
+}
+
+function sanitizeConfiguredRequestString(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return normalizeOptionalString(value);
+}
+
+function sanitizeConfiguredProviderRequest(request) {
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    return undefined;
+  }
+  let headers;
+  if (request.headers && typeof request.headers === "object" && !Array.isArray(request.headers)) {
+    const nextHeaders = {};
+    for (const [key, value] of Object.entries(request.headers)) {
+      const sanitized = sanitizeConfiguredRequestString(value);
+      if (sanitized) {
+        nextHeaders[key] = sanitized;
+      }
+    }
+    if (Object.keys(nextHeaders).length > 0) {
+      headers = nextHeaders;
+    }
+  }
+  let auth;
+  const rawAuth = request.auth;
+  if (rawAuth && typeof rawAuth === "object" && !Array.isArray(rawAuth)) {
+    if (rawAuth.mode === "provider-default") {
+      auth = { mode: "provider-default" };
+    } else if (rawAuth.mode === "authorization-bearer") {
+      const token = sanitizeConfiguredRequestString(rawAuth.token);
+      if (token) {
+        auth = { mode: "authorization-bearer", token };
+      }
+    } else if (rawAuth.mode === "header") {
+      const headerName = sanitizeConfiguredRequestString(rawAuth.headerName);
+      const value = sanitizeConfiguredRequestString(rawAuth.value);
+      const prefix = sanitizeConfiguredRequestString(rawAuth.prefix);
+      if (headerName && value) {
+        auth = {
+          mode: "header",
+          headerName,
+          value,
+          ...(prefix ? { prefix } : {}),
+        };
+      }
+    }
+  }
+  const sanitizeTls = (tls) => {
+    if (!tls || typeof tls !== "object" || Array.isArray(tls)) {
+      return undefined;
+    }
+    const next = {};
+    for (const key of ["ca", "cert", "key", "passphrase", "serverName"]) {
+      const sanitized = sanitizeConfiguredRequestString(tls[key]);
+      if (sanitized) {
+        next[key] = sanitized;
+      }
+    }
+    if (tls.insecureSkipVerify === true) {
+      next.insecureSkipVerify = true;
+    } else if (tls.insecureSkipVerify === false) {
+      next.insecureSkipVerify = false;
+    }
+    return Object.keys(next).length > 0 ? next : undefined;
+  };
+  let proxy;
+  const rawProxy = request.proxy;
+  if (rawProxy && typeof rawProxy === "object" && !Array.isArray(rawProxy)) {
+    const tls = sanitizeTls(rawProxy.tls);
+    if (rawProxy.mode === "env-proxy") {
+      proxy = { mode: "env-proxy", ...(tls ? { tls } : {}) };
+    } else if (rawProxy.mode === "explicit-proxy") {
+      const url = sanitizeConfiguredRequestString(rawProxy.url);
+      if (url) {
+        proxy = { mode: "explicit-proxy", url, ...(tls ? { tls } : {}) };
+      }
+    }
+  }
+  const tls = sanitizeTls(request.tls);
+  if (!headers && !auth && !proxy && !tls) {
+    return undefined;
+  }
+  return {
+    ...(headers ? { headers } : {}),
+    ...(auth ? { auth } : {}),
+    ...(proxy ? { proxy } : {}),
+    ...(tls ? { tls } : {}),
+  };
+}
+
+function sanitizeConfiguredModelProviderRequest(request) {
+  const sanitized = sanitizeConfiguredProviderRequest(request);
+  const rawAllow = request && request.allowPrivateNetwork;
+  const allowPrivateNetwork = rawAllow === true ? true : rawAllow === false ? false : undefined;
+  if (!sanitized && allowPrivateNetwork === undefined) {
+    return undefined;
+  }
+  return {
+    ...(sanitized || {}),
+    ...(allowPrivateNetwork !== undefined ? { allowPrivateNetwork } : {}),
+  };
+}
+
+function mergeProviderRequestOverrides(...overrides) {
+  const merged = {};
+  let hasMerged = false;
+  for (const current of overrides) {
+    if (!current) {
+      continue;
+    }
+    hasMerged = true;
+    if (current.headers) {
+      merged.headers = Object.assign({}, merged.headers, current.headers);
+    }
+    if (current.auth) {
+      merged.auth = current.auth;
+    }
+    if (current.proxy) {
+      merged.proxy = current.proxy;
+    }
+    if (current.tls) {
+      merged.tls = current.tls;
+    }
+  }
+  return hasMerged ? merged : undefined;
+}
+
+function mergeModelProviderRequestOverrides(...overrides) {
+  let merged = mergeProviderRequestOverrides(...overrides);
+  for (const current of overrides) {
+    if (current && current.allowPrivateNetwork !== undefined) {
+      merged = merged || {};
+      merged.allowPrivateNetwork = current.allowPrivateNetwork;
+    }
+  }
+  return merged;
+}
+
+function mergeProviderRequestHeaders(...headerSets) {
+  let merged;
+  const headerNamesByLowerKey = new Map();
+  for (const headers of headerSets) {
+    if (!headers) {
+      continue;
+    }
+    merged = merged || {};
+    for (const [key, value] of Object.entries(headers)) {
+      const normalizedKey = normalizeLowercaseStringOrEmpty(key);
+      if (FORBIDDEN_PROVIDER_REQUEST_HEADER_KEYS.has(normalizedKey)) {
+        continue;
+      }
+      const previousKey = headerNamesByLowerKey.get(normalizedKey);
+      if (previousKey && previousKey !== key) {
+        delete merged[previousKey];
+      }
+      merged[key] = value;
+      headerNamesByLowerKey.set(normalizedKey, key);
+    }
+  }
+  return merged && Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function resolveTlsOverride(tls) {
+  if (!tls) {
+    return { configured: false };
+  }
+  if (tls.insecureSkipVerify === true) {
+    throw new Error(FORBIDDEN_INSECURE_TLS_MESSAGE);
+  }
+  const ca = normalizeOptionalString(tls.ca);
+  const cert = normalizeOptionalString(tls.cert);
+  const key = normalizeOptionalString(tls.key);
+  const passphrase = normalizeOptionalString(tls.passphrase);
+  const serverName = normalizeOptionalString(tls.serverName);
+  const rejectUnauthorized = tls.insecureSkipVerify === false ? true : undefined;
+  if (!ca && !cert && !key && !passphrase && !serverName && rejectUnauthorized === undefined) {
+    return { configured: false };
+  }
+  return {
+    configured: true,
+    ...(ca ? { ca } : {}),
+    ...(cert ? { cert } : {}),
+    ...(key ? { key } : {}),
+    ...(passphrase ? { passphrase } : {}),
+    ...(serverName ? { serverName } : {}),
+    ...(rejectUnauthorized !== undefined ? { rejectUnauthorized } : {}),
+  };
+}
+
+function resolveAuthOverride(params = {}) {
+  const auth = params.request && params.request.auth;
+  if (auth && auth.mode === "authorization-bearer") {
+    const value = normalizeOptionalString(auth.token);
+    if (value) {
+      return {
+        configured: true,
+        mode: "authorization-bearer",
+        headerName: "Authorization",
+        value,
+        injectAuthorizationHeader: true,
+      };
+    }
+  }
+  if (auth && auth.mode === "header") {
+    const headerName = normalizeOptionalString(auth.headerName);
+    const value = normalizeOptionalString(auth.value);
+    const prefix = normalizeOptionalString(auth.prefix);
+    if (headerName && value) {
+      return {
+        configured: true,
+        mode: "header",
+        headerName,
+        value,
+        ...(prefix ? { prefix } : {}),
+        injectAuthorizationHeader: false,
+      };
+    }
+  }
+  return {
+    configured: false,
+    mode: params.authHeader ? "authorization-bearer" : "provider-default",
+    injectAuthorizationHeader: params.authHeader === true,
+  };
+}
+
+function sanitizeRuntimeProviderRequestOverrides(request) {
+  if (!request) {
+    return undefined;
+  }
+  if (request.proxy || request.tls) {
+    throw new Error(FORBIDDEN_RUNTIME_TRANSPORT_OVERRIDE_MESSAGE);
+  }
+  const headers = request.headers;
+  const auth = request.auth;
+  if (!headers && !auth) {
+    return undefined;
+  }
+  return {
+    ...(headers ? { headers } : {}),
+    ...(auth ? { auth } : {}),
+  };
+}
+
+function resolveProxyOverride(request) {
+  const proxy = request && request.proxy;
+  if (!proxy) {
+    return { configured: false };
+  }
+  const tls = resolveTlsOverride(proxy.tls);
+  if (proxy.mode === "env-proxy") {
+    return {
+      configured: true,
+      mode: "env-proxy",
+      tls,
+    };
+  }
+  const proxyUrl = normalizeOptionalString(proxy.url);
+  if (!proxyUrl) {
+    return { configured: false };
+  }
+  return {
+    configured: true,
+    mode: "explicit-proxy",
+    proxyUrl,
+    tls,
+  };
+}
+
+function applyResolvedAuthHeader(headers, auth) {
+  if (!auth.configured) {
+    return headers;
+  }
+  const next = mergeProviderRequestHeaders(headers) || {};
+  const keysToDelete = new Set([normalizeLowercaseStringOrEmpty(auth.headerName)]);
+  if (auth.mode === "header") {
+    keysToDelete.add("authorization");
+  }
+  for (const key of Object.keys(next)) {
+    if (keysToDelete.has(normalizeLowercaseStringOrEmpty(key))) {
+      delete next[key];
+    }
+  }
+  next[auth.headerName] =
+    auth.mode === "authorization-bearer"
+      ? `Bearer ${auth.value}`
+      : `${auth.prefix || ""}${auth.value}`;
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function toTlsConnectOptions(tls) {
+  if (!tls || !tls.configured) {
+    return undefined;
+  }
+  const next = {};
+  if (tls.ca) {
+    next.ca = tls.ca;
+  }
+  if (tls.cert) {
+    next.cert = tls.cert;
+  }
+  if (tls.key) {
+    next.key = tls.key;
+  }
+  if (tls.passphrase) {
+    next.passphrase = tls.passphrase;
+  }
+  if (tls.serverName) {
+    next.servername = tls.serverName;
+  }
+  if (tls.rejectUnauthorized !== undefined) {
+    next.rejectUnauthorized = tls.rejectUnauthorized;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function buildProviderRequestDispatcherPolicy(request) {
+  const targetTls = toTlsConnectOptions(request.tls);
+  if (!request.proxy.configured) {
+    return targetTls ? { mode: "direct", connect: targetTls } : undefined;
+  }
+  const proxiedTls = toTlsConnectOptions(request.proxy.tls);
+  if (request.proxy.mode === "env-proxy") {
+    return {
+      mode: "env-proxy",
+      ...(targetTls ? { connect: { ...targetTls } } : {}),
+      ...(proxiedTls ? { proxyTls: { ...proxiedTls } } : {}),
+    };
+  }
+  return {
+    mode: "explicit-proxy",
+    proxyUrl: request.proxy.proxyUrl,
+    ...(proxiedTls ? { proxyTls: proxiedTls } : {}),
+  };
+}
+
+function buildProviderRequestTlsClientOptions(request) {
+  return toTlsConnectOptions(request.tls);
+}
+
+function isLoopbackProviderBaseUrl(baseUrl) {
+  if (!baseUrl) {
+    return false;
+  }
+  try {
+    const host = new URL(baseUrl).hostname.trim().toLowerCase().replace(/\.+$/, "");
+    return (
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host === "127.0.0.1" ||
+      host === "::1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function shouldAutoAllowLoopbackModelRequest(params = {}) {
+  return (
+    params.capability === "llm" &&
+    params.transport === "stream" &&
+    params.allowPrivateNetwork === undefined &&
+    (!params.request || params.request.allowPrivateNetwork === undefined) &&
+    isLoopbackProviderBaseUrl(params.baseUrl)
+  );
+}
+
+function resolveProviderRequestPolicyConfig(params = {}) {
+  const baseUrl = normalizeBaseUrl(params.baseUrl, params.defaultBaseUrl);
+  const capability = params.capability || "llm";
+  const transport = params.transport || "http";
+  const policyInput = {
+    provider: params.provider,
+    api: params.api,
+    baseUrl,
+    capability,
+    transport,
+  };
+  const policy = resolveProviderRequestPolicy(policyInput);
+  const capabilities = resolveProviderRequestCapabilities({
+    ...policyInput,
+    compat: params.compat,
+    modelId: params.modelId,
+  });
+  const auth = resolveAuthOverride({
+    authHeader: params.authHeader,
+    request: params.request,
+  });
+  const extraHeaders = applyResolvedAuthHeader(
+    mergeProviderRequestHeaders(
+      params.discoveredHeaders,
+      params.providerHeaders,
+      params.modelHeaders,
+      params.request && params.request.headers,
+    ),
+    auth,
+  );
+  const protectedAttributionKeys = new Set(
+    Object.keys(policy.attributionHeaders || {}).map((key) => normalizeLowercaseStringOrEmpty(key)),
+  );
+  const unprotectedCallerHeaders = params.callerHeaders
+    ? Object.fromEntries(
+        Object.entries(params.callerHeaders).filter(
+          ([key]) => !protectedAttributionKeys.has(normalizeLowercaseStringOrEmpty(key)),
+        ),
+      )
+    : undefined;
+  const mergedDefaults = mergeProviderRequestHeaders(extraHeaders, policy.attributionHeaders);
+  const headers =
+    params.precedence === "defaults-win"
+      ? mergeProviderRequestHeaders(unprotectedCallerHeaders, mergedDefaults)
+      : mergeProviderRequestHeaders(mergedDefaults, unprotectedCallerHeaders);
+  return {
+    api: params.api,
+    baseUrl,
+    headers,
+    extraHeaders: {
+      configured: Boolean(extraHeaders),
+      headers: extraHeaders,
+    },
+    auth,
+    proxy: resolveProxyOverride(params.request),
+    tls: resolveTlsOverride(params.request && params.request.tls),
+    policy,
+    capabilities,
+    allowPrivateNetwork:
+      params.allowPrivateNetwork ??
+      (params.request && params.request.allowPrivateNetwork) ??
+      shouldAutoAllowLoopbackModelRequest(params),
+  };
+}
+
+function resolveProviderRequestConfig(params = {}) {
+  const resolved = resolveProviderRequestPolicyConfig(params);
+  return {
+    api: resolved.api,
+    baseUrl: resolved.baseUrl,
+    headers: resolved.extraHeaders.headers,
+    extraHeaders: resolved.extraHeaders,
+    auth: resolved.auth,
+    proxy: resolved.proxy,
+    tls: resolved.tls,
+    policy: resolved.policy,
+  };
+}
+
+function resolveProviderRequestHeaders(params = {}) {
+  return resolveProviderRequestPolicyConfig({
+    provider: params.provider,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    capability: params.capability,
+    transport: params.transport,
+    callerHeaders: params.callerHeaders,
+    providerHeaders: params.defaultHeaders,
+    precedence: params.precedence,
+    request: params.request,
+  }).headers;
+}
+
+const MODEL_PROVIDER_REQUEST_TRANSPORT_SYMBOL = Symbol.for(
+  "openclaw.modelProviderRequestTransport",
+);
+
+function attachModelProviderRequestTransport(model, request) {
+  if (!request) {
+    return model;
+  }
+  return {
+    ...model,
+    [MODEL_PROVIDER_REQUEST_TRANSPORT_SYMBOL]: request,
+  };
+}
+
+function getModelProviderRequestTransport(model) {
+  return model ? model[MODEL_PROVIDER_REQUEST_TRANSPORT_SYMBOL] : undefined;
+}
+
+function resolveProviderHttpRequestConfig(params = {}) {
+  const requestConfig = resolveProviderRequestPolicyConfig({
+    provider: params.provider || "",
+    baseUrl: params.baseUrl,
+    defaultBaseUrl: params.defaultBaseUrl,
+    capability: params.capability || "other",
+    transport: params.transport || "http",
+    callerHeaders: params.headers
+      ? Object.fromEntries(new Headers(params.headers).entries())
+      : undefined,
+    providerHeaders: params.defaultHeaders,
+    precedence: "caller-wins",
+    allowPrivateNetwork: params.allowPrivateNetwork,
+    api: params.api,
+    request: params.request,
+  });
+  const headers = new Headers(requestConfig.headers);
+  if (!requestConfig.baseUrl) {
+    throw new Error("Missing baseUrl: provide baseUrl or defaultBaseUrl");
+  }
+  return {
+    baseUrl: requestConfig.baseUrl,
+    allowPrivateNetwork: requestConfig.allowPrivateNetwork,
+    headers,
+    dispatcherPolicy: buildProviderRequestDispatcherPolicy(requestConfig),
+    requestConfig,
+  };
+}
+
+function sanitizeAuditContext(auditContext) {
+  const cleaned = auditContext
+    ? String(auditContext)
+        .replace(/[\x00-\x1f\x7f]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    : "";
+  return cleaned ? cleaned.slice(0, 80) : undefined;
+}
+
+function resolveGuardedHttpTimeoutMs(timeoutMs) {
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return 60000;
+  }
+  return timeoutMs;
+}
+
+async function fetchWithTimeoutGuarded(url, init, timeoutMs, fetchFn, options = {}) {
+  return await fetchWithSsrFGuard({
+    url,
+    fetchImpl: fetchFn,
+    init,
+    timeoutMs: resolveGuardedHttpTimeoutMs(timeoutMs),
+    policy: options.ssrfPolicy,
+    lookupFn: options.lookupFn,
+    pinDns: options.pinDns,
+    dispatcherPolicy: options.dispatcherPolicy,
+    auditContext: sanitizeAuditContext(options.auditContext),
+    ...(options.mode ? { mode: options.mode } : {}),
+  });
+}
+
+function resolveGuardedPostRequestOptions(params = {}) {
+  if (
+    !params.allowPrivateNetwork &&
+    !params.dispatcherPolicy &&
+    params.pinDns === undefined &&
+    !params.auditContext &&
+    params.mode === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(params.allowPrivateNetwork ? { ssrfPolicy: { allowPrivateNetwork: true } } : {}),
+    ...(params.pinDns !== undefined ? { pinDns: params.pinDns } : {}),
+    ...(params.dispatcherPolicy ? { dispatcherPolicy: params.dispatcherPolicy } : {}),
+    ...(params.auditContext ? { auditContext: params.auditContext } : {}),
+    ...(params.mode !== undefined ? { mode: params.mode } : {}),
+  };
+}
+
+async function postTranscriptionRequest(params = {}) {
+  return fetchWithTimeoutGuarded(
+    params.url,
+    {
+      method: "POST",
+      headers: params.headers,
+      body: params.body,
+    },
+    params.timeoutMs,
+    params.fetchFn,
+    resolveGuardedPostRequestOptions(params),
+  );
+}
+
+async function postJsonRequest(params = {}) {
+  return fetchWithTimeoutGuarded(
+    params.url,
+    {
+      method: "POST",
+      headers: params.headers,
+      body: JSON.stringify(params.body),
+    },
+    params.timeoutMs,
+    params.fetchFn,
+    resolveGuardedPostRequestOptions(params),
+  );
+}
+
+async function postMultipartRequest(params = {}) {
+  return fetchWithTimeoutGuarded(
+    params.url,
+    {
+      method: "POST",
+      headers: params.headers,
+      body: params.body,
+    },
+    params.timeoutMs,
+    params.fetchFn,
+    resolveGuardedPostRequestOptions(params),
+  );
+}
+
+function requireTranscriptionText(value, missingMessage) {
+  const text = normalizeOptionalString(value);
+  if (!text) {
+    throw new Error(missingMessage);
+  }
+  return text;
+}
+
+const providerHttpRuntime = {
+  asBoolean,
+  asFiniteNumber,
+  asObject: speechCoreAsObject,
+  assertOkOrThrowHttpError,
+  assertOkOrThrowProviderError,
+  attachModelProviderRequestTransport,
+  buildAudioTranscriptionFormData,
+  buildProviderRequestDispatcherPolicy,
+  buildProviderRequestTlsClientOptions,
+  createProviderHttpError,
+  createProviderOperationDeadline,
+  describeProviderRequestRoutingSummary,
+  extractProviderErrorDetail,
+  extractProviderRequestId,
+  fetchWithTimeout,
+  fetchWithTimeoutGuarded,
+  formatProviderErrorPayload,
+  formatProviderHttpErrorMessage,
+  getModelProviderRequestTransport,
+  listProviderAttributionPolicies,
+  mergeModelProviderRequestOverrides,
+  mergeProviderRequestOverrides,
+  normalizeBaseUrl,
+  pollProviderOperationJson,
+  postJsonRequest,
+  postMultipartRequest,
+  postTranscriptionRequest,
+  readResponseTextLimited,
+  requireTranscriptionText,
+  resolveAudioTranscriptionUploadFileName,
+  resolveProviderAttributionHeaders,
+  resolveProviderAttributionIdentity,
+  resolveProviderAttributionPolicy,
+  resolveProviderEndpoint,
+  resolveProviderHttpRequestConfig,
+  resolveProviderOperationTimeoutMs,
+  resolveProviderRequestAttributionHeaders,
+  resolveProviderRequestCapabilities,
+  resolveProviderRequestConfig,
+  resolveProviderRequestHeaders,
+  resolveProviderRequestPolicy,
+  sanitizeConfiguredModelProviderRequest,
+  sanitizeConfiguredProviderRequest,
+  sanitizeRuntimeProviderRequestOverrides,
+  trimToUndefined: normalizeOptionalString,
+  truncateErrorDetail,
+  waitProviderOperationPollInterval,
 };
 
 const runtimeSecretResolutionRuntime = {
@@ -48921,6 +69568,1772 @@ const anthropicVertexAuthPresenceRuntime = {
   hasAnthropicVertexAvailableAuth,
 };
 
+const configRuntime = {
+  GROUP_POLICY_BLOCKED_LABEL,
+  TELEGRAM_COMMAND_NAME_PATTERN,
+  applyModelOverrideToSessionEntry,
+  canonicalizeMainSessionAlias,
+  clearConfigCache,
+  clearRuntimeConfigSnapshot,
+  clearSessionStoreCacheForTest: () => {},
+  coerceSecretRef,
+  evaluateSessionFreshness,
+  evaluateSupplementalContextVisibility,
+  filterSupplementalContextItems,
+  getRuntimeConfig,
+  getRuntimeConfigSnapshot,
+  getRuntimeConfigSourceSnapshot,
+  isDangerousNameMatchingEnabled,
+  isNativeCommandsExplicitlyDisabled,
+  loadConfig,
+  loadCronStore,
+  loadSessionStore,
+  logConfigUpdated,
+  mutateConfigFile,
+  normalizePluginsConfig,
+  normalizeTelegramCommandName: normalizeSlashCommandName,
+  readConfigFileSnapshotForWrite,
+  readSessionUpdatedAt,
+  recordSessionMetaFromInbound,
+  replaceConfigFile,
+  requireRuntimeConfig,
+  resolveActiveTalkProviderConfig,
+  resolveAgentMaxConcurrent,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveChannelContextVisibilityMode,
+  resolveChannelGroupPolicy,
+  resolveChannelGroupRequireMention,
+  resolveChannelModelOverride,
+  resolveChannelResetConfig,
+  resolveConfiguredSecretInputString,
+  resolveConfiguredSecretInputWithFallback,
+  resolveDangerousNameMatchingEnabled,
+  resolveDefaultAgentId,
+  resolveDefaultContextVisibility,
+  resolveDefaultGroupPolicy,
+  resolveGroupSessionKey,
+  resolveLivePluginConfigObject,
+  resolveMarkdownTableMode,
+  resolveNativeCommandsEnabled,
+  resolveNativeSkillsEnabled,
+  resolveOpenProviderRuntimeGroupPolicy,
+  resolvePluginConfigObject,
+  resolveRequiredConfiguredSecretRefInputString,
+  resolveSessionKey,
+  resolveSessionResetPolicy,
+  resolveSessionResetType,
+  resolveStorePath,
+  resolveThreadFlag,
+  resolveToolsBySender,
+  saveCronStore,
+  saveSessionStore,
+  setRuntimeConfigSnapshot,
+  updateConfig,
+  updateLastRoute,
+  updateSessionStore,
+  warnMissingProviderGroupPolicyFallbackOnce,
+  writeConfigFile,
+};
+
+const pluginConfigRuntime = {
+  normalizePluginsConfig,
+  requireRuntimeConfig,
+  resolveEffectiveEnableState,
+  resolveLivePluginConfigObject,
+  resolvePluginConfigObject,
+};
+
+const configMutationRuntime = {
+  logConfigUpdated,
+  mutateConfigFile,
+  readConfigFileSnapshotForWrite,
+  replaceConfigFile,
+  updateConfig,
+};
+
+const GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS = new Set([
+  "patternProperties",
+  "additionalProperties",
+  "$schema",
+  "$id",
+  "$ref",
+  "$defs",
+  "definitions",
+  "examples",
+  "minLength",
+  "maxLength",
+  "minimum",
+  "maximum",
+  "multipleOf",
+  "pattern",
+  "format",
+  "minItems",
+  "maxItems",
+  "uniqueItems",
+  "minProperties",
+  "maxProperties",
+  "not",
+]);
+const XAI_TOOL_SCHEMA_PROFILE = "xai";
+const HTML_ENTITY_TOOL_CALL_ARGUMENTS_ENCODING = "html-entities";
+const XAI_UNSUPPORTED_SCHEMA_KEYWORDS = new Set([
+  "minLength",
+  "maxLength",
+  "minItems",
+  "maxItems",
+  "minContains",
+  "maxContains",
+]);
+
+function copyProviderSchemaMeta(from, to) {
+  for (const key of ["description", "title", "default"]) {
+    if (from && from[key] !== undefined) {
+      to[key] = from[key];
+    }
+  }
+}
+
+function tryFlattenLiteralUnionVariants(variants) {
+  if (!Array.isArray(variants) || variants.length === 0) {
+    return null;
+  }
+  const values = [];
+  let commonType = null;
+  for (const variant of variants) {
+    if (!variant || typeof variant !== "object" || Array.isArray(variant)) {
+      return null;
+    }
+    let literalValue;
+    if (Object.prototype.hasOwnProperty.call(variant, "const")) {
+      literalValue = variant.const;
+    } else if (Array.isArray(variant.enum) && variant.enum.length === 1) {
+      literalValue = variant.enum[0];
+    } else {
+      return null;
+    }
+    const variantType = typeof variant.type === "string" ? variant.type : null;
+    if (!variantType || (commonType !== null && commonType !== variantType)) {
+      return null;
+    }
+    commonType = variantType;
+    values.push(literalValue);
+  }
+  return commonType ? { type: commonType, enum: values } : null;
+}
+
+function isNullProviderSchemaVariant(variant) {
+  if (!variant || typeof variant !== "object" || Array.isArray(variant)) {
+    return false;
+  }
+  if (variant.const === null) {
+    return true;
+  }
+  if (Array.isArray(variant.enum) && variant.enum.length === 1 && variant.enum[0] === null) {
+    return true;
+  }
+  if (variant.type === "null") {
+    return true;
+  }
+  return Array.isArray(variant.type) && variant.type.length === 1 && variant.type[0] === "null";
+}
+
+function sanitizeProviderRequiredFields(schema) {
+  if (!Array.isArray(schema.required)) {
+    return schema;
+  }
+  if (
+    !schema.properties ||
+    typeof schema.properties !== "object" ||
+    Array.isArray(schema.properties)
+  ) {
+    if (schema.type === "object") {
+      delete schema.required;
+    }
+    return schema;
+  }
+  const properties = schema.properties;
+  const required = schema.required.filter(
+    (key) => typeof key === "string" && Object.prototype.hasOwnProperty.call(properties, key),
+  );
+  if (required.length > 0) {
+    schema.required = required;
+  } else {
+    delete schema.required;
+  }
+  return schema;
+}
+
+function cleanSchemaForGemini(schema) {
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+  if (Array.isArray(schema)) {
+    return schema.map(cleanSchemaForGemini);
+  }
+  const obj = schema;
+  const cleaned = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS.has(key)) {
+      continue;
+    }
+    if (key === "const") {
+      cleaned.enum = [value];
+      continue;
+    }
+    if (key === "required" && Array.isArray(value) && value.length === 0) {
+      continue;
+    }
+    if ((key === "anyOf" || key === "oneOf") && Array.isArray(value)) {
+      const variants = value
+        .filter((variant) => !isNullProviderSchemaVariant(variant))
+        .map(cleanSchemaForGemini);
+      const flattened = tryFlattenLiteralUnionVariants(variants);
+      if (flattened) {
+        copyProviderSchemaMeta(obj, flattened);
+        return sanitizeProviderRequiredFields(flattened);
+      }
+      cleaned[key] = variants;
+      continue;
+    }
+    if (key === "type" && Array.isArray(value)) {
+      const types = value.filter((entry) => entry !== "null");
+      cleaned.type = types.length === 1 ? types[0] : types;
+      continue;
+    }
+    if (key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
+      cleaned.properties = Object.fromEntries(
+        Object.entries(value).map(([childKey, childValue]) => [
+          childKey,
+          cleanSchemaForGemini(childValue),
+        ]),
+      );
+      continue;
+    }
+    if (key === "items" && value && typeof value === "object") {
+      cleaned.items = cleanSchemaForGemini(value);
+      continue;
+    }
+    cleaned[key] = value;
+  }
+  return sanitizeProviderRequiredFields(cleaned);
+}
+
+function stripUnsupportedSchemaKeywords(schema, unsupportedKeywords) {
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+  if (Array.isArray(schema)) {
+    return schema.map((entry) => stripUnsupportedSchemaKeywords(entry, unsupportedKeywords));
+  }
+  const cleaned = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (unsupportedKeywords.has(key)) {
+      continue;
+    }
+    cleaned[key] = stripUnsupportedSchemaKeywords(value, unsupportedKeywords);
+  }
+  return cleaned;
+}
+
+function stripXaiUnsupportedKeywords(schema) {
+  return stripUnsupportedSchemaKeywords(schema, XAI_UNSUPPORTED_SCHEMA_KEYWORDS);
+}
+
+function resolveXaiModelCompatPatch() {
+  return {
+    toolSchemaProfile: XAI_TOOL_SCHEMA_PROFILE,
+    unsupportedToolSchemaKeywords: Array.from(XAI_UNSUPPORTED_SCHEMA_KEYWORDS),
+    nativeWebSearchTool: true,
+    toolCallArgumentsEncoding: HTML_ENTITY_TOOL_CALL_ARGUMENTS_ENCODING,
+  };
+}
+
+function applyXaiModelCompat(model = {}) {
+  return {
+    ...model,
+    compat: {
+      ...((model && model.compat) || {}),
+      ...resolveXaiModelCompatPatch(),
+    },
+  };
+}
+
+function findUnsupportedSchemaKeywords(schema, schemaPath, unsupportedKeywords) {
+  if (!schema || typeof schema !== "object") {
+    return [];
+  }
+  if (Array.isArray(schema)) {
+    return schema.flatMap((entry, index) =>
+      findUnsupportedSchemaKeywords(entry, `${schemaPath}[${index}]`, unsupportedKeywords),
+    );
+  }
+  const violations = [];
+  for (const [key, value] of Object.entries(schema)) {
+    if (unsupportedKeywords.has(key)) {
+      violations.push(`${schemaPath}.${key}`);
+    }
+    if (value && typeof value === "object") {
+      violations.push(
+        ...findUnsupportedSchemaKeywords(value, `${schemaPath}.${key}`, unsupportedKeywords),
+      );
+    }
+  }
+  return violations;
+}
+
+function normalizeGeminiToolSchemas(ctx = {}) {
+  return (Array.isArray(ctx.tools) ? ctx.tools : []).map((tool) => ({
+    ...tool,
+    parameters:
+      tool && tool.parameters && typeof tool.parameters === "object"
+        ? cleanSchemaForGemini(tool.parameters)
+        : tool.parameters,
+  }));
+}
+
+function inspectGeminiToolSchemas(ctx = {}) {
+  return (Array.isArray(ctx.tools) ? ctx.tools : []).flatMap((tool, toolIndex) => {
+    const violations = findUnsupportedSchemaKeywords(
+      tool && tool.parameters,
+      `${tool && tool.name ? tool.name : `tool${toolIndex}`}.parameters`,
+      GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS,
+    );
+    return violations.length > 0 ? [{ toolName: tool.name, toolIndex, violations }] : [];
+  });
+}
+
+function shouldApplyOpenAIToolCompat(ctx = {}) {
+  const provider = normalizeLowercaseStringOrEmpty(
+    (ctx.model && ctx.model.provider) || ctx.provider,
+  );
+  const api = normalizeLowercaseStringOrEmpty((ctx.model && ctx.model.api) || ctx.modelApi);
+  const baseUrl = normalizeLowercaseStringOrEmpty((ctx.model && ctx.model.baseUrl) || "");
+  if (provider === "openai") {
+    return (
+      api === "openai-responses" &&
+      (!baseUrl || /^https:\/\/api\.openai\.com(?:\/v1)?(?:\/|$)/i.test(baseUrl))
+    );
+  }
+  if (provider === "openai-codex") {
+    return api === "openai-codex-responses";
+  }
+  return false;
+}
+
+function normalizeOpenAIStrictCompatSchema(schema, options = { promoteEmptyObject: true }) {
+  if (Array.isArray(schema)) {
+    return schema.map((entry) =>
+      normalizeOpenAIStrictCompatSchema(entry, { promoteEmptyObject: false }),
+    );
+  }
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+  const normalized = {};
+  for (const [key, value] of Object.entries(schema)) {
+    normalized[key] =
+      value && typeof value === "object"
+        ? normalizeOpenAIStrictCompatSchema(value, { promoteEmptyObject: false })
+        : value;
+  }
+  if (Object.keys(normalized).length === 0 && options.promoteEmptyObject) {
+    return { type: "object", properties: {}, required: [], additionalProperties: false };
+  }
+  const hasObjectHints =
+    !("type" in normalized) &&
+    ((normalized.properties && typeof normalized.properties === "object") ||
+      Array.isArray(normalized.required));
+  if (hasObjectHints) {
+    normalized.type = "object";
+  }
+  if (normalized.type === "object" && !("properties" in normalized)) {
+    normalized.properties = {};
+  }
+  const hasEmptyProperties =
+    normalized.properties &&
+    typeof normalized.properties === "object" &&
+    !Array.isArray(normalized.properties) &&
+    Object.keys(normalized.properties).length === 0;
+  if (normalized.type === "object" && hasEmptyProperties && !Array.isArray(normalized.required)) {
+    normalized.required = [];
+  }
+  if (
+    normalized.type === "object" &&
+    hasEmptyProperties &&
+    !("additionalProperties" in normalized)
+  ) {
+    normalized.additionalProperties = false;
+  }
+  return normalized;
+}
+
+function normalizeOpenAIToolSchemas(ctx = {}) {
+  if (!shouldApplyOpenAIToolCompat(ctx)) {
+    return Array.isArray(ctx.tools) ? ctx.tools : [];
+  }
+  return (Array.isArray(ctx.tools) ? ctx.tools : []).map((tool) => ({
+    ...tool,
+    parameters: normalizeOpenAIStrictCompatSchema(tool.parameters || {}),
+  }));
+}
+
+function findOpenAIStrictSchemaViolations(schema, schemaPath, options = {}) {
+  if (Array.isArray(schema)) {
+    return options.requireObjectRoot ? [`${schemaPath}.type`] : [];
+  }
+  if (!schema || typeof schema !== "object") {
+    return options.requireObjectRoot ? [`${schemaPath}.type`] : [];
+  }
+  const violations = [];
+  if (Array.isArray(schema.anyOf)) {
+    violations.push(`${schemaPath}.anyOf`);
+  }
+  if (Array.isArray(schema.oneOf)) {
+    violations.push(`${schemaPath}.oneOf`);
+  }
+  if (Array.isArray(schema.allOf)) {
+    violations.push(`${schemaPath}.allOf`);
+  }
+  if (Array.isArray(schema.type)) {
+    violations.push(`${schemaPath}.type`);
+  }
+  if (schema.type === "object") {
+    if (schema.additionalProperties !== false) {
+      violations.push(`${schemaPath}.additionalProperties`);
+    }
+    if (!Array.isArray(schema.required)) {
+      violations.push(`${schemaPath}.required`);
+    } else if (schema.properties && typeof schema.properties === "object") {
+      const requiredSet = new Set(schema.required.filter((entry) => typeof entry === "string"));
+      for (const key of Object.keys(schema.properties)) {
+        if (!requiredSet.has(key)) {
+          violations.push(`${schemaPath}.required.${key}`);
+        }
+      }
+    }
+  }
+  const properties =
+    schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
+      ? schema.properties
+      : undefined;
+  if (properties) {
+    for (const [key, value] of Object.entries(properties)) {
+      violations.push(
+        ...findOpenAIStrictSchemaViolations(value, `${schemaPath}.properties.${key}`),
+      );
+    }
+  }
+  return violations;
+}
+
+function inspectOpenAIToolSchemas(_ctx = {}) {
+  return [];
+}
+
+function buildProviderToolCompatFamilyHooks(family) {
+  switch (family) {
+    case "gemini":
+      return {
+        normalizeToolSchemas: normalizeGeminiToolSchemas,
+        inspectToolSchemas: inspectGeminiToolSchemas,
+      };
+    case "openai":
+      return {
+        normalizeToolSchemas: normalizeOpenAIToolSchemas,
+        inspectToolSchemas: inspectOpenAIToolSchemas,
+      };
+    default:
+      throw new Error("Unsupported provider tool compatibility family");
+  }
+}
+
+const providerToolsRuntime = {
+  GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS,
+  HTML_ENTITY_TOOL_CALL_ARGUMENTS_ENCODING,
+  XAI_TOOL_SCHEMA_PROFILE,
+  XAI_UNSUPPORTED_SCHEMA_KEYWORDS,
+  applyXaiModelCompat,
+  buildProviderToolCompatFamilyHooks,
+  cleanSchemaForGemini,
+  findOpenAIStrictSchemaViolations,
+  findUnsupportedSchemaKeywords,
+  inspectGeminiToolSchemas,
+  inspectOpenAIToolSchemas,
+  normalizeGeminiToolSchemas,
+  normalizeOpenAIToolSchemas,
+  resolveXaiModelCompatPatch,
+  stripUnsupportedSchemaKeywords,
+  stripXaiUnsupportedKeywords,
+};
+
+function createProviderDefaultStream() {
+  return {
+    async result() {
+      return {};
+    },
+    [Symbol.asyncIterator]() {
+      return {
+        async next() {
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
+}
+
+function composeProviderStreamWrappers(baseStreamFn, ...wrappers) {
+  return wrappers.reduce(
+    (streamFn, wrapper) => (wrapper ? wrapper(streamFn) : streamFn),
+    baseStreamFn,
+  );
+}
+
+function defaultToolStreamExtraParams(extraParams) {
+  if (extraParams && Object.prototype.hasOwnProperty.call(extraParams, "tool_stream")) {
+    return extraParams;
+  }
+  return {
+    ...(extraParams || {}),
+    tool_stream: true,
+  };
+}
+
+const PROVIDER_HTML_ENTITY_RE = /&(?:amp|lt|gt|quot|apos|#39|#x[0-9a-f]+|#\d+);/i;
+
+function decodeProviderHtmlEntityString(value) {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/&#(\d+);/gi, (_, dec) => String.fromCodePoint(Number.parseInt(dec, 10)));
+}
+
+function decodeHtmlEntitiesInObject(value) {
+  if (typeof value === "string") {
+    return PROVIDER_HTML_ENTITY_RE.test(value) ? decodeProviderHtmlEntityString(value) : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(decodeHtmlEntitiesInObject);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, decodeHtmlEntitiesInObject(entry)]),
+    );
+  }
+  return value;
+}
+
+function visitProviderContentBlocks(value, visitor, seen = new Set()) {
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  if (seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      visitProviderContentBlocks(entry, visitor, seen);
+    }
+    return;
+  }
+  visitor(value);
+  for (const entry of Object.values(value)) {
+    visitProviderContentBlocks(entry, visitor, seen);
+  }
+}
+
+function decodeToolCallArgumentsHtmlEntitiesInMessage(message) {
+  visitProviderContentBlocks(message, (block) => {
+    if (block.type !== "toolCall" || !block.arguments) {
+      return;
+    }
+    if (typeof block.arguments === "object") {
+      block.arguments = decodeHtmlEntitiesInObject(block.arguments);
+    }
+  });
+}
+
+function wrapStreamMessageObjects(stream, transformMessage) {
+  if (!stream || typeof stream !== "object") {
+    return stream;
+  }
+  if (typeof stream.result === "function") {
+    const originalResult = stream.result.bind(stream);
+    stream.result = async () => {
+      const message = await originalResult();
+      transformMessage(message);
+      return message;
+    };
+  }
+  if (typeof stream[Symbol.asyncIterator] === "function") {
+    const originalAsyncIterator = stream[Symbol.asyncIterator].bind(stream);
+    stream[Symbol.asyncIterator] = function () {
+      const iterator = originalAsyncIterator();
+      return {
+        async next() {
+          const result = await iterator.next();
+          if (!result.done && result.value && typeof result.value === "object") {
+            transformMessage(result.value.partial);
+            transformMessage(result.value.message);
+          }
+          return result;
+        },
+        async return(value) {
+          if (typeof iterator.return === "function") {
+            return iterator.return(value);
+          }
+          return { done: true, value: undefined };
+        },
+        async throw(error) {
+          if (typeof iterator.throw === "function") {
+            return iterator.throw(error);
+          }
+          return { done: true, value: undefined };
+        },
+      };
+    };
+  }
+  return stream;
+}
+
+function createHtmlEntityToolCallArgumentDecodingWrapper(baseStreamFn) {
+  const underlying = baseStreamFn || (() => createProviderDefaultStream());
+  return (model, context, options) => {
+    const maybeStream = underlying(model, context, options);
+    if (maybeStream && typeof maybeStream === "object" && "then" in maybeStream) {
+      return Promise.resolve(maybeStream).then((stream) =>
+        wrapStreamMessageObjects(stream, decodeToolCallArgumentsHtmlEntitiesInMessage),
+      );
+    }
+    return wrapStreamMessageObjects(maybeStream, decodeToolCallArgumentsHtmlEntitiesInMessage);
+  };
+}
+
+function streamWithPayloadPatch(underlying, model, context, options, patchPayload) {
+  const optionsObject = options && typeof options === "object" ? options : {};
+  const originalOnPayload = optionsObject.onPayload;
+  const nextOptions = {
+    ...optionsObject,
+    onPayload(payload, payloadModel) {
+      if (payload && typeof payload === "object") {
+        patchPayload(payload, payloadModel || model);
+      }
+      if (typeof originalOnPayload === "function") {
+        originalOnPayload(payload, payloadModel || model);
+      }
+    },
+  };
+  return underlying(model, context, nextOptions);
+}
+
+function createPayloadPatchStreamWrapper(baseStreamFn, patchPayload, wrapperOptions) {
+  const underlying = baseStreamFn || (() => createProviderDefaultStream());
+  return (model, context, options) => {
+    if (
+      wrapperOptions &&
+      typeof wrapperOptions.shouldPatch === "function" &&
+      !wrapperOptions.shouldPatch({ model, context, options })
+    ) {
+      return underlying(model, context, options);
+    }
+    return streamWithPayloadPatch(underlying, model, context, options, (payload) =>
+      patchPayload({ payload, model, context, options }),
+    );
+  };
+}
+
+function isAnthropicThinkingEnabled(payload) {
+  const thinking = payload && payload.thinking;
+  return Boolean(thinking && typeof thinking === "object" && thinking.type !== "disabled");
+}
+
+function assistantMessageHasAnthropicToolUse(message) {
+  if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+    return true;
+  }
+  const content = message.content;
+  if (!Array.isArray(content)) {
+    return false;
+  }
+  return content.some(
+    (block) =>
+      block &&
+      typeof block === "object" &&
+      (block.type === "tool_use" || block.type === "toolCall"),
+  );
+}
+
+function stripTrailingAssistantPrefillMessages(payload) {
+  if (!payload || !Array.isArray(payload.messages)) {
+    return 0;
+  }
+  let stripped = 0;
+  while (payload.messages.length > 0) {
+    const finalMessage = payload.messages[payload.messages.length - 1];
+    if (!finalMessage || typeof finalMessage !== "object") {
+      break;
+    }
+    if (finalMessage.role !== "assistant" || assistantMessageHasAnthropicToolUse(finalMessage)) {
+      break;
+    }
+    payload.messages.pop();
+    stripped += 1;
+  }
+  return stripped;
+}
+
+function stripTrailingAnthropicAssistantPrefillWhenThinking(payload) {
+  if (!isAnthropicThinkingEnabled(payload || {})) {
+    return 0;
+  }
+  return stripTrailingAssistantPrefillMessages(payload);
+}
+
+function createAnthropicThinkingPrefillPayloadWrapper(baseStreamFn, onStripped, wrapperOptions) {
+  return createPayloadPatchStreamWrapper(
+    baseStreamFn,
+    ({ payload }) => {
+      const stripped = stripTrailingAnthropicAssistantPrefillWhenThinking(payload);
+      if (stripped > 0 && typeof onStripped === "function") {
+        onStripped(stripped);
+      }
+    },
+    wrapperOptions,
+  );
+}
+
+function isOpenAICompatibleThinkingEnabled(params) {
+  const options = (params && params.options) || {};
+  const raw = options.reasoningEffort ?? options.reasoning ?? params.thinkingLevel ?? "high";
+  if (typeof raw !== "string") {
+    return true;
+  }
+  const normalized = raw.trim().toLowerCase();
+  return normalized !== "off" && normalized !== "none";
+}
+
+function isDisabledDeepSeekV4ThinkingLevel(thinkingLevel) {
+  const normalized = typeof thinkingLevel === "string" ? thinkingLevel.toLowerCase() : "";
+  return normalized === "off" || normalized === "none";
+}
+
+function resolveDeepSeekV4ReasoningEffort(thinkingLevel) {
+  return thinkingLevel === "xhigh" || thinkingLevel === "max" ? "max" : "high";
+}
+
+function stripDeepSeekV4ReasoningContent(payload) {
+  if (!Array.isArray(payload.messages)) {
+    return;
+  }
+  for (const message of payload.messages) {
+    if (message && typeof message === "object") {
+      delete message.reasoning_content;
+    }
+  }
+}
+
+function ensureDeepSeekV4AssistantReasoningContent(payload) {
+  if (!Array.isArray(payload.messages)) {
+    return;
+  }
+  for (const message of payload.messages) {
+    if (!message || typeof message !== "object" || message.role !== "assistant") {
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(message, "reasoning_content")) {
+      message.reasoning_content = "";
+    }
+  }
+}
+
+function createDeepSeekV4OpenAICompatibleThinkingWrapper(params) {
+  if (!params || !params.baseStreamFn) {
+    return undefined;
+  }
+  const underlying = params.baseStreamFn;
+  return (model, context, options) => {
+    if (typeof params.shouldPatchModel === "function" && !params.shouldPatchModel(model)) {
+      return underlying(model, context, options);
+    }
+    return streamWithPayloadPatch(underlying, model, context, options, (payload) => {
+      if (isDisabledDeepSeekV4ThinkingLevel(params.thinkingLevel)) {
+        payload.thinking = { type: "disabled" };
+        delete payload.reasoning_effort;
+        delete payload.reasoning;
+        stripDeepSeekV4ReasoningContent(payload);
+        return;
+      }
+      payload.thinking = { type: "enabled" };
+      payload.reasoning_effort = resolveDeepSeekV4ReasoningEffort(params.thinkingLevel);
+      ensureDeepSeekV4AssistantReasoningContent(payload);
+    });
+  };
+}
+
+function isGoogleThinkingRequiredModel(modelId) {
+  return normalizeLowercaseStringOrEmpty(modelId).includes("gemini-2.5-pro");
+}
+
+function isGoogleGemini25ThinkingBudgetModel(modelId) {
+  return /(?:^|\/)gemini-2\.5-/.test(normalizeLowercaseStringOrEmpty(modelId));
+}
+
+function isGoogleGemini3ProModel(modelId) {
+  const normalized = normalizeLowercaseStringOrEmpty(modelId);
+  return /(?:^|\/)gemini-(?:3(?:\.\d+)?-pro|pro-latest)(?:-|$)/.test(normalized);
+}
+
+function isGoogleGemini3FlashModel(modelId) {
+  const normalized = normalizeLowercaseStringOrEmpty(modelId);
+  return /(?:^|\/)gemini-(?:3(?:\.\d+)?-flash|flash(?:-lite)?-latest)(?:-|$)/.test(
+    normalized,
+  );
+}
+
+function isGoogleGemini3ThinkingLevelModel(modelId) {
+  return isGoogleGemini3ProModel(modelId) || isGoogleGemini3FlashModel(modelId);
+}
+
+function resolveGoogleGemini3ThinkingLevel(params) {
+  if (!params || typeof params.modelId !== "string") {
+    return undefined;
+  }
+  if (isGoogleGemini3ProModel(params.modelId)) {
+    switch (params.thinkingLevel) {
+      case "off":
+      case "minimal":
+      case "low":
+        return "LOW";
+      case "medium":
+      case "high":
+      case "max":
+      case "xhigh":
+        return "HIGH";
+      case "adaptive":
+        return undefined;
+      default:
+        break;
+    }
+    if (typeof params.thinkingBudget === "number") {
+      if (params.thinkingBudget < 0) {
+        return undefined;
+      }
+      return params.thinkingBudget <= 2048 ? "LOW" : "HIGH";
+    }
+    return undefined;
+  }
+  if (!isGoogleGemini3FlashModel(params.modelId)) {
+    return undefined;
+  }
+  switch (params.thinkingLevel) {
+    case "off":
+    case "minimal":
+      return "MINIMAL";
+    case "low":
+      return "LOW";
+    case "medium":
+      return "MEDIUM";
+    case "high":
+    case "max":
+    case "xhigh":
+      return "HIGH";
+    case "adaptive":
+      return undefined;
+    default:
+      break;
+  }
+  if (typeof params.thinkingBudget !== "number" || params.thinkingBudget < 0) {
+    return undefined;
+  }
+  if (params.thinkingBudget <= 0) {
+    return "MINIMAL";
+  }
+  if (params.thinkingBudget <= 2048) {
+    return "LOW";
+  }
+  if (params.thinkingBudget <= 8192) {
+    return "MEDIUM";
+  }
+  return "HIGH";
+}
+
+function stripInvalidGoogleThinkingBudget(params) {
+  if (
+    !params ||
+    !params.thinkingConfig ||
+    params.thinkingConfig.thinkingBudget !== 0 ||
+    typeof params.modelId !== "string" ||
+    !isGoogleThinkingRequiredModel(params.modelId)
+  ) {
+    return false;
+  }
+  delete params.thinkingConfig.thinkingBudget;
+  return true;
+}
+
+function isGemma4Model(modelId) {
+  return normalizeLowercaseStringOrEmpty(modelId).startsWith("gemma-4");
+}
+
+function mapThinkLevelToGemma4ThinkingLevel(thinkingLevel) {
+  switch (thinkingLevel) {
+    case "off":
+      return undefined;
+    case "minimal":
+    case "low":
+      return "MINIMAL";
+    case "medium":
+    case "adaptive":
+    case "high":
+    case "max":
+    case "xhigh":
+      return "HIGH";
+    default:
+      return undefined;
+  }
+}
+
+function normalizeGemma4ThinkingLevel(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  switch (value.trim().toUpperCase()) {
+    case "MINIMAL":
+    case "LOW":
+      return "MINIMAL";
+    case "MEDIUM":
+    case "HIGH":
+      return "HIGH";
+    default:
+      return undefined;
+  }
+}
+
+function deleteEmptyThinkingConfigContainer(configObj, thinkingConfigObj) {
+  if (Object.keys(thinkingConfigObj).length === 0) {
+    delete configObj.thinkingConfig;
+  }
+}
+
+function sanitizeGoogleThinkingConfigContainer(params) {
+  if (!params.container || typeof params.container !== "object") {
+    return;
+  }
+  const configObj = params.container;
+  const thinkingConfigObj = configObj.thinkingConfig;
+  if (!thinkingConfigObj || typeof thinkingConfigObj !== "object") {
+    return;
+  }
+  if (typeof params.modelId === "string" && isGemma4Model(params.modelId)) {
+    const normalizedThinkingLevel = normalizeGemma4ThinkingLevel(
+      thinkingConfigObj.thinkingLevel,
+    );
+    const explicitMappedLevel = mapThinkLevelToGemma4ThinkingLevel(params.thinkingLevel);
+    const disabledViaBudget =
+      typeof thinkingConfigObj.thinkingBudget === "number" &&
+      thinkingConfigObj.thinkingBudget <= 0;
+    const hadThinkingBudget = thinkingConfigObj.thinkingBudget !== undefined;
+    delete thinkingConfigObj.thinkingBudget;
+    if (
+      params.thinkingLevel === "off" ||
+      (disabledViaBudget && explicitMappedLevel === undefined && !normalizedThinkingLevel)
+    ) {
+      delete thinkingConfigObj.thinkingLevel;
+      deleteEmptyThinkingConfigContainer(configObj, thinkingConfigObj);
+      return;
+    }
+    const mappedLevel =
+      explicitMappedLevel ?? normalizedThinkingLevel ?? (hadThinkingBudget ? "MINIMAL" : undefined);
+    if (mappedLevel) {
+      thinkingConfigObj.thinkingLevel = mappedLevel;
+    }
+    return;
+  }
+  const thinkingBudget = thinkingConfigObj.thinkingBudget;
+  if (
+    params.thinkingLevel === "adaptive" &&
+    typeof params.modelId === "string" &&
+    isGoogleGemini25ThinkingBudgetModel(params.modelId)
+  ) {
+    delete thinkingConfigObj.thinkingLevel;
+    thinkingConfigObj.thinkingBudget = -1;
+    return;
+  }
+  if (
+    params.thinkingLevel === "adaptive" &&
+    typeof params.modelId === "string" &&
+    isGoogleGemini3ThinkingLevelModel(params.modelId)
+  ) {
+    delete thinkingConfigObj.thinkingBudget;
+    delete thinkingConfigObj.thinkingLevel;
+    deleteEmptyThinkingConfigContainer(configObj, thinkingConfigObj);
+    return;
+  }
+  if (typeof params.modelId === "string" && isGoogleGemini3ThinkingLevelModel(params.modelId)) {
+    const mappedLevel = resolveGoogleGemini3ThinkingLevel({
+      modelId: params.modelId,
+      thinkingLevel: params.thinkingLevel,
+      thinkingBudget: typeof thinkingBudget === "number" ? thinkingBudget : undefined,
+    });
+    delete thinkingConfigObj.thinkingBudget;
+    if (mappedLevel) {
+      thinkingConfigObj.thinkingLevel = mappedLevel;
+    }
+    deleteEmptyThinkingConfigContainer(configObj, thinkingConfigObj);
+    return;
+  }
+  if (
+    stripInvalidGoogleThinkingBudget({
+      thinkingConfig: thinkingConfigObj,
+      modelId: params.modelId,
+    })
+  ) {
+    deleteEmptyThinkingConfigContainer(configObj, thinkingConfigObj);
+    return;
+  }
+  if (typeof thinkingBudget !== "number" || thinkingBudget >= 0) {
+    return;
+  }
+  delete thinkingConfigObj.thinkingBudget;
+  deleteEmptyThinkingConfigContainer(configObj, thinkingConfigObj);
+}
+
+function sanitizeGoogleThinkingPayload(params) {
+  if (!params || !params.payload || typeof params.payload !== "object") {
+    return;
+  }
+  sanitizeGoogleThinkingConfigContainer({
+    container: params.payload.config,
+    modelId: params.modelId,
+    thinkingLevel: params.thinkingLevel,
+  });
+  sanitizeGoogleThinkingConfigContainer({
+    container: params.payload.generationConfig,
+    modelId: params.modelId,
+    thinkingLevel: params.thinkingLevel,
+  });
+}
+
+function createGoogleThinkingPayloadWrapper(baseStreamFn, thinkingLevel) {
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload, model }) => {
+    if (model && model.api === "google-generative-ai") {
+      sanitizeGoogleThinkingPayload({ payload, modelId: model.id, thinkingLevel });
+    }
+  });
+}
+
+function createGoogleThinkingStreamWrapper(ctx) {
+  return createGoogleThinkingPayloadWrapper(ctx.streamFn, ctx.thinkingLevel);
+}
+
+function normalizeMoonshotThinkingType(value) {
+  if (typeof value === "boolean") {
+    return value ? "enabled" : "disabled";
+  }
+  if (typeof value === "string") {
+    const normalized = normalizeLowercaseStringOrEmpty(value);
+    if (["enabled", "enable", "on", "true"].includes(normalized)) {
+      return "enabled";
+    }
+    if (["disabled", "disable", "off", "false"].includes(normalized)) {
+      return "disabled";
+    }
+    return undefined;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return normalizeMoonshotThinkingType(value.type);
+  }
+  return undefined;
+}
+
+function resolveMoonshotThinkingType(params) {
+  const configured = normalizeMoonshotThinkingType(params && params.configuredThinking);
+  if (configured) {
+    return configured;
+  }
+  if (!params || !params.thinkingLevel) {
+    return undefined;
+  }
+  return params.thinkingLevel === "off" ? "disabled" : "enabled";
+}
+
+function resolveMoonshotThinkingKeep(params) {
+  const value = params && params.configuredThinking;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return normalizeLowercaseStringOrEmpty(value.keep) === "all" ? "all" : undefined;
+}
+
+function isMoonshotToolChoiceCompatible(toolChoice) {
+  if (toolChoice == null || toolChoice === "auto" || toolChoice === "none") {
+    return true;
+  }
+  return (
+    toolChoice &&
+    typeof toolChoice === "object" &&
+    !Array.isArray(toolChoice) &&
+    (toolChoice.type === "auto" || toolChoice.type === "none")
+  );
+}
+
+function isPinnedMoonshotToolChoice(toolChoice) {
+  return (
+    toolChoice &&
+    typeof toolChoice === "object" &&
+    !Array.isArray(toolChoice) &&
+    (toolChoice.type === "tool" || toolChoice.type === "function")
+  );
+}
+
+function createMoonshotThinkingWrapper(baseStreamFn, thinkingType, thinkingKeep) {
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload }) => {
+    let effectiveThinkingType = normalizeMoonshotThinkingType(payload.thinking);
+    if (thinkingType) {
+      payload.thinking = { type: thinkingType };
+      effectiveThinkingType = thinkingType;
+    }
+    if (
+      effectiveThinkingType === "enabled" &&
+      !isMoonshotToolChoiceCompatible(payload.tool_choice)
+    ) {
+      if (payload.tool_choice === "required") {
+        payload.tool_choice = "auto";
+      } else if (isPinnedMoonshotToolChoice(payload.tool_choice)) {
+        payload.thinking = { type: "disabled" };
+        effectiveThinkingType = "disabled";
+      }
+    }
+    const thinkingObj =
+      payload.thinking && typeof payload.thinking === "object" ? payload.thinking : undefined;
+    if (!thinkingObj) {
+      return;
+    }
+    if (payload.model === "kimi-k2.6" && effectiveThinkingType === "enabled") {
+      if (thinkingKeep === "all") {
+        thinkingObj.keep = "all";
+      }
+    } else {
+      delete thinkingObj.keep;
+    }
+  });
+}
+
+function createToolStreamWrapper(baseStreamFn, enabled) {
+  if (!enabled) {
+    return baseStreamFn || (() => createProviderDefaultStream());
+  }
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload }) => {
+    payload.tool_stream = true;
+  });
+}
+
+const createZaiToolStreamWrapper = createToolStreamWrapper;
+
+const providerStreamSharedRuntime = {
+  composeProviderStreamWrappers,
+  createAnthropicThinkingPrefillPayloadWrapper,
+  createDeepSeekV4OpenAICompatibleThinkingWrapper,
+  createGoogleThinkingPayloadWrapper,
+  createGoogleThinkingStreamWrapper,
+  createHtmlEntityToolCallArgumentDecodingWrapper,
+  createMoonshotThinkingWrapper,
+  createPayloadPatchStreamWrapper,
+  createToolStreamWrapper,
+  createZaiToolStreamWrapper,
+  decodeHtmlEntitiesInObject,
+  defaultToolStreamExtraParams,
+  isGoogleGemini25ThinkingBudgetModel,
+  isGoogleGemini3FlashModel,
+  isGoogleGemini3ProModel,
+  isGoogleGemini3ThinkingLevelModel,
+  isGoogleThinkingRequiredModel,
+  isOpenAICompatibleThinkingEnabled,
+  resolveMoonshotThinkingKeep,
+  resolveMoonshotThinkingType,
+  resolveGoogleGemini3ThinkingLevel,
+  sanitizeGoogleThinkingPayload,
+  streamWithPayloadPatch,
+  stripInvalidGoogleThinkingBudget,
+  stripTrailingAnthropicAssistantPrefillWhenThinking,
+  stripTrailingAssistantPrefillMessages,
+  wrapStreamMessageObjects,
+};
+
+function resolveOpenAIFastMode(extraParams) {
+  return Boolean(
+    extraParams &&
+      (extraParams.fastMode === true ||
+        extraParams.fast_mode === true ||
+        extraParams.fast === true),
+  );
+}
+
+function resolveOpenAIServiceTier(extraParams) {
+  const value = extraParams && (extraParams.serviceTier ?? extraParams.service_tier);
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function resolveOpenAITextVerbosity(extraParams) {
+  const value =
+    extraParams &&
+    (extraParams.textVerbosity ?? extraParams.text_verbosity ?? extraParams.verbosity);
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return ["low", "medium", "high"].includes(normalized) ? normalized : undefined;
+}
+
+function createOpenAIAttributionHeadersWrapper(baseStreamFn) {
+  const underlying = baseStreamFn || (() => createProviderDefaultStream());
+  return (model, context, options) => {
+    const optionsObject = options && typeof options === "object" ? options : {};
+    return underlying(model, context, {
+      ...optionsObject,
+      headers: {
+        ...(optionsObject.headers || {}),
+        "OpenAI-Beta": "responses=v1",
+      },
+    });
+  };
+}
+
+function createOpenAIServiceTierWrapper(baseStreamFn, serviceTier) {
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload }) => {
+    payload.service_tier = serviceTier;
+  });
+}
+
+function createOpenAITextVerbosityWrapper(baseStreamFn, verbosity) {
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload }) => {
+    payload.text = {
+      ...(payload.text && typeof payload.text === "object" ? payload.text : {}),
+      verbosity,
+    };
+  });
+}
+
+function createOpenAIFastModeWrapper(baseStreamFn) {
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload }) => {
+    payload.reasoning = { effort: "low" };
+  });
+}
+
+function createOpenAIThinkingLevelWrapper(baseStreamFn, thinkingLevel) {
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload, options }) => {
+    if (payload.reasoning) {
+      return;
+    }
+    const enabled = isOpenAICompatibleThinkingEnabled({ thinkingLevel, options });
+    if (enabled) {
+      payload.reasoning = { effort: thinkingLevel || "high" };
+    }
+  });
+}
+
+function createOpenAIReasoningCompatibilityWrapper(baseStreamFn) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function createOpenAIResponsesContextManagementWrapper(baseStreamFn, _extraParams) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function createCodexNativeWebSearchWrapper(baseStreamFn, _params) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function createOpenAIStringContentWrapper(baseStreamFn) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function createOpenAIDefaultTransportWrapper(baseStreamFn) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function createMinimaxFastModeWrapper(baseStreamFn, enabled) {
+  const underlying = baseStreamFn || (() => createProviderDefaultStream());
+  return (model, context, options) => {
+    if (!enabled || !model || model.provider !== "minimax" || typeof model.id !== "string") {
+      return underlying(model, context, options);
+    }
+    const nextModel = {
+      ...model,
+      id: model.id.endsWith("-highspeed") ? model.id : `${model.id}-highspeed`,
+    };
+    return underlying(nextModel, context, options);
+  };
+}
+
+function isProxyReasoningUnsupported(modelId) {
+  const normalized = normalizeLowercaseStringOrEmpty(modelId);
+  return (
+    normalized === "auto" ||
+    normalized === "kilo/auto" ||
+    normalized.includes("grok") ||
+    normalized.startsWith("x-ai/")
+  );
+}
+
+function createProxyThinkingWrapper(baseStreamFn, thinkingLevel) {
+  if (!thinkingLevel) {
+    return baseStreamFn || (() => createProviderDefaultStream());
+  }
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload }) => {
+    payload.reasoning = { effort: thinkingLevel === "xhigh" ? "high" : thinkingLevel };
+  });
+}
+
+function createKilocodeWrapper(baseStreamFn, thinkingLevel) {
+  return createProxyThinkingWrapper(baseStreamFn, thinkingLevel);
+}
+
+function createOpenRouterWrapper(baseStreamFn, thinkingLevel) {
+  return createProxyThinkingWrapper(baseStreamFn, thinkingLevel);
+}
+
+function createOpenRouterSystemCacheWrapper(baseStreamFn) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function getOpenRouterModelCapabilities(_modelId) {
+  return {};
+}
+
+async function loadOpenRouterModelCapabilities(_params) {
+  return {};
+}
+
+function buildProviderStreamFamilyHooks(family) {
+  switch (family) {
+    case "google-thinking":
+      return {
+        wrapStreamFn: (ctx) =>
+          createGoogleThinkingPayloadWrapper(ctx.streamFn, ctx.thinkingLevel),
+      };
+    case "moonshot-thinking":
+      return {
+        wrapStreamFn: (ctx) => {
+          const thinkingType = resolveMoonshotThinkingType({
+            configuredThinking: ctx.extraParams && ctx.extraParams.thinking,
+            thinkingLevel: ctx.thinkingLevel,
+          });
+          const thinkingKeep = resolveMoonshotThinkingKeep({
+            configuredThinking: ctx.extraParams && ctx.extraParams.thinking,
+          });
+          return createMoonshotThinkingWrapper(ctx.streamFn, thinkingType, thinkingKeep);
+        },
+      };
+    case "kilocode-thinking":
+      return {
+        wrapStreamFn: (ctx) => {
+          const thinkingLevel =
+            ctx.modelId === "kilo/auto" || isProxyReasoningUnsupported(ctx.modelId)
+              ? undefined
+              : ctx.thinkingLevel;
+          return createKilocodeWrapper(ctx.streamFn, thinkingLevel);
+        },
+      };
+    case "minimax-fast-mode":
+      return {
+        wrapStreamFn: (ctx) =>
+          createMinimaxFastModeWrapper(ctx.streamFn, ctx.extraParams?.fastMode === true),
+      };
+    case "openai-responses-defaults":
+      return {
+        wrapStreamFn: (ctx) => {
+          let nextStreamFn = createOpenAIAttributionHeadersWrapper(ctx.streamFn);
+          if (resolveOpenAIFastMode(ctx.extraParams)) {
+            nextStreamFn = createOpenAIFastModeWrapper(nextStreamFn);
+          }
+          const serviceTier = resolveOpenAIServiceTier(ctx.extraParams);
+          if (serviceTier) {
+            nextStreamFn = createOpenAIServiceTierWrapper(nextStreamFn, serviceTier);
+          }
+          const textVerbosity = resolveOpenAITextVerbosity(ctx.extraParams);
+          if (textVerbosity) {
+            nextStreamFn = createOpenAITextVerbosityWrapper(nextStreamFn, textVerbosity);
+          }
+          nextStreamFn = createCodexNativeWebSearchWrapper(nextStreamFn, {
+            config: ctx.config,
+            agentDir: ctx.agentDir,
+          });
+          nextStreamFn = createOpenAIStringContentWrapper(nextStreamFn);
+          return createOpenAIResponsesContextManagementWrapper(
+            createOpenAIReasoningCompatibilityWrapper(
+              createOpenAIThinkingLevelWrapper(nextStreamFn, ctx.thinkingLevel),
+            ),
+            ctx.extraParams,
+          );
+        },
+      };
+    case "openrouter-thinking":
+      return {
+        wrapStreamFn: (ctx) => {
+          const thinkingLevel =
+            ctx.modelId === "auto" || isProxyReasoningUnsupported(ctx.modelId)
+              ? undefined
+              : ctx.thinkingLevel;
+          return createOpenRouterWrapper(ctx.streamFn, thinkingLevel);
+        },
+      };
+    case "tool-stream-default-on":
+      return {
+        wrapStreamFn: (ctx) =>
+          createToolStreamWrapper(ctx.streamFn, ctx.extraParams?.tool_stream !== false),
+      };
+    default:
+      throw new Error("Unsupported provider stream family");
+  }
+}
+
+const GOOGLE_THINKING_STREAM_HOOKS = buildProviderStreamFamilyHooks("google-thinking");
+const KILOCODE_THINKING_STREAM_HOOKS = buildProviderStreamFamilyHooks("kilocode-thinking");
+const MOONSHOT_THINKING_STREAM_HOOKS = buildProviderStreamFamilyHooks("moonshot-thinking");
+const MINIMAX_FAST_MODE_STREAM_HOOKS = buildProviderStreamFamilyHooks("minimax-fast-mode");
+const OPENAI_RESPONSES_STREAM_HOOKS = buildProviderStreamFamilyHooks(
+  "openai-responses-defaults",
+);
+const OPENROUTER_THINKING_STREAM_HOOKS = buildProviderStreamFamilyHooks("openrouter-thinking");
+const TOOL_STREAM_DEFAULT_ON_HOOKS = buildProviderStreamFamilyHooks("tool-stream-default-on");
+
+const providerStreamRuntime = {
+  ...providerStreamSharedRuntime,
+  GOOGLE_THINKING_STREAM_HOOKS,
+  KILOCODE_THINKING_STREAM_HOOKS,
+  MINIMAX_FAST_MODE_STREAM_HOOKS,
+  MOONSHOT_THINKING_STREAM_HOOKS,
+  OPENAI_RESPONSES_STREAM_HOOKS,
+  OPENROUTER_THINKING_STREAM_HOOKS,
+  TOOL_STREAM_DEFAULT_ON_HOOKS,
+  buildProviderStreamFamilyHooks,
+  createCodexNativeWebSearchWrapper,
+  createKilocodeWrapper,
+  createMinimaxFastModeWrapper,
+  createOpenAIAttributionHeadersWrapper,
+  createOpenAIDefaultTransportWrapper,
+  createOpenAIFastModeWrapper,
+  createOpenAIReasoningCompatibilityWrapper,
+  createOpenAIResponsesContextManagementWrapper,
+  createOpenAIServiceTierWrapper,
+  createOpenAIStringContentWrapper,
+  createOpenAITextVerbosityWrapper,
+  createOpenAIThinkingLevelWrapper,
+  createOpenRouterSystemCacheWrapper,
+  createOpenRouterWrapper,
+  getOpenRouterModelCapabilities,
+  isProxyReasoningUnsupported,
+  loadOpenRouterModelCapabilities,
+  resolveOpenAIFastMode,
+  resolveOpenAIServiceTier,
+  resolveOpenAITextVerbosity,
+};
+
+const SYSTEM_PROMPT_CACHE_BOUNDARY = "\n<!-- OPENCLAW_CACHE_BOUNDARY -->\n";
+
+function stripSystemPromptCacheBoundary(text) {
+  return String(text).split(SYSTEM_PROMPT_CACHE_BOUNDARY).join("\n");
+}
+
+function sanitizeTransportPayloadText(text) {
+  return String(text).replace(
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+    "",
+  );
+}
+
+function coerceTransportToolCallArguments(argumentsValue) {
+  if (argumentsValue && typeof argumentsValue === "object" && !Array.isArray(argumentsValue)) {
+    return argumentsValue;
+  }
+  if (typeof argumentsValue === "string") {
+    try {
+      const parsed = JSON.parse(argumentsValue);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function mergeTransportHeaders(...headerSources) {
+  const merged = {};
+  for (const headers of headerSources) {
+    if (headers && typeof headers === "object") {
+      Object.assign(merged, headers);
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function createEmptyTransportUsage() {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+function createWritableTransportEventStream() {
+  const eventStream = {
+    events: [],
+    ended: false,
+  };
+  const stream = {
+    push(event) {
+      eventStream.events.push(event);
+    },
+    end() {
+      eventStream.ended = true;
+    },
+  };
+  return { eventStream, stream };
+}
+
+function finalizeTransportStream(params) {
+  const { stream, output, signal } = params;
+  if (signal && signal.aborted) {
+    throw new Error("Request was aborted");
+  }
+  if (output.stopReason === "aborted" || output.stopReason === "error") {
+    throw new Error("An unknown error occurred");
+  }
+  stream.push({ type: "done", reason: output.stopReason, message: output });
+  stream.end();
+}
+
+function failTransportStream(params) {
+  const { stream, output, signal, error, cleanup } = params;
+  if (typeof cleanup === "function") {
+    cleanup();
+  }
+  output.stopReason = signal && signal.aborted ? "aborted" : "error";
+  output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+  stream.push({ type: "error", reason: output.stopReason, error: output });
+  stream.end();
+}
+
+const SYNTHETIC_TOOL_RESULT_APIS = new Set([
+  "anthropic-messages",
+  "openclaw-anthropic-messages-transport",
+  "bedrock-converse-stream",
+  "google-generative-ai",
+  "openclaw-google-generative-ai-transport",
+  "openai-responses",
+  "openai-codex-responses",
+  "azure-openai-responses",
+  "openclaw-openai-responses-transport",
+  "openclaw-azure-openai-responses-transport",
+]);
+
+const CODEX_STYLE_ABORTED_OUTPUT_APIS = new Set([
+  "openai-responses",
+  "openai-codex-responses",
+  "azure-openai-responses",
+  "openclaw-openai-responses-transport",
+  "openclaw-azure-openai-responses-transport",
+]);
+
+function isFailedTransportAssistantTurn(message) {
+  return (
+    message &&
+    message.role === "assistant" &&
+    (message.stopReason === "error" || message.stopReason === "aborted")
+  );
+}
+
+function transportAssistantToolCalls(message) {
+  if (!message || message.role !== "assistant" || !Array.isArray(message.content)) {
+    return [];
+  }
+  return message.content.filter((block) => block && block.type === "toolCall");
+}
+
+function transformTransportMessages(messages, model, normalizeToolCallId) {
+  const allowSynthetic = SYNTHETIC_TOOL_RESULT_APIS.has(model && model.api);
+  const syntheticText = CODEX_STYLE_ABORTED_OUTPUT_APIS.has(model && model.api)
+    ? "aborted"
+    : "No result provided";
+  const realResultsById = new Map();
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (message && message.role === "toolResult" && typeof message.toolCallId === "string") {
+      realResultsById.set(message.toolCallId, message);
+    }
+  }
+  const emittedRealResults = new Set();
+  const output = [];
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (isFailedTransportAssistantTurn(message)) {
+      continue;
+    }
+    if (message.role === "toolResult") {
+      if (!emittedRealResults.has(message.toolCallId)) {
+        output.push(message);
+        emittedRealResults.add(message.toolCallId);
+      }
+      continue;
+    }
+    if (message.role !== "assistant") {
+      output.push(message);
+      continue;
+    }
+    const nextAssistant = { ...message };
+    if (Array.isArray(message.content)) {
+      nextAssistant.content = message.content.map((block) => {
+        if (
+          block &&
+          block.type === "toolCall" &&
+          typeof block.id === "string" &&
+          typeof normalizeToolCallId === "function"
+        ) {
+          const normalizedId = normalizeToolCallId(block.id, model, message);
+          return normalizedId !== block.id ? { ...block, id: normalizedId } : block;
+        }
+        return block;
+      });
+    }
+    output.push(nextAssistant);
+    if (!allowSynthetic) {
+      continue;
+    }
+    for (const toolCall of transportAssistantToolCalls(nextAssistant)) {
+      const existing = realResultsById.get(toolCall.id);
+      if (existing && !emittedRealResults.has(toolCall.id)) {
+        output.push(existing);
+        emittedRealResults.add(toolCall.id);
+        continue;
+      }
+      if (!existing) {
+        output.push({
+          role: "toolResult",
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          content: [{ type: "text", text: syntheticText }],
+          isError: true,
+        });
+      }
+    }
+  }
+  return output;
+}
+
+function convertTransportCompletionMessage(message) {
+  if (message.role === "user" && typeof message.content === "string") {
+    return { role: "user", content: sanitizeTransportPayloadText(message.content) };
+  }
+  if (message.role === "assistant" && Array.isArray(message.content)) {
+    return {
+      role: "assistant",
+      content: message.content
+        .filter((block) => block && block.type === "text")
+        .map((block) => sanitizeTransportPayloadText(block.text || ""))
+        .join(""),
+    };
+  }
+  if (message.role === "toolResult") {
+    return {
+      role: "tool",
+      tool_call_id: message.toolCallId,
+      content: (message.content || [])
+        .filter((block) => block && block.type === "text")
+        .map((block) => sanitizeTransportPayloadText(block.text || ""))
+        .join("\n"),
+    };
+  }
+  return message;
+}
+
+function buildOpenAICompletionsParams(model, context, options) {
+  const compat = (model && model.compat) || {};
+  const params = {
+    model: model.id,
+    messages: [],
+    stream: true,
+    stream_options: { include_usage: true },
+  };
+  if (context && context.systemPrompt) {
+    params.messages.push({
+      role: "system",
+      content: sanitizeTransportPayloadText(
+        stripSystemPromptCacheBoundary(context.systemPrompt),
+      ),
+    });
+  }
+  for (const message of (context && context.messages) || []) {
+    params.messages.push(convertTransportCompletionMessage(message));
+  }
+  if (compat.supportsStore === true) {
+    params.store = false;
+  }
+  if (
+    compat.supportsPromptCacheKey === true &&
+    options &&
+    options.cacheRetention !== "none" &&
+    options.sessionId
+  ) {
+    params.prompt_cache_key = options.sessionId;
+  }
+  if (options && options.maxTokens) {
+    const maxTokensField =
+      compat.maxTokensField === "max_tokens" ? "max_tokens" : "max_completion_tokens";
+    params[maxTokensField] = options.maxTokens;
+  }
+  if (options && options.temperature !== undefined) {
+    params.temperature = options.temperature;
+  }
+  if (context && Array.isArray(context.tools)) {
+    params.tools = context.tools.map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters || {},
+      },
+    }));
+    if (options && options.toolChoice) {
+      params.tool_choice = options.toolChoice;
+    }
+  }
+  const reasoningEffort = options && (options.reasoningEffort || options.reasoning);
+  if (reasoningEffort && model && model.reasoning) {
+    if (compat.thinkingFormat === "openrouter") {
+      params.reasoning = { effort: reasoningEffort };
+    } else {
+      params.reasoning_effort = reasoningEffort;
+    }
+  }
+  return params;
+}
+
+function buildGuardedModelFetch(_model, _timeoutMs) {
+  return async (input, init) => fetch(input, init);
+}
+
+const providerTransportRuntime = {
+  buildGuardedModelFetch,
+  buildOpenAICompletionsParams,
+  coerceTransportToolCallArguments,
+  createEmptyTransportUsage,
+  createWritableTransportEventStream,
+  failTransportStream,
+  finalizeTransportStream,
+  mergeTransportHeaders,
+  sanitizeTransportPayloadText,
+  stripSystemPromptCacheBoundary,
+  transformTransportMessages,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -48957,6 +71370,7 @@ const genericSdk = new Proxy(
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
+    ...runtimeGroupPolicyRuntime,
     ...providerSelectionRuntime,
     ...windowsSpawnRuntime,
     ...allowFromRuntime,
@@ -48975,6 +71389,7 @@ const genericSdk = new Proxy(
     ...webhookMemoryGuardsRuntime,
     ...webhookRequestGuardsRuntime,
     ...webhookTargetsRuntime,
+    ...webhookIngressRuntime,
     ...requestUrlRuntime,
     ...fetchAuthRuntime,
     ...ssrfPolicyRuntime,
@@ -48982,6 +71397,11 @@ const genericSdk = new Proxy(
     ...providerModelIdNormalizeRuntime,
     ...providerModelSharedRuntime,
     ...providerCatalogSharedRuntime,
+    ...providerCatalogRuntime,
+    ...providerOnboardRuntime,
+    ...providerUsageRuntime,
+    ...toolSendRuntime,
+    ...webMediaRuntime,
     ...providerEntryRuntime,
     ...providerEnableConfigRuntime,
     ...providerWebFetchContractRuntime,
@@ -48990,8 +71410,13 @@ const genericSdk = new Proxy(
     ...providerWebSearchContractRuntime,
     ...providerWebFetchRuntime,
     ...providerWebSearchRuntime,
+    ...providerHttpRuntime,
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
+    ...fileLockRuntime,
+    ...browserCdpRuntime,
+    ...browserConfigSupportRuntime,
+    ...browserConfigRuntime,
     ...secretFileRuntime,
     ...runtimeEnvRuntime,
     ...runtimeRuntime,
@@ -49383,6 +71808,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return providerSetupRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/sandbox" ||
+    request === "@openclaw/plugin-sdk/sandbox"
+  ) {
+    return sandboxRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/proxy-capture" ||
+    request === "@openclaw/plugin-sdk/proxy-capture"
+  ) {
+    return proxyCaptureRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/lmstudio" ||
     request === "@openclaw/plugin-sdk/lmstudio" ||
     request === "openclaw/plugin-sdk/lmstudio-runtime" ||
@@ -49490,6 +71927,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return mediaStoreRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/web-media" ||
+    request === "@openclaw/plugin-sdk/web-media"
+  ) {
+    return webMediaRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/error-runtime" ||
     request === "@openclaw/plugin-sdk/error-runtime"
   ) {
@@ -49568,6 +72011,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return webhookTargetsRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/webhook-ingress" ||
+    request === "@openclaw/plugin-sdk/webhook-ingress"
+  ) {
+    return webhookIngressRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/request-url" ||
     request === "@openclaw/plugin-sdk/request-url"
   ) {
@@ -49598,6 +72047,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return providerModelIdNormalizeRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/google-model-id" ||
+    request === "@openclaw/plugin-sdk/google-model-id"
+  ) {
+    return googleModelIdRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/xai-model-id" ||
     request === "@openclaw/plugin-sdk/xai-model-id"
   ) {
@@ -49616,6 +72071,24 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return providerCatalogSharedRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/provider-catalog-runtime" ||
+    request === "@openclaw/plugin-sdk/provider-catalog-runtime"
+  ) {
+    return providerCatalogRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-onboard" ||
+    request === "@openclaw/plugin-sdk/provider-onboard"
+  ) {
+    return providerOnboardRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-usage" ||
+    request === "@openclaw/plugin-sdk/provider-usage"
+  ) {
+    return providerUsageRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/provider-entry" ||
     request === "@openclaw/plugin-sdk/provider-entry"
   ) {
@@ -49626,6 +72099,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-enable-config"
   ) {
     return providerEnableConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/open-prose" ||
+    request === "@openclaw/plugin-sdk/open-prose"
+  ) {
+    return openProseRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-fetch-contract" ||
@@ -49675,16 +72154,25 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   ) {
     return memoryCoreHostMultimodalRuntime;
   }
+  if (request === "@openclaw/memory-host-sdk/multimodal") {
+    return memoryCoreHostMultimodalRuntime;
+  }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-query" ||
     request === "@openclaw/plugin-sdk/memory-core-host-query"
   ) {
     return memoryCoreHostQueryRuntime;
   }
+  if (request === "@openclaw/memory-host-sdk/query") {
+    return memoryCoreHostQueryRuntime;
+  }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-secret" ||
     request === "@openclaw/plugin-sdk/memory-core-host-secret"
   ) {
+    return memoryCoreHostSecretRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/secret") {
     return memoryCoreHostSecretRuntime;
   }
   if (
@@ -49714,6 +72202,45 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return memoryCoreEngineRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/memory-core-host-engine-embeddings" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-engine-embeddings"
+  ) {
+    return memoryCoreHostEngineEmbeddingsRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/engine-embeddings") {
+    return memoryCoreHostEngineEmbeddingsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-engine-foundation" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-engine-foundation"
+  ) {
+    return memoryCoreHostEngineFoundationRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/engine-foundation") {
+    return memoryCoreHostEngineFoundationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-engine-qmd" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-engine-qmd"
+  ) {
+    return memoryCoreHostEngineQmdRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/engine-qmd") {
+    return memoryCoreHostEngineQmdRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-engine-storage" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-engine-storage"
+  ) {
+    return memoryCoreHostEngineStorageRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/engine-storage") {
+    return memoryCoreHostEngineStorageRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/engine") {
+    return memoryHostSdkEngineRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/memory-core-host-status" ||
     request === "@openclaw/plugin-sdk/memory-core-host-status" ||
     request === "openclaw/plugin-sdk/memory-host-status" ||
@@ -49721,10 +72248,16 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   ) {
     return memoryCoreHostStatusRuntime;
   }
+  if (request === "@openclaw/memory-host-sdk/status") {
+    return memoryCoreHostStatusRuntime;
+  }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-runtime-files" ||
     request === "@openclaw/plugin-sdk/memory-core-host-runtime-files"
   ) {
+    return memoryCoreHostRuntimeFilesRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/runtime-files") {
     return memoryCoreHostRuntimeFilesRuntime;
   }
   if (
@@ -49741,11 +72274,20 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   ) {
     return memoryCoreHostRuntimeCoreRuntime;
   }
+  if (request === "@openclaw/memory-host-sdk/runtime-core") {
+    return memoryCoreHostRuntimeCoreRuntime;
+  }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-runtime-cli" ||
     request === "@openclaw/plugin-sdk/memory-core-host-runtime-cli"
   ) {
     return memoryCoreHostRuntimeCliRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/runtime-cli") {
+    return memoryCoreHostRuntimeCliRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/runtime") {
+    return memoryHostSdkRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-env" ||
@@ -49980,6 +72522,90 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return imageGenerationCoreAuthRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/image-generation-core" ||
+    request === "@openclaw/plugin-sdk/image-generation-core"
+  ) {
+    return imageGenerationCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/image-generation-runtime" ||
+    request === "@openclaw/plugin-sdk/image-generation-runtime"
+  ) {
+    return imageGenerationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-generation-runtime" ||
+    request === "@openclaw/plugin-sdk/media-generation-runtime"
+  ) {
+    return mediaGenerationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-generation-runtime-shared" ||
+    request === "@openclaw/plugin-sdk/media-generation-runtime-shared"
+  ) {
+    return mediaGenerationRuntimeSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-understanding" ||
+    request === "@openclaw/plugin-sdk/media-understanding"
+  ) {
+    return mediaUnderstandingProviderRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-understanding-runtime" ||
+    request === "@openclaw/plugin-sdk/media-understanding-runtime"
+  ) {
+    return mediaUnderstandingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/speech-core" ||
+    request === "@openclaw/plugin-sdk/speech-core"
+  ) {
+    return speechCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/speech" ||
+    request === "@openclaw/plugin-sdk/speech"
+  ) {
+    return speechRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/tts-runtime" ||
+    request === "@openclaw/plugin-sdk/tts-runtime"
+  ) {
+    return ttsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/video-generation-core" ||
+    request === "@openclaw/plugin-sdk/video-generation-core"
+  ) {
+    return videoGenerationCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/video-generation-runtime" ||
+    request === "@openclaw/plugin-sdk/video-generation-runtime"
+  ) {
+    return videoGenerationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/realtime-transcription" ||
+    request === "@openclaw/plugin-sdk/realtime-transcription"
+  ) {
+    return realtimeTranscriptionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/realtime-voice" ||
+    request === "@openclaw/plugin-sdk/realtime-voice"
+  ) {
+    return realtimeVoiceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/music-generation-core" ||
+    request === "@openclaw/plugin-sdk/music-generation-core"
+  ) {
+    return musicGenerationCoreRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/provider-auth-api-key" ||
     request === "@openclaw/plugin-sdk/provider-auth-api-key"
   ) {
@@ -50026,6 +72652,50 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/dedupe-runtime"
   ) {
     return dedupeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/persistent-dedupe" ||
+    request === "@openclaw/plugin-sdk/persistent-dedupe"
+  ) {
+    return persistentDedupeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/models-provider-runtime" ||
+    request === "@openclaw/plugin-sdk/models-provider-runtime"
+  ) {
+    return modelsProviderRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/skill-commands-runtime" ||
+    request === "@openclaw/plugin-sdk/skill-commands-runtime"
+  ) {
+    return skillCommandsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/skills-runtime" ||
+    request === "@openclaw/plugin-sdk/skills-runtime"
+  ) {
+    return skillsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/agent-runtime" ||
+    request === "@openclaw/plugin-sdk/agent-runtime"
+  ) {
+    return agentRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/agent-harness-runtime" ||
+    request === "@openclaw/plugin-sdk/agent-harness-runtime" ||
+    request === "openclaw/plugin-sdk/agent-harness" ||
+    request === "@openclaw/plugin-sdk/agent-harness"
+  ) {
+    return agentHarnessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/qa-runner-runtime" ||
+    request === "@openclaw/plugin-sdk/qa-runner-runtime"
+  ) {
+    return qaRunnerRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-dedupe" ||
@@ -50086,6 +72756,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/group-access"
   ) {
     return groupAccessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-group-policy" ||
+    request === "@openclaw/plugin-sdk/runtime-group-policy"
+  ) {
+    return runtimeGroupPolicyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/group-activation" ||
@@ -50166,6 +72842,21 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return commandAuthRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/zalouser" ||
+    request === "@openclaw/plugin-sdk/zalouser"
+  ) {
+    return {
+      resolveSenderCommandAuthorization,
+      resolveSenderCommandAuthorizationWithRuntime,
+    };
+  }
+  if (
+    request === "openclaw/plugin-sdk/zod" ||
+    request === "@openclaw/plugin-sdk/zod"
+  ) {
+    return zodRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/command-auth-native" ||
     request === "@openclaw/plugin-sdk/command-auth-native"
   ) {
@@ -50214,10 +72905,72 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return channelSetupRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/setup-runtime" ||
+    request === "@openclaw/plugin-sdk/setup-runtime"
+  ) {
+    return setupRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/setup-adapter-runtime" ||
     request === "@openclaw/plugin-sdk/setup-adapter-runtime"
   ) {
     return setupAdapterRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/setup-tools" ||
+    request === "@openclaw/plugin-sdk/setup-tools"
+  ) {
+    return setupToolsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/config-runtime" ||
+    request === "@openclaw/plugin-sdk/config-runtime"
+  ) {
+    return configRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/plugin-config-runtime" ||
+    request === "@openclaw/plugin-sdk/plugin-config-runtime"
+  ) {
+    return pluginConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/config-mutation" ||
+    request === "@openclaw/plugin-sdk/config-mutation"
+  ) {
+    return configMutationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-tools" ||
+    request === "@openclaw/plugin-sdk/provider-tools"
+  ) {
+    return providerToolsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-stream-shared" ||
+    request === "@openclaw/plugin-sdk/provider-stream-shared"
+  ) {
+    return providerStreamSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-stream" ||
+    request === "@openclaw/plugin-sdk/provider-stream" ||
+    request === "openclaw/plugin-sdk/provider-stream-family" ||
+    request === "@openclaw/plugin-sdk/provider-stream-family"
+  ) {
+    return providerStreamRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-transport-runtime" ||
+    request === "@openclaw/plugin-sdk/provider-transport-runtime"
+  ) {
+    return providerTransportRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-http" ||
+    request === "@openclaw/plugin-sdk/provider-http"
+  ) {
+    return providerHttpRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||
@@ -50328,10 +73081,100 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return fileAccessRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/file-lock" ||
+    request === "@openclaw/plugin-sdk/file-lock"
+  ) {
+    return fileLockRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/browser-security-runtime" ||
     request === "@openclaw/plugin-sdk/browser-security-runtime"
   ) {
     return browserSecurityRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-cdp" ||
+    request === "@openclaw/plugin-sdk/browser-cdp"
+  ) {
+    return browserCdpRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-config-support" ||
+    request === "@openclaw/plugin-sdk/browser-config-support"
+  ) {
+    return browserConfigSupportRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-config" ||
+    request === "@openclaw/plugin-sdk/browser-config"
+  ) {
+    return browserConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-control-auth" ||
+    request === "@openclaw/plugin-sdk/browser-control-auth"
+  ) {
+    return browserControlAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-profiles" ||
+    request === "@openclaw/plugin-sdk/browser-profiles"
+  ) {
+    return browserProfilesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-config-runtime" ||
+    request === "@openclaw/plugin-sdk/browser-config-runtime"
+  ) {
+    return browserConfigRuntimeSdk;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-trash" ||
+    request === "@openclaw/plugin-sdk/browser-trash"
+  ) {
+    return browserTrashRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-maintenance" ||
+    request === "@openclaw/plugin-sdk/browser-maintenance"
+  ) {
+    return browserMaintenanceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-host-inspection" ||
+    request === "@openclaw/plugin-sdk/browser-host-inspection"
+  ) {
+    return browserHostInspectionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-node-host" ||
+    request === "@openclaw/plugin-sdk/browser-node-host"
+  ) {
+    return browserNodeHostRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-node-runtime" ||
+    request === "@openclaw/plugin-sdk/browser-node-runtime"
+  ) {
+    return browserNodeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-setup-tools" ||
+    request === "@openclaw/plugin-sdk/browser-setup-tools"
+  ) {
+    return browserSetupToolsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-support" ||
+    request === "@openclaw/plugin-sdk/browser-support"
+  ) {
+    return browserSupportRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-bridge" ||
+    request === "@openclaw/plugin-sdk/browser-bridge"
+  ) {
+    return browserBridgeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
@@ -50402,6 +73245,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return bundledChannelConfigSchemaRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/googlechat-runtime-shared" ||
+    request === "@openclaw/plugin-sdk/googlechat-runtime-shared"
+  ) {
+    return googleChatRuntimeShared;
+  }
+  if (
     request === "openclaw/plugin-sdk/channel-config-helpers" ||
     request === "@openclaw/plugin-sdk/channel-config-helpers"
   ) {
@@ -50444,6 +73293,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-targets"
   ) {
     return channelTargetsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/messaging-targets" ||
+    request === "@openclaw/plugin-sdk/messaging-targets"
+  ) {
+    return messagingTargetsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-streaming" ||
@@ -50530,6 +73385,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/tool-payload"
   ) {
     return toolPayloadRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/tool-send" ||
+    request === "@openclaw/plugin-sdk/tool-send"
+  ) {
+    return toolSendRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/boolean-param" ||
@@ -50767,6 +73628,7 @@ async function activatePlugin(plugin) {
     return null;
   }
   const tools = [];
+  const providers = [];
   const registerTool = (definition, opts) => {
     const names = toolNamesFromDefinition(definition, opts);
     if (!names.length) {
@@ -50811,10 +73673,27 @@ async function activatePlugin(plugin) {
           : undefined,
     });
   };
+  const registerProvider = (provider) => {
+    if (!provider || typeof provider !== "object") {
+      return;
+    }
+    const providerId = normalizeOptionalString(provider.id);
+    if (!providerId) {
+      return;
+    }
+    providers.push({
+      ...provider,
+      id: providerId,
+      pluginId: plugin.id || plugin.pluginId,
+      pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+    });
+  };
   const api = {
     pluginId: plugin.id || plugin.pluginId,
     pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+    registerProvider,
     registerTool,
+    providers: { register: registerProvider, registerProvider },
     tools: { register: registerTool, registerTool },
     tool: { register: registerTool, registerTool },
   };
@@ -50826,6 +73705,7 @@ async function activatePlugin(plugin) {
   }
   return {
     pluginId: plugin.id || plugin.pluginId,
+    providers,
     tools,
   };
 }
@@ -50836,6 +73716,7 @@ async function activatePlugin(plugin) {
     if (!result) {
       throw new Error("OpenClaw plugin runtime execution failed: plugin did not activate");
     }
+    nativeRegisteredProviderPlugins = Array.isArray(result.providers) ? result.providers : [];
     const toolName = String(context.toolName || "").trim();
     const toolEntry = result.tools.find((entry) => entry.names.includes(toolName));
     const tool =

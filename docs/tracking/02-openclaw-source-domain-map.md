@@ -2,7 +2,7 @@
 
 Agent report source: Banach
 
-Last updated: 2026-05-06
+Last updated: 2026-05-07
 
 OpenClaw is the upstream source of truth for repo-wide parity. Each domain below
 should become one or more bounded OpenZues parity seams before it can affect the
@@ -18,10 +18,10 @@ repo-wide percentage.
 | [ ] | Agent runtime, sessions, harnesses | embedded agents, CLI backends, ACP/Codex/Pi harnesses, subagents, session stores, compaction | `src/agents`, `src/sessions`, `src/acp`, `docs/pi.md` |
 | [~] | Channels, routing, delivery | Telegram audio/voice, Google Chat native text/thread/media/DM, Nextcloud Talk signed bot, Synology Chat incoming-webhook, Mattermost channel-id, Feishu/Lark route-backed text and direct media sends plus read/post media resource hydration, presentation-card send/thread-reply, image/file/audio/video media sends with local-root guards, audioAsVoice transcode, mediaMaxMb caps, and channel capability metadata, and read/edit/pin/unpin/list-pins/channel-info/member-info/channel-list/react/reactions actions, Microsoft Teams Bot Framework proactive text/threaded replies, Adaptive Card polls, `/api/messages` bearer-gated webhook dispatch, configured Teams webhook path plus `/api/messages` fallback, Bot Framework JWT validation, attachment-only inbound placeholders, inbound attachment URL metadata, media staging, inbound media Graph/Bot Framework auth fallback, personal welcome-card member lifecycle, group welcome member lifecycle, adaptive-card inbound session routing, inbound mention stripping/HTML fallback, feedback invoke recording, feedback-disabled invoke consuming, feedback reflection learning/follow-up, SSO no-config invoke acknowledgement, configured SSO token exchange/store, configured SSO verify-state magic-code flow, SSO DM allowlist sign-in drop handling, SSO route allowlist sign-in drop handling, SSO group sender allowlist sign-in drop handling, Graph reaction listing/write/read/pin/unpin/list-pins/search/member-info/channel-list/channel-info actions, Bot Framework edit/delete/upload-file and adaptive-card send actions, stored delegated-token reaction writes, expired delegated-token fallback, delegated refresh-token flow, delegated OAuth setup URL/bootstrap/completion, delegated-auth probe posture, native readiness probe, user-reference routing, FileConsent, and Graph upload verified; Signal JSON-RPC send plus reaction actions, IRC PRIVMSG, and Twitch chat route-backed sends plus send action verified; channel registry, broader session routing, full inbound/outbound delivery, typing/status/reactions, pairing, access groups remain | `src/channels`, `src/routing`, `docs/channels`, `extensions/telegram/openclaw.plugin.json`, `extensions/googlechat/src`, `extensions/nextcloud-talk/src`, `extensions/mattermost/src`, `extensions/signal/src`, `extensions/irc/src`, `extensions/twitch/src` |
 | [ ] | Provider and model capability matrix | model catalogs, auth profiles, provider discovery, text/media/search/voice providers | `src/model-catalog`, `extensions/openai`, `extensions/anthropic`, `docs/providers` |
-| [~] | Plugin and extension system | SDK, manifests, bundled/installed plugins, lifecycle, hooks, ClawHub/npm packaging; document and web-content extractor contracts plus CommonJS/ESM runtime import/execution, request-time tool factory context, text-runtime string helpers, string-coerce-runtime helpers, text-autolink-runtime helpers, dedupe-runtime helpers, retry-runtime helpers, keyed-async-queue helpers, lazy-value helpers, lazy-runtime helpers, config-paths helpers, context-visibility-runtime helpers, heartbeat-runtime helpers, json-store helpers, diagnostic-runtime helpers, system-event-runtime helpers, oauth-utils helpers, runtime-config-snapshot helpers, runtime-fetch helpers, runtime-doctor helpers, runtime-secret-resolution helpers, memory-core-host-query helpers, memory-core-host-multimodal helpers, memory-core-host-secret helpers, memory-core-host-events helpers, memory-core-host-status helpers, memory-core-engine-runtime facade helpers, provider-setup helpers, self-hosted-provider-setup helpers, LM Studio runtime helpers, media-store helpers, browser-security-runtime helpers, command-primitives-runtime helpers, media-mime helpers, command-detection helpers, global-singleton helpers, concurrency-runtime helpers, channel-inbound-debounce helpers, channel-inbound helpers, channel-route helpers, channel-policy helpers, group-access helpers, group-activation helpers, provider-selection-runtime helpers, windows-spawn helpers, command-status helpers, command-auth native helpers, process-runtime command helpers, run-command normalized helpers, poll-runtime helpers, CLI runtime helpers, approval-auth-runtime helpers, approval-auth-helpers, approval-approvers helpers, approval-reply-runtime helpers, approval-renderers helpers, approval-client-helpers, approval-client-runtime alias helpers, approval-delivery-helpers, approval-native-helpers, approval-native-runtime delivery helpers/factory/expiration, approval-handler-adapter-runtime helpers, approval-handler-runtime adapter factory/wrapper/capability bridge, approval-runtime aggregate helpers, approval-gateway-runtime resolver helpers, Telegram command config helpers, param-readers helpers, provider-zai-endpoint helpers, provider-env-vars helpers, session-visibility helpers, simple-completion-runtime extractAssistantText helper, webhook helper shims, fetch/SSRF helper shims, provider model/catalog helper shims, provider entry/enable/auth-result helper shims, provider-auth-runtime helper shims, provider-auth API-key helper shims, provider-auth-login helper/runtime alias shims, provider-auth facade helper shims, provider web-search contract helper shims, provider web facade helper shims, device-bootstrap helper shims, runtime-store helper shims, runtime helper shims, directory-runtime helper shims, directory-config-runtime helper shims, thread-bindings-runtime helper shims, conversation-runtime helper shims, outbound-runtime helper shims, conversation-binding-runtime helper shims, session-binding/session-key runtime alias shims, session-store runtime helper shims, model-session-runtime helper shims, account-id/configured-id subpath shims, agent-media-payload helper shims, agent-config-primitives helper shims, ACP binding resolve helper shims, Anthropic CLI facade helper shims, Anthropic Vertex auth-presence helper shims, Anthropic Vertex facade helper shims, XAI model-id helper shims, channel pairing path helper shims, channel inbound root helper shims, channel location helper shims, state path helper shims, setup adapter runtime helper shims, channel secret TTS runtime helper shims, channel secret basic/runtime helper shims, secret-file-runtime helper shim, secret-ref-runtime helper shim, secret-input-runtime helper shim, secret-input-schema helper shim, cron-store-runtime helper shim, file-access-runtime helper shim, logging-core helper shim, native-command-config-runtime helper shim, host-runtime helper shim, image-generation-core auth-runtime helper shim, talk config runtime helper shims, GitHub Copilot token helper shims, channel plugin common/core helper shims, channel entry contract helper shims, channel config primitives/schema helper shims, runtime-env helper shims, channel-config-helpers helper shims, channel-config-writes alias shim, channel-lifecycle helper shim, exact channel-core helper shim, channel-contract-testing helper shim, channel-targets helper shim, channel-streaming helper shim, channel-envelope helper shim, channel-mention-gating helper shim, channel-runtime-context helper shim, channel-activity-runtime helper shim, inbound-envelope helper shim, allow-from helpers, allowlist-config-edit helpers, access-groups helpers, direct-DM access helpers, direct-DM guard-policy helpers, direct-DM helpers, channel-send-result helpers, channel-pairing helpers, command-auth helpers, channel-setup helpers, channel-reply-options-runtime helpers, channel-reply-pipeline helpers, channel-feedback helpers, markdown-table-runtime helpers, reply-history helpers, reply-reference helpers, reply-dedupe helpers, string-normalization helpers, dangerous-name helpers, channel-logging helpers, time-runtime helpers, number-runtime helpers, secure-random-runtime helpers, collection-runtime helpers, async-lock-runtime helpers, transport-ready-runtime helpers, target-resolver-runtime helpers, response-limit-runtime helpers, error-runtime helpers, temp-path helpers, secret-input helpers, routing/session helper shims, reply-chunking helpers, text-chunking helpers, reply-payload helpers, account-helper shims, account-core/account-resolution shims, tool-payload shims, boolean-param shims, channel-actions shims, status-helper shims, and channel-status shims verified; broader SDK helper/runtime contracts remain | `src/plugins`, `src/plugin-sdk`, `extensions`, `packages/plugin-sdk` |
+| [~] | Plugin and extension system | SDK, manifests, bundled/installed plugins, lifecycle, hooks, ClawHub/npm packaging; document and web-content extractor contracts plus CommonJS/ESM runtime import/execution, request-time tool factory context, text-runtime string helpers, string-coerce-runtime helpers, text-autolink-runtime helpers, dedupe-runtime helpers, retry-runtime helpers, keyed-async-queue helpers, lazy-value helpers, lazy-runtime helpers, config-paths helpers, context-visibility-runtime helpers, heartbeat-runtime helpers, json-store helpers, diagnostic-runtime helpers, system-event-runtime helpers, oauth-utils helpers, runtime-config-snapshot helpers, runtime-fetch helpers, runtime-doctor helpers, runtime-secret-resolution helpers, memory-core-host-query helpers, memory-core-host-multimodal helpers, memory-core-host-secret helpers, memory-core-host-events helpers, memory-core-host-status helpers, memory-core-engine-runtime facade helpers, memory-core-host-engine-embeddings helpers, memory-core-host-engine-foundation helpers, provider-setup helpers, self-hosted-provider-setup helpers, LM Studio runtime helpers, media-store helpers, browser-security-runtime helpers, command-primitives-runtime helpers, media-mime helpers, command-detection helpers, global-singleton helpers, concurrency-runtime helpers, channel-inbound-debounce helpers, channel-inbound helpers, channel-route helpers, channel-policy helpers, group-access helpers, group-activation helpers, provider-selection-runtime helpers, windows-spawn helpers, command-status helpers, command-auth native helpers, process-runtime command helpers, run-command normalized helpers, poll-runtime helpers, CLI runtime helpers, approval-auth-runtime helpers, approval-auth-helpers, approval-approvers helpers, approval-reply-runtime helpers, approval-renderers helpers, approval-client-helpers, approval-client-runtime alias helpers, approval-delivery-helpers, approval-native-helpers, approval-native-runtime delivery helpers/factory/expiration, approval-handler-adapter-runtime helpers, approval-handler-runtime adapter factory/wrapper/capability bridge, approval-runtime aggregate helpers, approval-gateway-runtime resolver helpers, Telegram command config helpers, param-readers helpers, provider-zai-endpoint helpers, provider-env-vars helpers, session-visibility helpers, simple-completion-runtime extractAssistantText helper, webhook helper shims, fetch/SSRF helper shims, provider model/catalog helper shims, models-provider-runtime helper shim, skill-commands-runtime helper shim, skills-runtime helper shim, provider entry/enable/auth-result helper shims, provider-auth-runtime helper shims, provider-auth API-key helper shims, provider-auth-login helper/runtime alias shims, provider-auth facade helper shims, provider web-search contract helper shims, provider web facade helper shims, device-bootstrap helper shims, runtime-store helper shims, runtime helper shims, directory-runtime helper shims, directory-config-runtime helper shims, thread-bindings-runtime helper shims, conversation-runtime helper shims, outbound-runtime helper shims, conversation-binding-runtime helper shims, session-binding/session-key runtime alias shims, session-store runtime helper shims, model-session-runtime helper shims, account-id/configured-id subpath shims, agent-media-payload helper shims, agent-config-primitives helper shims, ACP binding resolve helper shims, Anthropic CLI facade helper shims, Anthropic Vertex auth-presence helper shims, Anthropic Vertex facade helper shims, XAI model-id helper shims, channel pairing path helper shims, channel inbound root helper shims, channel location helper shims, state path helper shims, setup adapter runtime helper shims, channel secret TTS runtime helper shims, channel secret basic/runtime helper shims, secret-file-runtime helper shim, secret-ref-runtime helper shim, secret-input-runtime helper shim, secret-input-schema helper shim, cron-store-runtime helper shim, file-access-runtime helper shim, logging-core helper shim, native-command-config-runtime helper shim, host-runtime helper shim, image-generation-core auth-runtime helper shim, talk config runtime helper shims, GitHub Copilot token helper shims, channel plugin common/core helper shims, channel entry contract helper shims, channel config primitives/schema helper shims, runtime-env helper shims, channel-config-helpers helper shims, channel-config-writes alias shim, channel-lifecycle helper shim, exact channel-core helper shim, channel-contract-testing helper shim, channel-targets helper shim, channel-streaming helper shim, channel-envelope helper shim, channel-mention-gating helper shim, channel-runtime-context helper shim, channel-activity-runtime helper shim, inbound-envelope helper shim, allow-from helpers, allowlist-config-edit helpers, access-groups helpers, direct-DM access helpers, direct-DM guard-policy helpers, direct-DM helpers, channel-send-result helpers, channel-pairing helpers, command-auth helpers, channel-setup helpers, channel-reply-options-runtime helpers, channel-reply-pipeline helpers, channel-feedback helpers, markdown-table-runtime helpers, reply-history helpers, reply-reference helpers, reply-dedupe helpers, string-normalization helpers, dangerous-name helpers, channel-logging helpers, time-runtime helpers, number-runtime helpers, secure-random-runtime helpers, collection-runtime helpers, async-lock-runtime helpers, transport-ready-runtime helpers, target-resolver-runtime helpers, response-limit-runtime helpers, error-runtime helpers, temp-path helpers, secret-input helpers, routing/session helper shims, reply-chunking helpers, text-chunking helpers, reply-payload helpers, account-helper shims, account-core/account-resolution shims, tool-payload shims, boolean-param shims, channel-actions shims, status-helper shims, and channel-status shims verified; broader SDK helper/runtime contracts remain | `src/plugins`, `src/plugin-sdk`, `extensions`, `packages/plugin-sdk` |
 | [ ] | Tools, skills, MCP, ACPX | browser/exec/diffs/file tools, skills, MCP integration, ACPX runtime, plugin commands | `src/tools`, `src/mcp`, `extensions/browser`, `extensions/acpx` |
 | [ ] | Memory and knowledge | memory plugins, embeddings, dreaming, QMD/wiki/LanceDB, memory host SDK | `extensions/memory-core`, `extensions/memory-wiki`, `packages/memory-host-sdk`, `docs/concepts/memory.md` |
-| [~] | Media, voice, web, canvas | canvas shortcode normalization verified; image/video/music generation, media understanding, TTS/STT/realtime voice, web search/fetch, Canvas/A2UI breadth remain | `src/media`, `src/image-generation`, `src/realtime-voice`, `src/canvas-host`, `extensions/comfy` |
+| [~] | Media, voice, web, canvas | canvas shortcode normalization verified; image/video/realtime voice/media understanding helper shims landed; music generation, web search/fetch, Canvas/A2UI breadth remain | `src/media`, `src/image-generation`, `src/realtime-voice`, `src/canvas-host`, `extensions/comfy` |
 | [ ] | Automation, cron, tasks, commitments | scheduled runs, task commands, commitment safety, heartbeat/maintenance | `src/cron`, `src/tasks`, `src/commitments`, `docs/cli/cron.md` |
 | [ ] | Config, secrets, security, sandbox | schemas, config migration, SecretRef, auth, approvals, sandbox policy, SSRF/network safety | `src/config`, `src/secrets`, `src/security`, `src/agents/sandbox`, `docs/gateway/sandboxing.md` |
 | [ ] | Control UI and web surfaces | Vite/Lit Control UI, chat, settings, agents, sessions, logs, i18n, WebChat/TUI docs | `ui/src/ui/views`, `ui/src/ui/controllers`, `ui/src/i18n`, `docs/web` |
@@ -29,6 +29,240 @@ repo-wide percentage.
 | [ ] | QA, tests, scenarios | unit/e2e/live/docker tests, QA Lab, scenario catalog, provider/channel regressions | `test/vitest`, `scripts/e2e`, `qa/scenarios`, `extensions/qa-lab` |
 | [~] | Packaging, distribution, release | packageDistribution doctor JSON, dist inventory validation, update-status channel projection, and git branch channel labeling verified; npm package, plugin packages, Docker/Podman, macOS DMG/Sparkle, CI release workflows, update channels remain | `src/flows/doctor-health.ts`, `src/commands/doctor-install.ts`, `src/infra/update-global.ts`, `scripts/openclaw-npm-publish.sh`, `scripts/package-mac-dist.sh`, `Dockerfile`, `.github/workflows` |
 | [ ] | Observability, diagnostics, ops | logging, OpenTelemetry/Prometheus, health/status, proxy capture, runtime reports | `src/logging`, `extensions/diagnostics-otel`, `extensions/diagnostics-prometheus`, `docs/logging.md` |
+
+Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
+verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is
+verified in `884c9afb`; `@openclaw/memory-host-sdk/engine` aggregate coverage
+is verified in `fa5ad046`; `@openclaw/memory-host-sdk/runtime` aggregate
+coverage is verified in `ebd215d5`; memory-host package facade coverage for
+`query`, `multimodal`, `secret`, and `status` is verified in `c95e0129`. All
+are counted with the SDK helper/runtime set above.
+The imported `agent-runtime` core SDK helper coverage from
+`src/plugin-sdk/agent-runtime.ts` and adjacent agent scope/path/time/defaults/
+identity/provider-id helpers is verified in `a8e871a3` and counted with the
+plugin/extension system row above.
+The imported `agent-runtime` model-selection SDK helper coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/model-selection.ts`,
+`src/agents/model-selection-normalize.ts`,
+`src/agents/model-selection-shared.ts`,
+`src/agents/model-selection-resolve.ts`, and `src/agents/model-ref-shared.ts`
+is verified in `0d009e7d` and counted with the plugin/extension system row
+above.
+The imported `agent-runtime` tool bridge SDK helper coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/tools/common.ts`, and
+`src/tools/*` descriptor/availability/planning/protocol helpers is verified in
+`01653787` and counted with the plugin/extension system row above.
+The imported `agent-runtime` facade utility coverage from model-auth markers,
+sandbox paths, identity-avatar public source projection, and simple-completion
+selection helpers is verified in `a6d70a6f` and counted with the
+plugin/extension system row above.
+The imported `agent-runtime` model-catalog lookup coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/model-catalog.ts`, and
+`src/agents/model-catalog-lookup.ts` is verified in `a5794303` and counted
+with the plugin/extension system row above.
+The imported `agent-runtime` PI embedded utility coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/pi-embedded-utils.ts`, and
+adjacent assistant-visible-text/reasoning-tag/chat-message helpers is verified
+in `db2affa5` and counted with the plugin/extension system row above.
+The imported `agent-runtime` embedded block chunker coverage from
+`src/plugin-sdk/agent-runtime.ts`,
+`src/agents/pi-embedded-block-chunker.ts`, and `src/markdown/fences.ts` is
+verified in `da591809` and counted with the plugin/extension system row above.
+The imported `agent-runtime` model-auth helper coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/model-auth.ts`,
+`src/agents/model-auth-env.ts`, and adjacent auth/profile helpers is verified
+in `b93c187b` and counted with the plugin/extension system row above.
+The imported `agent-runtime` schema/typebox helper coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/schema/typebox.ts`,
+`src/agents/schema/string-enum.ts`, and `src/infra/outbound/channel-target.ts`
+is verified in `0884d4f3` and counted with the plugin/extension system row
+above.
+The imported `agent-runtime` web-tool helper coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/tools/web-shared.ts`,
+`src/agents/tools/web-fetch-utils.ts`, and
+`src/agents/tools/web-guarded-fetch.ts` is verified in `9bc67f5e` and counted
+with the plugin/extension system row above.
+The imported `agent-runtime` provider-auth alias helper coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/provider-auth-aliases.ts`,
+`src/plugins/plugin-config-trust.ts`, and
+`src/plugins/plugin-control-plane-context.ts` is verified in `61731b33` and
+counted with the plugin/extension system row above.
+The imported `agent-runtime` TTS helper coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/tts/tts.ts`,
+`src/plugin-sdk/tts-runtime.ts`, and `extensions/speech-core/src/tts.ts` is
+verified in `9b328bbd` and counted with the plugin/extension system row above.
+The imported `agent-runtime` agent-command entrypoint coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/agent-command.ts`,
+`src/agents/agent-runtime-config.ts`, `src/agents/command/types.ts`, and
+`src/commands/agent.ts` is verified in `9e6496fb` and counted with the
+plugin/extension system row above.
+The imported `file-lock` helper coverage from `src/plugin-sdk/file-lock.ts` is
+verified in `ed03c127` and counted with the plugin/extension system row above.
+The imported `google-model-id` alias coverage from
+`src/plugin-sdk/google-model-id.ts` is verified in `67db67b5`, and the
+imported `googlechat-runtime-shared` schema coverage from
+`src/plugin-sdk/googlechat-runtime-shared.ts` is verified in `f721b7e3`, and
+the imported `open-prose` exact helper coverage from
+`src/plugin-sdk/open-prose.ts` is verified in `ef8830b1`, and imported
+`runtime-group-policy` helper coverage from
+`src/plugin-sdk/runtime-group-policy.ts` is verified in `b11adc13`; imported
+`browser-cdp` helper coverage from `src/plugin-sdk/browser-cdp.ts` is verified
+in `4e15c3c2`, imported `browser-config-support` coverage from
+`src/plugin-sdk/browser-config-support.ts` is verified in `33463b7c`, and
+imported `browser-config` facade coverage from
+`src/plugin-sdk/browser-config.ts`, `src/plugin-sdk/browser-profiles.ts`,
+`src/plugin-sdk/browser-control-auth.ts`, and
+`src/plugin-sdk/browser-trash.ts` is verified in `300224b7`, and imported
+`browser-control-auth` exact helper coverage from
+`src/plugin-sdk/browser-control-auth.ts` plus
+`extensions/browser/src/browser/control-auth.ts` is verified in `d1d7b371`,
+and imported `browser-profiles` exact helper coverage from
+`src/plugin-sdk/browser-profiles.ts` plus
+`extensions/browser/browser-profiles.ts` is verified in `73d20703`, and
+imported `browser-config-runtime` helper coverage from
+`src/plugin-sdk/browser-config-runtime.ts`, `src/config/config.ts`,
+`src/config/paths.ts`, `src/plugins/config-state.ts`, and
+`src/utils/boolean.ts` is verified in `7a4ef6f0`, and imported
+`browser-trash` exact helper coverage from `src/plugin-sdk/browser-trash.ts`
+is verified in `9a90555e`, and imported `browser-maintenance` exact helper
+coverage from `src/plugin-sdk/browser-maintenance.ts` is verified in
+`ce39d8c6`, and imported `browser-host-inspection` exact helper coverage from
+`src/plugin-sdk/browser-host-inspection.ts` and
+`extensions/browser/src/browser/chrome.executables.ts` is verified in
+`bf5ce3f0`, and imported `browser-node-host` exact facade coverage from
+`src/plugin-sdk/browser-node-host.ts` and
+`extensions/browser/src/node-host/invoke-browser.ts` is verified in
+`2ef00b04`, and imported `browser-node-runtime` aggregate coverage from
+`src/plugin-sdk/browser-node-runtime.ts` and
+`extensions/browser/src/sdk-node-runtime.ts` is verified in `bc7ef301`, and
+imported `browser-setup-tools` aggregate coverage from
+`src/plugin-sdk/browser-setup-tools.ts` and
+`extensions/browser/src/sdk-setup-tools.ts` is verified in `50876922`, and
+imported `browser-support` aggregate coverage from
+`src/plugin-sdk/browser-support.ts` is verified in `37eec77e`, and imported
+`browser-bridge` exact facade coverage from `src/plugin-sdk/browser-bridge.ts`
+is verified in `f0635cce`, and imported `agent-harness-runtime` /
+`agent-harness` exact helper coverage from
+`src/plugin-sdk/agent-harness-runtime.ts` and `src/plugin-sdk/agent-harness.ts`
+is verified in `ee7f5c49`, and imported `sandbox` exact helper coverage from
+`src/plugin-sdk/sandbox.ts` plus adjacent `src/agents/sandbox/*` helpers is
+verified in `2aba5dbc`, and imported `proxy-capture` exact helper coverage
+from `src/plugin-sdk/proxy-capture.ts` plus adjacent `src/proxy-capture/*`
+helpers is verified in `84300681`, and imported `setup-runtime` exact helper
+coverage from `src/plugin-sdk/setup-runtime.ts` plus adjacent setup wizard
+helpers is verified in `252f28fe`, and imported `setup-tools` exact helper
+coverage from `src/plugin-sdk/setup-tools.ts` plus adjacent CLI, archive,
+brew, binary detection, docs-link, and config-dir helpers is verified in
+`e0f1e72c`, and imported `config-runtime` exact helper coverage from
+`src/plugin-sdk/config-runtime.ts` plus adjacent plugin config, config IO,
+config mutation, config logging, session-store, session-reset, and config
+policy helpers is verified in `74fd1711`, and imported
+`plugin-config-runtime` exact helper coverage from
+`src/plugin-sdk/plugin-config-runtime.ts` plus adjacent plugin config-state
+helpers is verified in `458d6c7f`, and imported `config-mutation` exact
+helper coverage from `src/plugin-sdk/config-mutation.ts` plus adjacent config
+mutation, config IO, config logging, and model shared update helpers is
+verified in `a9813667`, and imported `provider-tools` exact helper coverage
+from `src/plugin-sdk/provider-tools.ts`, `src/agents/schema/clean-for-gemini.ts`,
+and `src/plugins/provider-model-compat.ts` is verified in `2762ee46`, and
+imported `provider-stream-shared` exact helper coverage from
+`src/plugin-sdk/provider-stream-shared.ts`,
+`src/agents/pi-embedded-runner/stream-payload-utils.ts`, adjacent stream
+wrappers, and `src/shared/message-content-blocks.ts` is verified in
+`711865e0`, and imported `provider-stream` / `provider-stream-family` exact
+helper coverage from `src/plugin-sdk/provider-stream.ts` and
+`src/plugin-sdk/provider-stream-family.ts` is verified in `da9a3e66`, and
+imported `provider-transport-runtime` exact helper coverage from
+`src/plugin-sdk/provider-transport-runtime.ts` plus adjacent transport stream,
+message-transform, prompt-boundary, and OpenAI completions helpers is verified
+in `dd8bcfd8`, and imported `provider-http` exact helper coverage from
+`src/plugin-sdk/provider-http.ts`, `src/agents/provider-http-errors.ts`,
+`src/media-understanding/shared.ts`, `src/agents/provider-attribution.ts`, and
+`src/agents/provider-request-config.ts` is verified in `750bbf71`, and
+imported `provider-catalog-runtime` exact helper coverage from
+`src/plugin-sdk/provider-catalog-runtime.ts`,
+`src/plugins/provider-runtime.ts`, `src/plugins/providers.ts`, and
+`src/plugins/providers.runtime.ts` is verified in `2ede5f0d`. All are counted
+with the plugin/extension system row above.
+The imported `speech-core` SDK helper coverage from
+`src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
+`src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
+with the plugin/extension system row above.
+The imported `video-generation-core` SDK helper coverage from
+`src/plugin-sdk/video-generation-core.ts`, adjacent video/media generation
+helpers, failover helpers, model input helpers, logging, and provider env-var
+helpers is verified in `f85c7465` and is counted with the
+plugin/extension system row above.
+The imported `image-generation-core` SDK helper coverage from
+`src/plugin-sdk/image-generation-core.ts`, adjacent image/media generation
+helpers, Gemini auth, Google model id helpers, failover helpers, model input
+helpers, logging, auth-runtime, and provider env-var helpers is verified in
+`1a128fa5` and is counted with the plugin/extension system row above.
+The imported `music-generation-core` SDK helper coverage from
+`src/plugin-sdk/music-generation-core.ts`, adjacent music generation helpers,
+failover helpers, model input helpers, logging, and provider env-var helpers
+is verified in `a17da4e3` and is counted with the plugin/extension system row
+above.
+The imported `media-generation-runtime` and `media-generation-runtime-shared`
+SDK helper coverage from `src/plugin-sdk/media-generation-runtime.ts`,
+`src/plugin-sdk/media-generation-runtime-shared.ts`, and
+`src/media-generation/runtime-shared.ts` is verified in `f475d85a` and is
+counted with the plugin/extension system row above.
+The imported `image-generation-runtime` SDK helper coverage from
+`src/plugin-sdk/image-generation-runtime.ts` and
+`src/image-generation/runtime.ts` is verified in `719fcee8` and is counted
+with the plugin/extension system row above.
+The imported `video-generation-runtime` SDK helper coverage from
+`src/plugin-sdk/video-generation-runtime.ts`, `src/video-generation/runtime.ts`,
+`src/video-generation/normalization.ts`, `src/video-generation/capabilities.ts`,
+and `src/video-generation/duration-support.ts` is verified in `2cf18309` and
+is counted with the plugin/extension system row above.
+The imported `realtime-transcription` SDK helper coverage from
+`src/plugin-sdk/realtime-transcription.ts`,
+`src/realtime-transcription/provider-registry.ts`,
+`src/plugins/provider-registry-shared.ts`, and
+`src/realtime-transcription/websocket-session.ts` is verified in `18a7e15b`
+and is counted with the plugin/extension system row above.
+The imported `realtime-voice` SDK helper coverage from
+`src/plugin-sdk/realtime-voice.ts`, `src/realtime-voice/provider-types.ts`,
+`src/realtime-voice/provider-registry.ts`,
+`src/realtime-voice/provider-resolver.ts`,
+`src/realtime-voice/agent-consult-tool.ts`,
+`src/realtime-voice/agent-consult-runtime.ts`,
+`src/realtime-voice/session-runtime.ts`, and
+`src/realtime-voice/audio-codec.ts` is verified in `0f6e62d7` and is counted
+with the plugin/extension system row above.
+The imported `media-understanding-runtime` SDK helper coverage from
+`src/plugin-sdk/media-understanding-runtime.ts`,
+`src/media-understanding/runtime.ts`,
+`src/media-understanding/runtime-types.ts`, `src/media-understanding/runner.ts`,
+`src/media-understanding/runner.entries.ts`,
+`src/media-understanding/runner.attachments.ts`,
+`src/media-understanding/attachments.normalize.ts`,
+`src/media-understanding/attachments.select.ts`,
+`src/media-understanding/attachments.cache.ts`,
+`src/media-understanding/provider-registry.ts`, and
+`src/media-understanding/resolve.ts` is verified in `65d2ce12` and is counted
+with the plugin/extension system row above.
+The imported `media-understanding` SDK provider-helper coverage from
+`src/plugin-sdk/media-understanding.ts`,
+`src/media-understanding/openai-compatible-video.ts`,
+`src/media-understanding/openai-compatible-audio.ts`, and
+`src/media-understanding/shared.ts` is verified in `4a383013` and is counted
+with the plugin/extension system row above.
+The imported `messaging-targets` SDK helper coverage from
+`src/plugin-sdk/messaging-targets.ts` and `src/channels/targets.ts` is verified
+in `cd85f7f5` and is counted with the plugin/extension system row above.
+The imported `request-url` SDK helper coverage from
+`src/plugin-sdk/request-url.ts` is reverified from the `f4a23a25`
+fetch/SSRF helper checkpoint and is counted with the plugin/extension system
+row above.
+The imported `persistent-dedupe` SDK helper coverage from
+`src/plugin-sdk/persistent-dedupe.ts` is verified in `cfe26bca` and is counted
+with the plugin/extension system row above.
+The imported `qa-runner-runtime` SDK helper coverage from
+`src/plugin-sdk/qa-runner-runtime.ts` is verified in `f9d46a8f` and is counted
+with the plugin/extension system row above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -105,7 +339,94 @@ checkpointed in `2317c1e7`; `memory-core-host-runtime-cli` from
 `packages/memory-host-sdk/src/runtime-cli.ts`, and adjacent
 CLI/runtime/theme/progress/home-path helper behavior is checkpointed in
 `762da43c`; `memory-core-engine-runtime` from
-`src/plugin-sdk/memory-core-engine-runtime.ts` is checkpointed in `ad4b05e5`.
+`src/plugin-sdk/memory-core-engine-runtime.ts` is checkpointed in `ad4b05e5`;
+`memory-core-host-engine-embeddings` from
+`src/plugin-sdk/memory-core-host-engine-embeddings.ts` and
+`packages/memory-host-sdk/src/engine-embeddings.ts` is checkpointed in
+`4a1d82a8`; `memory-core-host-engine-foundation` from
+`src/plugin-sdk/memory-core-host-engine-foundation.ts` and
+`packages/memory-host-sdk/src/engine-foundation.ts` is checkpointed in
+`4d0b1103`; `memory-core-host-engine-qmd` from
+`src/plugin-sdk/memory-core-host-engine-qmd.ts`,
+`packages/memory-host-sdk/src/engine-qmd.ts`, and adjacent QMD
+parser/scope/process/session-file/query helpers is checkpointed in
+`147b0978`; `memory-core-host-engine-storage` from
+`src/plugin-sdk/memory-core-host-engine-storage.ts`,
+`packages/memory-host-sdk/src/engine-storage.ts`, and adjacent internal,
+read-file, schema, sqlite, sqlite-vec, fs-utils, backend-config, and
+multimodal helper behavior is checkpointed in `884c9afb`;
+`@openclaw/memory-host-sdk/engine` from
+`packages/memory-host-sdk/src/engine.ts`,
+`src/memory-host-sdk/engine.ts`, and package export behavior is checkpointed in
+`fa5ad046`; `@openclaw/memory-host-sdk/runtime` from
+`packages/memory-host-sdk/src/runtime.ts`,
+`src/memory-host-sdk/runtime.ts`, and package export behavior is checkpointed
+in `ebd215d5`; `@openclaw/memory-host-sdk/query`, `multimodal`, `secret`, and
+`status` package facades from `packages/memory-host-sdk/src/query.ts`,
+`packages/memory-host-sdk/src/multimodal.ts`,
+`packages/memory-host-sdk/src/secret.ts`, and
+`packages/memory-host-sdk/src/status.ts` are checkpointed in `c95e0129`.
+`speech-core` from `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*`
+helpers, and `src/agents/provider-http-errors.ts` is checkpointed in
+`ff03eba7`.
+`provider-http` from `src/plugin-sdk/provider-http.ts`, adjacent
+`src/agents/provider-http-errors.ts`, `src/media-understanding/shared.ts`,
+`src/agents/provider-attribution.ts`, and
+`src/agents/provider-request-config.ts` is checkpointed in `750bbf71`.
+`provider-catalog-runtime` from
+`src/plugin-sdk/provider-catalog-runtime.ts`, adjacent
+`src/plugins/provider-runtime.ts`, `src/plugins/providers.ts`, and
+`src/plugins/providers.runtime.ts` is checkpointed in `2ede5f0d`.
+`video-generation-core` from `src/plugin-sdk/video-generation-core.ts`,
+adjacent video/media generation helpers, failover helpers, model input
+helpers, logging, and provider env-var helpers is checkpointed in `f85c7465`.
+`image-generation-core` from `src/plugin-sdk/image-generation-core.ts`,
+adjacent image/media generation helpers, Gemini auth, Google model id helpers,
+failover helpers, model input helpers, logging, auth-runtime, and provider
+env-var helpers is checkpointed in `1a128fa5`.
+`music-generation-core` from `src/plugin-sdk/music-generation-core.ts`,
+adjacent music generation helpers, failover helpers, model input helpers,
+logging, and provider env-var helpers is checkpointed in `a17da4e3`.
+`media-generation-runtime` and `media-generation-runtime-shared` from
+`src/plugin-sdk/media-generation-runtime.ts`,
+`src/plugin-sdk/media-generation-runtime-shared.ts`, and
+`src/media-generation/runtime-shared.ts` are checkpointed in `f475d85a`.
+`image-generation-runtime` from `src/plugin-sdk/image-generation-runtime.ts`
+and `src/image-generation/runtime.ts` is checkpointed in `719fcee8`.
+`video-generation-runtime` from `src/plugin-sdk/video-generation-runtime.ts`,
+`src/video-generation/runtime.ts`, `src/video-generation/normalization.ts`,
+`src/video-generation/capabilities.ts`, and
+`src/video-generation/duration-support.ts` is checkpointed in `2cf18309`.
+`realtime-transcription` from `src/plugin-sdk/realtime-transcription.ts`,
+`src/realtime-transcription/provider-registry.ts`,
+`src/plugins/provider-registry-shared.ts`, and
+`src/realtime-transcription/websocket-session.ts` is checkpointed in
+`18a7e15b`.
+`realtime-voice` from `src/plugin-sdk/realtime-voice.ts`,
+`src/realtime-voice/provider-types.ts`,
+`src/realtime-voice/provider-registry.ts`,
+`src/realtime-voice/provider-resolver.ts`,
+`src/realtime-voice/agent-consult-tool.ts`,
+`src/realtime-voice/agent-consult-runtime.ts`,
+`src/realtime-voice/session-runtime.ts`, and
+`src/realtime-voice/audio-codec.ts` is checkpointed in `0f6e62d7`.
+`media-understanding-runtime` from
+`src/plugin-sdk/media-understanding-runtime.ts`,
+`src/media-understanding/runtime.ts`,
+`src/media-understanding/runtime-types.ts`, `src/media-understanding/runner.ts`,
+`src/media-understanding/runner.entries.ts`,
+`src/media-understanding/runner.attachments.ts`,
+`src/media-understanding/attachments.normalize.ts`,
+`src/media-understanding/attachments.select.ts`,
+`src/media-understanding/attachments.cache.ts`,
+`src/media-understanding/provider-registry.ts`, and
+`src/media-understanding/resolve.ts` is checkpointed in `65d2ce12`.
+`media-understanding` from `src/plugin-sdk/media-understanding.ts`,
+`src/media-understanding/openai-compatible-video.ts`,
+`src/media-understanding/openai-compatible-audio.ts`, and
+`src/media-understanding/shared.ts` is checkpointed in `4a383013`.
+`messaging-targets` from `src/plugin-sdk/messaging-targets.ts` and
+`src/channels/targets.ts` is checkpointed in `cd85f7f5`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map

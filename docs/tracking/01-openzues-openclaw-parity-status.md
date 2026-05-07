@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-06
+Last updated: 2026-05-07
 
 Primary ledgers:
 
@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~90.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~98.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1155,6 +1155,20 @@ may lag behind this tracker.
   audit, and repair exports with explicit unavailable backend projection.
   - Status: checkpointed in `ad4b05e5`
 
+- [x] Imported plugin SDK memory-core-host-engine-embeddings shim for
+  embedding provider registry, remote provider/fetch helpers, batch
+  output/status/grouping helpers, vector/input normalization, cache headers,
+  model-prefix normalization, multimodal classifiers, and local/upload
+  unavailable boundaries.
+  - Status: checkpointed in `4a1d82a8`
+
+- [x] Imported plugin SDK memory-core-host-engine-foundation shim for agent
+  scope/config/path helpers, memory search and sync config projection,
+  duration parsing, SecretInput helpers, safe IO/logging/mime wrappers,
+  transcript listener registration, global singletons, concurrency,
+  shell-arg splitting, home path shortening, and UTF-16-safe truncation.
+  - Status: checkpointed in `4d0b1103`
+
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
   "openclaw/plugin-sdk/*"` and `export default` syntax to a temporary CommonJS
@@ -2255,6 +2269,89 @@ may lag behind this tracker.
     adjacent plugin invoke proof (`22 passed, 803 deselected`), `ruff check`,
     and `mypy`.
 
+- [x] Imported plugin SDK tool-send shim.
+  - Source: `openclaw-main/src/plugin-sdk/tool-send.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `87450dcc`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused tool-send proof (`1 passed`),
+    adjacent SDK helper proof (`4 passed, 1080 deselected`), adjacent
+    imported-plugin proof (`272 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK webhook-ingress shim.
+  - Source: `openclaw-main/src/plugin-sdk/webhook-ingress.ts`,
+    `openclaw-main/src/gateway/auth-rate-limit.ts`,
+    `openclaw-main/src/infra/ws.ts`,
+    `openclaw-main/src/plugins/http-path.ts`, and
+    `openclaw-main/src/infra/http-body.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `399e784a`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused webhook-ingress proof (`1 passed`),
+    adjacent SDK helper proof (`3 passed, 1082 deselected`), adjacent
+    imported-plugin proof (`273 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK web-media shim.
+  - Source: `openclaw-main/src/plugin-sdk/web-media.ts`,
+    `openclaw-main/src/media/web-media.ts`,
+    `openclaw-main/src/media/local-media-access.ts`,
+    `openclaw-main/src/media/local-roots.ts`,
+    `openclaw-main/src/media/mime.ts`, and
+    `openclaw-main/src/media/constants.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `a60b54f2`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused web-media proof (`1 passed`),
+    adjacent SDK helper proof (`4 passed, 1082 deselected`), adjacent
+    imported-plugin proof (`274 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK speech facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/speech.ts`,
+    `openclaw-main/src/plugin-sdk/speech-core.ts`,
+    `openclaw-main/src/tts/openai-compatible-speech-provider.ts`,
+    `openclaw-main/src/tts/openai-compatible-speech-provider.test.ts`, and
+    `openclaw-main/src/agents/provider-http-errors.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `97ec0d27`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused speech facade proof (`1 passed`),
+    adjacent SDK helper proof (`3 passed, 1084 deselected`), adjacent
+    imported-plugin proof (`275 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK zalouser compatibility facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/zalouser.ts`,
+    `openclaw-main/src/plugin-sdk/command-auth.ts`, and
+    `openclaw-main/src/plugin-sdk/command-auth.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `6f0c70b5`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused zalouser proof (`1 passed`),
+    adjacent command-auth proof (`3 passed, 1085 deselected`), adjacent
+    imported-plugin proof (`276 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK zod facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/zod.ts`,
+    `openclaw-main/extensions/acpx/src/config-schema.ts`, and
+    `openclaw-main/extensions/feishu/src/config-schema.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `c49cbd4a`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused zod proof (`1 passed`),
+    adjacent SDK helper proof (`4 passed, 1085 deselected`), adjacent
+    imported-plugin proof (`277 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
 - [x] Imported plugin SDK account-core/account-resolution shim.
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
     `openclaw-main/src/plugin-sdk/account-resolution.ts`,
@@ -2363,6 +2460,919 @@ may lag behind this tracker.
   - Last verified: 2026-05-05, focused text-runtime helper proof (`1
     passed`), adjacent plugin invoke proof (`13 passed, 803 deselected`),
     `ruff check`, and `mypy`.
+
+- [x] Imported plugin SDK speech-core helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/speech-core.ts`, adjacent
+    `openclaw-main/src/tts/*` helpers, and
+    `openclaw-main/src/agents/provider-http-errors.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `ff03eba7`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused speech-core helper proof (`1
+    passed`), adjacent SDK helper proof (`3 passed, 1016 deselected`),
+    adjacent imported-plugin proof (`207 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK video-generation-core helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/video-generation-core.ts`,
+    adjacent `openclaw-main/src/video-generation/*`,
+    `openclaw-main/src/media-generation/runtime-shared.ts`,
+    `openclaw-main/src/config/model-input.ts`,
+    `openclaw-main/src/agents/failover-error.ts`,
+    `openclaw-main/src/logging/subsystem.ts`, and
+    `openclaw-main/src/secrets/provider-env-vars.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `f85c7465`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused video-generation-core helper proof
+    (`1 passed`), adjacent SDK helper proof (`3 passed, 1017 deselected`),
+    adjacent imported-plugin proof (`208 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK image-generation-core helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/image-generation-core.ts`,
+    adjacent `openclaw-main/src/image-generation/*`,
+    `openclaw-main/src/media-generation/runtime-shared.ts`,
+    `openclaw-main/src/config/model-input.ts`,
+    `openclaw-main/src/agents/failover-error.ts`,
+    `openclaw-main/src/infra/gemini-auth.ts`,
+    `openclaw-main/src/plugin-sdk/provider-model-shared.ts`,
+    `openclaw-main/src/logging/subsystem.ts`, and
+    `openclaw-main/src/secrets/provider-env-vars.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `1a128fa5`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused image-generation-core helper proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 1017 deselected`),
+    adjacent imported-plugin proof (`209 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK music-generation-core helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/music-generation-core.ts`,
+    adjacent `openclaw-main/src/music-generation/*`,
+    `openclaw-main/src/config/model-input.ts`,
+    `openclaw-main/src/agents/failover-error.ts`,
+    `openclaw-main/src/logging/subsystem.ts`, and
+    `openclaw-main/src/secrets/provider-env-vars.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `a17da4e3`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused music-generation-core helper proof
+    (`1 passed`), adjacent SDK helper proof (`5 passed, 1017 deselected`),
+    adjacent imported-plugin proof (`210 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK media-generation-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/media-generation-runtime.ts`,
+    `openclaw-main/src/plugin-sdk/media-generation-runtime-shared.ts`, and
+    `openclaw-main/src/media-generation/runtime-shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `f475d85a`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused media-generation-runtime helper proof
+    (`1 passed`), adjacent SDK helper proof (`6 passed, 1017 deselected`),
+    adjacent imported-plugin proof (`211 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK image-generation-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/image-generation-runtime.ts` and
+    `openclaw-main/src/image-generation/runtime.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `719fcee8`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused image-generation-runtime helper proof
+    (`1 passed`), adjacent SDK helper proof (`6 passed, 1018 deselected`),
+    adjacent imported-plugin proof (`212 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK video-generation-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/video-generation-runtime.ts`,
+    `openclaw-main/src/video-generation/runtime.ts`,
+    `openclaw-main/src/video-generation/normalization.ts`,
+    `openclaw-main/src/video-generation/capabilities.ts`, and
+    `openclaw-main/src/video-generation/duration-support.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `2cf18309`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused video-generation-runtime helper proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 1021 deselected`),
+    adjacent imported-plugin proof (`213 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK realtime-transcription helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/realtime-transcription.ts`,
+    `openclaw-main/src/realtime-transcription/provider-registry.ts`,
+    `openclaw-main/src/plugins/provider-registry-shared.ts`, and
+    `openclaw-main/src/realtime-transcription/websocket-session.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `18a7e15b`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused realtime-transcription helper proof
+    (`1 passed`), adjacent SDK helper proof (`2 passed, 1024 deselected`),
+    adjacent imported-plugin proof (`214 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK realtime-voice helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/realtime-voice.ts`,
+    `openclaw-main/src/realtime-voice/provider-types.ts`,
+    `openclaw-main/src/realtime-voice/provider-registry.ts`,
+    `openclaw-main/src/realtime-voice/provider-resolver.ts`,
+    `openclaw-main/src/realtime-voice/agent-consult-tool.ts`,
+    `openclaw-main/src/realtime-voice/agent-consult-runtime.ts`,
+    `openclaw-main/src/realtime-voice/session-runtime.ts`, and
+    `openclaw-main/src/realtime-voice/audio-codec.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `0f6e62d7`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused realtime-voice helper proof
+    (`1 passed`), adjacent SDK helper proof (`3 passed, 1024 deselected`),
+    adjacent imported-plugin proof (`215 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK media-understanding-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/media-understanding-runtime.ts`,
+    `openclaw-main/src/media-understanding/runtime.ts`,
+    `openclaw-main/src/media-understanding/runtime-types.ts`,
+    `openclaw-main/src/media-understanding/runner.ts`,
+    `openclaw-main/src/media-understanding/runner.entries.ts`,
+    `openclaw-main/src/media-understanding/runner.attachments.ts`,
+    `openclaw-main/src/media-understanding/attachments.normalize.ts`,
+    `openclaw-main/src/media-understanding/attachments.select.ts`,
+    `openclaw-main/src/media-understanding/attachments.cache.ts`,
+    `openclaw-main/src/media-understanding/provider-registry.ts`, and
+    `openclaw-main/src/media-understanding/resolve.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `65d2ce12`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused media-understanding-runtime helper
+    proof (`1 passed`), adjacent SDK helper proof (`4 passed, 1024
+    deselected`), adjacent imported-plugin proof (`216 passed, 812
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK media-understanding provider-helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/media-understanding.ts`,
+    `openclaw-main/src/media-understanding/openai-compatible-video.ts`,
+    `openclaw-main/src/media-understanding/openai-compatible-audio.ts`, and
+    `openclaw-main/src/media-understanding/shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `4a383013`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused media-understanding helper proof
+    (`1 passed`), adjacent SDK helper proof (`3 passed, 1026 deselected`),
+    adjacent imported-plugin proof (`217 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK messaging-targets helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/messaging-targets.ts` and
+    `openclaw-main/src/channels/targets.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `cd85f7f5`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused messaging-targets helper proof (`1
+    passed`), adjacent SDK helper proof (`3 passed, 1027 deselected`),
+    adjacent imported-plugin proof (`218 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK request-url helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/request-url.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: verified; source/test behavior checkpointed in `f4a23a25`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused request-url/fetch-SSRF proof (`1
+    passed`), adjacent SDK helper proof (`2 passed, 1028 deselected`),
+    adjacent imported-plugin proof (`218 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Imported plugin SDK persistent-dedupe helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/persistent-dedupe.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `cfe26bca`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused persistent-dedupe proof (`1 passed`),
+    adjacent SDK helper proof (`4 passed, 1027 deselected`), adjacent
+    imported-plugin proof (`219 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK qa-runner-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/qa-runner-runtime.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `f9d46a8f`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused qa-runner-runtime proof (`1 passed`),
+    adjacent SDK helper proof (`3 passed, 1029 deselected`), adjacent
+    imported-plugin proof (`220 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK models-provider-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/models-provider-runtime.ts`,
+    `openclaw-main/src/auto-reply/reply/commands-models.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `695de78b`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused models-provider-runtime proof (`1
+    passed`), adjacent SDK helper proof (`6 passed, 1027 deselected`),
+    adjacent imported-plugin proof (`221 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK skill-commands-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/skill-commands-runtime.ts`,
+    `openclaw-main/src/auto-reply/skill-commands.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `14864460`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused skill-commands-runtime proof (`1
+    passed`), adjacent SDK helper proof (`5 passed, 1029 deselected`),
+    adjacent imported-plugin proof (`222 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK skills-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/skills-runtime.ts`,
+    `openclaw-main/src/agents/skills/refresh-state.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `106ddcb8`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused skills-runtime proof (`1 passed`),
+    adjacent SDK helper proof (`3 passed, 1032 deselected`), adjacent
+    imported-plugin proof (`223 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime core helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/agent-scope.ts`,
+    `openclaw-main/src/agents/agent-paths.ts`,
+    `openclaw-main/src/agents/current-time.ts`,
+    `openclaw-main/src/agents/date-time.ts`,
+    `openclaw-main/src/agents/defaults.ts`,
+    `openclaw-main/src/agents/identity.ts`,
+    `openclaw-main/src/agents/provider-id.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `a8e871a3`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime core proof (`1 passed`),
+    adjacent SDK helper proof (`3 passed, 1033 deselected`), adjacent
+    imported-plugin proof (`224 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime model-selection helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/model-selection.ts`,
+    `openclaw-main/src/agents/model-selection-normalize.ts`,
+    `openclaw-main/src/agents/model-selection-shared.ts`,
+    `openclaw-main/src/agents/model-selection-resolve.ts`,
+    `openclaw-main/src/agents/model-ref-shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `0d009e7d`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime model-selection proof
+    (`1 passed`), adjacent SDK helper proof (`3 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`225 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime tool bridge helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/tools/common.ts`,
+    `openclaw-main/src/tools/index.ts`,
+    `openclaw-main/src/tools/availability.ts`,
+    `openclaw-main/src/tools/descriptors.ts`,
+    `openclaw-main/src/tools/diagnostics.ts`,
+    `openclaw-main/src/tools/execution.ts`,
+    `openclaw-main/src/tools/planner.ts`,
+    `openclaw-main/src/tools/protocol.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `01653787`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime tool bridge proof (`1
+    passed`), adjacent SDK helper proof (`3 passed, 1035 deselected`),
+    adjacent imported-plugin proof (`226 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime facade utility helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/model-auth-markers.ts`,
+    `openclaw-main/src/agents/sandbox-paths.ts`,
+    `openclaw-main/src/agents/identity-avatar.ts`,
+    `openclaw-main/src/agents/simple-completion-runtime.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `a6d70a6f`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime facade utility proof (`1
+    passed`), adjacent SDK helper proof (`4 passed, 1035 deselected`),
+    adjacent imported-plugin proof (`227 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime model-catalog lookup helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/model-catalog.ts`,
+    `openclaw-main/src/agents/model-catalog-lookup.ts`,
+    `openclaw-main/src/agents/model-catalog.types.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `a5794303`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime model-catalog proof (`1
+    passed`), adjacent SDK helper proof (`5 passed, 1035 deselected`),
+    adjacent imported-plugin proof (`228 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime PI embedded utility helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/pi-embedded-utils.ts`,
+    `openclaw-main/src/shared/text/assistant-visible-text.ts`,
+    `openclaw-main/src/shared/text/reasoning-tags.ts`,
+    `openclaw-main/src/shared/chat-message-content.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `db2affa5`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime PI utility proof (`1
+    passed`), adjacent SDK helper proof (`7 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`229 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime embedded block chunker shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/pi-embedded-block-chunker.ts`,
+    `openclaw-main/src/markdown/fences.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `da591809`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime block chunker proof (`1
+    passed`), adjacent SDK helper proof (`8 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`230 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime model-auth helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/model-auth.ts`,
+    `openclaw-main/src/agents/model-auth-env.ts`,
+    `openclaw-main/src/agents/model-auth-runtime-shared.ts`,
+    `openclaw-main/src/agents/auth-profiles.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `b93c187b`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime model-auth proof (`1
+    passed`), adjacent SDK helper proof (`9 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`231 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime schema/typebox helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/schema/typebox.ts`,
+    `openclaw-main/src/agents/schema/string-enum.ts`,
+    `openclaw-main/src/infra/outbound/channel-target.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `0884d4f3`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime schema/typebox proof (`1
+    passed`), adjacent SDK helper proof (`10 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`232 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime web-tool helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/tools/web-shared.ts`,
+    `openclaw-main/src/agents/tools/web-fetch-utils.ts`,
+    `openclaw-main/src/agents/tools/web-guarded-fetch.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `9bc67f5e`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime web-tool proof (`1
+    passed`), adjacent SDK helper proof (`11 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`233 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime provider-auth alias helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/provider-auth-aliases.ts`,
+    `openclaw-main/src/plugins/plugin-config-trust.ts`,
+    `openclaw-main/src/plugins/plugin-control-plane-context.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `61731b33`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime provider-auth alias proof
+    (`1 passed`), adjacent SDK helper proof (`12 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`234 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime TTS helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/tts/tts.ts`,
+    `openclaw-main/src/plugin-sdk/tts-runtime.ts`,
+    `openclaw-main/extensions/speech-core/src/tts.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `9b328bbd`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime TTS proof (`1 passed`),
+    adjacent SDK helper proof (`13 passed, 1034 deselected`), adjacent
+    imported-plugin proof (`235 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime command entrypoint shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/agent-command.ts`,
+    `openclaw-main/src/agents/agent-runtime-config.ts`,
+    `openclaw-main/src/agents/command/types.ts`,
+    `openclaw-main/src/commands/agent.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `9e6496fb`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime command entrypoint proof
+    (`1 passed`), adjacent SDK helper proof (`14 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`236 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK file-lock helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/file-lock.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `ed03c127`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused file-lock proof (`1 passed`),
+    adjacent SDK helper proof (`15 passed, 1034 deselected`), adjacent
+    imported-plugin proof (`237 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK google-model-id alias shim.
+  - Source: `openclaw-main/src/plugin-sdk/google-model-id.ts`,
+    `openclaw-main/src/plugin-sdk/provider-model-shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `67db67b5`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused google-model-id proof (`1 passed`),
+    adjacent SDK helper proof (`16 passed, 1034 deselected`), adjacent
+    imported-plugin proof (`238 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK googlechat-runtime-shared schema shim.
+  - Source: `openclaw-main/src/plugin-sdk/googlechat-runtime-shared.ts`,
+    `openclaw-main/src/config/zod-schema.providers-core.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `f721b7e3`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused googlechat-runtime-shared proof (`1
+    passed`), adjacent SDK helper proof (`17 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`239 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK open-prose exact plugin-entry shim.
+  - Source: `openclaw-main/src/plugin-sdk/open-prose.ts`,
+    `openclaw-main/src/plugin-sdk/plugin-entry.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `ef8830b1`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused open-prose proof (`1 passed`),
+    adjacent SDK helper proof (`18 passed, 1034 deselected`), adjacent
+    imported-plugin proof (`240 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK runtime-group-policy helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/runtime-group-policy.ts`,
+    `openclaw-main/src/config/runtime-group-policy.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `b11adc13`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused runtime-group-policy proof (`1
+    passed`), adjacent SDK helper proof (`20 passed, 1033 deselected`),
+    adjacent imported-plugin proof (`241 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-cdp helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-cdp.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `4e15c3c2`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-cdp proof (`1 passed`),
+    adjacent SDK helper proof (`22 passed, 1032 deselected`), adjacent
+    imported-plugin proof (`242 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-config-support helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-config-support.ts`,
+    `openclaw-main/src/config/paths.ts`,
+    `openclaw-main/extensions/browser/src/sdk-config.ts`,
+    `openclaw-main/src/gateway/net.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `33463b7c`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-config-support proof (`1
+    passed`), adjacent SDK helper proof (`23 passed, 1032 deselected`),
+    adjacent imported-plugin proof (`243 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-config facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-config.ts`,
+    `openclaw-main/src/plugin-sdk/browser-profiles.ts`,
+    `openclaw-main/src/plugin-sdk/browser-cdp.ts`,
+    `openclaw-main/src/plugin-sdk/browser-control-auth.ts`,
+    `openclaw-main/src/plugin-sdk/browser-trash.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `300224b7`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-config facade proof (`1
+    passed`), adjacent SDK helper proof (`24 passed, 1032 deselected`),
+    adjacent imported-plugin proof (`244 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-control-auth helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-control-auth.ts`,
+    `openclaw-main/extensions/browser/src/browser/control-auth.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `d1d7b371`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-control-auth proof (`1
+    passed`), focused entrypoints proof (`1 passed`), adjacent SDK helper
+    proof (`26 passed, 1031 deselected`), adjacent imported-plugin proof (`245
+    passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-profiles helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-profiles.ts`,
+    `openclaw-main/extensions/browser/browser-profiles.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `73d20703`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-profiles proof (`1 passed`),
+    focused entrypoints proof (`1 passed`), adjacent SDK helper proof (`27
+    passed, 1031 deselected`), adjacent imported-plugin proof (`246 passed,
+    812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-config-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-config-runtime.ts`,
+    `openclaw-main/src/config/config.ts`,
+    `openclaw-main/src/config/paths.ts`,
+    `openclaw-main/src/plugins/config-state.ts`,
+    `openclaw-main/src/utils/boolean.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `7a4ef6f0`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-config-runtime proof (`1
+    passed`), focused entrypoints proof (`1 passed`), adjacent SDK helper
+    proof (`28 passed, 1031 deselected`), adjacent imported-plugin proof (`247
+    passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-trash helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-trash.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `9a90555e`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-trash proof (`1 passed`),
+    focused entrypoints proof (`1 passed`), adjacent SDK helper proof (`29
+    passed, 1031 deselected`), adjacent imported-plugin proof (`248 passed,
+    812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-maintenance helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-maintenance.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `ce39d8c6`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-maintenance proof (`1 passed`),
+    focused entrypoints proof (`1 passed`), adjacent SDK helper proof (`30
+    passed, 1031 deselected`), adjacent imported-plugin proof (`249 passed,
+    812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-host-inspection helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-host-inspection.ts`,
+    `openclaw-main/extensions/browser/src/browser/chrome.executables.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `bf5ce3f0`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-host-inspection proof (`1
+    passed`), focused entrypoints proof (`1 passed`), adjacent SDK helper proof
+    (`31 passed, 1031 deselected`), adjacent imported-plugin proof (`250
+    passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-node-host helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-node-host.ts`,
+    `openclaw-main/extensions/browser/src/node-host/invoke-browser.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `2ef00b04`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-node-host proof (`1 passed`),
+    focused entrypoints proof (`1 passed`), adjacent SDK helper proof (`32
+    passed, 1031 deselected`), adjacent imported-plugin proof (`251 passed,
+    812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-node-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-node-runtime.ts`,
+    `openclaw-main/extensions/browser/src/sdk-node-runtime.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `bc7ef301`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-node-runtime proof (`1
+    passed`), focused entrypoints proof (`1 passed`), adjacent SDK helper proof
+    (`33 passed, 1031 deselected`), adjacent imported-plugin proof (`252
+    passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-setup-tools helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-setup-tools.ts`,
+    `openclaw-main/extensions/browser/src/sdk-setup-tools.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `50876922`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-setup-tools proof (`1
+    passed`), focused entrypoints proof (`1 passed`), adjacent SDK helper proof
+    (`34 passed, 1031 deselected`), adjacent imported-plugin proof (`253
+    passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-support helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-support.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `37eec77e`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-support proof (`1 passed`),
+    focused entrypoints proof (`1 passed`), adjacent SDK helper proof (`35
+    passed, 1031 deselected`), adjacent imported-plugin proof (`254 passed,
+    812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK browser-bridge helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-bridge.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `f0635cce`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused browser-bridge proof (`1 passed`),
+    focused entrypoints proof (`1 passed`), adjacent SDK helper proof (`36
+    passed, 1031 deselected`), adjacent imported-plugin proof (`255 passed,
+    812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-harness-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-harness-runtime.ts`,
+    `openclaw-main/src/plugin-sdk/agent-harness.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `ee7f5c49`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-harness-runtime proof (`1
+    passed`), adjacent SDK helper proof (`6 passed, 1062 deselected`),
+    adjacent imported-plugin proof (`256 passed, 812 deselected`), `ruff
+    check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK sandbox helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/sandbox.ts`,
+    `openclaw-main/src/agents/sandbox.ts`,
+    `openclaw-main/src/agents/sandbox/ssh.ts`,
+    `openclaw-main/src/agents/sandbox/sanitize-env-vars.ts`,
+    `openclaw-main/src/agents/sandbox/backend.ts`, and
+    `openclaw-main/src/agents/sandbox/fs-bridge-rename-targets.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `2aba5dbc`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused sandbox proof (`1 passed`), adjacent
+    SDK helper proof (`7 passed, 1062 deselected`), adjacent imported-plugin
+    proof (`257 passed, 812 deselected`), `ruff check`, `mypy`, and `git diff
+    --check`.
+
+- [x] Imported plugin SDK proxy-capture helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/proxy-capture.ts`,
+    `openclaw-main/src/proxy-capture/env.ts`,
+    `openclaw-main/src/proxy-capture/store.sqlite.ts`,
+    `openclaw-main/src/proxy-capture/runtime.ts`,
+    `openclaw-main/src/proxy-capture/blob-store.ts`, and
+    `openclaw-main/src/proxy-capture/paths.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `84300681`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused proxy-capture proof (`1 passed`),
+    adjacent SDK helper proof (`6 passed, 1064 deselected`), adjacent
+    imported-plugin proof (`258 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK setup-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/setup-runtime.ts`,
+    `openclaw-main/src/channels/plugins/setup-helpers.ts`,
+    `openclaw-main/src/channels/plugins/setup-wizard-helpers.ts`,
+    `openclaw-main/src/channels/plugins/setup-wizard-binary.ts`, and
+    `openclaw-main/src/channels/plugins/setup-wizard-proxy.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `252f28fe`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused setup-runtime proof (`1 passed`),
+    adjacent SDK helper proof (`6 passed, 1065 deselected`), adjacent
+    imported-plugin proof (`259 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK setup-tools helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/setup-tools.ts`,
+    `openclaw-main/src/cli/command-format.ts`,
+    `openclaw-main/src/infra/archive.ts`,
+    `openclaw-main/src/infra/brew.ts`,
+    `openclaw-main/src/infra/detect-binary.ts`,
+    `openclaw-main/src/terminal/links.ts`, and
+    `openclaw-main/src/utils.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `e0f1e72c`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused setup-tools proof (`1 passed`),
+    adjacent SDK helper proof (`8 passed, 1064 deselected`), adjacent
+    imported-plugin proof (`260 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK config-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/config-runtime.ts`,
+    `openclaw-main/src/plugin-sdk/plugin-config-runtime.ts`,
+    `openclaw-main/src/config/io.ts`,
+    `openclaw-main/src/config/mutate.ts`,
+    `openclaw-main/src/config/logging.ts`,
+    `openclaw-main/src/config/sessions/store.ts`,
+    `openclaw-main/src/config/sessions/reset.ts`, and adjacent config policy
+    helpers re-exported by the upstream barrel
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `74fd1711`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused config-runtime proof (`1 passed`),
+    adjacent SDK helper proof (`7 passed, 1066 deselected`), adjacent
+    imported-plugin proof (`261 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK plugin-config-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/plugin-config-runtime.ts`,
+    `openclaw-main/src/plugins/config-state.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `458d6c7f`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused plugin-config-runtime proof (`1
+    passed`), adjacent SDK helper proof (`8 passed, 1066 deselected`),
+    adjacent imported-plugin proof (`262 passed, 812 deselected`), `ruff
+    check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK config-mutation helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/config-mutation.ts`,
+    `openclaw-main/src/config/mutate.ts`,
+    `openclaw-main/src/config/io.ts`,
+    `openclaw-main/src/config/logging.ts`, and
+    `openclaw-main/src/commands/models/shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `a9813667`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused config-mutation proof (`1 passed`),
+    adjacent SDK helper proof (`9 passed, 1066 deselected`), adjacent
+    imported-plugin proof (`263 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK provider-tools helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/provider-tools.ts`,
+    `openclaw-main/src/agents/schema/clean-for-gemini.ts`, and
+    `openclaw-main/src/plugins/provider-model-compat.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `2762ee46`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused provider-tools proof (`1 passed`),
+    adjacent SDK helper proof (`7 passed, 1069 deselected`), adjacent
+    imported-plugin proof (`264 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK provider-stream-shared helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/provider-stream-shared.ts`,
+    `openclaw-main/src/agents/pi-embedded-runner/stream-payload-utils.ts`,
+    `openclaw-main/src/agents/pi-embedded-runner/zai-stream-wrappers.ts`,
+    `openclaw-main/src/agents/pi-embedded-runner/moonshot-thinking-stream-wrappers.ts`,
+    and `openclaw-main/src/shared/message-content-blocks.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `711865e0`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused provider-stream-shared proof (`1
+    passed`), adjacent SDK helper proof (`8 passed, 1069 deselected`),
+    adjacent imported-plugin proof (`265 passed, 812 deselected`), `ruff
+    check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK provider-stream helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/provider-stream.ts` and
+    `openclaw-main/src/plugin-sdk/provider-stream-family.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `da9a3e66`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused provider-stream proof (`1 passed`),
+    adjacent SDK helper proof (`5 passed, 1073 deselected`), adjacent
+    imported-plugin proof (`266 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK provider-transport-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/provider-transport-runtime.ts`,
+    `openclaw-main/src/agents/transport-stream-shared.ts`,
+    `openclaw-main/src/agents/transport-message-transform.ts`,
+    `openclaw-main/src/agents/system-prompt-cache-boundary.ts`, and
+    `openclaw-main/src/agents/openai-transport-stream.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `dd8bcfd8`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused provider-transport-runtime proof (`1
+    passed`), adjacent SDK helper proof (`4 passed, 1075 deselected`),
+    adjacent imported-plugin proof (`267 passed, 812 deselected`), `ruff
+    check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK provider-http helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/provider-http.ts`,
+    `openclaw-main/src/agents/provider-http-errors.ts`,
+    `openclaw-main/src/media-understanding/shared.ts`,
+    `openclaw-main/src/agents/provider-attribution.ts`, and
+    `openclaw-main/src/agents/provider-request-config.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `750bbf71`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused provider-http proof (`1 passed`),
+    adjacent SDK helper proof (`5 passed, 1075 deselected`), adjacent
+    imported-plugin proof (`268 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK provider-catalog-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/provider-catalog-runtime.ts`,
+    `openclaw-main/src/plugins/provider-runtime.ts`,
+    `openclaw-main/src/plugins/providers.ts`, and
+    `openclaw-main/src/plugins/providers.runtime.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `2ede5f0d`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused provider-catalog-runtime proof (`1
+    passed`), adjacent SDK helper proof (`5 passed, 1076 deselected`),
+    adjacent imported-plugin proof (`269 passed, 812 deselected`), `ruff
+    check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK provider-onboard helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/provider-onboard.ts`,
+    `openclaw-main/src/agents/model-allowlist-entry.ts`,
+    `openclaw-main/src/agents/model-ref-shared.ts`, and
+    `openclaw-main/src/config/model-input.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `2c994a4c`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused provider-onboard proof (`1 passed`),
+    adjacent SDK helper proof (`4 passed, 1078 deselected`), adjacent
+    imported-plugin proof (`270 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK provider-usage helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/provider-usage.ts`,
+    `openclaw-main/src/infra/provider-usage.fetch.ts`,
+    `openclaw-main/src/infra/provider-usage.fetch.shared.ts`,
+    `openclaw-main/src/infra/provider-usage.shared.ts`, and provider-specific
+    usage fetch helpers under `openclaw-main/src/infra/`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `cbc85bd2`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused provider-usage proof (`1 passed`),
+    adjacent SDK helper proof (`5 passed, 1078 deselected`), adjacent
+    imported-plugin proof (`271 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
 
 - [x] Imported plugin runtime tool factory context.
   - Source: `openclaw-main/src/plugins/tool-types.ts`,

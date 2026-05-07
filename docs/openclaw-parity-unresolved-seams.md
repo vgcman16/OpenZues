@@ -1,11 +1,11 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-06
+Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~90.7% overall, with a reasonable
-  band of ~79-91%.
+- Repo-wide OpenClaw parity is estimated at ~98.6% overall, with a reasonable
+  band of ~80-99%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -56,6 +56,7 @@ Current percentage rollup:
   installed plugin runtime activation adapter,
   installed plugin disabled activation gate,
   active-registry executor projection, runtime activation doctor posture, and
+  speech facade helper,
   imported plugin SDK allow-from, access-groups, direct-DM access,
   direct-DM guard-policy, direct-DM, channel-send-result, channel-pairing,
   command-auth, channel-setup, allowlist-config-edit, group-access,
@@ -96,8 +97,16 @@ Current percentage rollup:
   memory-core-host-secret helper, memory-core-host-events helper,
   memory-core-host-status helper, provider-setup helper,
   self-hosted-provider-setup helper, LM Studio runtime helper,
-  group-activation helper, media-store helper,
-  browser-security-runtime helper, fetch-runtime helper, cli-backend helper,
+  group-activation helper, media-store helper, web-media helper,
+  browser-security-runtime helper, browser-host-inspection helper,
+  browser-node-host helper, browser-node-runtime helper,
+  browser-setup-tools helper, browser-support helper, browser-bridge helper,
+  agent-harness-runtime helper, sandbox helper, proxy-capture helper,
+  setup-runtime helper, setup-tools helper, config-runtime helper,
+  plugin-config-runtime helper, config-mutation helper, provider-tools helper,
+  provider-stream-shared helper, provider-stream helper,
+  provider-transport-runtime helper,
+  fetch-runtime helper, cli-backend helper,
   type-only SDK barrel helper, config-schema helper, entrypoints helper,
   diffs helper, acpx helper, ACP runtime-backend helper, ACP runtime facade
   helper, ACP binding-runtime helper, CLI runtime helper, approval-auth-helpers,
@@ -106,8 +115,10 @@ Current percentage rollup:
   approval-renderers helper, approval-client-helpers,
   approval-client-runtime alias, approval-delivery-helpers,
   approval-native-helpers, approval-native-runtime delivery-helper,
-  approval-handler-adapter-runtime helper, and approval-handler-runtime
-  adapter-factory slices.
+  approval-handler-adapter-runtime helper, approval-handler-runtime
+  adapter-factory, realtime-voice helper, media-understanding-runtime helper,
+  media-understanding provider-helper, messaging-targets, web-media, speech,
+  zalouser, and zod slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -8700,6 +8711,262 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   pytest, adjacent SDK helper proof, adjacent imported-plugin proof,
   `ruff check`, `mypy`, and `git diff --check`; source/test checkpointed in
   `ad4b05e5`.
+- Closed the imported OpenClaw plugin SDK memory core host engine embeddings
+  seam from `src/plugin-sdk/memory-core-host-engine-embeddings.ts`,
+  `packages/memory-host-sdk/src/engine-embeddings.ts`, and adjacent provider,
+  batch, vector, remote, and multimodal helpers: scoped and unscoped native
+  runtime entries expose provider registration/listing/lookup, remote
+  embedding provider/fetch helpers, batch output/status/grouping helpers,
+  UTF-8 and structured input sizing, vector normalization, cache-header
+  sanitization, model-prefix normalization, multimodal extension/path helpers,
+  and explicit unavailable errors for local model and batch upload backends.
+  Repo-wide parity is now estimated at ~90.8%. Verified with focused
+  memory-core-host-engine-embeddings pytest, adjacent SDK helper proof,
+  adjacent imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `4a1d82a8`.
+- Closed the imported OpenClaw plugin SDK memory core host engine foundation
+  seam from `src/plugin-sdk/memory-core-host-engine-foundation.ts`,
+  `packages/memory-host-sdk/src/engine-foundation.ts`, and adjacent agent
+  scope/config, memory search, SecretInput, safe IO, transcript-event, global
+  singleton, concurrency, shell-arg, user-path, and UTF-16 truncation helpers.
+  Repo-wide parity is now estimated at ~90.9%. Verified with focused
+  memory-core-host-engine-foundation pytest, adjacent SDK helper proof,
+  adjacent imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `4d0b1103`.
+- Closed the imported OpenClaw plugin SDK memory core host engine QMD seam from
+  `src/plugin-sdk/memory-core-host-engine-qmd.ts`,
+  `packages/memory-host-sdk/src/engine-qmd.ts`, and adjacent
+  parser/scope/process/session-file/query helper files: scoped and unscoped
+  native runtime entries expose `parseQmdQueryJson`,
+  `isQmdScopeAllowed`, `deriveQmdScopeChannel`,
+  `deriveQmdScopeChatType`, transcript listing/classification/export helpers,
+  usage-counted session-id parsing, and CLI process/binary helpers. Repo-wide
+  parity is now estimated at ~91.0%. Verified with focused
+  memory-core-host-engine-qmd pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `147b0978`.
+- Closed the imported OpenClaw plugin SDK memory core host engine storage seam
+  from `src/plugin-sdk/memory-core-host-engine-storage.ts`,
+  `packages/memory-host-sdk/src/engine-storage.ts`, and adjacent internal,
+  read-file, schema, sqlite, sqlite-vec, fs-utils, backend-config, and
+  multimodal helper behavior: scoped and unscoped native runtime entries expose
+  memory file listing, file entry metadata, multimodal indexing chunks,
+  Markdown chunking/remapping, read-window projection, vector helpers, sqlite
+  schema/extension/WAL shims, missing-file stat handling, concurrency, and
+  backend config reuse. Repo-wide parity is now estimated at ~91.1%. Verified
+  with focused memory-core-host-engine-storage pytest, adjacent SDK helper
+  proof, adjacent imported-plugin proof, `ruff check`, `mypy`, and
+  `git diff --check`; source/test checkpointed in `884c9afb`.
+- Closed the OpenClaw memory host SDK engine aggregate seam from
+  `packages/memory-host-sdk/src/engine.ts`, `src/memory-host-sdk/engine.ts`,
+  and package subpath export behavior: native installed plugin runtimes can
+  require `@openclaw/memory-host-sdk/engine` as the upstream aggregate of
+  foundation, storage, embeddings, and QMD helpers, plus matching engine
+  subpath aliases for implemented package surfaces. Repo-wide parity is now
+  estimated at ~91.2%. Verified with focused memory-host-sdk engine pytest,
+  adjacent SDK helper proof, adjacent imported-plugin proof, `ruff check`,
+  `mypy`, and `git diff --check`; source/test checkpointed in `fa5ad046`.
+- Closed the OpenClaw memory host SDK runtime aggregate seam from
+  `packages/memory-host-sdk/src/runtime.ts`, `src/memory-host-sdk/runtime.ts`,
+  and package subpath export behavior: native installed plugin runtimes can
+  require `@openclaw/memory-host-sdk/runtime` as the upstream aggregate of
+  runtime-core, runtime-cli, and runtime-files helpers, plus matching runtime
+  subpath aliases for implemented package surfaces. Repo-wide parity is now
+  estimated at ~91.3%. Verified with focused memory-host-sdk runtime pytest,
+  adjacent SDK helper proof, adjacent imported-plugin proof, `ruff check`,
+  `mypy`, and `git diff --check`; source/test checkpointed in `ebd215d5`.
+- Closed the OpenClaw memory host SDK package facade seam from
+  `packages/memory-host-sdk/src/query.ts`,
+  `packages/memory-host-sdk/src/multimodal.ts`,
+  `packages/memory-host-sdk/src/secret.ts`,
+  `packages/memory-host-sdk/src/status.ts`, and package subpath export
+  behavior: native installed plugin runtimes can require the
+  `@openclaw/memory-host-sdk/query`, `multimodal`, `secret`, and `status`
+  facades through the existing native helper shims. Repo-wide parity is now
+  estimated at ~91.4%. Verified with focused memory-host-sdk facade pytest,
+  adjacent SDK helper proof, adjacent imported-plugin proof, `ruff check`,
+  `mypy`, and `git diff --check`; source/test checkpointed in `c95e0129`.
+- Closed the imported OpenClaw plugin SDK speech core seam from
+  `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helper files, and
+  `src/agents/provider-http-errors.ts`: scoped and unscoped native runtime
+  entries expose TTS normalization, directive parsing, effective config
+  merging, provider id helpers, provider HTTP error helpers, response text
+  limiting, cleanup scheduling, and bounded `summarizeText` unavailable/error
+  behavior. Repo-wide parity is now estimated at ~91.5%. Verified with
+  focused speech-core pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `ff03eba7`.
+- Closed the imported OpenClaw plugin SDK video generation core seam from
+  `src/plugin-sdk/video-generation-core.ts` and adjacent media-generation,
+  model-input, failover, provider-env-var, logging, and video provider
+  registry helpers: scoped and unscoped native runtime entries expose model
+  reference parsing, model candidate/fallback selection, no-model and failover
+  error formatting, provider env-var hints, empty native provider lookup, and
+  subsystem logger availability. Repo-wide parity is now estimated at ~91.6%.
+  Verified with focused video-generation-core pytest, adjacent SDK helper
+  proof, adjacent imported-plugin proof, `ruff check`, `mypy`, and
+  `git diff --check`; source/test checkpointed in `f85c7465`.
+- Closed the imported OpenClaw plugin SDK image generation core seam from
+  `src/plugin-sdk/image-generation-core.ts` and adjacent image/media
+  generation, model-input, failover, Gemini auth, Google-model-id,
+  provider-env-var, logging, auth-runtime, and image provider registry helpers:
+  scoped and unscoped native runtime entries expose model reference parsing,
+  model candidate/fallback selection, no-model and failover error formatting,
+  Gemini API-key/OAuth header parsing, Google preview model normalization,
+  `OPENAI_DEFAULT_IMAGE_MODEL`, API-key resolver delegation, provider env-var
+  hints, empty native provider lookup, and subsystem logger availability.
+  Repo-wide parity is now estimated at ~91.7%. Verified with focused
+  image-generation-core pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `1a128fa5`.
+- Closed the imported OpenClaw plugin SDK music generation core seam from
+  `src/plugin-sdk/music-generation-core.ts` and adjacent music model-ref,
+  music provider-registry, model-input, failover, logging, and provider-env-var
+  helpers: scoped and unscoped native runtime entries expose model reference
+  parsing, model config primary/fallback readers, failover detection and
+  description, provider env-var hints, empty native provider lookup, and
+  subsystem logger availability. Repo-wide parity is now estimated at ~91.8%.
+  Verified with focused music-generation-core pytest, adjacent SDK helper
+  proof, adjacent imported-plugin proof, `ruff check`, `mypy`, and
+  `git diff --check`; source/test checkpointed in `a17da4e3`.
+- Closed the imported OpenClaw plugin SDK media generation runtime seam from
+  `src/plugin-sdk/media-generation-runtime.ts`,
+  `src/plugin-sdk/media-generation-runtime-shared.ts`, and
+  `src/media-generation/runtime-shared.ts`: scoped and unscoped native runtime
+  entries expose model candidate auto-fallback ordering, no-model and
+  generation-failure messaging, failover-attempt recording,
+  normalization-entry detection, aspect-ratio/size derivation and
+  closest-match resolution, resolution matching, duration clamping, and
+  normalization metadata projection. Repo-wide parity is now estimated at
+  ~91.9%. Verified with focused media-generation-runtime pytest, adjacent SDK
+  helper proof, adjacent imported-plugin proof, `ruff check`, `mypy`, and
+  `git diff --check`; source/test checkpointed in `f475d85a`.
+- Closed the imported OpenClaw plugin SDK image generation runtime seam from
+  `src/plugin-sdk/image-generation-runtime.ts` and
+  `src/image-generation/runtime.ts`: scoped and unscoped native runtime entries
+  expose fakeable provider listing, provider-backed `generateImage`, model
+  candidate fallback, configured timeout inheritance, image override
+  normalization, generated-image result shaping, normalization metadata
+  projection, ignored override reporting, warning hooks, missing-provider
+  attempts, and no-model config errors with provider env-var hints. Repo-wide
+  parity is now estimated at ~92.0%. Verified with focused
+  image-generation-runtime pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `719fcee8`.
+- Closed the imported OpenClaw plugin SDK video generation runtime seam from
+  `src/plugin-sdk/video-generation-runtime.ts`,
+  `src/video-generation/runtime.ts`, `src/video-generation/normalization.ts`,
+  `src/video-generation/capabilities.ts`, and
+  `src/video-generation/duration-support.ts`: scoped and unscoped native
+  runtime entries expose fakeable provider listing, provider-backed
+  `generateVideo`, model candidate fallback, configured timeout inheritance,
+  video mode capability resolution, reference audio/providerOptions/duration
+  skip guards, supported-duration normalization, mixed image/video/audio
+  reference forwarding, generated-video result shaping, normalization metadata
+  projection, ignored override reporting, missing-provider attempts,
+  undeliverable asset errors, and no-model config errors with provider env-var
+  hints. Repo-wide parity is now estimated at ~92.1%. Verified with focused
+  video-generation-runtime pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `2cf18309`.
+- Closed the imported OpenClaw plugin SDK realtime transcription seam from
+  `src/plugin-sdk/realtime-transcription.ts`,
+  `src/realtime-transcription/provider-registry.ts`,
+  `src/plugins/provider-registry-shared.ts`, and
+  `src/realtime-transcription/websocket-session.ts`: scoped and unscoped
+  native runtime entries expose provider id normalization, fakeable
+  config-backed provider listing, alias-aware provider lookup, canonical
+  provider id projection, and an in-process realtime transcription session
+  lifecycle with queued audio, ready marking, close state, sendJson/sendBinary
+  transport hooks, and pre-ready connect failure/error callback behavior.
+  Repo-wide parity is now estimated at ~92.2%. Verified with focused
+  realtime-transcription pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `18a7e15b`.
+- Closed the imported OpenClaw plugin SDK realtime voice seam from
+  `src/plugin-sdk/realtime-voice.ts`, `src/realtime-voice/provider-types.ts`,
+  `src/realtime-voice/provider-registry.ts`,
+  `src/realtime-voice/provider-resolver.ts`,
+  `src/realtime-voice/agent-consult-tool.ts`,
+  `src/realtime-voice/agent-consult-runtime.ts`,
+  `src/realtime-voice/session-runtime.ts`, and
+  `src/realtime-voice/audio-codec.ts`: scoped and unscoped native runtime
+  entries expose audio-format constants, provider id normalization,
+  config-backed provider listing, alias-aware lookup, canonical provider id
+  projection, configured provider auto-selection/default-model behavior,
+  realtime voice agent-consult helper surfaces, bridge-session callback routing,
+  and PCM/mu-law/resampling helpers. Repo-wide parity is now estimated at
+  ~92.3%. Verified with focused realtime-voice pytest, adjacent SDK helper
+  proof, adjacent imported-plugin proof, `ruff check`, `mypy`, and
+  `git diff --check`; source/test checkpointed in `0f6e62d7`.
+- Closed the imported OpenClaw plugin SDK media-understanding runtime seam from
+  `src/plugin-sdk/media-understanding-runtime.ts`,
+  `src/media-understanding/runtime.ts`,
+  `src/media-understanding/runtime-types.ts`,
+  `src/media-understanding/runner.ts`,
+  `src/media-understanding/runner.entries.ts`,
+  `src/media-understanding/runner.attachments.ts`,
+  `src/media-understanding/attachments.normalize.ts`,
+  `src/media-understanding/attachments.select.ts`,
+  `src/media-understanding/attachments.cache.ts`,
+  `src/media-understanding/provider-registry.ts`, and
+  `src/media-understanding/resolve.ts`: scoped and unscoped native runtime
+  entries expose provider-backed image/audio/video file execution, request
+  prompt and timeout overrides, provider registry resolution, attachment
+  selection, disabled/no-attachment decisions, direct
+  `describeImageFileWithModel`, output trimming, and audio/video provider call
+  metadata. Repo-wide parity is now estimated at ~92.4%. Verified with focused
+  media-understanding-runtime pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `65d2ce12`.
+- Closed the imported OpenClaw plugin SDK media-understanding provider-helper
+  seam from `src/plugin-sdk/media-understanding.ts`,
+  `src/media-understanding/openai-compatible-video.ts`,
+  `src/media-understanding/openai-compatible-audio.ts`, and
+  `src/media-understanding/shared.ts`: scoped and unscoped native runtime
+  entries expose OpenAI-compatible video request/coercion helpers,
+  media-understanding string fallback normalization, OpenAI-compatible audio
+  transcription FormData upload construction, base URL/header shaping, HTTP
+  error/text handling, and image helper call surfaces backed by an injectable
+  image runtime. Repo-wide parity is now estimated at ~92.5%. Verified with
+  focused media-understanding helper pytest, adjacent SDK helper proof,
+  adjacent imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `4a383013`.
+- Closed the imported OpenClaw plugin SDK messaging-targets seam from
+  `src/plugin-sdk/messaging-targets.ts` and `src/channels/targets.ts`: scoped
+  and unscoped native runtime entries expose the narrow public target parser
+  barrel for target construction, id normalization, mention/prefix parsing,
+  at-user parsing, and required target-kind validation. Repo-wide parity was
+  estimated at ~92.6% for that checkpoint. Verified with focused messaging-targets pytest,
+  adjacent SDK helper proof, adjacent imported-plugin proof, `ruff check`,
+  `mypy`, and `git diff --check`; source/test checkpointed in `cd85f7f5`.
+- Refreshed the imported OpenClaw plugin SDK request-url seam from
+  `src/plugin-sdk/request-url.ts`: scoped and unscoped native runtime entries
+  expose the `resolveRequestUrl` helper for string, `URL`, request-like
+  `{ url }`, and unsupported inputs through the same fetch/SSRF helper proof
+  path. Repo-wide parity was estimated at ~92.7% for that checkpoint. Verified
+  with focused request-url/fetch-SSRF pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test behavior was
+  already checkpointed in `f4a23a25` and refreshed on 2026-05-07.
+- Closed the imported OpenClaw plugin SDK persistent-dedupe seam from
+  `src/plugin-sdk/persistent-dedupe.ts`: scoped and unscoped native runtime
+  entries expose `createPersistentDedupe` and `createClaimableDedupe` with
+  namespace-scoped persistent records, in-process duplicate race guards,
+  warmup, memory fallback on disk errors, claim/commit/release behavior, and
+  persistent-backed recent checks. Repo-wide parity was estimated at ~92.8%
+  for that checkpoint. Verified with focused persistent-dedupe pytest,
+  adjacent SDK helper proof, adjacent imported-plugin proof, `ruff check`,
+  `mypy`, and `git diff --check`; source/test checkpointed in `cfe26bca`.
+- Closed the imported OpenClaw plugin SDK qa-runner-runtime seam from
+  `src/plugin-sdk/qa-runner-runtime.ts`: scoped and unscoped native runtime
+  entries expose lazy QA lab runtime loading, bundled plugin test API loading,
+  QA runtime availability checks, sorted QA runner manifest discovery,
+  activated/bundled runtime registration matching, blocked runner projection,
+  duplicate command detection, invalid registration detection, and undeclared
+  runtime command rejection. Repo-wide parity is now estimated at ~92.9%.
+  Verified with focused qa-runner-runtime pytest, adjacent SDK helper proof,
+  adjacent imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `f9d46a8f`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/lazy-runtime/config-paths/context-visibility-runtime/heartbeat-runtime/json-store/diagnostic-runtime/system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/runtime-doctor/runtime-secret-resolution/memory-core-host-query/memory-core-host-multimodal/memory-core-host-secret/memory-core-host-events/memory-core-host-status/provider-setup/self-hosted-provider-setup/lmstudio/lmstudio-runtime/group-activation/media-store/browser-security-runtime/fetch-runtime/cli-backend/type-only-sdk-barrels/config-schema/entrypoints/diffs/acpx/acp-runtime-backend/acp-runtime/acp-binding-runtime/cli-runtime/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -8740,8 +9007,395 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   approval-handler-adapter-runtime/approval-handler-runtime/approval-runtime/
   channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
-  channel-config-helpers/channel-config-writes/channel-lifecycle path,
-  starting with `memory-core-host-engine-embeddings`.
+  channel-config-helpers/channel-config-writes/channel-lifecycle path, plus
+  models-provider-runtime provider menu/list helpers, skill-commands-runtime
+  workspace/agent skill command discovery, skills-runtime refresh-state
+  helpers, the first agent-runtime core helper subset, the bounded
+  agent-runtime model-selection helper subset, the agent-runtime tool bridge
+  helper subset, the agent-runtime facade utility subset, and the
+  agent-runtime model-catalog lookup subset, the agent-runtime PI embedded
+  utility subset, the agent-runtime embedded block chunker subset, and the
+  agent-runtime model-auth helper subset, the agent-runtime schema/typebox
+  helper subset, the agent-runtime web-tool helper subset, and the
+  agent-runtime provider-auth alias helper subset, continuing with remaining
+  TTS exports and agent-command breadth.
+- Current queue-head adjustment: imported plugin SDK `models-provider-runtime`
+  now exposes the upstream `buildModelsProviderData`,
+  `formatModelsAvailableHeader`, and `resolveModelsCommandReply` exports for
+  scoped and unscoped native runtime imports. The native shim preserves
+  provider/model Map+Set data, model names, hidden legacy runtime providers,
+  OpenClaw Pi runtime choices, `/models` provider menus, paginated/all
+  provider lists, auth labels, unknown-provider and out-of-range responses,
+  `/models add` deprecation text, and non-`/models` null returns. Source/test
+  checkpointed in `695de78b`.
+- Current queue-head adjustment: imported plugin SDK `skill-commands-runtime`
+  now exposes the upstream `listSkillCommandsForAgents` and
+  `listSkillCommandsForWorkspace` exports for scoped and unscoped native
+  runtime imports. The native shim preserves workspace skill scanning,
+  agent/default skill allowlists, explicit empty filters, shared-workspace
+  allowlist merging, missing-workspace skips, skillName de-duplication,
+  command-name sanitization, descriptions, and tool dispatch metadata.
+  Source/test checkpointed in `14864460`.
+- Current queue-head adjustment: imported plugin SDK `skills-runtime` now
+  exposes the upstream `bumpSkillsSnapshotVersion`,
+  `getSkillsSnapshotVersion`, `registerSkillsChangeListener`, and
+  `shouldRefreshSnapshotForVersion` exports for scoped and unscoped native
+  runtime imports. The native shim preserves global/workspace version tracking,
+  refresh comparisons, `watch`/`config-change`/`remote-node` event emission,
+  listener unsubscription, and listener-error swallowing. Source/test
+  checkpointed in `106ddcb8`.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the first source-backed native core helper subset for scoped and
+  unscoped imports: default model constants, provider ID normalization and
+  lookup, agent list/default/config/workspace/dir/session resolution,
+  identity/ack/message/response prefix resolution, timestamp normalization,
+  Cron-style current-time lines, and OpenClaw agent-dir env overrides.
+  Source/test checkpointed in `a8e871a3`; broader model-selection and
+  agent-command/tool bridge exports remained next at that checkpoint.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed model-selection helper subset for scoped and
+  unscoped imports: canonical/legacy model keys, model ref parsing and
+  normalization, persisted runtime/override model resolution, stored override
+  normalization, configured catalog and allowlist helpers, alias indexes,
+  default/subagent model selection, allowed-model status/projection, and
+  reasoning-default projection. Source/test checkpointed in `0d009e7d`;
+  agent-command/tool bridge exports remain the next `agent-runtime` seam.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed tool bridge helper subset for scoped and unscoped
+  imports: tool input and authorization errors, owner-only execution wrapping,
+  string/number/array/reaction parameter readers, action gates, text/json/
+  payload result helpers, available-tag parsing, descriptor helpers,
+  availability evaluation, executor-ref formatting, tool-plan diagnostics, and
+  protocol descriptor projection. Source/test checkpointed in `01653787`;
+  remaining `agent-runtime` facade exports and agent-command entrypoints remain
+  the next seam.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed facade utility helper subset for scoped and
+  unscoped imports: model-auth marker constants/checks, OAuth and SecretRef
+  marker helpers, sandbox path resolution and escape rejection, data-URL media
+  rejection, public avatar source redaction, and alias/profile-aware
+  simple-completion model selection. Source/test checkpointed in `a6d70a6f`;
+  live provider/model runtime helpers and agent-command entrypoints remain the
+  next seam.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed model-catalog lookup helper subset for scoped and
+  unscoped imports: provider-alias-aware catalog lookup, providerless
+  unique-match lookup, and text/image/audio/document capability probes.
+  Source/test checkpointed in `a5794303`; live provider/model runtime helpers
+  and agent-command entrypoints remain the next seam.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed PI embedded utility helper subset for scoped and
+  unscoped imports: assistant-message detection, assistant text/final-answer/
+  reasoning extraction, thinking-tag splitting/promotion/extraction helpers,
+  reasoning message formatting, downgraded tool-call text stripping, and
+  Minimax XML stripping. Source/test checkpointed in `db2affa5`; embedded
+  block chunking, live provider/model runtime helpers, and agent-command
+  entrypoints remain the next seam.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed embedded block chunker helper subset for scoped and
+  unscoped imports: `EmbeddedBlockChunker`, paragraph flushing, forced drains,
+  max-length clamping, fence-safe chunk emission, buffered-text visibility, and
+  reset/`hasBuffered` lifecycle behavior. Source/test checkpointed in
+  `da591809`; live provider/model runtime helpers and agent-command entrypoints
+  remain the next seam.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed model-auth helper subset for scoped and unscoped
+  imports: custom provider API-key lookup, env-SecretRef resolution, synthetic
+  local-provider auth posture, runtime-available auth probes, model auth-mode
+  projection, async provider/model auth resolution, and local/auth-header
+  override helpers. Source/test checkpointed in `b93c187b`; provider-auth
+  alias-map depth, schema/typebox, web-tool helpers, TTS exports, and
+  agent-command entrypoints remain the next `agent-runtime` seams.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed schema/typebox helper subset for scoped and
+  unscoped imports: channel target schemas, channel target-array schemas,
+  string enum schemas, and optional string enum schemas with OpenClaw target
+  descriptions and enum-object support. Source/test checkpointed in
+  `0884d4f3`; provider-auth alias-map depth, web-tool helpers, TTS exports,
+  and agent-command entrypoints remain the next `agent-runtime` seams.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed web-tool helper subset for scoped and unscoped
+  imports: cache key/read/write helpers, timeout and cache TTL resolution,
+  bounded response text reads, whitespace/Markdown/text helpers, HTML content
+  extraction, trusted/self-hosted/strict endpoint wrappers, and fakeable
+  guarded fetch lifecycle behavior. Source/test checkpointed in `9bc67f5e`;
+  provider-auth alias-map depth, TTS exports, and agent-command entrypoints
+  remain the next `agent-runtime` seams.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed provider-auth alias helper subset for scoped and
+  unscoped imports: provider auth alias-map resolution, cache reset,
+  deprecated auth-choice alias mapping, origin-priority conflict handling,
+  trusted workspace plugin gating, and alias-aware provider auth id
+  resolution. Source/test checkpointed in `61731b33`; TTS exports and
+  agent-command entrypoints remain the next `agent-runtime` seams.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` and
+  `tts-runtime` now expose the source-backed TTS helper subset for scoped and
+  unscoped imports: config/persona/provider normalization, prefs-backed auto
+  mode, selected provider/persona, max-length and summarization persistence,
+  directive/parser access, explicit override resolution, provider order and
+  availability probes, prompt hinting, and no-provider synthesis failures.
+  Source/test checkpointed in `9b328bbd`; agent-command entrypoints remain the
+  next `agent-runtime` seam.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed agent-command entrypoint subset for scoped and
+  unscoped imports: `agentCommand`, `agentCommandFromIngress`, and
+  `__testing` helpers for runtime config resolution and command preparation.
+  Local calls apply trusted owner/model-override defaults, ingress calls
+  preserve the explicit trust-boolean guard, command preparation preserves the
+  source validation messages for missing message/target, unknown agent, and
+  mismatched session keys, and execution fails with a precise unavailable
+  error unless a native runner hook is wired. Source/test checkpointed in
+  `9e6496fb`; the plugin/runtime queue now rotates back to broader SDK helper
+  and runtime surface breadth.
+- Current queue-head adjustment: imported plugin SDK `file-lock` now exposes
+  the source-backed lock helper subset for scoped and unscoped imports:
+  `FILE_LOCK_TIMEOUT_ERROR_CODE`, `acquireFileLock`, `withFileLock`,
+  `resetFileLockStateForTest`, and `drainFileLockStateForTest`. The native
+  shim preserves process-local re-entrant handles, `.lock` sidecar files,
+  stale-lock cleanup, timeout error code/lockPath projection, and callback
+  release behavior. Source/test checkpointed in `ed03c127`; broader SDK
+  helper/runtime surface breadth remains the next plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `google-model-id` now
+  exposes the source-backed alias subset for scoped and unscoped imports:
+  `normalizeGoogleModelId` and `normalizeAntigravityModelId` delegate to the
+  already verified provider model ID normalizers. Source/test checkpointed in
+  `67db67b5`; broader SDK helper/runtime surface breadth remains the next
+  plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK
+  `googlechat-runtime-shared` now exposes the source-backed narrow schema
+  subset for scoped and unscoped imports: `GoogleChatConfigSchema` projects the
+  upstream provider channel config object schema without leaking the broader
+  generic SDK surface. Source/test checkpointed in `f721b7e3`; broader SDK
+  helper/runtime surface breadth remains the next plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `open-prose` now exposes
+  the source-backed exact helper subset for scoped and unscoped imports:
+  `definePluginEntry` is the only exported runtime value, and the shared
+  plugin-entry helper now preserves `reload`, `nodeHostCommands`, and
+  `securityAuditCollectors` with lazy cached `configSchema` resolution.
+  Source/test checkpointed in `ef8830b1`; broader SDK helper/runtime surface
+  breadth remains the next plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `runtime-group-policy`
+  now exposes the source-backed exact helper subset for scoped and unscoped
+  imports: group-policy blocked labels, default policy lookup, open/allowlist
+  provider runtime policy resolution, and the one-shot missing-provider
+  fallback warning helper. Source/test checkpointed in `b11adc13`; broader SDK
+  helper/runtime surface breadth remains the next plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `browser-cdp` now exposes
+  the source-backed exact helper subset for scoped and unscoped imports:
+  `parseBrowserHttpUrl` and `redactCdpUrl` cover protocol validation, default
+  port derivation, normalized URL projection, and credential stripping.
+  Source/test checkpointed in `4e15c3c2`; broader browser/config SDK helper
+  surface remains a nearby plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `browser-config-support`
+  now exposes the source-backed exact helper subset for scoped and unscoped
+  imports: gateway port resolution, browser control/CDP port defaults,
+  loopback host checks, and CONFIG_DIR/path/regex helpers. Source/test
+  checkpointed in `33463b7c`; broader browser/config SDK helper surface
+  remains a nearby plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `browser-config` now
+  exposes the source-backed facade subset for scoped and unscoped imports:
+  browser defaults, config/profile resolution helpers, browser control auth
+  helpers, CDP URL helpers, and safe trash facade exports. Source/test
+  checkpointed in `300224b7`; broader browser runtime/control helper surface
+  remains a nearby plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `browser-control-auth`
+  now exposes the source-backed exact helper subset for scoped and unscoped
+  imports: gateway-auth-mode credential projection, config-first token/password
+  resolution, OPENCLAW_GATEWAY_* env fallbacks, test/Vitest auto-generation
+  suppression, and the ensure helper. Source/test checkpointed in `d1d7b371`;
+  broader browser profiles/runtime helper surface remains a nearby
+  plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `browser-profiles` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: browser default constants, config/profile resolution, CDP range
+  derivation, loopback detection, tab-cleanup defaults, and existing-session
+  profile projection. Source/test checkpointed in `73d20703`; broader browser
+  config-runtime/support aggregation remains a nearby plugin-runtime queue
+  head.
+- Current queue-head adjustment: imported plugin SDK `browser-config-runtime`
+  now exposes the source-backed helper subset for scoped and unscoped imports:
+  config IO, runtime config snapshots, config path/gateway/browser port
+  helpers, plugin config normalization, effective enable-state projection,
+  boolean parsing, and CONFIG_DIR/path text helpers. Source/test checkpointed
+  in `7a4ef6f0`; browser-support aggregation and browser node/runtime helper
+  surfaces remain nearby plugin-runtime queue heads.
+- Current queue-head adjustment: imported plugin SDK `browser-trash` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: `movePathToTrash` with allowed-root validation, home `.Trash`
+  containerized destinations, and cross-device copy/remove fallback.
+  Source/test checkpointed in `9a90555e`; browser-support aggregation and
+  browser node/runtime helper surfaces remain nearby plugin-runtime queue
+  heads.
+- Current queue-head adjustment: imported plugin SDK `browser-maintenance`
+  now exposes the source-backed exact helper subset for scoped and unscoped
+  imports: `movePathToTrash` plus no-session no-op and unavailable-warning
+  `closeTrackedBrowserTabsForSessions` behavior. Source/test checkpointed in
+  `ce39d8c6`; browser-support aggregation and browser node/runtime helper
+  surfaces remain nearby plugin-runtime queue heads.
+- Current queue-head adjustment: imported plugin SDK `agent-harness-runtime`
+  and `agent-harness` now expose the source-backed exact helper subset for
+  scoped and unscoped imports: terminal fallback classification preserves the
+  empty/reasoning-only/planning-only OpenClaw outcomes, tool metadata
+  inference covers the public read/write/web detail path, progress output is
+  normalized and truncated with the upstream cap, and heavyweight coding-tool
+  construction keeps an honest native unavailable boundary. Source/test
+  checkpointed in `ee7f5c49`; broader SDK helper/runtime surface breadth
+  remains the next plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `sandbox` now exposes the
+  source-backed exact helper subset for scoped and unscoped imports: sandbox
+  backend registry helpers, SSH command builders/session config helpers,
+  sanitized env projection, writable rename target resolution, temp-dir
+  lookup, and run-command timeout bridging now resolve through the native
+  plugin bridge, with honest unavailable boundaries for remote fs
+  bridge/upload helpers. Source/test checkpointed in `2aba5dbc`; broader SDK
+  helper/runtime surface breadth remains the next plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `proxy-capture` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: debug proxy env/settings resolution, effective proxy URL selection,
+  WebSocket agent fallback, capture-store leasing, blob persistence, session
+  summaries, query presets, HTTP exchange capture with sensitive-header
+  redaction, fetch patch initialize/finalize lifecycle, and WS event capture.
+  Source/test checkpointed in `84300681`; broader SDK helper/runtime surface
+  breadth remains the next plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `setup-runtime` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: setup adapters, setup input validation, allow-from and group-access
+  setup sections, setup status builders, account-scoped config patching,
+  setup entry parsing, delegated setup wizard proxies, and CLI-path text input
+  helpers. Source/test checkpointed in `252f28fe`; `setup-tools` and adjacent
+  config/runtime SDK surfaces remain nearby plugin-runtime queue heads.
+- Current queue-head adjustment: imported plugin SDK `setup-tools` now exposes
+  the source-backed exact helper subset for scoped and unscoped imports: CLI
+  command formatting, docs-link formatting, `CONFIG_DIR`, Homebrew executable
+  lookup, binary detection, and promise-returning archive extraction with the
+  upstream unsupported-archive error. Source/test checkpointed in `e0f1e72c`;
+  adjacent config/runtime SDK surfaces remain nearby plugin-runtime queue
+  heads.
+- Current queue-head adjustment: imported plugin SDK `config-runtime` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: plugin config lookup, runtime config snapshots, config file
+  IO/mutation helpers, context/group/native-command/Telegram policy helpers,
+  cron/session-store helpers, model-session helpers, and configured secret
+  resolution. Source/test checkpointed in `74fd1711`; adjacent config/plugin
+  runtime entrypoints remain nearby plugin-runtime queue heads.
+- Current queue-head adjustment: imported plugin SDK `plugin-config-runtime`
+  now exposes the source-backed exact helper subset for scoped and unscoped
+  imports: plugin config lookup, live config fallback behavior, runtime-config
+  requirement errors, normalized plugin config projection, and effective
+  enable-state resolution. Source/test checkpointed in `458d6c7f`; adjacent
+  config mutation and runtime entrypoints remain nearby plugin-runtime queue
+  heads.
+- Current queue-head adjustment: imported plugin SDK `config-mutation` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: config snapshot reads, `mutateConfigFile`, `replaceConfigFile`,
+  `updateConfig`, and config-update logging. Source/test checkpointed in
+  `a9813667`; adjacent runtime and provider entrypoints remain nearby
+  plugin-runtime queue heads.
+- Current queue-head adjustment: imported plugin SDK `provider-tools` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: Gemini schema cleanup/inspection, XAI unsupported-keyword stripping
+  and compat metadata, OpenAI strict-schema normalization/violation helpers,
+  and provider compatibility hook selection. Source/test checkpointed in
+  `2762ee46`; adjacent provider stream and transport entrypoints remain nearby
+  plugin-runtime queue heads. Repo-wide parity was estimated at ~97.3% at
+  that checkpoint.
+- Current queue-head adjustment: imported plugin SDK `provider-stream-shared`
+  now exposes the source-backed exact helper subset for scoped and unscoped
+  imports: stream wrapper composition, tool-stream defaults, HTML entity
+  decoding for tool-call arguments, payload patch wrappers, Anthropic prefill
+  stripping, DeepSeek V4 reasoning-content patching, and Google thinking
+  payload sanitization. Source/test checkpointed in `711865e0`; the
+  `provider-stream` family facade remains the nearby plugin-runtime queue
+  head. Repo-wide parity was estimated at ~97.4% at that checkpoint.
+- Current queue-head adjustment: imported plugin SDK `provider-stream` and
+  `provider-stream-family` now expose the source-backed exact helper subset
+  for scoped and unscoped imports: provider stream family hook selection,
+  canonical hook constants, Google thinking wrapping, Moonshot thinking/keep,
+  Minimax fast-mode model rewriting, OpenAI response defaults, OpenRouter and
+  Kilocode reasoning wrappers, and tool-stream default-on behavior. Source/test
+  checkpointed in `da9a3e66`; `provider-transport-runtime` remains the nearby
+  plugin-runtime queue head. Repo-wide parity was estimated at ~97.5% at that
+  checkpoint.
+- Current queue-head adjustment: imported plugin SDK
+  `provider-transport-runtime` now exposes the source-backed exact helper
+  subset for scoped and unscoped imports: guarded fetch shape, OpenAI
+  completions parameter shaping, prompt-boundary stripping, transport replay
+  repair, header merging, payload sanitization, usage initialization, writable
+  stream shape, and stream finalization/failure helpers. Source/test
+  checkpointed in `dd8bcfd8`; adjacent provider runtime breadth remains open.
+  Repo-wide parity is now estimated at ~97.6%.
+- Current queue-head adjustment: imported plugin SDK `provider-http` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: provider HTTP error projection, response-text limiting,
+  transcription FormData/file-name helpers, operation deadlines and polling,
+  guarded JSON/multipart/transcription posts, provider attribution/policy/
+  capability resolution, provider request-header merging, transport override
+  sanitization, and dispatcher/TLS policy shaping. Source/test checkpointed in
+  `750bbf71`; adjacent provider SDK breadth remains open with
+  `provider-usage`, `provider-onboard`, or `provider-catalog-runtime`.
+  Repo-wide parity is now estimated at ~97.7%.
+- Current queue-head adjustment: imported plugin SDK
+  `provider-catalog-runtime` now exposes the source-backed exact helper subset
+  for scoped and unscoped imports: provider plugin listing, plugin-id scoping,
+  provider-ref matching, config deny/disabled filtering, owner plugin id
+  resolution, load-in-flight posture, and `augmentModelCatalog` hook
+  aggregation. Source/test checkpointed in `2ede5f0d`; adjacent provider SDK
+  breadth remains open with `provider-usage` or `provider-onboard`.
+  Repo-wide parity is now estimated at ~97.8%.
+- Current queue-head adjustment: imported plugin SDK `provider-onboard` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: onboarding agent/provider config mutation, alias preservation,
+  default-model/default-models/model-catalog presets, OpenCode Zen default
+  posture, preset applier ordering, and raw plus canonical model allowlist
+  insertion. Source/test checkpointed in `2c994a4c`; adjacent provider SDK
+  breadth remains open with `provider-usage`. Repo-wide parity is now
+  estimated at ~97.9%.
+- Current queue-head adjustment: imported plugin SDK `provider-usage` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: usage labels, percentage clamping, usage/error snapshot projection,
+  timeout-wrapped fakeable fetches, legacy PI auth token resolution, and
+  Claude/Codex/Gemini/MiniMax/z.ai usage response normalization. Source/test
+  checkpointed in `cbc85bd2`; repo-wide parity is now estimated at ~98.0%.
+- Current queue-head adjustment: imported plugin SDK `tool-send` now exposes
+  the source-backed exact helper subset for scoped and unscoped imports:
+  `extractToolSend` action matching, raw `to` preservation, account/thread id
+  normalization, and null projection for non-send or missing-target payloads.
+  Source/test checkpointed in `87450dcc`; repo-wide parity is now estimated
+  at ~98.1%.
+- Current queue-head adjustment: imported plugin SDK `webhook-ingress` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: aggregate webhook path/memory/request/target helpers, raw data
+  conversion, plugin HTTP path normalization, auth rate limiting, and
+  `DEFAULT_WEBHOOK_MAX_BODY_BYTES`. Source/test checkpointed in `399e784a`;
+  repo-wide parity is now estimated at ~98.2%.
+- Current queue-head adjustment: imported plugin SDK `web-media` now exposes
+  the source-backed exact helper subset for scoped and unscoped imports: local
+  and file-URL media loading under explicit local roots, default local media
+  roots, MIME/kind/fileName projection, `LocalMediaAccessError` shaping,
+  unsafe-bypass rejection, and image optimization helper error projection.
+  Source/test checkpointed in `a60b54f2`; repo-wide parity is now estimated at
+  ~98.3%.
+- Current queue-head adjustment: imported plugin SDK `speech` now exposes the
+  source-backed exact facade subset for scoped and unscoped imports:
+  provider-facing speech helpers, `createOpenAiCompatibleSpeechProvider`,
+  provider config normalization, directive parsing, talk config/override
+  resolution, voice listing, env-backed configuration detection, and native
+  HTTP-backed audio synthesis. Source/test checkpointed in `97ec0d27`;
+  repo-wide parity is now estimated at ~98.4%.
+- Current queue-head adjustment: imported plugin SDK `zalouser` now exposes
+  the source-backed deprecated compatibility facade for scoped and unscoped
+  imports: `resolveSenderCommandAuthorization` and
+  `resolveSenderCommandAuthorizationWithRuntime` reexport the exact
+  command-auth functions for published Lark/Zalo package compatibility.
+  Source/test checkpointed in `6f0c70b5`; repo-wide parity is now estimated at
+  ~98.5%.
+- Current queue-head adjustment: imported plugin SDK `zod` now exposes the
+  source-backed facade needed by bundled extension config schemas for scoped
+  and unscoped imports: `z`, `ZodError`, `ZodIssueCode`, object and
+  strict-object parsing, string/number/boolean checks, enum/literal/union,
+  arrays, records, unknown, optional/default/describe, transforms, safe parse,
+  and `superRefine` custom issue projection. Source/test checkpointed in
+  `c49cbd4a`; repo-wide parity is now estimated at ~98.6%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
