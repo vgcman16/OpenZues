@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~98.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~98.5% overall, with a reasonable
   band of ~80-98%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9381,6 +9381,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   resolution, voice listing, env-backed configuration detection, and native
   HTTP-backed audio synthesis. Source/test checkpointed in `97ec0d27`;
   repo-wide parity is now estimated at ~98.4%.
+- Current queue-head adjustment: imported plugin SDK `zalouser` now exposes
+  the source-backed deprecated compatibility facade for scoped and unscoped
+  imports: `resolveSenderCommandAuthorization` and
+  `resolveSenderCommandAuthorizationWithRuntime` reexport the exact
+  command-auth functions for published Lark/Zalo package compatibility.
+  Source/test checkpointed in `6f0c70b5`; repo-wide parity is now estimated at
+  ~98.5%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
