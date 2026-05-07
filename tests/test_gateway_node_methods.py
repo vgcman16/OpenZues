@@ -52214,6 +52214,343 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_security_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-security-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const path = require("path");
+const security = require("openclaw/plugin-sdk/security-runtime");
+const scopedSecurity = require("@openclaw/plugin-sdk/security-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.security_runtime",
+      description: "Use OpenClaw security-runtime SDK shim",
+      parameters: {
+        type: "object",
+        properties: {
+          rootDir: { type: "string" },
+          sourcePath: { type: "string" },
+          textPath: { type: "string" },
+          jsonPath: { type: "string" }
+        }
+      },
+      async execute(_toolCallId, args) {
+        fs.mkdirSync(args.rootDir, { recursive: true });
+        fs.writeFileSync(args.sourcePath, "secure copy", "utf8");
+        security.writeTextFileAtomic(args.textPath, "' quoted value '");
+        security.writeJsonFileSecure(args.jsonPath, { ok: true });
+        let applied = null;
+        const resolverContext = security.createResolverContext({
+          sourceConfig: { assistantName: "OpenZues" },
+          env: { OPENAI_API_KEY: "unused" }
+        });
+        security.collectSecretInputAssignment({
+          value: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
+          path: "providers.openai.apiKey",
+          expected: "string",
+          defaults: undefined,
+          context: resolverContext,
+          apply: (value) => { applied = value; }
+        });
+        security.applyResolvedAssignments({
+          assignments: resolverContext.assignments,
+          resolved: new Map([["env:default:OPENAI_API_KEY", "resolved-secret"]])
+        });
+        const metadata = security.buildUntrustedChannelMetadata({
+          source: "slack",
+          label: "Sender",
+          entries: [" A    B ", "A B", null, "C"],
+          maxChars: 300
+        });
+        const visibilityBlocked = security.evaluateSupplementalContextVisibility({
+          mode: "allowlist",
+          kind: "history",
+          senderAllowed: false
+        });
+        const visibilityQuote = security.evaluateSupplementalContextVisibility({
+          mode: "allowlist_quote",
+          kind: "quote",
+          senderAllowed: false
+        });
+        const filtered = security.filterSupplementalContextItems({
+          items: [
+            { id: "a", allowed: true },
+            { id: "b", allowed: false }
+          ],
+          mode: "allowlist",
+          kind: "history",
+          isSenderAllowed: (item) => item.allowed
+        });
+        const matches = await security.resolveAccessGroupAllowFromMatches({
+          cfg: {
+            accessGroups: {
+              admins: {
+                type: "message.senders",
+                members: { "*": ["alice"], telegram: ["bob"] }
+              }
+            }
+          },
+          allowFrom: ["accessGroup:admins", "plain"],
+          channel: "telegram",
+          accountId: "main",
+          senderId: "bob",
+          isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId)
+        });
+        const expanded = await security.expandAllowFromWithAccessGroups({
+          cfg: {
+            accessGroups: {
+              admins: {
+                type: "message.senders",
+                members: { telegram: ["bob"] }
+              }
+            }
+          },
+          allowFrom: ["accessGroup:admins", "plain"],
+          channel: "telegram",
+          accountId: "main",
+          senderId: "bob",
+          senderAllowEntry: "sender:bob",
+          isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId)
+        });
+        const regex = security.compileSafeRegex("hello.*", "i");
+        const nested = security.compileSafeRegexDetailed("(a+)+$");
+        const invalid = security.compileSafeRegexDetailed("[");
+        const empty = security.compileSafeRegexDetailed("   ");
+        await security.writeFileFromPathWithinRoot({
+          rootDir: args.rootDir,
+          relativePath: "copied.txt",
+          sourcePath: args.sourcePath
+        });
+        const opened = await scopedSecurity.openFileWithinRoot({
+          rootDir: args.rootDir,
+          relativePath: "copied.txt",
+          rejectHardlinks: false
+        });
+        const copied = fs.readFileSync(opened.realPath, "utf8");
+        await opened.handle.close();
+        return {
+          selectedTypes: {
+            buildUntrustedChannelMetadata:
+              typeof security.buildUntrustedChannelMetadata,
+            createResolverContext: typeof security.createResolverContext,
+            compileSafeRegexDetailed: typeof security.compileSafeRegexDetailed,
+            expandAllowFromWithAccessGroups:
+              typeof security.expandAllowFromWithAccessGroups,
+            safeEqualSecret: typeof security.safeEqualSecret,
+            openFileWithinRoot: typeof security.openFileWithinRoot
+          },
+          scopedSame:
+            scopedSecurity.safeEqualSecret === security.safeEqualSecret,
+          secrets: {
+            parsed: security.parseEnvValue("' quoted value '"),
+            positive: security.normalizePositiveInt(2.9, 1),
+            fallbackPositive: security.normalizePositiveInt("bad", 4),
+            dotPath: security.parseDotPath(" a..b.c "),
+            dotBack: security.toDotPath(["a", "b", "c"]),
+            readText: security.readTextFileIfExists(args.textPath),
+            readMissing: security.readTextFileIfExists(path.join(args.rootDir, "missing")),
+            readJson: JSON.parse(fs.readFileSync(args.jsonPath, "utf8")),
+            applied,
+            assignments: resolverContext.assignments.length,
+            warnings: resolverContext.warnings.length,
+            isNonEmptyString: security.isNonEmptyString(" value ")
+          },
+          metadata: {
+            hasHeader: metadata.includes("UNTRUSTED channel metadata (slack)"),
+            hasDedupedBody: metadata.includes("A B\\nC"),
+            wrapped: metadata.includes("EXTERNAL_UNTRUSTED_CONTENT")
+          },
+          visibility: {
+            blocked: visibilityBlocked,
+            quote: visibilityQuote,
+            filteredIds: filtered.items.map((item) => item.id),
+            omitted: filtered.omitted
+          },
+          accessGroups: {
+            prefix: security.ACCESS_GROUP_ALLOW_FROM_PREFIX,
+            parsed: [
+              security.parseAccessGroupAllowFromEntry(" accessGroup: admins "),
+              security.parseAccessGroupAllowFromEntry("plain")
+            ],
+            matches,
+            expanded
+          },
+          dmPolicy: {
+            pinned: security.resolvePinnedMainDmOwnerFromAllowlist({
+              dmScope: "main",
+              allowFrom: [" Alice "],
+              normalizeEntry: (entry) => entry.trim().toLowerCase()
+            }),
+            open: security.resolveOpenDmAllowlistAccess({
+              effectiveAllowFrom: ["*"],
+              isSenderAllowed: () => false
+            }),
+            group: security.resolveDmGroupAccessWithLists({
+              isGroup: true,
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["bob"],
+              isSenderAllowed: (allowFrom) => allowFrom.includes("bob")
+            })
+          },
+          regex: {
+            match: regex.test("HELLO world"),
+            boundedTail: security.testRegexWithBoundedInput(
+              /tail$/,
+              `${"a".repeat(3000)}tail`,
+              32
+            ),
+            nestedReason: nested.reason,
+            invalidReason: invalid.reason,
+            emptyReason: empty.reason,
+            nestedBool: security.hasNestedRepetition("(a+)+$")
+          },
+          file: {
+            copied,
+            inside: security.isPathInside(args.rootDir, opened.realPath)
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-security-runtime-plugin",
+                    "name": "Runtime Security Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-security-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.security_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.security_runtime",
+            "args": {
+                "rootDir": str(tmp_path / "security-runtime-root"),
+                "sourcePath": str(tmp_path / "security-runtime-source.txt"),
+                "textPath": str(tmp_path / "security-runtime" / "secret.txt"),
+                "jsonPath": str(tmp_path / "security-runtime" / "secure.json"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "buildUntrustedChannelMetadata": "function",
+            "createResolverContext": "function",
+            "compileSafeRegexDetailed": "function",
+            "expandAllowFromWithAccessGroups": "function",
+            "safeEqualSecret": "function",
+            "openFileWithinRoot": "function",
+        },
+        "scopedSame": True,
+        "secrets": {
+            "parsed": " quoted value ",
+            "positive": 2,
+            "fallbackPositive": 4,
+            "dotPath": ["a", "b", "c"],
+            "dotBack": "a.b.c",
+            "readText": "' quoted value '",
+            "readMissing": None,
+            "readJson": {"ok": True},
+            "applied": "resolved-secret",
+            "assignments": 1,
+            "warnings": 0,
+            "isNonEmptyString": True,
+        },
+        "metadata": {
+            "hasHeader": True,
+            "hasDedupedBody": True,
+            "wrapped": True,
+        },
+        "visibility": {
+            "blocked": {"include": False, "reason": "blocked"},
+            "quote": {"include": True, "reason": "quote_override"},
+            "filteredIds": ["a"],
+            "omitted": 1,
+        },
+        "accessGroups": {
+            "prefix": "accessGroup:",
+            "parsed": ["admins", None],
+            "matches": ["accessGroup:admins"],
+            "expanded": ["accessGroup:admins", "plain", "sender:bob"],
+        },
+        "dmPolicy": {
+            "pinned": "alice",
+            "open": {
+                "decision": "allow",
+                "reasonCode": "dm_policy_open",
+                "reason": "dmPolicy=open",
+            },
+            "group": {
+                "decision": "allow",
+                "reasonCode": "group_policy_allowed",
+                "reason": "groupPolicy=allowlist",
+                "effectiveAllowFrom": [],
+                "effectiveGroupAllowFrom": ["bob"],
+            },
+        },
+        "regex": {
+            "match": True,
+            "boundedTail": True,
+            "nestedReason": "unsafe-nested-repetition",
+            "invalidReason": "invalid-regex",
+            "emptyReason": "empty",
+            "nestedBool": True,
+        },
+        "file": {
+            "copied": "secure copy",
+            "inside": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_fetch_runtime_helpers(
     tmp_path,
 ) -> None:

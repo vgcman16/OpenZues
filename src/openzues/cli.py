@@ -23000,6 +23000,46 @@ function wrapWebContent(content, source = "web_search") {
   return wrapExternalContent(content, { source, includeWarning: source === "web_fetch" });
 }
 
+const CHANNEL_METADATA_DEFAULT_MAX_CHARS = 800;
+const CHANNEL_METADATA_DEFAULT_MAX_ENTRY_CHARS = 400;
+
+function normalizeChannelMetadataEntry(entry) {
+  return entry.replace(/\s+/g, " ").trim();
+}
+
+function truncateSecurityText(value, maxChars) {
+  if (maxChars <= 0) {
+    return "";
+  }
+  if (value.length <= maxChars) {
+    return value;
+  }
+  const trimmed = value.slice(0, Math.max(0, maxChars - 3)).trimEnd();
+  return `${trimmed}...`;
+}
+
+function buildUntrustedChannelMetadata(params = {}) {
+  const cleaned = (Array.isArray(params.entries) ? params.entries : [])
+    .map((entry) => (typeof entry === "string" ? normalizeChannelMetadataEntry(entry) : ""))
+    .filter(Boolean)
+    .map((entry) => truncateSecurityText(entry, CHANNEL_METADATA_DEFAULT_MAX_ENTRY_CHARS));
+  const deduped = cleaned.filter((entry, index, list) => list.indexOf(entry) === index);
+  if (deduped.length === 0) {
+    return undefined;
+  }
+  const body = deduped.join("\n");
+  const header = `UNTRUSTED channel metadata (${params.source})`;
+  const labeled = `${params.label}:\n${body}`;
+  const truncated = truncateSecurityText(
+    `${header}\n${labeled}`,
+    params.maxChars || CHANNEL_METADATA_DEFAULT_MAX_CHARS,
+  );
+  return wrapExternalContent(truncated, {
+    source: "channel_metadata",
+    includeWarning: false,
+  });
+}
+
 function formatCliCommand(parts) {
   return (parts || []).map((part) => String(part)).join(" ");
 }
@@ -29032,6 +29072,72 @@ function collectSecretInputAssignment(params) {
   });
 }
 
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function parseEnvValue(raw) {
+  const trimmed = String(raw || "").trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function normalizePositiveInt(value, fallback) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(1, Math.floor(value));
+  }
+  return Math.max(1, Math.floor(fallback));
+}
+
+function parseDotPath(pathname) {
+  return String(pathname || "")
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function toDotPath(segments) {
+  return (Array.isArray(segments) ? segments : []).join(".");
+}
+
+function ensureDirForFile(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+}
+
+function writeJsonFileSecure(pathname, value) {
+  ensureDirForFile(pathname);
+  fs.writeFileSync(pathname, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  try {
+    fs.chmodSync(pathname, 0o600);
+  } catch (_error) {
+    // Windows may ignore POSIX-style modes.
+  }
+}
+
+function readTextFileIfExists(pathname) {
+  if (!fs.existsSync(pathname)) {
+    return null;
+  }
+  return fs.readFileSync(pathname, "utf8");
+}
+
+function writeTextFileAtomic(pathname, value, mode = 0o600) {
+  ensureDirForFile(pathname);
+  const tempPath = `${pathname}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tempPath, value, "utf8");
+  try {
+    fs.chmodSync(tempPath, mode);
+  } catch (_error) {
+    // Best effort on Windows.
+  }
+  fs.renameSync(tempPath, pathname);
+}
+
 function secretRuntimeRefKey(ref) {
   return `${ref.source}:${ref.provider}:${ref.id}`;
 }
@@ -34132,6 +34238,28 @@ function resolveEffectiveAllowFromLists(params) {
   };
 }
 
+function resolvePinnedMainDmOwnerFromAllowlist(params) {
+  if ((params.dmScope || "main") !== "main") {
+    return null;
+  }
+  const rawAllowFrom = Array.isArray(params.allowFrom) ? params.allowFrom : [];
+  if (rawAllowFrom.some((entry) => String(entry).trim() === "*")) {
+    return null;
+  }
+  const normalizeEntry =
+    typeof params.normalizeEntry === "function"
+      ? params.normalizeEntry
+      : (entry) => normalizeOptionalString(entry);
+  const normalizedOwners = Array.from(
+    new Set(
+      rawAllowFrom
+        .map((entry) => normalizeEntry(String(entry)))
+        .filter((entry) => typeof entry === "string" && entry.trim().length > 0),
+    ),
+  );
+  return normalizedOwners.length === 1 ? normalizedOwners[0] : null;
+}
+
 const DM_GROUP_ACCESS_REASON = {
   GROUP_POLICY_ALLOWED: "group_policy_allowed",
   GROUP_POLICY_DISABLED: "group_policy_disabled",
@@ -34361,6 +34489,37 @@ function resolveDmGroupAccessWithCommandGate(params) {
     ...access,
     commandAuthorized: commandGate.commandAuthorized,
     shouldBlockControlCommand: Boolean(params.isGroup && commandGate.shouldBlock),
+  };
+}
+
+async function resolveDmAllowState(params) {
+  const configAllowFrom = normalizeStringEntries(
+    Array.isArray(params.allowFrom) ? params.allowFrom : undefined,
+  );
+  const hasWildcard = configAllowFrom.includes("*");
+  const storeAllowFrom = await readStoreAllowFromForDmPolicy({
+    provider: params.provider,
+    accountId: params.accountId,
+    dmPolicy: params.dmPolicy,
+    readStore: params.readStore,
+  });
+  const normalizeEntry =
+    typeof params.normalizeEntry === "function" ? params.normalizeEntry : (value) => value;
+  const normalizedCfg = configAllowFrom
+    .filter((value) => value !== "*")
+    .map((value) => normalizeEntry(value))
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const normalizedStore = storeAllowFrom
+    .map((value) => normalizeEntry(value))
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const allowCount = new Set([...normalizedCfg, ...normalizedStore]).size;
+  return {
+    configAllowFrom,
+    hasWildcard,
+    allowCount,
+    isMultiUserDm: hasWildcard || allowCount > 1,
   };
 }
 
@@ -62261,6 +62420,77 @@ const browserNodeHostRuntime = {
   runBrowserProxyCommand,
 };
 
+const SAFE_REGEX_CACHE_MAX = 256;
+const SAFE_REGEX_TEST_WINDOW = 2048;
+const safeRegexCompileCache = new Map();
+
+function testRegexFromStart(regex, value) {
+  regex.lastIndex = 0;
+  return regex.test(value);
+}
+
+function testRegexWithBoundedInput(regex, input, maxWindow = SAFE_REGEX_TEST_WINDOW) {
+  if (maxWindow <= 0) {
+    return false;
+  }
+  const value = String(input || "");
+  if (value.length <= maxWindow) {
+    return testRegexFromStart(regex, value);
+  }
+  const head = value.slice(0, maxWindow);
+  if (testRegexFromStart(regex, head)) {
+    return true;
+  }
+  return testRegexFromStart(regex, value.slice(-maxWindow));
+}
+
+function hasNestedRepetition(source) {
+  const cleaned = String(source || "")
+    .replace(/\\./g, "")
+    .replace(/\[[^\]]*\]/g, "");
+  return /\((?:[^()]|\([^)]*\))*[+*{][^)]*\)\s*[+*{]/.test(cleaned);
+}
+
+function compileSafeRegexDetailed(source, flags = "") {
+  const trimmed = String(source || "").trim();
+  if (!trimmed) {
+    return { regex: null, source: trimmed, flags, reason: "empty" };
+  }
+  const cacheKey = `${flags}::${trimmed}`;
+  if (safeRegexCompileCache.has(cacheKey)) {
+    return (
+      safeRegexCompileCache.get(cacheKey) || {
+        regex: null,
+        source: trimmed,
+        flags,
+        reason: "invalid-regex",
+      }
+    );
+  }
+  let result;
+  if (hasNestedRepetition(trimmed)) {
+    result = { regex: null, source: trimmed, flags, reason: "unsafe-nested-repetition" };
+  } else {
+    try {
+      result = { regex: new RegExp(trimmed, flags), source: trimmed, flags, reason: null };
+    } catch (_error) {
+      result = { regex: null, source: trimmed, flags, reason: "invalid-regex" };
+    }
+  }
+  safeRegexCompileCache.set(cacheKey, result);
+  if (safeRegexCompileCache.size > SAFE_REGEX_CACHE_MAX) {
+    const oldestKey = safeRegexCompileCache.keys().next().value;
+    if (oldestKey) {
+      safeRegexCompileCache.delete(oldestKey);
+    }
+  }
+  return result;
+}
+
+function compileSafeRegex(source, flags = "") {
+  return compileSafeRegexDetailed(source, flags).regex;
+}
+
 const browserSecurityRuntime = {
   SafeOpenError,
   SsrFBlockedError,
@@ -71360,6 +71590,19 @@ const runtimeSecretResolutionRuntime = {
   resolveSecretRefValues,
 };
 
+const secretSharedRuntime = {
+  ensureDirForFile,
+  isNonEmptyString,
+  isRecord,
+  normalizePositiveInt,
+  parseDotPath,
+  parseEnvValue,
+  readTextFileIfExists,
+  toDotPath,
+  writeJsonFileSecure,
+  writeTextFileAtomic,
+};
+
 const channelSecretTtsRuntime = {
   collectNestedChannelTtsAssignments,
 };
@@ -71386,6 +71629,35 @@ const channelSecretBasicRuntime = {
 const channelSecretRuntime = {
   ...channelSecretBasicRuntime,
   ...channelSecretTtsRuntime,
+};
+
+const safeRegexRuntime = {
+  compileSafeRegex,
+  compileSafeRegexDetailed,
+  hasNestedRepetition,
+  testRegexWithBoundedInput,
+};
+
+const securityRuntime = {
+  ...channelSecretRuntime,
+  ...runtimeSecretResolutionRuntime,
+  ...secretSharedRuntime,
+  ...accessGroupsRuntime,
+  ...browserSecurityRuntime,
+  ...safeRegexRuntime,
+  DM_GROUP_ACCESS_REASON,
+  buildUntrustedChannelMetadata,
+  evaluateSupplementalContextVisibility,
+  filterSupplementalContextItems,
+  readStoreAllowFromForDmPolicy,
+  resolveDmAllowState,
+  resolveDmGroupAccessDecision,
+  resolveDmGroupAccessWithCommandGate,
+  resolveDmGroupAccessWithLists,
+  resolveEffectiveAllowFromLists,
+  resolveOpenDmAllowlistAccess,
+  resolvePinnedMainDmOwnerFromAllowlist,
+  shouldIncludeSupplementalContext,
 };
 
 const talkConfigRuntime = {
@@ -74222,6 +74494,7 @@ const genericSdk = new Proxy(
     ...runtimeEnvRuntime,
     ...runtimeRuntime,
     ...channelSecretRuntime,
+    ...securityRuntime,
     ...directoryRuntime,
     ...threadBindingsRuntime,
     ...conversationRuntime,
@@ -76088,6 +76361,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-secret-runtime"
   ) {
     return channelSecretRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/security-runtime" ||
+    request === "@openclaw/plugin-sdk/security-runtime"
+  ) {
+    return securityRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/talk-config-runtime" ||
