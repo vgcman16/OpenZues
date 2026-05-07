@@ -31682,6 +31682,165 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_plugin_test_api_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-api.cjs"
+    runtime_entry.write_text(
+        """
+const testApi = require("openclaw/plugin-sdk/plugin-test-api");
+const scopedTestApi = require("@openclaw/plugin-sdk/plugin-test-api");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.plugin_test_api",
+      description: "Use OpenClaw plugin-test-api SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const registeredTools = [];
+        const pluginApi = testApi.createTestPluginApi({
+          id: "custom-plugin",
+          name: "Custom Plugin",
+          config: { enabled: true },
+          registerTool(tool) {
+            registeredTools.push(tool.name);
+          },
+          resolvePath(input) {
+            return `root:${input}`;
+          }
+        });
+        pluginApi.registerTool({ name: "demo.tool" });
+        const injection = await pluginApi.enqueueNextTurnInjection({
+          sessionKey: "agent:main:main",
+          text: "next"
+        });
+        return {
+          keys: Object.keys(testApi).sort(),
+          scopedSame:
+            scopedTestApi.createTestPluginApi === testApi.createTestPluginApi,
+          base: {
+            id: pluginApi.id,
+            name: pluginApi.name,
+            source: pluginApi.source,
+            registrationMode: pluginApi.registrationMode,
+            config: pluginApi.config,
+            runtimeType: typeof pluginApi.runtime,
+            loggerTypes: [
+              typeof pluginApi.logger.info,
+              typeof pluginApi.logger.warn,
+              typeof pluginApi.logger.error,
+              typeof pluginApi.logger.debug
+            ],
+            noops: [
+              typeof pluginApi.registerHook,
+              typeof pluginApi.registerHttpRoute,
+              typeof pluginApi.registerChannel,
+              typeof pluginApi.registerGatewayMethod,
+              typeof pluginApi.registerCli,
+              typeof pluginApi.registerProvider,
+              typeof pluginApi.registerMemoryCapability,
+              typeof pluginApi.on
+            ]
+          },
+          registeredTools,
+          injection,
+          resolvedPath: pluginApi.resolvePath("data/file.txt"),
+          runContext: {
+            set: pluginApi.setRunContext({ runId: "r1" }),
+            get: pluginApi.getRunContext() ?? null
+          },
+          scheduler: pluginApi.registerSessionSchedulerJob({ id: "job" }) ?? null
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-plugin-test-api-plugin",
+                    "name": "Runtime Plugin Test API Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-test-api.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.plugin_test_api"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.plugin_test_api"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["createTestPluginApi"],
+        "scopedSame": True,
+        "base": {
+            "id": "custom-plugin",
+            "name": "Custom Plugin",
+            "source": "test",
+            "registrationMode": "full",
+            "config": {"enabled": True},
+            "runtimeType": "object",
+            "loggerTypes": ["function", "function", "function", "function"],
+            "noops": [
+                "function",
+                "function",
+                "function",
+                "function",
+                "function",
+                "function",
+                "function",
+                "function",
+            ],
+        },
+        "registeredTools": ["demo.tool"],
+        "injection": {
+            "enqueued": False,
+            "id": "",
+            "sessionKey": "agent:main:main",
+        },
+        "resolvedPath": "root:data/file.txt",
+        "runContext": {"set": False, "get": None},
+        "scheduler": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:

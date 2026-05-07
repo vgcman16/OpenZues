@@ -57887,6 +57887,90 @@ const channelTestHelpersRuntime = {
   waitForStartedMocks,
 };
 
+function createTestPluginApi(api = {}) {
+  return {
+    id: "test-plugin",
+    name: "test-plugin",
+    source: "test",
+    registrationMode: "full",
+    config: {},
+    runtime: {},
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+    registerTool() {},
+    registerHook() {},
+    registerHttpRoute() {},
+    registerChannel() {},
+    registerGatewayMethod() {},
+    registerCli() {},
+    registerCliBackend() {},
+    registerTextTransforms() {},
+    registerService() {},
+    registerGatewayDiscoveryService() {},
+    registerReload() {},
+    registerNodeHostCommand() {},
+    registerNodeInvokePolicy() {},
+    registerSecurityAuditCollector() {},
+    registerConfigMigration() {},
+    registerMigrationProvider() {},
+    registerAutoEnableProbe() {},
+    registerProvider() {},
+    registerSpeechProvider() {},
+    registerRealtimeTranscriptionProvider() {},
+    registerRealtimeVoiceProvider() {},
+    registerMediaUnderstandingProvider() {},
+    registerImageGenerationProvider() {},
+    registerMusicGenerationProvider() {},
+    registerVideoGenerationProvider() {},
+    registerWebFetchProvider() {},
+    registerWebSearchProvider() {},
+    registerInteractiveHandler() {},
+    onConversationBindingResolved() {},
+    registerCommand() {},
+    registerContextEngine() {},
+    registerCompactionProvider() {},
+    registerAgentHarness() {},
+    registerCodexAppServerExtensionFactory() {},
+    registerAgentToolResultMiddleware() {},
+    registerDetachedTaskRuntime() {},
+    registerSessionExtension() {},
+    enqueueNextTurnInjection: async (injection) => ({
+      enqueued: false,
+      id: "",
+      sessionKey: injection.sessionKey,
+    }),
+    registerTrustedToolPolicy() {},
+    registerToolMetadata() {},
+    registerControlUiDescriptor() {},
+    registerRuntimeLifecycle() {},
+    registerAgentEventSubscription() {},
+    setRunContext: () => false,
+    getRunContext: () => undefined,
+    clearRunContext() {},
+    registerSessionSchedulerJob: () => undefined,
+    registerMemoryCapability() {},
+    registerMemoryPromptSection() {},
+    registerMemoryPromptSupplement() {},
+    registerMemoryCorpusSupplement() {},
+    registerMemoryFlushPlan() {},
+    registerMemoryRuntime() {},
+    registerMemoryEmbeddingProvider() {},
+    resolvePath(input) {
+      return input;
+    },
+    on() {},
+    ...api,
+  };
+}
+
+const pluginTestApiRuntime = {
+  createTestPluginApi,
+};
+
 function applyChannelMatchMeta(result, match = {}) {
   if (match.matchKey && match.matchSource) {
     result.matchKey = match.matchKey;
@@ -76653,6 +76737,7 @@ const genericSdk = new Proxy(
     ...channelContractTestingRuntime,
     ...channelTargetTestingRuntime,
     ...channelTestHelpersRuntime,
+    ...pluginTestApiRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
@@ -78703,6 +78788,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-test-helpers"
   ) {
     return channelTestHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/plugin-test-api" ||
+    request === "@openclaw/plugin-sdk/plugin-test-api"
+  ) {
+    return pluginTestApiRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||
