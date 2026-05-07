@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~94.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~94.6% overall, with a reasonable
   band of ~80-95%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9137,6 +9137,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   error unless a native runner hook is wired. Source/test checkpointed in
   `9e6496fb`; the plugin/runtime queue now rotates back to broader SDK helper
   and runtime surface breadth.
+- Current queue-head adjustment: imported plugin SDK `file-lock` now exposes
+  the source-backed lock helper subset for scoped and unscoped imports:
+  `FILE_LOCK_TIMEOUT_ERROR_CODE`, `acquireFileLock`, `withFileLock`,
+  `resetFileLockStateForTest`, and `drainFileLockStateForTest`. The native
+  shim preserves process-local re-entrant handles, `.lock` sidecar files,
+  stale-lock cleanup, timeout error code/lockPath projection, and callback
+  release behavior. Source/test checkpointed in `ed03c127`; broader SDK
+  helper/runtime surface breadth remains the next plugin-runtime queue head.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

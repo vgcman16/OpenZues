@@ -96,6 +96,8 @@ The imported `agent-runtime` agent-command entrypoint coverage from
 `src/agents/agent-runtime-config.ts`, `src/agents/command/types.ts`, and
 `src/commands/agent.ts` is verified in `9e6496fb` and counted with the
 plugin/extension system row above.
+The imported `file-lock` helper coverage from `src/plugin-sdk/file-lock.ts` is
+verified in `ed03c127` and counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
