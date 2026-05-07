@@ -24609,6 +24609,183 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_delivery_queue_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-delivery-queue-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const deliveryQueue = require("openclaw/plugin-sdk/delivery-queue-runtime");
+const scopedDeliveryQueue = require("@openclaw/plugin-sdk/delivery-queue-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.delivery_queue_runtime",
+      description: "Use OpenClaw delivery queue runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        const log = {
+          info: (msg) => calls.push(["info", msg]),
+          warn: (msg) => calls.push(["warn", msg]),
+          error: (msg) => calls.push(["error", msg])
+        };
+        globalThis.__openzuesDeliveryQueueRuntime = {
+          async drainPendingDeliveries(opts) {
+            const selected = opts.selectEntry({
+              id: "entry-1",
+              channel: "slack",
+              retryCount: 0,
+              enqueuedAt: 10
+            }, 1234);
+            const delivered = await opts.deliver({
+              cfg: opts.cfg,
+              channel: "slack",
+              to: opts.to || "C1",
+              payloads: [{ text: opts.text || "hello" }],
+              deps: {
+                slack: async (ctx) => ({
+                  messageId: `default-${ctx.text}`,
+                  text: ctx.text,
+                  to: ctx.to
+                })
+              },
+              skipQueue: true
+            });
+            calls.push({
+              drainKey: opts.drainKey,
+              logLabel: opts.logLabel,
+              selected,
+              delivered
+            });
+          }
+        };
+        await deliveryQueue.drainPendingDeliveries({
+          drainKey: "demo:test",
+          logLabel: "Demo reconnect drain",
+          cfg: {},
+          log,
+          selectEntry: (entry, now) => ({
+            match: entry.channel === "slack" && now === 1234,
+            bypassBackoff: true
+          })
+        });
+        const explicitDeliver = async (params) => [{
+          messageId: `explicit-${params.to}`,
+          skipQueue: params.skipQueue === true
+        }];
+        await scopedDeliveryQueue.drainPendingDeliveries({
+          drainKey: "demo:explicit",
+          logLabel: "Demo explicit drain",
+          cfg: {},
+          log,
+          to: "C2",
+          text: "manual",
+          deliver: explicitDeliver,
+          selectEntry: () => ({ match: true })
+        });
+        delete globalThis.__openzuesDeliveryQueueRuntime;
+        let noRuntimeError = "";
+        try {
+          await deliveryQueue.drainPendingDeliveries({
+            drainKey: "demo:missing",
+            logLabel: "Demo missing drain",
+            cfg: {},
+            log,
+            selectEntry: () => ({ match: true })
+          });
+        } catch (error) {
+          noRuntimeError = error.message;
+        }
+        return {
+          keys: Object.keys(deliveryQueue).sort(),
+          scopedSame:
+            scopedDeliveryQueue.drainPendingDeliveries ===
+            deliveryQueue.drainPendingDeliveries,
+          calls,
+          noRuntimeError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "delivery-queue-runtime-plugin",
+                    "name": "Delivery Queue Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-delivery-queue-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.delivery_queue_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.delivery_queue_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["drainPendingDeliveries"],
+        "scopedSame": True,
+        "calls": [
+            {
+                "drainKey": "demo:test",
+                "logLabel": "Demo reconnect drain",
+                "selected": {"match": True, "bypassBackoff": True},
+                "delivered": [
+                    {"messageId": "default-hello", "text": "hello", "to": "C1"}
+                ],
+            },
+            {
+                "drainKey": "demo:explicit",
+                "logLabel": "Demo explicit drain",
+                "selected": {"match": True},
+                "delivered": [{"messageId": "explicit-C2", "skipQueue": True}],
+            },
+        ],
+        "noRuntimeError": (
+            "delivery queue runtime is unavailable in OpenZues plugin runtime."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_conversation_binding_runtime_helpers(
     tmp_path,
 ) -> None:

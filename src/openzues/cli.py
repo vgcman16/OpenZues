@@ -46808,6 +46808,30 @@ const outboundRuntime = {
   summarizeOutboundPayloadForTransport,
 };
 
+async function drainPendingDeliveries(opts = {}) {
+  const deliver =
+    opts.deliver ||
+    (async (params) => {
+      const runtime = globalThis.__openzuesOutboundDeliverRuntime;
+      if (runtime && typeof runtime.deliverOutboundPayloads === "function") {
+        return await runtime.deliverOutboundPayloads(params);
+      }
+      return await deliverOutboundPayloads(params);
+    });
+  const runtime = globalThis.__openzuesDeliveryQueueRuntime;
+  if (runtime && typeof runtime.drainPendingDeliveries === "function") {
+    return await runtime.drainPendingDeliveries({
+      ...opts,
+      deliver,
+    });
+  }
+  throw new Error("delivery queue runtime is unavailable in OpenZues plugin runtime.");
+}
+
+const deliveryQueueRuntime = {
+  drainPendingDeliveries,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -71636,6 +71660,7 @@ const genericSdk = new Proxy(
     ...sessionKeyRuntime,
     ...sessionStoreRuntime,
     ...outboundRuntime,
+    ...deliveryQueueRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -72702,6 +72727,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/outbound-runtime"
   ) {
     return outboundRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/delivery-queue-runtime" ||
+    request === "@openclaw/plugin-sdk/delivery-queue-runtime"
+  ) {
+    return deliveryQueueRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||
