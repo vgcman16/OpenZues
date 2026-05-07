@@ -113,6 +113,9 @@ row above.
 The imported `persistent-dedupe` SDK helper coverage from
 `src/plugin-sdk/persistent-dedupe.ts` is verified in `cfe26bca` and is counted
 with the plugin/extension system row above.
+The imported `qa-runner-runtime` SDK helper coverage from
+`src/plugin-sdk/qa-runner-runtime.ts` is verified in `f9d46a8f` and is counted
+with the plugin/extension system row above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,

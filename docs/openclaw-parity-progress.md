@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~92.8% overall, with a reasonable band of ~80-93%.
+- Estimated repo-wide parity: ~92.9% overall, with a reasonable band of ~80-93%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -3403,9 +3403,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 ## Current Queue Head
 
-- Imported OpenClaw plugin runtime entries now have the `persistent-dedupe`
-  SDK subpath for disk-backed duplicate checks and claimable in-flight guards;
-  the broader plugin SDK helper queue continues with `qa-runner-runtime`.
+- Imported OpenClaw plugin runtime entries now have the `qa-runner-runtime`
+  SDK subpath for QA lab surface loading and QA runner contribution discovery;
+  the broader plugin SDK helper queue continues with `models-provider-runtime`.
 - Browser command productization is now effectively closed for the current installed-command queue, with persistent proxy/profile mutation left intentionally guarded.
 - Cron expression schedules now create, update, list, compute due state, and launch through `cron.run mode=due`; richer upstream cron runtime semantics such as full Croner expression breadth and persisted scheduler error telemetry remain future hardening.
 - `agents.files.*` now covers OpenClaw bootstrap and memory filenames (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, `memory.md`) while retaining the existing OpenZues `.codex/AGENTS.md` path.
@@ -15991,8 +15991,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `createClaimableDedupe`, including namespace-scoped persistent records,
   in-process duplicate races, warmup, memory fallback on disk errors,
   claim/commit/release behavior, and persistent-backed recent checks. This
-  closes `OZ-PLUGIN-00208`; repo-wide parity is now estimated at ~92.8%.
-  Remaining plugin SDK breadth continues with `qa-runner-runtime`.
+  closes `OZ-PLUGIN-00208`; repo-wide parity was estimated at ~92.8% for that
+  checkpoint. Remaining plugin SDK breadth then continued with
+  `qa-runner-runtime`.
 - Verified the persistent-dedupe helper slice with
   `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_persistent_dedupe_helpers -q`
   (`1 passed`), adjacent SDK helper proof
@@ -16003,6 +16004,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `cfe26bca`.
+- Imported OpenClaw plugin runtime entries now have the `qa-runner-runtime`
+  SDK subpath from `src/plugin-sdk/qa-runner-runtime.ts`: scoped and unscoped
+  native runtime entries expose lazy QA lab runtime loading, bundled plugin
+  test API loading, QA runtime availability checks, sorted QA runner manifest
+  discovery, activated/bundled runtime registration matching, blocked runner
+  projection, duplicate command detection, invalid registration detection, and
+  undeclared runtime command rejection. This closes `OZ-PLUGIN-00209`;
+  repo-wide parity is now estimated at ~92.9%. Remaining plugin SDK breadth
+  continues with `models-provider-runtime`.
+- Verified the qa-runner-runtime helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_qa_runner_runtime_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "qa_runner_runtime or persistent_dedupe or json_store"`
+  (`3 passed, 1029 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`220 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `f9d46a8f`.
 
 ## References
 
