@@ -10371,6 +10371,166 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_web_content_extractor_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-web-content-extractor.cjs"
+    runtime_entry.write_text(
+        """
+const extractor = require("openclaw/plugin-sdk/web-content-extractor");
+const scopedExtractor = require("@openclaw/plugin-sdk/web-content-extractor");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.web_content_extractor",
+      description: "Use OpenClaw web-content-extractor SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const html = `
+          <html>
+            <head><title>Demo &amp; Docs</title></head>
+            <body>
+              <h1> Hello&nbsp;World </h1>
+              <p>Visible <a href="https://example.test">Link</a></p>
+              <div aria-hidden="true">Prompt Injection</div>
+              <span class="sr-only">Screen Reader Trap</span>
+              <p style="display: none">Invisible Text</p>
+              <template>Template Trap</template>
+              <svg><text>Vector Trap</text></svg>
+              <input type="hidden" value="Input Trap">
+              <ul><li>One</li></ul>
+            </body>
+          </html>
+        `;
+        const clean = await extractor.sanitizeHtml(html);
+        const markdown = extractor.htmlToMarkdown(clean);
+        const extractedMarkdown = await extractor.extractBasicHtmlContent({
+          html,
+          extractMode: "markdown"
+        });
+        const extractedText = await scopedExtractor.extractBasicHtmlContent({
+          html,
+          extractMode: "text"
+        });
+        return {
+          keys: Object.keys(extractor).sort(),
+          scopedType: typeof scopedExtractor.extractBasicHtmlContent,
+          sameNormalize:
+            extractor.normalizeWhitespace === scopedExtractor.normalizeWhitespace,
+          cleanContains: {
+            visible: clean.includes("Visible"),
+            prompt: clean.includes("Prompt Injection"),
+            trap: clean.includes("Screen Reader Trap"),
+            invisible: clean.includes("Invisible Text"),
+            template: clean.includes("Template Trap"),
+            vector: clean.includes("Vector Trap"),
+            input: clean.includes("Input Trap")
+          },
+          markdown,
+          extractedMarkdown,
+          extractedText,
+          invisible: extractor.stripInvisibleUnicode("a\\u200bb\\u202ec\\ufeffd"),
+          normalized: extractor.normalizeWhitespace(" A  B \\n\\n\\n C "),
+          plain: extractor.markdownToText("# Head\\n- [Link](https://ex)\\n`code`")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-web-content-extractor-plugin",
+                    "name": "Runtime Web Content Extractor Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-web-content-extractor.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.web_content_extractor"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.web_content_extractor"},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "extractBasicHtmlContent",
+        "htmlToMarkdown",
+        "markdownToText",
+        "normalizeWhitespace",
+        "sanitizeHtml",
+        "stripInvisibleUnicode",
+    ]
+    assert result["scopedType"] == "function"
+    assert result["sameNormalize"] is True
+    assert result["cleanContains"] == {
+        "visible": True,
+        "prompt": False,
+        "trap": False,
+        "invisible": False,
+        "template": False,
+        "vector": False,
+        "input": False,
+    }
+    assert result["markdown"] == {
+        "text": (
+            "Demo & Docs\n\n# Hello World\n\n "
+            "Visible [Link](https://example.test)\n\n- One"
+        ),
+        "title": "Demo & Docs",
+    }
+    assert result["extractedMarkdown"] == result["markdown"]
+    assert result["extractedText"] == {
+        "text": "Demo & Docs\n\nHello World\n\n Visible Link\nOne",
+        "title": "Demo & Docs",
+    }
+    assert result["invisible"] == "abcd"
+    assert result["normalized"] == "A B\n\n C"
+    assert result["plain"] == "Head\nLink\ncode"
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_setup_helpers(
     tmp_path,
 ) -> None:

@@ -22183,8 +22183,106 @@ function webToolStripTags(value) {
   return webToolDecodeEntities(String(value || "").replace(/<[^>]+>/g, ""));
 }
 
+function readHtmlAttribute(attrs, name) {
+  const escapedName = name.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+  const unquotedAttributeValue = "[^\\s\"'=<>`]+";
+  const match = String(attrs || "").match(
+    new RegExp(
+      `(?:^|\\s)${escapedName}(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|` +
+        `(${unquotedAttributeValue})))?`,
+      "i",
+    ),
+  );
+  if (!match) {
+    return undefined;
+  }
+  return match[1] ?? match[2] ?? match[3] ?? "";
+}
+
+function hasHtmlAttribute(attrs, name) {
+  return readHtmlAttribute(attrs, name) !== undefined;
+}
+
+function hasHiddenHtmlClass(className) {
+  const hiddenClasses = new Set([
+    "d-none",
+    "hidden",
+    "invisible",
+    "offscreen",
+    "screen-reader-only",
+    "sr-only",
+    "visually-hidden",
+  ]);
+  return String(className || "")
+    .toLowerCase()
+    .split(/\s+/)
+    .some((entry) => hiddenClasses.has(entry));
+}
+
+function isHiddenHtmlStyle(style) {
+  const text = String(style || "");
+  if (/(?:^|;)\s*display\s*:\s*none\s*(?:;|$)/i.test(text)) {
+    return true;
+  }
+  if (/(?:^|;)\s*visibility\s*:\s*hidden\s*(?:;|$)/i.test(text)) {
+    return true;
+  }
+  if (/(?:^|;)\s*opacity\s*:\s*0\s*(?:;|$)/i.test(text)) {
+    return true;
+  }
+  if (/(?:^|;)\s*font-size\s*:\s*0(?:px|em|rem|pt|%)?\s*(?:;|$)/i.test(text)) {
+    return true;
+  }
+  if (/(?:^|;)\s*color\s*:\s*transparent\s*(?:;|$)/i.test(text)) {
+    return true;
+  }
+  return /(?:^|;)\s*transform\s*:\s*scale\s*\(\s*0\s*\)/i.test(text);
+}
+
+function shouldRemoveHtmlElement(_tagName, attrs) {
+  const tagName = String(_tagName || "").toLowerCase();
+  if (["meta", "template", "svg", "canvas", "iframe", "object", "embed"].includes(tagName)) {
+    return true;
+  }
+  if (tagName === "input" && readHtmlAttribute(attrs, "type")?.toLowerCase() === "hidden") {
+    return true;
+  }
+  if (readHtmlAttribute(attrs, "aria-hidden")?.toLowerCase() === "true") {
+    return true;
+  }
+  if (hasHtmlAttribute(attrs, "hidden")) {
+    return true;
+  }
+  if (hasHiddenHtmlClass(readHtmlAttribute(attrs, "class"))) {
+    return true;
+  }
+  return isHiddenHtmlStyle(readHtmlAttribute(attrs, "style"));
+}
+
+async function sanitizeHtml(html) {
+  let output = String(html || "");
+  output = output.replace(/<!--[\s\S]*?-->/g, "");
+  output = output.replace(
+    /<(template|svg|canvas|iframe|object|embed)\b[^>]*>[\s\S]*?<\/\1>/gi,
+    "",
+  );
+  output = output.replace(/<meta\b[^>]*>/gi, "");
+  output = output.replace(
+    /<([a-z][\w:-]*)\b(?=[^>]*(?:aria-hidden|hidden|class\s*=|style\s*=))([^>]*)>[\s\S]*?<\/\1>/gi,
+    (match, tagName, attrs) => (shouldRemoveHtmlElement(tagName, attrs) ? "" : match),
+  );
+  output = output.replace(
+    /<([a-z][\w:-]*)\b(?=[^>]*(?:aria-hidden|hidden|class\s*=|style\s*=))([^>]*)\/?>/gi,
+    (match, tagName, attrs) => (shouldRemoveHtmlElement(tagName, attrs) ? "" : match),
+  );
+  return output;
+}
+
 function stripInvisibleUnicode(value) {
-  return String(value || "").replace(/[\u200B-\u200D\uFEFF]/g, "");
+  return String(value || "").replace(
+    /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u206A-\u206F\uFEFF]/g,
+    "",
+  );
 }
 
 function htmlToMarkdown(html) {
@@ -22241,7 +22339,7 @@ function truncateText(value, maxChars) {
 }
 
 async function extractBasicHtmlContent(params = {}) {
-  const cleanHtml = String(params.html || "");
+  const cleanHtml = await sanitizeHtml(String(params.html || ""));
   const rendered = htmlToMarkdown(cleanHtml);
   if (params.extractMode === "text") {
     const text =
@@ -43222,6 +43320,15 @@ const providerWebSharedRuntime = {
   withStrictWebToolsEndpoint,
   withTrustedWebToolsEndpoint,
   writeCache,
+};
+
+const webContentExtractorRuntime = {
+  extractBasicHtmlContent,
+  htmlToMarkdown,
+  markdownToText,
+  normalizeWhitespace,
+  sanitizeHtml,
+  stripInvisibleUnicode,
 };
 
 const providerWebFetchRuntime = {
@@ -72117,6 +72224,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-web-fetch"
   ) {
     return providerWebFetchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/web-content-extractor" ||
+    request === "@openclaw/plugin-sdk/web-content-extractor"
+  ) {
+    return webContentExtractorRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search" ||
