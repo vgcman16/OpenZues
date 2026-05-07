@@ -39565,6 +39565,325 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_tts_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    prefs_path = (tmp_path / "tts-prefs.json").as_posix()
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-tts.cjs"
+    runtime_entry.write_text(
+        f"""
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+const ttsRuntime = require("openclaw/plugin-sdk/tts-runtime");
+const scopedTtsRuntime = require("@openclaw/plugin-sdk/tts-runtime");
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.agent_tts",
+      description: "Use OpenClaw agent-runtime TTS helpers",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const prefsPath = {json.dumps(prefs_path)};
+        const cfg = {{
+          messages: {{
+            tts: {{
+              auto: "tagged",
+              mode: "all",
+              provider: "edge",
+              prefsPath,
+              maxTextLength: 1234,
+              modelOverrides: {{ enabled: true, allowProvider: true, allowText: true }},
+              providers: {{
+                edge: {{ voice: "aria", outputFormat: "audio-24khz-96kbitrate-mono-mp3" }},
+                openai: {{ model: "tts-1", voice: "alloy" }}
+              }},
+              personas: {{
+                Alfred: {{
+                  label: "Alfred",
+                  description: "Butler voice",
+                  provider: "edge",
+                  providers: {{ edge: {{ voice: "guy" }} }}
+                }}
+              }}
+            }}
+          }},
+          agents: {{
+            list: [
+              {{ id: "reader", tts: {{ provider: "openai", maxTextLength: 800 }} }}
+            ]
+          }},
+          channels: {{
+            discord: {{
+              tts: {{ provider: "elevenlabs" }},
+              accounts: {{ main: {{ tts: {{ provider: "google" }} }} }}
+            }}
+          }}
+        }};
+        const baseConfig = agent.resolveTtsConfig(cfg);
+        const agentConfig = agent.resolveTtsConfig(cfg, "reader");
+        const accountConfig = agent.resolveTtsConfig(cfg, {{
+          channelId: "discord",
+          accountId: "main"
+        }});
+        const prefsBefore = agent.resolveTtsAutoMode({{ config: baseConfig, prefsPath }});
+        agent.setTtsEnabled(prefsPath, true);
+        agent.setTtsProvider(prefsPath, "edge");
+        agent.setTtsPersona(prefsPath, "ALFRED");
+        agent.setTtsMaxLength(prefsPath, 321);
+        agent.setSummarizationEnabled(prefsPath, false);
+        agent.setLastTtsAttempt({{
+          timestamp: 123,
+          success: false,
+          textLength: 5,
+          summarized: false,
+          error: "no provider"
+        }});
+        const directivePolicy = agent._test.resolveModelOverridePolicy({{
+          enabled: true,
+          allowProvider: true,
+          allowText: true
+        }});
+        const directive = agent._test.parseTtsDirectives(
+          "Say [[tts:provider=edge voice=aria]]hello[[/tts]] [[tts:text]]hidden[[/tts:text]]",
+          directivePolicy,
+          {{
+            providers: [
+              {{
+                id: "microsoft",
+                aliases: ["edge"],
+                parseDirectiveToken: (params) => {{
+                  if (params.key === "voice") {{
+                    return {{ handled: true, overrides: {{ voice: params.value }} }};
+                  }}
+                  return {{ handled: false }};
+                }}
+              }}
+            ]
+          }}
+        );
+        const maybePayload = await agent.maybeApplyTtsToPayload({{
+          payload: {{ text: "hello", media: [] }},
+          cfg: {{ messages: {{ tts: {{ auto: "off" }} }} }}
+        }});
+        const synthesized = await agent.synthesizeSpeech({{ text: "hello", cfg }});
+
+        return {{
+          keys: Object.keys(agent).filter((key) => [
+            "_test",
+            "buildTtsSystemPromptHint",
+            "getLastTtsAttempt",
+            "getResolvedSpeechProviderConfig",
+            "getTtsMaxLength",
+            "getTtsPersona",
+            "getTtsProvider",
+            "isSummarizationEnabled",
+            "isTtsEnabled",
+            "isTtsProviderConfigured",
+            "listSpeechVoices",
+            "listTtsPersonas",
+            "maybeApplyTtsToPayload",
+            "resolveExplicitTtsOverrides",
+            "resolveTtsAutoMode",
+            "resolveTtsConfig",
+            "resolveTtsPrefsPath",
+            "resolveTtsProviderOrder",
+            "setLastTtsAttempt",
+            "setSummarizationEnabled",
+            "setTtsAutoMode",
+            "setTtsEnabled",
+            "setTtsMaxLength",
+            "setTtsPersona",
+            "setTtsProvider",
+            "synthesizeSpeech",
+            "textToSpeech",
+            "textToSpeechTelephony"
+          ].includes(key)).sort(),
+          directRuntime: {{
+            sameConfigFn: ttsRuntime.resolveTtsConfig === agent.resolveTtsConfig,
+            scopedConfigFn: scopedTtsRuntime.resolveTtsConfig === agent.resolveTtsConfig
+          }},
+          configs: {{
+            base: {{
+              auto: baseConfig.auto,
+              mode: baseConfig.mode,
+              provider: baseConfig.provider,
+              prefsPath: baseConfig.prefsPath,
+              maxTextLength: baseConfig.maxTextLength,
+              providerConfigKeys: Object.keys(baseConfig.providerConfigs).sort(),
+              personaIds: Object.keys(baseConfig.personas).sort(),
+              personaProvider: baseConfig.personas.alfred.provider
+            }},
+            agent: {{
+              provider: agentConfig.provider,
+              maxTextLength: agentConfig.maxTextLength
+            }},
+            account: {{
+              provider: accountConfig.provider
+            }}
+          }},
+          prefs: {{
+            before: prefsBefore,
+            auto: agent.resolveTtsAutoMode({{ config: baseConfig, prefsPath }}),
+            enabled: agent.isTtsEnabled(baseConfig, prefsPath),
+            provider: agent.getTtsProvider(baseConfig, prefsPath),
+            persona: agent.getTtsPersona(baseConfig, prefsPath),
+            personas: agent.listTtsPersonas(baseConfig).map((persona) => persona.id),
+            maxLength: agent.getTtsMaxLength(prefsPath),
+            summarize: agent.isSummarizationEnabled(prefsPath),
+            last: agent.getLastTtsAttempt()
+          }},
+          directive,
+          explicit: agent.resolveExplicitTtsOverrides({{ cfg, prefsPath, provider: "edge" }}),
+          prompt: agent.buildTtsSystemPromptHint(cfg),
+          providerOrder: agent.resolveTtsProviderOrder("edge", cfg),
+          providerConfigured: agent.isTtsProviderConfigured(baseConfig, "microsoft", cfg),
+          voices: await agent.listSpeechVoices({{
+            provider: "microsoft",
+            cfg,
+            config: baseConfig
+          }}),
+          maybePayload,
+          synthesized
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-tts-plugin",
+                    "name": "Runtime Agent TTS Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-tts.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_tts"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_tts"})
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "_test",
+        "buildTtsSystemPromptHint",
+        "getLastTtsAttempt",
+        "getResolvedSpeechProviderConfig",
+        "getTtsMaxLength",
+        "getTtsPersona",
+        "getTtsProvider",
+        "isSummarizationEnabled",
+        "isTtsEnabled",
+        "isTtsProviderConfigured",
+        "listSpeechVoices",
+        "listTtsPersonas",
+        "maybeApplyTtsToPayload",
+        "resolveExplicitTtsOverrides",
+        "resolveTtsAutoMode",
+        "resolveTtsConfig",
+        "resolveTtsPrefsPath",
+        "resolveTtsProviderOrder",
+        "setLastTtsAttempt",
+        "setSummarizationEnabled",
+        "setTtsAutoMode",
+        "setTtsEnabled",
+        "setTtsMaxLength",
+        "setTtsPersona",
+        "setTtsProvider",
+        "synthesizeSpeech",
+        "textToSpeech",
+        "textToSpeechTelephony",
+    ]
+    assert result["directRuntime"] == {"sameConfigFn": True, "scopedConfigFn": True}
+    assert result["configs"] == {
+        "base": {
+            "auto": "tagged",
+            "mode": "all",
+            "provider": "microsoft",
+            "prefsPath": prefs_path,
+            "maxTextLength": 1234,
+            "providerConfigKeys": ["microsoft", "openai"],
+            "personaIds": ["alfred"],
+            "personaProvider": "microsoft",
+        },
+        "agent": {"provider": "openai", "maxTextLength": 800},
+        "account": {"provider": "google"},
+    }
+    assert result["prefs"]["before"] == "tagged"
+    assert result["prefs"]["auto"] == "always"
+    assert result["prefs"]["enabled"] is True
+    assert result["prefs"]["provider"] == "microsoft"
+    assert result["prefs"]["persona"]["id"] == "alfred"
+    assert result["prefs"]["persona"]["provider"] == "microsoft"
+    assert result["prefs"]["personas"] == ["alfred"]
+    assert result["prefs"]["maxLength"] == 321
+    assert result["prefs"]["summarize"] is False
+    assert result["prefs"]["last"] == {
+        "timestamp": 123,
+        "success": False,
+        "textLength": 5,
+        "summarized": False,
+        "error": "no provider",
+    }
+    assert result["directive"]["cleanedText"] == "Say hello "
+    assert result["directive"]["ttsText"] == "hidden"
+    assert result["directive"]["overrides"] == {
+        "provider": "edge",
+        "providerOverrides": {"microsoft": {"voice": "aria"}},
+        "ttsText": "hidden",
+    }
+    assert result["explicit"] == {"provider": "microsoft"}
+    assert result["prompt"].startswith("Voice (TTS) is enabled.")
+    assert "Active TTS persona: Alfred - Butler voice." in result["prompt"]
+    assert "321 chars" in result["prompt"]
+    assert result["providerOrder"] == ["microsoft"]
+    assert result["providerConfigured"] is False
+    assert result["voices"] == []
+    assert result["maybePayload"] == {"text": "hello", "media": []}
+    assert result["synthesized"] == {
+        "success": False,
+        "error": "TTS conversion failed: no providers available",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

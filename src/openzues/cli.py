@@ -57025,7 +57025,524 @@ function resolveOpenClawAgentDir(env = process.env) {
   );
 }
 
+const DEFAULT_TTS_MAX_LENGTH = 4000;
+const DEFAULT_TTS_SUMMARIZE = true;
+const DEFAULT_TTS_TIMEOUT_MS = 30_000;
+let lastTtsAttempt;
+
+function normalizeConfiguredSpeechProviderId(providerId) {
+  const normalized = normalizeSpeechProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized === "edge" ? "microsoft" : normalized;
+}
+
+function normalizeTtsPersonaId(personaId) {
+  return normalizeOptionalLowercaseString(personaId == null ? undefined : personaId);
+}
+
+function resolveConfiguredTtsAutoMode(raw = {}) {
+  return normalizeTtsAutoMode(raw.auto) || (raw.enabled ? "always" : "off");
+}
+
+function resolveTtsPrefsPathValue(prefsPath, env = process.env) {
+  const explicit = normalizeOptionalString(prefsPath);
+  if (explicit) {
+    return resolveUserPath(explicit, env);
+  }
+  const envPath = normalizeOptionalString(env && env.OPENCLAW_TTS_PREFS);
+  if (envPath) {
+    return resolveUserPath(envPath, env);
+  }
+  return path.join(resolveStateDir(env), "settings", "tts.json");
+}
+
+function resolveModelOverridePolicy(overrides = {}) {
+  const enabled = overrides && Object.prototype.hasOwnProperty.call(overrides, "enabled")
+    ? overrides.enabled !== false
+    : true;
+  if (!enabled) {
+    return {
+      enabled: false,
+      allowText: false,
+      allowProvider: false,
+      allowVoice: false,
+      allowModelId: false,
+      allowVoiceSettings: false,
+      allowNormalization: false,
+      allowSeed: false,
+    };
+  }
+  const allow = (value, defaultValue = true) =>
+    typeof value === "boolean" ? value : defaultValue;
+  return {
+    enabled: true,
+    allowText: allow(overrides && overrides.allowText),
+    allowProvider: allow(overrides && overrides.allowProvider, false),
+    allowVoice: allow(overrides && overrides.allowVoice),
+    allowModelId: allow(overrides && overrides.allowModelId),
+    allowVoiceSettings: allow(overrides && overrides.allowVoiceSettings),
+    allowNormalization: allow(overrides && overrides.allowNormalization),
+    allowSeed: allow(overrides && overrides.allowSeed),
+  };
+}
+
+function ttsAsObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeTtsProviderConfigMap(value) {
+  const rawMap = ttsAsObject(value);
+  const out = {};
+  for (const [providerId, providerConfig] of Object.entries(rawMap)) {
+    const normalized = normalizeConfiguredSpeechProviderId(providerId) || providerId;
+    out[normalized] = ttsAsObject(providerConfig);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function collectTtsPersonas(raw = {}) {
+  const rawPersonas = ttsAsObject(raw.personas);
+  const personas = {};
+  for (const [id, value] of Object.entries(rawPersonas)) {
+    const normalizedId = normalizeTtsPersonaId(id);
+    if (!normalizedId || !value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    const persona = value;
+    personas[normalizedId] = {
+      ...persona,
+      id: normalizedId,
+      provider: normalizeConfiguredSpeechProviderId(persona.provider) || persona.provider,
+      providers: normalizeTtsProviderConfigMap(persona.providers),
+    };
+  }
+  return personas;
+}
+
+function collectDirectTtsProviderConfigEntries(raw = {}) {
+  const entries = {};
+  const rawProviders = ttsAsObject(raw.providers);
+  for (const [providerId, value] of Object.entries(rawProviders)) {
+    const normalized = normalizeConfiguredSpeechProviderId(providerId) || providerId;
+    entries[normalized] = ttsAsObject(value);
+  }
+  const reservedKeys = new Set([
+    "auto",
+    "enabled",
+    "maxTextLength",
+    "mode",
+    "modelOverrides",
+    "persona",
+    "personas",
+    "prefsPath",
+    "provider",
+    "providers",
+    "summaryModel",
+    "timeoutMs",
+  ]);
+  for (const [key, value] of Object.entries(raw)) {
+    if (reservedKeys.has(key) || !value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    const normalized = normalizeConfiguredSpeechProviderId(key) || key;
+    if (!Object.prototype.hasOwnProperty.call(entries, normalized)) {
+      entries[normalized] = ttsAsObject(value);
+    }
+  }
+  return entries;
+}
+
+function resolveTtsConfig(cfg = {}, contextOrAgentId = {}) {
+  const raw = resolveEffectiveTtsConfig(cfg, contextOrAgentId) || {};
+  const providerSource = raw.provider ? "config" : "default";
+  const provider =
+    normalizeConfiguredSpeechProviderId(raw.provider) ||
+    (providerSource === "config" ? normalizeOptionalLowercaseString(raw.provider) || "" : "");
+  return {
+    auto: resolveConfiguredTtsAutoMode(raw),
+    mode: raw.mode || "final",
+    provider,
+    providerSource,
+    persona: normalizeTtsPersonaId(raw.persona),
+    personas: collectTtsPersonas(raw),
+    summaryModel: normalizeOptionalString(raw.summaryModel),
+    modelOverrides: resolveModelOverridePolicy(raw.modelOverrides),
+    providerConfigs: collectDirectTtsProviderConfigEntries(raw),
+    prefsPath: raw.prefsPath,
+    maxTextLength:
+      typeof raw.maxTextLength === "number" && Number.isFinite(raw.maxTextLength)
+        ? raw.maxTextLength
+        : DEFAULT_TTS_MAX_LENGTH,
+    timeoutMs:
+      typeof raw.timeoutMs === "number" && Number.isFinite(raw.timeoutMs)
+        ? raw.timeoutMs
+        : DEFAULT_TTS_TIMEOUT_MS,
+    rawConfig: raw,
+    sourceConfig: cfg,
+  };
+}
+
+function resolveTtsPrefsPath(config = {}) {
+  return resolveTtsPrefsPathValue(config.prefsPath);
+}
+
+function readTtsPrefs(prefsPath) {
+  try {
+    if (!prefsPath || !fs.existsSync(prefsPath)) {
+      return {};
+    }
+    return JSON.parse(fs.readFileSync(prefsPath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeTtsPrefs(prefsPath, prefs) {
+  fs.mkdirSync(path.dirname(prefsPath), { recursive: true });
+  fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2), { mode: 0o600 });
+}
+
+function updateTtsPrefs(prefsPath, update) {
+  const prefs = readTtsPrefs(prefsPath);
+  update(prefs);
+  writeTtsPrefs(prefsPath, prefs);
+}
+
+function resolveTtsAutoModeFromPrefs(prefs) {
+  const auto = normalizeTtsAutoMode(prefs && prefs.tts && prefs.tts.auto);
+  if (auto) {
+    return auto;
+  }
+  if (prefs && prefs.tts && typeof prefs.tts.enabled === "boolean") {
+    return prefs.tts.enabled ? "always" : "off";
+  }
+  return undefined;
+}
+
+function resolveTtsAutoMode(params = {}) {
+  const sessionAuto = normalizeTtsAutoMode(params.sessionAuto);
+  if (sessionAuto) {
+    return sessionAuto;
+  }
+  const prefsAuto = resolveTtsAutoModeFromPrefs(readTtsPrefs(params.prefsPath));
+  if (prefsAuto) {
+    return prefsAuto;
+  }
+  return (params.config && params.config.auto) || "off";
+}
+
+function isTtsEnabled(config, prefsPath, sessionAuto) {
+  return resolveTtsAutoMode({ config, prefsPath, sessionAuto }) !== "off";
+}
+
+function setTtsAutoMode(prefsPath, mode) {
+  const normalized = normalizeTtsAutoMode(mode) || "off";
+  updateTtsPrefs(prefsPath, (prefs) => {
+    const next = { ...(prefs.tts || {}) };
+    delete next.enabled;
+    next.auto = normalized;
+    prefs.tts = next;
+  });
+}
+
+function setTtsEnabled(prefsPath, enabled) {
+  setTtsAutoMode(prefsPath, enabled ? "always" : "off");
+}
+
+function getTtsPersona(config = {}, prefsPath) {
+  const prefs = readTtsPrefs(prefsPath);
+  let personaId;
+  if (prefs.tts && Object.prototype.hasOwnProperty.call(prefs.tts, "persona")) {
+    personaId = normalizeTtsPersonaId(prefs.tts.persona);
+  } else {
+    personaId = normalizeTtsPersonaId(config.persona);
+  }
+  return personaId && config.personas ? config.personas[personaId] : undefined;
+}
+
+function getTtsProvider(config = {}, prefsPath) {
+  const prefs = readTtsPrefs(prefsPath);
+  const prefsProvider =
+    normalizeConfiguredSpeechProviderId(prefs.tts && prefs.tts.provider) ||
+    normalizeSpeechProviderId(prefs.tts && prefs.tts.provider);
+  if (prefsProvider) {
+    return prefsProvider;
+  }
+  const persona = getTtsPersona(config, prefsPath);
+  const personaProvider =
+    normalizeConfiguredSpeechProviderId(persona && persona.provider) ||
+    normalizeSpeechProviderId(persona && persona.provider);
+  if (personaProvider) {
+    return personaProvider;
+  }
+  if (config.providerSource === "config") {
+    return normalizeConfiguredSpeechProviderId(config.provider) || config.provider;
+  }
+  return config.provider || "";
+}
+
+function listTtsPersonas(config = {}) {
+  return Object.values(config.personas || {}).sort((left, right) =>
+    String(left.id || "").localeCompare(String(right.id || "")),
+  );
+}
+
+function setTtsPersona(prefsPath, persona) {
+  updateTtsPrefs(prefsPath, (prefs) => {
+    prefs.tts = { ...(prefs.tts || {}), persona: normalizeTtsPersonaId(persona) || null };
+  });
+}
+
+function setTtsProvider(prefsPath, provider) {
+  updateTtsPrefs(prefsPath, (prefs) => {
+    prefs.tts = {
+      ...(prefs.tts || {}),
+      provider: normalizeConfiguredSpeechProviderId(provider) || provider,
+    };
+  });
+}
+
+function getTtsMaxLength(prefsPath) {
+  const prefs = readTtsPrefs(prefsPath);
+  return prefs.tts && typeof prefs.tts.maxLength === "number"
+    ? prefs.tts.maxLength
+    : DEFAULT_TTS_MAX_LENGTH;
+}
+
+function setTtsMaxLength(prefsPath, maxLength) {
+  updateTtsPrefs(prefsPath, (prefs) => {
+    prefs.tts = { ...(prefs.tts || {}), maxLength };
+  });
+}
+
+function isSummarizationEnabled(prefsPath) {
+  const prefs = readTtsPrefs(prefsPath);
+  return prefs.tts && typeof prefs.tts.summarize === "boolean"
+    ? prefs.tts.summarize
+    : DEFAULT_TTS_SUMMARIZE;
+}
+
+function setSummarizationEnabled(prefsPath, enabled) {
+  updateTtsPrefs(prefsPath, (prefs) => {
+    prefs.tts = { ...(prefs.tts || {}), summarize: Boolean(enabled) };
+  });
+}
+
+function getLastTtsAttempt() {
+  return lastTtsAttempt;
+}
+
+function setLastTtsAttempt(entry) {
+  lastTtsAttempt = entry;
+}
+
+function getResolvedSpeechProviderConfig(config = {}, providerId) {
+  const canonical =
+    normalizeConfiguredSpeechProviderId(providerId) ||
+    normalizeSpeechProviderId(providerId) ||
+    String(providerId || "");
+  const existing = (config.providerConfigs || {})[canonical];
+  if (existing) {
+    return existing;
+  }
+  const raw = config.rawConfig || {};
+  return (
+    (ttsAsObject(raw.providers)[canonical] && ttsAsObject(ttsAsObject(raw.providers)[canonical])) ||
+    ttsAsObject(raw[canonical])
+  );
+}
+
+function resolveExplicitTtsOverrides(params = {}) {
+  const cfg = params.cfg || {};
+  const providerInput = normalizeOptionalString(params.provider);
+  const config = resolveTtsConfig(cfg, {
+    agentId: params.agentId,
+    channelId: params.channelId,
+    accountId: params.accountId,
+  });
+  const prefsPath = params.prefsPath || resolveTtsPrefsPath(config);
+  const selectedProvider =
+    normalizeConfiguredSpeechProviderId(providerInput) ||
+    (params.modelId || params.voiceId ? getTtsProvider(config, prefsPath) : undefined);
+  if (providerInput && !selectedProvider) {
+    throw new Error(`Unknown TTS provider "${providerInput}".`);
+  }
+  if (!params.modelId && !params.voiceId) {
+    return selectedProvider ? { provider: selectedProvider } : {};
+  }
+  if (!selectedProvider) {
+    throw new Error("TTS model or voice overrides require a resolved provider.");
+  }
+  throw new Error(`TTS provider "${selectedProvider}" does not support model or voice overrides.`);
+}
+
+function resolveTtsProviderOrder(primary, _cfg) {
+  const normalized =
+    normalizeConfiguredSpeechProviderId(primary) || normalizeSpeechProviderId(primary);
+  return normalized ? [normalized] : [];
+}
+
+function isTtsProviderConfigured(_config, _provider, _cfg) {
+  return false;
+}
+
+async function listSpeechVoices(_params = {}) {
+  return [];
+}
+
+function buildTtsSystemPromptHint(cfg = {}, agentId) {
+  const config = resolveTtsConfig(cfg, agentId);
+  const prefsPath = resolveTtsPrefsPath(config);
+  const autoMode = resolveTtsAutoMode({ config, prefsPath });
+  if (autoMode === "off") {
+    return undefined;
+  }
+  const persona = getTtsPersona(config, prefsPath);
+  const maxLength = getTtsMaxLength(prefsPath);
+  const summarize = isSummarizationEnabled(prefsPath) ? "on" : "off";
+  const autoHint =
+    autoMode === "inbound"
+      ? "Only use TTS when the user's last message includes audio/voice."
+      : autoMode === "tagged"
+        ? [
+            "Only use TTS when you include [[tts:key=value]] directives",
+            "or a [[tts:text]]...[[/tts:text]] block.",
+          ].join(" ")
+        : undefined;
+  const personaHint =
+    persona && `Active TTS persona: ${persona.label || persona.id}${
+      persona.description ? ` - ${persona.description}` : ""
+    }.`;
+  return [
+    "Voice (TTS) is enabled.",
+    autoHint,
+    personaHint,
+    `Keep spoken text ${maxLength} chars to avoid auto-summary (summary ${summarize}).`,
+    "Use [[tts:...]] and optional [[tts:text]]...[[/tts:text]] to control voice/expressiveness.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function supportsNativeVoiceNoteTts(channel) {
+  return resolveChannelTtsVoiceDelivery(channel) !== undefined;
+}
+
+function supportsTranscodedVoiceNoteTts(channel) {
+  const delivery = resolveChannelTtsVoiceDelivery(channel);
+  return Boolean(delivery && delivery.synthesisTarget === "voice-note" && delivery.transcodesAudio);
+}
+
+function resolveTtsSynthesisTarget(channel) {
+  const delivery = resolveChannelTtsVoiceDelivery(channel);
+  return (delivery && delivery.synthesisTarget) || "audio-file";
+}
+
+function shouldDeliverTtsAsVoice(params = {}) {
+  const delivery = resolveChannelTtsVoiceDelivery(params.channel);
+  if (!delivery) {
+    return false;
+  }
+  if (delivery.synthesisTarget === "audio-file") {
+    const formats = new Set(
+      (delivery.audioFileFormats || []).map((format) => String(format).toLowerCase()),
+    );
+    const extension = normalizeOptionalLowercaseString(params.fileExtension || "");
+    const outputFormat = normalizeOptionalLowercaseString(params.outputFormat || "");
+    return (
+      params.target === "audio-file" &&
+      (formats.has((extension || "").replace(/^\./, "")) || formats.has(outputFormat || ""))
+    );
+  }
+  return params.target === "voice-note" &&
+    (params.voiceCompatible === true || delivery.transcodesAudio === true);
+}
+
+function formatTtsProviderError(provider, err) {
+  const error = err instanceof Error ? err : new Error(String(err));
+  if (error.name === "AbortError") {
+    return `${provider}: request timed out`;
+  }
+  return `${provider}: ${redactSensitiveText(error.message)}`;
+}
+
+function sanitizeTtsErrorForLog(err) {
+  return redactSensitiveText(formatErrorMessage(err))
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/\t/g, "\\t");
+}
+
+async function synthesizeSpeech(_params = {}) {
+  return {
+    success: false,
+    error: "TTS conversion failed: no providers available",
+  };
+}
+
+async function textToSpeech(params = {}) {
+  return synthesizeSpeech(params);
+}
+
+async function textToSpeechTelephony(_params = {}) {
+  return {
+    success: false,
+    error: "TTS conversion failed: no providers available",
+  };
+}
+
+async function maybeApplyTtsToPayload(params = {}) {
+  return params.payload;
+}
+
+const ttsRuntimeTestFacade = {
+  parseTtsDirectives,
+  resolveModelOverridePolicy,
+  supportsNativeVoiceNoteTts,
+  supportsTranscodedVoiceNoteTts,
+  resolveTtsSynthesisTarget,
+  shouldDeliverTtsAsVoice,
+  summarizeText,
+  getResolvedSpeechProviderConfig,
+  formatTtsProviderError,
+  sanitizeTtsErrorForLog,
+};
+
+const ttsRuntime = {
+  _test: ttsRuntimeTestFacade,
+  buildTtsSystemPromptHint,
+  getLastTtsAttempt,
+  getResolvedSpeechProviderConfig,
+  getTtsMaxLength,
+  getTtsPersona,
+  getTtsProvider,
+  isSummarizationEnabled,
+  isTtsEnabled,
+  isTtsProviderConfigured,
+  listSpeechVoices,
+  listTtsPersonas,
+  maybeApplyTtsToPayload,
+  resolveExplicitTtsOverrides,
+  resolveTtsAutoMode,
+  resolveTtsConfig,
+  resolveTtsPrefsPath,
+  resolveTtsProviderOrder,
+  setLastTtsAttempt,
+  setSummarizationEnabled,
+  setTtsAutoMode,
+  setTtsEnabled,
+  setTtsMaxLength,
+  setTtsPersona,
+  setTtsProvider,
+  synthesizeSpeech,
+  textToSpeech,
+  textToSpeechTelephony,
+};
+
 const agentRuntime = {
+  ...ttsRuntime,
   DEFAULT_CACHE_TTL_MINUTES,
   DEFAULT_CONTEXT_TOKENS: AGENT_RUNTIME_DEFAULT_CONTEXT_TOKENS,
   DEFAULT_MODEL: AGENT_RUNTIME_DEFAULT_MODEL,
@@ -61728,6 +62245,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/speech-core"
   ) {
     return speechCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/tts-runtime" ||
+    request === "@openclaw/plugin-sdk/tts-runtime"
+  ) {
+    return ttsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/video-generation-core" ||
