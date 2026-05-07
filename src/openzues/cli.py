@@ -53835,6 +53835,224 @@ const fileAccessRuntime = {
   writeFileWithinRoot,
 };
 
+const FILE_LOCK_TIMEOUT_ERROR_CODE = "file_lock_timeout";
+const FILE_LOCK_HELD_LOCKS_KEY = "__openzuesFileLockHeldLocks";
+const FILE_LOCK_CLEANUP_REGISTERED_KEY = "__openzuesFileLockCleanupRegistered";
+
+function getFileLockHeldLocks() {
+  return resolveGlobalMap(FILE_LOCK_HELD_LOCKS_KEY);
+}
+
+function releaseAllFileLocksSync() {
+  const locks = getFileLockHeldLocks();
+  for (const [normalizedFile, held] of locks) {
+    if (held && held.handle && typeof held.handle.close === "function") {
+      void held.handle.close().catch(() => undefined);
+    }
+    if (held && held.lockPath) {
+      try {
+        fs.rmSync(held.lockPath, { force: true });
+      } catch (_error) {
+        // Best-effort exit cleanup only.
+      }
+    }
+    locks.delete(normalizedFile);
+  }
+}
+
+async function drainFileLockStateForTest() {
+  const locks = getFileLockHeldLocks();
+  for (const [normalizedFile, held] of Array.from(locks.entries())) {
+    locks.delete(normalizedFile);
+    if (held && held.handle && typeof held.handle.close === "function") {
+      await held.handle.close().catch(() => undefined);
+    }
+    if (held && held.lockPath) {
+      await fs.promises.rm(held.lockPath, { force: true }).catch(() => undefined);
+    }
+  }
+}
+
+function resetFileLockStateForTest() {
+  releaseAllFileLocksSync();
+}
+
+function ensureFileLockExitCleanupRegistered() {
+  if (process[FILE_LOCK_CLEANUP_REGISTERED_KEY]) {
+    return;
+  }
+  process[FILE_LOCK_CLEANUP_REGISTERED_KEY] = true;
+  process.on("exit", releaseAllFileLocksSync);
+}
+
+function normalizeFileLockOptions(options = {}) {
+  const retries = options.retries || {};
+  return {
+    retries: {
+      retries: Math.max(0, Number.parseInt(String(retries.retries ?? 0), 10) || 0),
+      factor: Number.isFinite(Number(retries.factor)) ? Number(retries.factor) : 1,
+      minTimeout: Math.max(0, Number.parseInt(String(retries.minTimeout ?? 0), 10) || 0),
+      maxTimeout: Math.max(0, Number.parseInt(String(retries.maxTimeout ?? 0), 10) || 0),
+      randomize: retries.randomize === true,
+    },
+    stale: Math.max(0, Number.parseInt(String(options.stale ?? 0), 10) || 0),
+  };
+}
+
+function computeFileLockDelayMs(retries, attempt) {
+  const base = Math.min(
+    retries.maxTimeout,
+    Math.max(retries.minTimeout, retries.minTimeout * retries.factor ** attempt),
+  );
+  const jitter = retries.randomize ? 1 + Math.random() : 1;
+  return Math.min(retries.maxTimeout, Math.round(base * jitter));
+}
+
+async function readFileLockPayload(lockPath) {
+  try {
+    const raw = await fs.promises.readFile(lockPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.pid !== "number" || typeof parsed.createdAt !== "string") {
+      return null;
+    }
+    return { pid: parsed.pid, createdAt: parsed.createdAt };
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function resolveNormalizedFileLockPath(filePath) {
+  const resolved = path.resolve(filePath);
+  const dir = path.dirname(resolved);
+  await fs.promises.mkdir(dir, { recursive: true });
+  try {
+    const realDir = await fs.promises.realpath(dir);
+    return path.join(realDir, path.basename(resolved));
+  } catch (_error) {
+    return resolved;
+  }
+}
+
+function isFileLockPidAlive(pid) {
+  if (!pid || typeof pid !== "number") {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function isStaleFileLock(lockPath, staleMs) {
+  const payload = await readFileLockPayload(lockPath);
+  if (payload && payload.pid && !isFileLockPidAlive(payload.pid)) {
+    return true;
+  }
+  if (payload && payload.createdAt) {
+    const createdAt = Date.parse(payload.createdAt);
+    if (!Number.isFinite(createdAt) || Date.now() - createdAt > staleMs) {
+      return true;
+    }
+  }
+  try {
+    const stat = await fs.promises.stat(lockPath);
+    return Date.now() - stat.mtimeMs > staleMs;
+  } catch (_error) {
+    return true;
+  }
+}
+
+function createFileLockTimeoutError(normalizedFile, lockPath) {
+  const error = new Error(`file lock timeout for ${normalizedFile}`);
+  error.code = FILE_LOCK_TIMEOUT_ERROR_CODE;
+  error.lockPath = lockPath;
+  return error;
+}
+
+async function releaseHeldFileLock(normalizedFile) {
+  const locks = getFileLockHeldLocks();
+  const current = locks.get(normalizedFile);
+  if (!current) {
+    return;
+  }
+  current.count -= 1;
+  if (current.count > 0) {
+    return;
+  }
+  locks.delete(normalizedFile);
+  await current.handle.close().catch(() => undefined);
+  await fs.promises.rm(current.lockPath, { force: true }).catch(() => undefined);
+}
+
+async function acquireFileLock(filePath, rawOptions = {}) {
+  ensureFileLockExitCleanupRegistered();
+  const options = normalizeFileLockOptions(rawOptions);
+  const normalizedFile = await resolveNormalizedFileLockPath(filePath);
+  const lockPath = `${normalizedFile}.lock`;
+  const locks = getFileLockHeldLocks();
+  const held = locks.get(normalizedFile);
+  if (held) {
+    held.count += 1;
+    return {
+      lockPath,
+      release: () => releaseHeldFileLock(normalizedFile),
+    };
+  }
+  for (let attempt = 0; attempt <= options.retries.retries; attempt += 1) {
+    try {
+      const handle = await fs.promises.open(lockPath, "wx");
+      try {
+        await handle.writeFile(
+          JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }, null, 2),
+          "utf8",
+        );
+      } catch (writeError) {
+        await handle.close().catch(() => undefined);
+        await fs.promises.rm(lockPath, { force: true }).catch(() => undefined);
+        throw writeError;
+      }
+      locks.set(normalizedFile, { count: 1, handle, lockPath });
+      return {
+        lockPath,
+        release: () => releaseHeldFileLock(normalizedFile),
+      };
+    } catch (error) {
+      if (!error || error.code !== "EEXIST") {
+        throw error;
+      }
+      if (await isStaleFileLock(lockPath, options.stale)) {
+        await fs.promises.rm(lockPath, { force: true }).catch(() => undefined);
+        continue;
+      }
+      if (attempt >= options.retries.retries) {
+        break;
+      }
+      const delayMs = computeFileLockDelayMs(options.retries, attempt);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw createFileLockTimeoutError(normalizedFile, lockPath);
+}
+
+async function withFileLock(filePath, options, fn) {
+  const lock = await acquireFileLock(filePath, options);
+  try {
+    return await fn();
+  } finally {
+    await lock.release();
+  }
+}
+
+const fileLockRuntime = {
+  FILE_LOCK_TIMEOUT_ERROR_CODE,
+  acquireFileLock,
+  drainFileLockStateForTest,
+  resetFileLockStateForTest,
+  withFileLock,
+};
+
 const browserSecurityRuntime = {
   SafeOpenError,
   SsrFBlockedError,
@@ -61325,6 +61543,7 @@ const genericSdk = new Proxy(
     ...providerWebSearchRuntime,
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
+    ...fileLockRuntime,
     ...secretFileRuntime,
     ...runtimeEnvRuntime,
     ...runtimeRuntime,
@@ -62836,6 +63055,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/file-access-runtime"
   ) {
     return fileAccessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/file-lock" ||
+    request === "@openclaw/plugin-sdk/file-lock"
+  ) {
+    return fileLockRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/browser-security-runtime" ||

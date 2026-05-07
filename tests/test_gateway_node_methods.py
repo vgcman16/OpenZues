@@ -40164,6 +40164,185 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_file_lock_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    lock_root = (tmp_path / "locks").as_posix()
+    runtime_entry = tmp_path / "runtime-plugin-file-lock.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("node:fs");
+const path = require("node:path");
+const fileLock = require("openclaw/plugin-sdk/file-lock");
+const scopedFileLock = require("@openclaw/plugin-sdk/file-lock");
+
+async function capture(fn) {{
+  try {{
+    return {{ ok: true, value: await fn() }};
+  }} catch (error) {{
+    return {{
+      ok: false,
+      message: error && error.message,
+      code: error && error.code,
+      lockPathBasename: error && error.lockPath && path.basename(error.lockPath)
+    }};
+  }}
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.file_lock",
+      description: "Use OpenClaw file-lock helpers",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        fileLock.resetFileLockStateForTest();
+        const options = {{
+          retries: {{ retries: 0, factor: 1, minTimeout: 1, maxTimeout: 1 }},
+          stale: 10000
+        }};
+        const staleOptions = {{
+          retries: {{ retries: 1, factor: 1, minTimeout: 1, maxTimeout: 1 }},
+          stale: 10000
+        }};
+        const root = {json.dumps(lock_root)};
+        fs.mkdirSync(root, {{ recursive: true }});
+
+        const target = path.join(root, "resource.txt");
+        const first = await fileLock.acquireFileLock(target, options);
+        const second = await scopedFileLock.acquireFileLock(target, options);
+        const existsAfterFirst = fs.existsSync(first.lockPath);
+        await second.release();
+        const existsAfterSecondRelease = fs.existsSync(first.lockPath);
+        await first.release();
+        const existsAfterFinalRelease = fs.existsSync(first.lockPath);
+
+        const withValue = await fileLock.withFileLock(target, options, async () => ({{
+          existsDuringCallback: fs.existsSync(`${{target}}.lock`),
+          lockPathBasename: path.basename(`${{target}}.lock`)
+        }}));
+        const existsAfterWith = fs.existsSync(`${{target}}.lock`);
+
+        const timeoutTarget = path.join(root, "fresh.txt");
+        fs.writeFileSync(
+          `${{timeoutTarget}}.lock`,
+          JSON.stringify({{ pid: process.pid, createdAt: new Date().toISOString() }})
+        );
+        const timeout = await capture(() =>
+          fileLock.acquireFileLock(timeoutTarget, options)
+        );
+        fs.rmSync(`${{timeoutTarget}}.lock`, {{ force: true }});
+
+        const staleTarget = path.join(root, "stale.txt");
+        fs.writeFileSync(
+          `${{staleTarget}}.lock`,
+          JSON.stringify({{ pid: 99999999, createdAt: "2000-01-01T00:00:00.000Z" }})
+        );
+        const stale = await fileLock.acquireFileLock(staleTarget, staleOptions);
+        const staleLockPathBasename = path.basename(stale.lockPath);
+        const staleExistsAfterAcquire = fs.existsSync(stale.lockPath);
+        await stale.release();
+        await fileLock.drainFileLockStateForTest();
+
+        return {{
+          keys: Object.keys(fileLock).sort(),
+          scopedSame: scopedFileLock.acquireFileLock === fileLock.acquireFileLock,
+          firstLockPathBasename: path.basename(first.lockPath),
+          existsAfterFirst,
+          existsAfterSecondRelease,
+          existsAfterFinalRelease,
+          withValue,
+          existsAfterWith,
+          timeout,
+          staleLockPathBasename,
+          staleExistsAfterAcquire,
+          staleExistsAfterRelease: fs.existsSync(`${{staleTarget}}.lock`)
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-file-lock-plugin",
+                    "name": "Runtime File Lock Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-file-lock.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.file_lock"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.file_lock"})
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "FILE_LOCK_TIMEOUT_ERROR_CODE",
+        "acquireFileLock",
+        "drainFileLockStateForTest",
+        "resetFileLockStateForTest",
+        "withFileLock",
+    ]
+    assert result["scopedSame"] is True
+    assert result["firstLockPathBasename"] == "resource.txt.lock"
+    assert result["existsAfterFirst"] is True
+    assert result["existsAfterSecondRelease"] is True
+    assert result["existsAfterFinalRelease"] is False
+    assert result["withValue"] == {
+        "existsDuringCallback": True,
+        "lockPathBasename": "resource.txt.lock",
+    }
+    assert result["existsAfterWith"] is False
+    assert result["timeout"] == {
+        "ok": False,
+        "message": f"file lock timeout for {(tmp_path / 'locks' / 'fresh.txt')}",
+        "code": "file_lock_timeout",
+        "lockPathBasename": "fresh.txt.lock",
+    }
+    assert result["staleLockPathBasename"] == "stale.txt.lock"
+    assert result["staleExistsAfterAcquire"] is True
+    assert result["staleExistsAfterRelease"] is False
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
