@@ -18033,7 +18033,7 @@ const crypto = require("crypto");
 const os = require("os");
 const path = require("path");
 const util = require("util");
-const { execFile, spawn } = require("child_process");
+const { execFile, execFileSync, spawn } = require("child_process");
 const { fileURLToPath, pathToFileURL } = require("url");
 const Module = require("module");
 const execFileAsync = util.promisify(execFile);
@@ -39610,6 +39610,7 @@ const pluginSdkEntrypoints = [
   "browser-control-auth",
   "browser-config",
   "browser-config-runtime",
+  "browser-host-inspection",
   "browser-maintenance",
   "browser-profiles",
   "browser-trash",
@@ -39791,6 +39792,7 @@ const publicPluginOwnedSdkEntrypoints = [
   "browser-control-auth",
   "browser-config",
   "browser-config-runtime",
+  "browser-host-inspection",
   "browser-maintenance",
   "browser-profiles",
   "browser-trash",
@@ -54930,6 +54932,93 @@ const browserMaintenanceRuntime = {
   movePathToTrash,
 };
 
+const CHROME_VERSION_RE = /\b(\d+)(?:\.\d+){1,3}\b/g;
+
+function browserExecutableExists(filePath) {
+  try {
+    return fs.existsSync(filePath);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function findFirstChromeExecutable(candidates) {
+  for (const candidate of candidates) {
+    if (browserExecutableExists(candidate)) {
+      return { kind: "chrome", path: candidate };
+    }
+  }
+  return null;
+}
+
+function resolveGoogleChromeExecutableForPlatform(platformName = process.platform) {
+  const platform = normalizeOptionalString(platformName);
+  if (platform === "darwin") {
+    return findFirstChromeExecutable([
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+      path.join(os.homedir(), "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    ]);
+  }
+  if (platform === "linux") {
+    return findFirstChromeExecutable([
+      "/usr/bin/google-chrome",
+      "/usr/bin/google-chrome-stable",
+      "/usr/bin/google-chrome-beta",
+      "/usr/bin/google-chrome-unstable",
+      "/snap/bin/chromium",
+    ]);
+  }
+  if (platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA || "";
+    const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+    const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    const joinWin = path.win32.join;
+    const candidates = [];
+    if (localAppData) {
+      candidates.push(joinWin(localAppData, "Google", "Chrome", "Application", "chrome.exe"));
+      candidates.push(joinWin(localAppData, "Google", "Chrome SxS", "Application", "chrome.exe"));
+    }
+    candidates.push(joinWin(programFiles, "Google", "Chrome", "Application", "chrome.exe"));
+    candidates.push(joinWin(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"));
+    return findFirstChromeExecutable(candidates);
+  }
+  return null;
+}
+
+function readBrowserVersion(executablePath) {
+  const executable = normalizeOptionalString(executablePath);
+  if (!executable) {
+    return null;
+  }
+  try {
+    const output = execFileSync(executable, ["--version"], {
+      timeout: 2000,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+    });
+    return normalizeOptionalString(String(output).replace(/\s+/g, " ")) || null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function parseBrowserMajorVersion(rawVersion) {
+  const matches = Array.from(String(rawVersion ?? "").matchAll(CHROME_VERSION_RE));
+  const match = matches[matches.length - 1];
+  if (!match || !match[1]) {
+    return null;
+  }
+  const major = Number.parseInt(match[1], 10);
+  return Number.isFinite(major) ? major : null;
+}
+
+const browserHostInspectionRuntime = {
+  parseBrowserMajorVersion,
+  readBrowserVersion,
+  resolveGoogleChromeExecutableForPlatform,
+};
+
 const browserSecurityRuntime = {
   SafeOpenError,
   SsrFBlockedError,
@@ -64014,6 +64103,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-maintenance"
   ) {
     return browserMaintenanceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-host-inspection" ||
+    request === "@openclaw/plugin-sdk/browser-host-inspection"
+  ) {
+    return browserHostInspectionRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||

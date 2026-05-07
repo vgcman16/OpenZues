@@ -42002,6 +42002,109 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_host_inspection_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-host-inspection.cjs"
+    runtime_entry.write_text(
+        """
+const host = require("openclaw/plugin-sdk/browser-host-inspection");
+const scopedHost = require("@openclaw/plugin-sdk/browser-host-inspection");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_host_inspection",
+      description: "Use OpenClaw browser host inspection helpers",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        return {
+          keys: Object.keys(host).sort(),
+          scopedSame:
+            scopedHost.parseBrowserMajorVersion === host.parseBrowserMajorVersion,
+          parsed: {
+            chrome: host.parseBrowserMajorVersion("Google Chrome 144.0.7534.0"),
+            edge: host.parseBrowserMajorVersion("Microsoft Edge 121.0.2277.83"),
+            invalid: host.parseBrowserMajorVersion("not a version")
+          },
+          missingVersion: host.readBrowserVersion(args.missingPath),
+          unsupportedPlatform: host.resolveGoogleChromeExecutableForPlatform("sunos")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-host-inspection-plugin",
+                    "name": "Runtime Browser Host Inspection Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-host-inspection.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_host_inspection"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.browser_host_inspection",
+            "args": {"missingPath": str(tmp_path / "missing-browser.exe")},
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "parseBrowserMajorVersion",
+            "readBrowserVersion",
+            "resolveGoogleChromeExecutableForPlatform",
+        ],
+        "scopedSame": True,
+        "parsed": {"chrome": 144, "edge": 121, "invalid": None},
+        "missingVersion": None,
+        "unsupportedPlatform": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -44205,11 +44308,11 @@ module.exports = {
         ],
         "scopedType": "function",
         "counts": {
-            "entrypoints": 299,
-            "subpaths": 298,
-            "specifiers": 299,
-            "exports": 299,
-            "artifacts": 598,
+            "entrypoints": 300,
+            "subpaths": 299,
+            "specifiers": 300,
+            "exports": 300,
+            "artifacts": 600,
         },
         "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
         "last": [
