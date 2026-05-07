@@ -42728,6 +42728,112 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_bridge_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-bridge.cjs"
+    runtime_entry.write_text(
+        """
+const bridge = require("openclaw/plugin-sdk/browser-bridge");
+const scopedBridge = require("@openclaw/plugin-sdk/browser-bridge");
+
+async function capture(fn) {
+  try {
+    await fn();
+    return null;
+  } catch (error) {
+    return String(error && error.message ? error.message : error);
+  }
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_bridge",
+      description: "Use OpenClaw browser bridge helpers",
+      parameters: { type: "object" },
+      async execute() {
+        return {
+          keys: Object.keys(bridge).sort(),
+          scopedSame:
+            scopedBridge.startBrowserBridgeServer === bridge.startBrowserBridgeServer,
+          startError: await capture(() =>
+            bridge.startBrowserBridgeServer({
+              resolved: { enabled: true },
+              authToken: "token"
+            })
+          ),
+          stopError: await capture(() =>
+            bridge.stopBrowserBridgeServer({ close: () => {} })
+          )
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-bridge-plugin",
+                    "name": "Runtime Browser Bridge Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-bridge.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_bridge"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.browser_bridge", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["startBrowserBridgeServer", "stopBrowserBridgeServer"],
+        "scopedSame": True,
+        "startError": "UNAVAILABLE: browser bridge runtime unavailable",
+        "stopError": "UNAVAILABLE: browser bridge runtime unavailable",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -44931,11 +45037,11 @@ module.exports = {
         ],
         "scopedType": "function",
         "counts": {
-            "entrypoints": 304,
-            "subpaths": 303,
-            "specifiers": 304,
-            "exports": 304,
-            "artifacts": 608,
+            "entrypoints": 305,
+            "subpaths": 304,
+            "specifiers": 305,
+            "exports": 305,
+            "artifacts": 610,
         },
         "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
         "last": [

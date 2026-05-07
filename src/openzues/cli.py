@@ -39607,6 +39607,7 @@ const pluginSdkEntrypoints = [
   "agent-config-primitives",
   "allow-from",
   "allowlist-config-edit",
+  "browser-bridge",
   "browser-control-auth",
   "browser-config",
   "browser-config-runtime",
@@ -39794,6 +39795,7 @@ const supportedBundledFacadeSdkEntrypoints = [
 ];
 const publicPluginOwnedSdkEntrypoints = [
   "browser-control-auth",
+  "browser-bridge",
   "browser-config",
   "browser-config-runtime",
   "browser-host-inspection",
@@ -55520,6 +55522,19 @@ const browserSupportRuntime = {
   ...browserSetupToolsRuntime,
 };
 
+async function startBrowserBridgeServer() {
+  throw new Error("UNAVAILABLE: browser bridge runtime unavailable");
+}
+
+async function stopBrowserBridgeServer() {
+  throw new Error("UNAVAILABLE: browser bridge runtime unavailable");
+}
+
+const browserBridgeRuntime = {
+  startBrowserBridgeServer,
+  stopBrowserBridgeServer,
+};
+
 const secretRefRuntime = {
   coerceSecretRef,
 };
@@ -64609,6 +64624,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-support"
   ) {
     return browserSupportRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-bridge" ||
+    request === "@openclaw/plugin-sdk/browser-bridge"
+  ) {
+    return browserBridgeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
