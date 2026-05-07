@@ -36719,6 +36719,406 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    writer_workspace = tmp_path / "writer-workspace"
+    default_workspace = tmp_path / "default-workspace"
+    agent_dir = tmp_path / "agents" / "writer"
+    state_dir = tmp_path / "state"
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+const scopedAgent = require("@openclaw/plugin-sdk/agent-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_core",
+      description: "Use OpenClaw agent-runtime core SDK shim",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const cfg = {
+          agents: {
+            defaults: {
+              workspace: args.defaultWorkspace,
+              contextLimits: { maxInputTokens: 1000 },
+              skills: ["global-skill"],
+              humanDelay: { mode: "random", minMs: 10 },
+              userTimezone: "UTC",
+              timeFormat: "24",
+              model: {
+                primary: "openai/gpt-5.5",
+                fallbacks: ["openai/gpt-5.4"]
+              }
+            },
+            list: [
+              {
+                id: "Writer Agent",
+                default: true,
+                name: "Writer",
+                workspace: args.writerWorkspace,
+                agentDir: args.agentDir,
+                identity: { name: "Writer Bot", emoji: "WB" },
+                contextLimits: { maxOutputTokens: 200 },
+                skills: [],
+                model: { primary: "anthropic/claude-sonnet-4-6", fallbacks: [] },
+                humanDelay: { maxMs: 50 }
+              },
+              {
+                id: "Ops",
+                workspace: args.defaultWorkspace + "/ops"
+              }
+            ]
+          },
+          messages: {
+            ackReaction: " global-ack ",
+            responsePrefix: "auto"
+          },
+          channels: {
+            slack: {
+              ackReaction: " slack-ack ",
+              responsePrefix: "auto",
+              accounts: {
+                team: {
+                  ackReaction: " team-ack ",
+                  responsePrefix: "Team:"
+                }
+              }
+            }
+          }
+        };
+        const timestamp = agent.normalizeTimestamp("1700000000");
+        const preserved = agent.withNormalizedTimestamp(
+          { timestampMs: 123, value: true },
+          "2026-05-07T10:00:00Z"
+        );
+        const patched = agent.withNormalizedTimestamp({ value: true }, "1700000000.250");
+        const cronNow = agent.resolveCronStyleNow(cfg, Date.parse("2026-05-07T15:04:00Z"));
+        const env = { OPENCLAW_AGENT_DIR: args.agentDir, OPENCLAW_STATE_DIR: args.stateDir };
+        const fallbackEnv = { PI_CODING_AGENT_DIR: args.defaultWorkspace };
+
+        return {
+          keys: Object.keys(agent).filter((key) => [
+            "DEFAULT_CONTEXT_TOKENS",
+            "DEFAULT_MODEL",
+            "DEFAULT_PROVIDER",
+            "appendCronStyleCurrentTimeLine",
+            "findNormalizedProviderKey",
+            "findNormalizedProviderValue",
+            "formatUserTime",
+            "getModelRefStatus",
+            "listAgentIds",
+            "normalizeProviderId",
+            "normalizeTimestamp",
+            "resolveAckReaction",
+            "resolveAgentConfig",
+            "resolveAgentContextLimits",
+            "resolveAgentDir",
+            "resolveAgentEffectiveModelPrimary",
+            "resolveAgentExplicitModelPrimary",
+            "resolveAgentIdFromSessionKey",
+            "resolveAgentModelFallbacksOverride",
+            "resolveAgentWorkspaceDir",
+            "resolveCronStyleNow",
+            "resolveDefaultAgentId",
+            "resolveEffectiveMessagesConfig",
+            "resolveIdentityNamePrefix",
+            "resolveMessagePrefix",
+            "resolveOpenClawAgentDir",
+            "resolveProviderIdForAuth",
+            "resolveResponsePrefix",
+            "resolveSessionAgentId",
+            "resolveSessionAgentIds",
+            "resolveUserTimeFormat",
+            "resolveUserTimezone",
+            "withNormalizedTimestamp"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedAgent.resolveDefaultAgentId,
+          constants: {
+            provider: agent.DEFAULT_PROVIDER,
+            model: agent.DEFAULT_MODEL,
+            context: agent.DEFAULT_CONTEXT_TOKENS
+          },
+          provider: {
+            zai: agent.normalizeProviderId(" z.ai "),
+            bedrock: agent.normalizeProviderId("AWS-Bedrock"),
+            value: agent.findNormalizedProviderValue({ "Z-AI": "zed" }, "z.ai"),
+            key: agent.findNormalizedProviderKey({ "AWS-Bedrock": true }, "bedrock"),
+            auth: agent.resolveProviderIdForAuth("doubao")
+          },
+          scope: {
+            ids: agent.listAgentIds(cfg),
+            defaultId: agent.resolveDefaultAgentId(cfg),
+            config: agent.resolveAgentConfig(cfg, "writer agent"),
+            workspace: agent.resolveAgentWorkspaceDir(cfg, "writer agent"),
+            defaultWorkspace: agent.resolveAgentWorkspaceDir(cfg, "main"),
+            agentDir: agent.resolveAgentDir(cfg, "writer agent"),
+            fallbackAgentDir: agent.resolveAgentDir(
+              { agents: { list: [{ id: "ops" }] } },
+              "ops",
+              env
+            ),
+            contextLimits: agent.resolveAgentContextLimits(cfg, "writer agent"),
+            sessionIds: agent.resolveSessionAgentIds({
+              config: cfg,
+              sessionKey: "agent:ops:main",
+              agentId: "Writer Agent"
+            }),
+            sessionAgent: agent.resolveSessionAgentId({
+              config: cfg,
+              sessionKey: "agent:ops:main"
+            }),
+            idFromSession: agent.resolveAgentIdFromSessionKey("agent:ops:main")
+          },
+          models: {
+            explicit: agent.resolveAgentExplicitModelPrimary(cfg, "writer agent"),
+            effective: agent.resolveAgentEffectiveModelPrimary(cfg, "writer agent"),
+            fallbackOverride: agent.resolveAgentModelFallbacksOverride(cfg, "writer agent"),
+            defaultEffective: agent.resolveAgentEffectiveModelPrimary(cfg, "ops")
+          },
+          identity: {
+            accountAck: agent.resolveAckReaction(cfg, "writer agent", {
+              channel: "slack",
+              accountId: "team"
+            }),
+            channelAck: agent.resolveAckReaction(cfg, "writer agent", { channel: "slack" }),
+            globalAck: agent.resolveAckReaction({ messages: { ackReaction: " ok " } }, "main"),
+            identityAck: agent.resolveAckReaction({ agents: { list: [{
+              id: "main",
+              identity: { emoji: "ID" }
+            }] } }, "main"),
+            namePrefix: agent.resolveIdentityNamePrefix(cfg, "writer agent"),
+            messagePrefix: agent.resolveMessagePrefix({ agents: cfg.agents }, "writer agent"),
+            allowFromPrefix: agent.resolveMessagePrefix(
+              { agents: cfg.agents },
+              "writer agent",
+              { hasAllowFrom: true, fallback: "[fallback]" }
+            ),
+            responsePrefix: agent.resolveResponsePrefix(cfg, "writer agent", { channel: "slack" }),
+            accountResponsePrefix: agent.resolveResponsePrefix(cfg, "writer agent", {
+              channel: "slack",
+              accountId: "team"
+            }),
+            effective: agent.resolveEffectiveMessagesConfig(cfg, "writer agent", {
+              channel: "slack",
+              accountId: "team"
+            })
+          },
+          time: {
+            timezone: agent.resolveUserTimezone("UTC"),
+            timeFormat: agent.resolveUserTimeFormat("24"),
+            formatted: agent.formatUserTime(new Date("2026-05-07T15:04:00Z"), "UTC", "24"),
+            timestamp,
+            preserved,
+            patched,
+            cronNow,
+            appended: agent.appendCronStyleCurrentTimeLine(
+              "Run summary",
+              cfg,
+              Date.parse("2026-05-07T15:04:00Z")
+            ),
+            alreadyAppended: agent.appendCronStyleCurrentTimeLine(
+              "Run summary\\nCurrent time: existing",
+              cfg,
+              Date.parse("2026-05-07T15:04:00Z")
+            )
+          },
+          paths: {
+            override: agent.resolveOpenClawAgentDir(env),
+            piFallback: agent.resolveOpenClawAgentDir(fallbackEnv)
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-core-plugin",
+                    "name": "Runtime Agent Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.agent_core",
+            "args": {
+                "writerWorkspace": str(writer_workspace),
+                "defaultWorkspace": str(default_workspace),
+                "agentDir": str(agent_dir),
+                "stateDir": str(state_dir),
+            },
+        },
+    )
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "DEFAULT_CONTEXT_TOKENS",
+        "DEFAULT_MODEL",
+        "DEFAULT_PROVIDER",
+        "appendCronStyleCurrentTimeLine",
+        "findNormalizedProviderKey",
+        "findNormalizedProviderValue",
+        "formatUserTime",
+        "listAgentIds",
+        "normalizeProviderId",
+        "normalizeTimestamp",
+        "resolveAckReaction",
+        "resolveAgentConfig",
+        "resolveAgentContextLimits",
+        "resolveAgentDir",
+        "resolveAgentEffectiveModelPrimary",
+        "resolveAgentExplicitModelPrimary",
+        "resolveAgentIdFromSessionKey",
+        "resolveAgentModelFallbacksOverride",
+        "resolveAgentWorkspaceDir",
+        "resolveCronStyleNow",
+        "resolveDefaultAgentId",
+        "resolveEffectiveMessagesConfig",
+        "resolveIdentityNamePrefix",
+        "resolveMessagePrefix",
+        "resolveOpenClawAgentDir",
+        "resolveProviderIdForAuth",
+        "resolveResponsePrefix",
+        "resolveSessionAgentId",
+        "resolveSessionAgentIds",
+        "resolveUserTimeFormat",
+        "resolveUserTimezone",
+        "withNormalizedTimestamp",
+    ]
+    assert result["scopedType"] == "function"
+    assert result["constants"] == {
+        "provider": "openai",
+        "model": "gpt-5.5",
+        "context": 200_000,
+    }
+    assert result["provider"] == {
+        "zai": "zai",
+        "bedrock": "amazon-bedrock",
+        "value": "zed",
+        "key": "AWS-Bedrock",
+        "auth": "volcengine",
+    }
+    assert result["scope"]["ids"] == ["writer-agent", "ops"]
+    assert result["scope"]["defaultId"] == "writer-agent"
+    assert result["scope"]["config"]["name"] == "Writer"
+    assert "verboseDefault" not in result["scope"]["config"]
+    assert result["scope"]["config"]["skills"] == []
+    assert result["scope"]["workspace"] == str(writer_workspace)
+    assert result["scope"]["defaultWorkspace"] == str(default_workspace / "main")
+    assert result["scope"]["agentDir"] == str(agent_dir)
+    assert result["scope"]["fallbackAgentDir"] == str(state_dir / "agents" / "ops" / "agent")
+    assert result["scope"]["contextLimits"] == {
+        "maxInputTokens": 1000,
+        "maxOutputTokens": 200,
+    }
+    assert result["scope"]["sessionIds"] == {
+        "defaultAgentId": "writer-agent",
+        "sessionAgentId": "writer-agent",
+    }
+    assert result["scope"]["sessionAgent"] == "ops"
+    assert result["scope"]["idFromSession"] == "ops"
+    assert result["models"] == {
+        "explicit": "anthropic/claude-sonnet-4-6",
+        "effective": "anthropic/claude-sonnet-4-6",
+        "fallbackOverride": [],
+        "defaultEffective": "openai/gpt-5.5",
+    }
+    assert result["identity"]["accountAck"] == "team-ack"
+    assert result["identity"]["channelAck"] == "slack-ack"
+    assert result["identity"]["globalAck"] == "ok"
+    assert result["identity"]["identityAck"] == "ID"
+    assert result["identity"]["namePrefix"] == "[Writer Bot]"
+    assert result["identity"]["messagePrefix"] == "[Writer Bot]"
+    assert result["identity"]["allowFromPrefix"] == ""
+    assert result["identity"]["responsePrefix"] == "[Writer Bot]"
+    assert result["identity"]["accountResponsePrefix"] == "Team:"
+    assert result["identity"]["effective"] == {
+        "messagePrefix": "[Writer Bot]",
+        "responsePrefix": "Team:",
+    }
+    assert result["time"]["timezone"] == "UTC"
+    assert result["time"]["timeFormat"] == "24"
+    assert result["time"]["formatted"] == "Thursday, May 7th, 2026 - 15:04"
+    assert result["time"]["timestamp"] == {
+        "timestampMs": 1_700_000_000_000,
+        "timestampUtc": "2023-11-14T22:13:20.000Z",
+    }
+    assert result["time"]["preserved"] == {
+        "timestampMs": 123,
+        "timestampUtc": "2026-05-07T10:00:00.000Z",
+        "value": True,
+    }
+    assert result["time"]["patched"] == {
+        "timestampMs": 1_700_000_000_250,
+        "timestampUtc": "2023-11-14T22:13:20.250Z",
+        "value": True,
+    }
+    assert result["time"]["cronNow"] == {
+        "userTimezone": "UTC",
+        "formattedTime": "Thursday, May 7th, 2026 - 15:04",
+        "timeLine": (
+            "Current time: Thursday, May 7th, 2026 - 15:04 (UTC) / "
+            "2026-05-07 15:04 UTC"
+        ),
+    }
+    assert result["time"]["appended"] == (
+        "Run summary\nCurrent time: Thursday, May 7th, 2026 - 15:04 (UTC) / "
+        "2026-05-07 15:04 UTC"
+    )
+    assert result["time"]["alreadyAppended"] == "Run summary\nCurrent time: existing"
+    assert result["paths"] == {
+        "override": str(agent_dir),
+        "piFallback": str(default_workspace),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

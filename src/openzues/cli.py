@@ -53695,6 +53695,408 @@ function resolveSessionAgentId(params = {}) {
   return parsed && parsed.agentId ? normalizeAgentId(parsed.agentId) : defaultAgentId;
 }
 
+const AGENT_RUNTIME_DEFAULT_PROVIDER = "openai";
+const AGENT_RUNTIME_DEFAULT_MODEL = "gpt-5.5";
+const AGENT_RUNTIME_DEFAULT_CONTEXT_TOKENS = 200000;
+
+function agentRuntimeNormalizeProviderId(provider) {
+  const normalized = normalizeLowercaseStringOrEmpty(provider);
+  if (normalized === "modelstudio" || normalized === "qwencloud") {
+    return "qwen";
+  }
+  if (normalized === "z.ai" || normalized === "z-ai") {
+    return "zai";
+  }
+  if (normalized === "opencode-zen") {
+    return "opencode";
+  }
+  if (normalized === "opencode-go-auth") {
+    return "opencode-go";
+  }
+  if (normalized === "kimi" || normalized === "kimi-code" || normalized === "kimi-coding") {
+    return "kimi";
+  }
+  if (normalized === "bedrock" || normalized === "aws-bedrock") {
+    return "amazon-bedrock";
+  }
+  if (normalized === "bytedance" || normalized === "doubao") {
+    return "volcengine";
+  }
+  return normalized;
+}
+
+function agentRuntimeFindNormalizedProviderValue(entries, provider) {
+  if (!entries || typeof entries !== "object") {
+    return undefined;
+  }
+  const providerKey = agentRuntimeNormalizeProviderId(provider);
+  for (const [key, value] of Object.entries(entries)) {
+    if (agentRuntimeNormalizeProviderId(key) === providerKey) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function agentRuntimeFindNormalizedProviderKey(entries, provider) {
+  if (!entries || typeof entries !== "object") {
+    return undefined;
+  }
+  const providerKey = agentRuntimeNormalizeProviderId(provider);
+  return Object.keys(entries).find((key) => agentRuntimeNormalizeProviderId(key) === providerKey);
+}
+
+function agentRuntimeListAgentEntries(cfg = {}) {
+  const list = cfg && cfg.agents && cfg.agents.list;
+  return Array.isArray(list)
+    ? list.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+    : [];
+}
+
+function agentRuntimeListAgentIds(cfg = {}) {
+  const entries = agentRuntimeListAgentEntries(cfg);
+  if (entries.length === 0) {
+    return [DEFAULT_AGENT_ID];
+  }
+  const seen = new Set();
+  const ids = [];
+  for (const entry of entries) {
+    const id = normalizeAgentId(entry && entry.id);
+    if (seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids.length > 0 ? ids : [DEFAULT_AGENT_ID];
+}
+
+function agentRuntimeResolveDefaultAgentId(cfg = {}) {
+  const entries = agentRuntimeListAgentEntries(cfg);
+  if (entries.length === 0) {
+    return DEFAULT_AGENT_ID;
+  }
+  const chosen = entries.find((entry) => entry && entry.default) || entries[0] || {};
+  return normalizeAgentId(chosen.id || DEFAULT_AGENT_ID);
+}
+
+function agentRuntimeResolveAgentEntry(cfg = {}, agentId) {
+  const id = normalizeAgentId(agentId);
+  return agentRuntimeListAgentEntries(cfg).find((entry) => normalizeAgentId(entry.id) === id);
+}
+
+function agentRuntimeResolveAgentConfig(cfg = {}, agentId) {
+  const entry = agentRuntimeResolveAgentEntry(cfg, agentId);
+  if (!entry) {
+    return undefined;
+  }
+  const defaults = cfg && cfg.agents && cfg.agents.defaults ? cfg.agents.defaults : {};
+  const entryContextLimits =
+    entry.contextLimits &&
+    typeof entry.contextLimits === "object" &&
+    !Array.isArray(entry.contextLimits)
+      ? entry.contextLimits
+      : undefined;
+  const defaultContextLimits =
+    defaults.contextLimits &&
+    typeof defaults.contextLimits === "object" &&
+    !Array.isArray(defaults.contextLimits)
+      ? defaults.contextLimits
+      : undefined;
+  return {
+    name: readStringValue(entry.name),
+    workspace: readStringValue(entry.workspace),
+    agentDir: readStringValue(entry.agentDir),
+    systemPromptOverride: readStringValue(entry.systemPromptOverride),
+    model:
+      typeof entry.model === "string" || (entry.model && typeof entry.model === "object")
+        ? entry.model
+        : undefined,
+    thinkingDefault: entry.thinkingDefault,
+    verboseDefault: entry.verboseDefault ?? defaults.verboseDefault,
+    reasoningDefault: entry.reasoningDefault,
+    fastModeDefault: entry.fastModeDefault,
+    skills: Array.isArray(entry.skills) ? entry.skills : undefined,
+    memorySearch: entry.memorySearch,
+    humanDelay: entry.humanDelay,
+    tts: entry.tts,
+    contextLimits: entryContextLimits
+      ? { ...(defaultContextLimits || {}), ...entryContextLimits }
+      : defaultContextLimits,
+    heartbeat: entry.heartbeat,
+    identity: entry.identity,
+    groupChat: entry.groupChat,
+    subagents:
+      entry.subagents && typeof entry.subagents === "object" && !Array.isArray(entry.subagents)
+        ? entry.subagents
+        : undefined,
+    embeddedPi:
+      entry.embeddedPi && typeof entry.embeddedPi === "object" && !Array.isArray(entry.embeddedPi)
+        ? entry.embeddedPi
+        : undefined,
+    sandbox: entry.sandbox,
+    tools: entry.tools,
+  };
+}
+
+function agentRuntimeResolveAgentContextLimits(cfg, agentId) {
+  const defaults = cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.contextLimits;
+  if (!cfg || !agentId) {
+    return defaults;
+  }
+  const resolved = agentRuntimeResolveAgentConfig(cfg, agentId);
+  return (resolved && resolved.contextLimits) || defaults;
+}
+
+function agentRuntimeResolveAgentWorkspaceDir(cfg = {}, agentId, env = process.env) {
+  const id = normalizeAgentId(agentId);
+  const configured = normalizeOptionalString(
+    (agentRuntimeResolveAgentConfig(cfg, id) || {}).workspace,
+  );
+  if (configured) {
+    return resolveUserPath(configured, env);
+  }
+  const fallback = normalizeOptionalString(
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.workspace,
+  );
+  if (id === agentRuntimeResolveDefaultAgentId(cfg)) {
+    return fallback
+      ? resolveUserPath(fallback, env)
+      : path.join(resolveRequiredHomeDir(env), ".openclaw", "workspace");
+  }
+  if (fallback) {
+    return path.join(resolveUserPath(fallback, env), id);
+  }
+  return path.join(resolveStateDir(env), `workspace-${id}`);
+}
+
+function agentRuntimeResolveAgentDir(cfg = {}, agentId, env = process.env) {
+  const id = normalizeAgentId(agentId);
+  const configured = normalizeOptionalString(
+    (agentRuntimeResolveAgentConfig(cfg, id) || {}).agentDir,
+  );
+  if (configured) {
+    return resolveUserPath(configured, env);
+  }
+  return path.join(resolveStateDir(env), "agents", id, "agent");
+}
+
+function agentRuntimeReadModelPrimaryValue(raw) {
+  if (typeof raw === "string") {
+    return normalizeOptionalString(raw);
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return normalizeOptionalString(raw.primary);
+  }
+  return undefined;
+}
+
+function agentRuntimeResolveAgentExplicitModelPrimary(cfg, agentId) {
+  return agentRuntimeReadModelPrimaryValue(
+    (agentRuntimeResolveAgentConfig(cfg || {}, agentId) || {}).model,
+  );
+}
+
+function agentRuntimeResolveAgentEffectiveModelPrimary(cfg, agentId) {
+  return (
+    agentRuntimeResolveAgentExplicitModelPrimary(cfg, agentId) ||
+    agentRuntimeReadModelPrimaryValue(
+      cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.model,
+    )
+  );
+}
+
+function agentRuntimeResolveAgentModelFallbacksOverride(cfg, agentId) {
+  const raw = (agentRuntimeResolveAgentConfig(cfg || {}, agentId) || {}).model;
+  if (!raw) {
+    return undefined;
+  }
+  if (typeof raw === "string") {
+    return agentRuntimeReadModelPrimaryValue(raw) ? [] : undefined;
+  }
+  if (!Object.prototype.hasOwnProperty.call(raw, "fallbacks")) {
+    return Object.prototype.hasOwnProperty.call(raw, "primary") &&
+      agentRuntimeReadModelPrimaryValue(raw)
+      ? []
+      : undefined;
+  }
+  return Array.isArray(raw.fallbacks) ? raw.fallbacks : undefined;
+}
+
+function agentRuntimeResolveSessionAgentIds(params = {}) {
+  const defaultAgentId = agentRuntimeResolveDefaultAgentId(params.config || {});
+  const explicitAgentIdRaw = normalizeLowercaseStringOrEmpty(params.agentId);
+  const explicitAgentId = explicitAgentIdRaw ? normalizeAgentId(explicitAgentIdRaw) : null;
+  const rawSessionKey = normalizeOptionalString(params.sessionKey);
+  const parsed = rawSessionKey ? parseAgentSessionKey(rawSessionKey) : null;
+  return {
+    defaultAgentId,
+    sessionAgentId:
+      explicitAgentId ||
+      (parsed && parsed.agentId ? normalizeAgentId(parsed.agentId) : defaultAgentId),
+  };
+}
+
+function agentRuntimeResolveSessionAgentId(params = {}) {
+  return agentRuntimeResolveSessionAgentIds(params).sessionAgentId;
+}
+
+function agentRuntimeResolveAgentIdentity(cfg, agentId) {
+  const resolved = agentRuntimeResolveAgentConfig(cfg || {}, agentId);
+  return resolved && resolved.identity && typeof resolved.identity === "object"
+    ? resolved.identity
+    : undefined;
+}
+
+function agentRuntimeResolveAckReaction(cfg = {}, agentId, opts = {}) {
+  if (opts.channel && opts.accountId) {
+    const channelCfg = getChannelConfig(cfg, opts.channel);
+    const accounts =
+      channelCfg && channelCfg.accounts && typeof channelCfg.accounts === "object"
+        ? channelCfg.accounts
+        : {};
+    const accountCfg = accounts[opts.accountId];
+    if (accountCfg && Object.prototype.hasOwnProperty.call(accountCfg, "ackReaction")) {
+      return String(accountCfg.ackReaction || "").trim();
+    }
+  }
+  if (opts.channel) {
+    const channelCfg = getChannelConfig(cfg, opts.channel);
+    if (channelCfg && Object.prototype.hasOwnProperty.call(channelCfg, "ackReaction")) {
+      return String(channelCfg.ackReaction || "").trim();
+    }
+  }
+  const messages = cfg && cfg.messages && typeof cfg.messages === "object" ? cfg.messages : {};
+  if (Object.prototype.hasOwnProperty.call(messages, "ackReaction")) {
+    return String(messages.ackReaction || "").trim();
+  }
+  const emoji = normalizeOptionalString(
+    agentRuntimeResolveAgentIdentity(cfg, agentId) &&
+      agentRuntimeResolveAgentIdentity(cfg, agentId).emoji,
+  );
+  return emoji || "\ud83d\udc40";
+}
+
+function agentRuntimeResolveIdentityNamePrefix(cfg, agentId) {
+  const identity = agentRuntimeResolveAgentIdentity(cfg, agentId);
+  const name = normalizeOptionalString(identity && identity.name);
+  return name ? `[${name}]` : undefined;
+}
+
+function agentRuntimeResolveMessagePrefix(cfg = {}, agentId, opts = {}) {
+  const messages = cfg && cfg.messages && typeof cfg.messages === "object" ? cfg.messages : {};
+  const configured = opts.configured !== undefined ? opts.configured : messages.messagePrefix;
+  if (configured !== undefined) {
+    return configured;
+  }
+  if (opts.hasAllowFrom === true) {
+    return "";
+  }
+  return agentRuntimeResolveIdentityNamePrefix(cfg, agentId) || opts.fallback || "[openclaw]";
+}
+
+function agentRuntimeResolveResponsePrefix(cfg = {}, agentId, opts = {}) {
+  if (opts.channel && opts.accountId) {
+    const channelCfg = getChannelConfig(cfg, opts.channel);
+    const accounts =
+      channelCfg && channelCfg.accounts && typeof channelCfg.accounts === "object"
+        ? channelCfg.accounts
+        : {};
+    const accountCfg = accounts[opts.accountId];
+    if (accountCfg && Object.prototype.hasOwnProperty.call(accountCfg, "responsePrefix")) {
+      return accountCfg.responsePrefix === "auto"
+        ? agentRuntimeResolveIdentityNamePrefix(cfg, agentId)
+        : accountCfg.responsePrefix;
+    }
+  }
+  if (opts.channel) {
+    const channelCfg = getChannelConfig(cfg, opts.channel);
+    if (channelCfg && Object.prototype.hasOwnProperty.call(channelCfg, "responsePrefix")) {
+      return channelCfg.responsePrefix === "auto"
+        ? agentRuntimeResolveIdentityNamePrefix(cfg, agentId)
+        : channelCfg.responsePrefix;
+    }
+  }
+  const messages = cfg && cfg.messages && typeof cfg.messages === "object" ? cfg.messages : {};
+  if (Object.prototype.hasOwnProperty.call(messages, "responsePrefix")) {
+    return messages.responsePrefix === "auto"
+      ? agentRuntimeResolveIdentityNamePrefix(cfg, agentId)
+      : messages.responsePrefix;
+  }
+  return undefined;
+}
+
+function agentRuntimeResolveEffectiveMessagesConfig(cfg = {}, agentId, opts = {}) {
+  return {
+    messagePrefix: agentRuntimeResolveMessagePrefix(cfg, agentId, {
+      hasAllowFrom: opts.hasAllowFrom,
+      fallback: opts.fallbackMessagePrefix,
+    }),
+    responsePrefix: agentRuntimeResolveResponsePrefix(cfg, agentId, {
+      channel: opts.channel,
+      accountId: opts.accountId,
+    }),
+  };
+}
+
+function appendCronStyleCurrentTimeLine(text, cfg = {}, nowMs) {
+  const base = String(text || "").trimEnd();
+  if (!base || base.includes("Current time:")) {
+    return base;
+  }
+  return `${base}\n${resolveCronStyleNow(cfg, nowMs).timeLine}`;
+}
+
+function resolveOpenClawAgentDir(env = process.env) {
+  const sourceEnv = env || process.env;
+  const override = normalizeOptionalString(sourceEnv.OPENCLAW_AGENT_DIR) ||
+    normalizeOptionalString(sourceEnv.PI_CODING_AGENT_DIR);
+  if (override) {
+    return resolveUserPath(override, sourceEnv);
+  }
+  return resolveUserPath(
+    path.join(resolveStateDir(sourceEnv), "agents", DEFAULT_AGENT_ID, "agent"),
+    sourceEnv,
+  );
+}
+
+const agentRuntime = {
+  DEFAULT_CONTEXT_TOKENS: AGENT_RUNTIME_DEFAULT_CONTEXT_TOKENS,
+  DEFAULT_MODEL: AGENT_RUNTIME_DEFAULT_MODEL,
+  DEFAULT_PROVIDER: AGENT_RUNTIME_DEFAULT_PROVIDER,
+  appendCronStyleCurrentTimeLine,
+  findNormalizedProviderKey: agentRuntimeFindNormalizedProviderKey,
+  findNormalizedProviderValue: agentRuntimeFindNormalizedProviderValue,
+  formatUserTime,
+  listAgentEntries: agentRuntimeListAgentEntries,
+  listAgentIds: agentRuntimeListAgentIds,
+  normalizeProviderId: agentRuntimeNormalizeProviderId,
+  normalizeProviderIdForAuth: agentRuntimeNormalizeProviderId,
+  normalizeTimestamp,
+  resolveAckReaction: agentRuntimeResolveAckReaction,
+  resolveAgentConfig: agentRuntimeResolveAgentConfig,
+  resolveAgentContextLimits: agentRuntimeResolveAgentContextLimits,
+  resolveAgentDir: agentRuntimeResolveAgentDir,
+  resolveAgentEffectiveModelPrimary: agentRuntimeResolveAgentEffectiveModelPrimary,
+  resolveAgentExplicitModelPrimary: agentRuntimeResolveAgentExplicitModelPrimary,
+  resolveAgentIdFromSessionKey,
+  resolveAgentModelFallbacksOverride: agentRuntimeResolveAgentModelFallbacksOverride,
+  resolveAgentWorkspaceDir: agentRuntimeResolveAgentWorkspaceDir,
+  resolveCronStyleNow,
+  resolveDefaultAgentId: agentRuntimeResolveDefaultAgentId,
+  resolveEffectiveMessagesConfig: agentRuntimeResolveEffectiveMessagesConfig,
+  resolveIdentityNamePrefix: agentRuntimeResolveIdentityNamePrefix,
+  resolveMessagePrefix: agentRuntimeResolveMessagePrefix,
+  resolveOpenClawAgentDir,
+  resolveProviderIdForAuth: agentRuntimeNormalizeProviderId,
+  resolveResponsePrefix: agentRuntimeResolveResponsePrefix,
+  resolveSessionAgentId: agentRuntimeResolveSessionAgentId,
+  resolveSessionAgentIds: agentRuntimeResolveSessionAgentIds,
+  resolveUserTimeFormat,
+  resolveUserTimezone,
+  withNormalizedTimestamp,
+};
+
 function resolveMemorySearchConfig(cfg = {}, agentId) {
   return memoryRuntimeResolveMemorySearchConfig(cfg, agentId);
 }
@@ -58340,6 +58742,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/skills-runtime"
   ) {
     return skillsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/agent-runtime" ||
+    request === "@openclaw/plugin-sdk/agent-runtime"
+  ) {
+    return agentRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/qa-runner-runtime" ||
