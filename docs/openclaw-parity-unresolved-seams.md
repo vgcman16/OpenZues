@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~94.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~94.4% overall, with a reasonable
   band of ~80-95%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9118,6 +9118,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   trusted workspace plugin gating, and alias-aware provider auth id
   resolution. Source/test checkpointed in `61731b33`; TTS exports and
   agent-command entrypoints remain the next `agent-runtime` seams.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` and
+  `tts-runtime` now expose the source-backed TTS helper subset for scoped and
+  unscoped imports: config/persona/provider normalization, prefs-backed auto
+  mode, selected provider/persona, max-length and summarization persistence,
+  directive/parser access, explicit override resolution, provider order and
+  availability probes, prompt hinting, and no-provider synthesis failures.
+  Source/test checkpointed in `9b328bbd`; agent-command entrypoints remain the
+  next `agent-runtime` seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
