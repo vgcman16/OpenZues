@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~93.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~93.5% overall, with a reasonable
   band of ~80-94%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9000,9 +9000,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   channel-config-helpers/channel-config-writes/channel-lifecycle path, plus
   models-provider-runtime provider menu/list helpers, skill-commands-runtime
   workspace/agent skill command discovery, skills-runtime refresh-state
-  helpers, the first agent-runtime core helper subset, and the bounded
-  agent-runtime model-selection helper subset, continuing with `agent-runtime`
-  agent-command/tool bridge breadth.
+  helpers, the first agent-runtime core helper subset, the bounded
+  agent-runtime model-selection helper subset, and the agent-runtime tool
+  bridge helper subset, continuing with remaining `agent-runtime` facade and
+  agent-command breadth.
 - Current queue-head adjustment: imported plugin SDK `models-provider-runtime`
   now exposes the upstream `buildModelsProviderData`,
   `formatModelsAvailableHeader`, and `resolveModelsCommandReply` exports for
@@ -9044,6 +9045,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   default/subagent model selection, allowed-model status/projection, and
   reasoning-default projection. Source/test checkpointed in `0d009e7d`;
   agent-command/tool bridge exports remain the next `agent-runtime` seam.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed tool bridge helper subset for scoped and unscoped
+  imports: tool input and authorization errors, owner-only execution wrapping,
+  string/number/array/reaction parameter readers, action gates, text/json/
+  payload result helpers, available-tag parsing, descriptor helpers,
+  availability evaluation, executor-ref formatting, tool-plan diagnostics, and
+  protocol descriptor projection. Source/test checkpointed in `01653787`;
+  remaining `agent-runtime` facade exports and agent-command entrypoints remain
+  the next seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
