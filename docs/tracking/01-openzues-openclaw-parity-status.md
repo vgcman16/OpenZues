@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~92.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~92.4% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2514,6 +2514,27 @@ may lag behind this tracker.
     (`1 passed`), adjacent SDK helper proof (`3 passed, 1024 deselected`),
     adjacent imported-plugin proof (`215 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK media-understanding-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/media-understanding-runtime.ts`,
+    `openclaw-main/src/media-understanding/runtime.ts`,
+    `openclaw-main/src/media-understanding/runtime-types.ts`,
+    `openclaw-main/src/media-understanding/runner.ts`,
+    `openclaw-main/src/media-understanding/runner.entries.ts`,
+    `openclaw-main/src/media-understanding/runner.attachments.ts`,
+    `openclaw-main/src/media-understanding/attachments.normalize.ts`,
+    `openclaw-main/src/media-understanding/attachments.select.ts`,
+    `openclaw-main/src/media-understanding/attachments.cache.ts`,
+    `openclaw-main/src/media-understanding/provider-registry.ts`, and
+    `openclaw-main/src/media-understanding/resolve.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `65d2ce12`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused media-understanding-runtime helper
+    proof (`1 passed`), adjacent SDK helper proof (`4 passed, 1024
+    deselected`), adjacent imported-plugin proof (`216 passed, 812
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin runtime tool factory context.
   - Source: `openclaw-main/src/plugins/tool-types.ts`,
