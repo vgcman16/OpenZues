@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~98.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~99.0% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2390,6 +2390,19 @@ may lag behind this tracker.
     passed`), adjacent setup/channel proof (`5 passed, 1087 deselected`),
     adjacent imported-plugin proof (`280 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK outbound-media facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/outbound-media.ts`,
+    `openclaw-main/src/media/load-options.ts`, and
+    `openclaw-main/src/plugin-sdk/web-media.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `49969f8f`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused outbound-media proof (`1 passed`),
+    adjacent media/reply proof (`3 passed, 1090 deselected`), adjacent
+    imported-plugin proof (`281 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
 
 - [x] Imported plugin SDK account-core/account-resolution shim.
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
