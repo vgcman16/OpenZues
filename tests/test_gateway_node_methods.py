@@ -41573,6 +41573,212 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_config_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-config-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const runtime = require("openclaw/plugin-sdk/browser-config-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/browser-config-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_config_runtime",
+      description: "Use OpenClaw browser config runtime helpers",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        const io = runtime.createConfigIO({ configPath: args.configPath });
+        await io.writeConfigFile({
+          gateway: { port: 19010 },
+          plugins: { enabled: false }
+        });
+        const loaded = await io.loadConfig();
+        const topLoaded = await runtime.loadConfig({ configPath: args.configPath });
+        const normalized = runtime.normalizePluginsConfig({
+          allow: ["openai-codex", "workspace"],
+          deny: ["blocked"],
+          load: { paths: ["~/plugins"] },
+          slots: { memory: "none", contextEngine: "ctx" },
+          entries: {
+            "openai-codex": {
+              enabled: true,
+              hooks: { allowPromptInjection: true },
+              subagent: {
+                allowModelOverride: false,
+                allowedModels: ["gpt-5", ""]
+              },
+              config: { flag: true }
+            }
+          }
+        });
+        return {
+          keys: Object.keys(runtime).sort(),
+          scopedSame: scopedRuntime.createConfigIO === runtime.createConfigIO,
+          paths: {
+            resolvedConfigPath: runtime.resolveConfigPath({
+              OPENCLAW_CONFIG_PATH: args.configPath
+            }),
+            configPath: io.configPath
+          },
+          loaded,
+          topLoaded,
+          snapshot: runtime.getRuntimeConfigSnapshot(),
+          ports: {
+            control: runtime.deriveDefaultBrowserControlPort(18789),
+            cdp: runtime.deriveDefaultBrowserCdpPortRange(18791),
+            defaultControl: runtime.DEFAULT_BROWSER_CONTROL_PORT,
+            gateway: runtime.resolveGatewayPort({ gateway: { port: 19020 } })
+          },
+          booleans: {
+            yes: runtime.parseBooleanValue("yes"),
+            off: runtime.parseBooleanValue("off"),
+            custom: runtime.parseBooleanValue("enabled", { truthy: ["enabled"] }),
+            missing: runtime.parseBooleanValue("maybe")
+          },
+          normalized,
+          enableStates: {
+            allowed: runtime.resolveEffectiveEnableState({
+              id: "workspace",
+              origin: "workspace",
+              config: runtime.normalizePluginsConfig({ allow: ["workspace"] })
+            }),
+            blocked: runtime.resolveEffectiveEnableState({
+              id: "blocked",
+              origin: "bundled",
+              config: runtime.normalizePluginsConfig({ deny: ["blocked"] })
+            })
+          },
+          text: {
+            escaped: runtime.escapeRegExp("a+b?"),
+            shortenedHomeType: typeof runtime.shortenHomePath(runtime.resolveUserPath("~/demo"))
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-config-runtime-plugin",
+                    "name": "Runtime Browser Config Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-config-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_config_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    config_path = tmp_path / "openclaw.json"
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.browser_config_runtime",
+            "args": {"configPath": str(config_path)},
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "CONFIG_DIR",
+            "DEFAULT_BROWSER_CONTROL_PORT",
+            "createConfigIO",
+            "deriveDefaultBrowserCdpPortRange",
+            "deriveDefaultBrowserControlPort",
+            "escapeRegExp",
+            "getRuntimeConfigSnapshot",
+            "loadConfig",
+            "normalizePluginsConfig",
+            "parseBooleanValue",
+            "resolveConfigPath",
+            "resolveEffectiveEnableState",
+            "resolveGatewayPort",
+            "resolveUserPath",
+            "shortenHomePath",
+            "writeConfigFile",
+        ],
+        "scopedSame": True,
+        "paths": {
+            "resolvedConfigPath": str(config_path),
+            "configPath": str(config_path),
+        },
+        "loaded": {"gateway": {"port": 19010}, "plugins": {"enabled": False}},
+        "topLoaded": {"gateway": {"port": 19010}, "plugins": {"enabled": False}},
+        "snapshot": None,
+        "ports": {
+            "control": 18791,
+            "cdp": {"start": 18800, "end": 18899},
+            "defaultControl": 18791,
+            "gateway": 19020,
+        },
+        "booleans": {"yes": True, "off": False, "custom": True},
+        "normalized": {
+            "enabled": True,
+            "allow": ["openai", "workspace"],
+            "deny": ["blocked"],
+            "loadPaths": ["~/plugins"],
+            "slots": {"memory": None, "contextEngine": "ctx"},
+            "entries": {
+                "openai": {
+                    "enabled": True,
+                    "hooks": {"allowPromptInjection": True},
+                    "subagent": {
+                        "allowModelOverride": False,
+                        "hasAllowedModelsConfig": True,
+                        "allowedModels": ["gpt-5"],
+                    },
+                    "config": {"flag": True},
+                }
+            },
+        },
+        "enableStates": {
+            "allowed": {"enabled": True},
+            "blocked": {"enabled": False, "reason": "blocked by denylist"},
+        },
+        "text": {"escaped": "a\\+b\\?", "shortenedHomeType": "string"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -43776,11 +43982,11 @@ module.exports = {
         ],
         "scopedType": "function",
         "counts": {
-            "entrypoints": 296,
-            "subpaths": 295,
-            "specifiers": 296,
-            "exports": 296,
-            "artifacts": 592,
+            "entrypoints": 297,
+            "subpaths": 296,
+            "specifiers": 297,
+            "exports": 297,
+            "artifacts": 594,
         },
         "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
         "last": [

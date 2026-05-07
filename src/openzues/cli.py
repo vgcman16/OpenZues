@@ -39609,6 +39609,7 @@ const pluginSdkEntrypoints = [
   "allowlist-config-edit",
   "browser-control-auth",
   "browser-config",
+  "browser-config-runtime",
   "browser-profiles",
   "boolean-param",
   "channel-contract-testing",
@@ -39787,6 +39788,7 @@ const supportedBundledFacadeSdkEntrypoints = [
 const publicPluginOwnedSdkEntrypoints = [
   "browser-control-auth",
   "browser-config",
+  "browser-config-runtime",
   "browser-profiles",
   "image-generation-core",
   "memory-core-host-engine-embeddings",
@@ -54327,6 +54329,262 @@ const browserConfigSupportRuntime = {
   shortenHomePath,
 };
 
+function resolveConfigPath(env = process.env, stateDir) {
+  const configEnv = env && typeof env === "object" ? env : {};
+  const override = normalizeOptionalString(configEnv.OPENCLAW_CONFIG_PATH);
+  if (override) {
+    return resolveUserPath(override, configEnv);
+  }
+  const baseStateDir =
+    normalizeOptionalString(stateDir) ||
+    normalizeOptionalString(configEnv.OPENCLAW_STATE_DIR) ||
+    CONFIG_DIR;
+  return path.join(resolveUserPath(baseStateDir, configEnv), "openclaw.json");
+}
+
+function readJsonConfigFile(configPath) {
+  if (!fs.existsSync(configPath)) {
+    return {};
+  }
+  const raw = fs.readFileSync(configPath, "utf8").trim();
+  if (!raw) {
+    return {};
+  }
+  return JSON.parse(raw);
+}
+
+function createConfigIO(options = {}) {
+  const configPath = resolveConfigPath(
+    options.env || process.env,
+    normalizeOptionalString(options.stateDir),
+  );
+  const effectiveConfigPath = normalizeOptionalString(options.configPath)
+    ? path.resolve(options.configPath)
+    : configPath;
+  return {
+    configPath: effectiveConfigPath,
+    async loadConfig() {
+      return readJsonConfigFile(effectiveConfigPath);
+    },
+    async writeConfigFile(nextConfig) {
+      fs.mkdirSync(path.dirname(effectiveConfigPath), { recursive: true });
+      fs.writeFileSync(effectiveConfigPath, `${JSON.stringify(nextConfig || {}, null, 2)}\n`);
+      return { configPath: effectiveConfigPath };
+    },
+  };
+}
+
+async function loadConfig(options = {}) {
+  return await createConfigIO(options).loadConfig();
+}
+
+async function writeConfigFile(nextConfig, options = {}) {
+  return await createConfigIO(options).writeConfigFile(nextConfig);
+}
+
+function parseBooleanValue(value, options = {}) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = normalizeOptionalLowercaseString(value);
+  if (!normalized) {
+    return undefined;
+  }
+  const truthy = Array.isArray(options.truthy)
+    ? options.truthy.map((entry) => normalizeLowercaseStringOrEmpty(entry)).filter(Boolean)
+    : ["true", "1", "yes", "on"];
+  const falsy = Array.isArray(options.falsy)
+    ? options.falsy.map((entry) => normalizeLowercaseStringOrEmpty(entry)).filter(Boolean)
+    : ["false", "0", "no", "off"];
+  if (truthy.includes(normalized)) {
+    return true;
+  }
+  if (falsy.includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
+const BUILT_IN_PLUGIN_ALIAS_LOOKUP = new Map([
+  ["openai-codex", "openai"],
+  ["google-gemini-cli", "google"],
+  ["minimax-portal", "minimax"],
+  ["minimax-portal-auth", "minimax"],
+]);
+
+function normalizeBrowserRuntimePluginId(id) {
+  const trimmed = normalizeOptionalString(id) || "";
+  const normalized = normalizeOptionalLowercaseString(trimmed) || "";
+  return BUILT_IN_PLUGIN_ALIAS_LOOKUP.get(normalized) || trimmed;
+}
+
+function normalizeBrowserRuntimeStringList(value, normalizer = normalizeBrowserRuntimePluginId) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => (typeof entry === "string" ? normalizer(entry) : ""))
+    .filter(Boolean);
+}
+
+function normalizeBrowserRuntimeSlotValue(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  if (normalizeOptionalLowercaseString(trimmed) === "none") {
+    return null;
+  }
+  return trimmed;
+}
+
+function normalizeBrowserRuntimePluginEntries(entries) {
+  if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+    return {};
+  }
+  const normalized = {};
+  for (const [key, value] of Object.entries(entries)) {
+    const normalizedKey = normalizeBrowserRuntimePluginId(key);
+    if (!normalizedKey) {
+      continue;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      normalized[normalizedKey] = {};
+      continue;
+    }
+    const entry = value;
+    const next = {};
+    if (typeof entry.enabled === "boolean") {
+      next.enabled = entry.enabled;
+    }
+    if (entry.hooks && typeof entry.hooks === "object" && !Array.isArray(entry.hooks)) {
+      const hooks = {};
+      if (typeof entry.hooks.allowPromptInjection === "boolean") {
+        hooks.allowPromptInjection = entry.hooks.allowPromptInjection;
+      }
+      if (typeof entry.hooks.allowConversationAccess === "boolean") {
+        hooks.allowConversationAccess = entry.hooks.allowConversationAccess;
+      }
+      if (Object.keys(hooks).length > 0) {
+        next.hooks = hooks;
+      }
+    }
+    if (entry.subagent && typeof entry.subagent === "object" && !Array.isArray(entry.subagent)) {
+      const subagent = {};
+      if (typeof entry.subagent.allowModelOverride === "boolean") {
+        subagent.allowModelOverride = entry.subagent.allowModelOverride;
+      }
+      if (Array.isArray(entry.subagent.allowedModels)) {
+        subagent.hasAllowedModelsConfig = true;
+        const allowedModels = entry.subagent.allowedModels
+          .map((model) => normalizeOptionalString(model))
+          .filter(Boolean);
+        if (allowedModels.length > 0) {
+          subagent.allowedModels = allowedModels;
+        }
+      }
+      if (Object.keys(subagent).length > 0) {
+        next.subagent = subagent;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(entry, "config")) {
+      next.config = entry.config;
+    }
+    normalized[normalizedKey] = next;
+  }
+  return normalized;
+}
+
+function normalizePluginsConfig(config = {}) {
+  const pluginsConfig = config && typeof config === "object" ? config : {};
+  const memorySlot = normalizeBrowserRuntimeSlotValue(
+    pluginsConfig.slots && pluginsConfig.slots.memory,
+  );
+  const contextEngineSlot = normalizeBrowserRuntimeSlotValue(
+    pluginsConfig.slots && pluginsConfig.slots.contextEngine,
+  );
+  return {
+    enabled: pluginsConfig.enabled !== false,
+    allow: normalizeBrowserRuntimeStringList(pluginsConfig.allow),
+    deny: normalizeBrowserRuntimeStringList(pluginsConfig.deny),
+    loadPaths: normalizeBrowserRuntimeStringList(
+      pluginsConfig.load && pluginsConfig.load.paths,
+      (entry) => normalizeOptionalString(entry) || "",
+    ),
+    slots: {
+      memory: memorySlot === undefined ? "memory-core" : memorySlot,
+      ...(contextEngineSlot !== undefined ? { contextEngine: contextEngineSlot } : {}),
+    },
+    entries: normalizeBrowserRuntimePluginEntries(pluginsConfig.entries),
+  };
+}
+
+function pluginActivationReasonForCause(cause, reason) {
+  if (reason) {
+    return reason;
+  }
+  const reasons = {
+    "plugins-disabled": "plugins disabled",
+    "blocked-by-denylist": "blocked by denylist",
+    "disabled-in-config": "disabled in config",
+    "workspace-disabled-by-default": "workspace plugin (disabled by default)",
+    "not-in-allowlist": "not in allowlist",
+    "enabled-by-effective-config": "enabled by effective config",
+    "bundled-default-enablement": "bundled default enablement",
+    "bundled-disabled-by-default": "bundled (disabled by default)",
+    "selected-memory-slot": "selected memory slot",
+    "selected-context-engine-slot": "selected context engine slot",
+    "selected-in-allowlist": "selected in allowlist",
+    "enabled-in-config": "enabled in config",
+  };
+  return reasons[cause];
+}
+
+function toEnableStateResult(state) {
+  return state.enabled
+    ? { enabled: true }
+    : { enabled: false, reason: pluginActivationReasonForCause(state.cause, state.reason) };
+}
+
+function resolveEffectiveEnableState(params = {}) {
+  const id = normalizeBrowserRuntimePluginId(params.id || "");
+  const origin = normalizeOptionalString(params.origin) || "workspace";
+  const config = params.config || normalizePluginsConfig();
+  const entry = config.entries && config.entries[id];
+  if (!config.enabled) {
+    return toEnableStateResult({ enabled: false, cause: "plugins-disabled" });
+  }
+  if (Array.isArray(config.deny) && config.deny.includes(id)) {
+    return toEnableStateResult({ enabled: false, cause: "blocked-by-denylist" });
+  }
+  if (entry && entry.enabled === false) {
+    return toEnableStateResult({ enabled: false, cause: "disabled-in-config" });
+  }
+  const explicitlyAllowed = Array.isArray(config.allow) && config.allow.includes(id);
+  if (origin === "workspace" && !explicitlyAllowed && (!entry || entry.enabled !== true)) {
+    return toEnableStateResult({ enabled: false, cause: "workspace-disabled-by-default" });
+  }
+  if (config.slots && config.slots.memory === id) {
+    return { enabled: true };
+  }
+  if (config.slots && config.slots.contextEngine === id) {
+    return { enabled: true };
+  }
+  if (Array.isArray(config.allow) && config.allow.length > 0 && !explicitlyAllowed) {
+    return toEnableStateResult({ enabled: false, cause: "not-in-allowlist" });
+  }
+  if (explicitlyAllowed || (entry && entry.enabled === true) || params.enabledByDefault === true) {
+    return { enabled: true };
+  }
+  if (origin === "bundled") {
+    return toEnableStateResult({ enabled: false, cause: "bundled-disabled-by-default" });
+  }
+  return { enabled: true };
+}
+
 function resolveBrowserConfig(cfg = {}, rootConfig = {}) {
   const browserConfig = cfg && typeof cfg === "object" ? cfg : {};
   const gatewayPort = resolveGatewayPort(rootConfig || {});
@@ -54564,6 +54822,25 @@ const browserProfilesRuntime = {
   DEFAULT_UPLOAD_DIR,
   resolveBrowserConfig,
   resolveProfile,
+};
+
+const browserConfigRuntimeSdk = {
+  CONFIG_DIR,
+  DEFAULT_BROWSER_CONTROL_PORT,
+  createConfigIO,
+  deriveDefaultBrowserCdpPortRange,
+  deriveDefaultBrowserControlPort,
+  escapeRegExp,
+  getRuntimeConfigSnapshot,
+  loadConfig,
+  normalizePluginsConfig,
+  parseBooleanValue,
+  resolveConfigPath,
+  resolveEffectiveEnableState,
+  resolveGatewayPort,
+  resolveUserPath,
+  shortenHomePath,
+  writeConfigFile,
 };
 
 const browserSecurityRuntime = {
@@ -63632,6 +63909,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-profiles"
   ) {
     return browserProfilesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-config-runtime" ||
+    request === "@openclaw/plugin-sdk/browser-config-runtime"
+  ) {
+    return browserConfigRuntimeSdk;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
