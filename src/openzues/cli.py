@@ -29819,6 +29819,25 @@ function resolveStateDir(env = process.env, homedir = () => os.homedir()) {
   return path.join(resolveRequiredHomeDir(sourceEnv, homedir), ".openclaw");
 }
 
+function resolveConfigDir(env = process.env, homedir = () => os.homedir()) {
+  const sourceEnv = env || process.env;
+  const stateOverride =
+    typeof sourceEnv.OPENCLAW_STATE_DIR === "string"
+      ? sourceEnv.OPENCLAW_STATE_DIR.trim()
+      : "";
+  if (stateOverride) {
+    return resolveUserPath(stateOverride, sourceEnv, homedir);
+  }
+  const configPath =
+    typeof sourceEnv.OPENCLAW_CONFIG_PATH === "string"
+      ? sourceEnv.OPENCLAW_CONFIG_PATH.trim()
+      : "";
+  if (configPath) {
+    return path.dirname(resolveUserPath(configPath, sourceEnv, homedir));
+  }
+  return path.join(resolveRequiredHomeDir(sourceEnv, homedir), ".openclaw");
+}
+
 function resolveOAuthDir(env = process.env, stateDir) {
   const sourceEnv = env || process.env;
   const override =
@@ -29837,7 +29856,53 @@ function resolveOAuthDir(env = process.env, stateDir) {
   return path.join(resolvedStateDir, "credentials");
 }
 
+const DEFAULT_GATEWAY_PORT = 18789;
+const CONFIG_DIR = resolveConfigDir();
 const STATE_DIR = resolveStateDir();
+
+function parseGatewayPortEnvValue(raw) {
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  if (!trimmed) {
+    return null;
+  }
+  if (/^\d+$/.test(trimmed)) {
+    const parsed = Number.parseInt(trimmed, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  const bracketedIpv6Match = trimmed.match(/^\[[^\]]+\]:(\d+)$/);
+  if (bracketedIpv6Match && bracketedIpv6Match[1]) {
+    const parsed = Number.parseInt(bracketedIpv6Match[1], 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  const firstColon = trimmed.indexOf(":");
+  const lastColon = trimmed.lastIndexOf(":");
+  if (firstColon <= 0 || firstColon !== lastColon) {
+    return null;
+  }
+  const suffix = trimmed.slice(firstColon + 1);
+  if (!/^\d+$/.test(suffix)) {
+    return null;
+  }
+  const parsed = Number.parseInt(suffix, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function resolveGatewayPort(cfg = {}, env = process.env) {
+  const sourceEnv = env || process.env;
+  const rawEnvPort =
+    typeof sourceEnv.OPENCLAW_GATEWAY_PORT === "string"
+      ? sourceEnv.OPENCLAW_GATEWAY_PORT
+      : undefined;
+  const envPort = parseGatewayPortEnvValue(rawEnvPort);
+  if (envPort !== null) {
+    return envPort;
+  }
+  const configPort = cfg && cfg.gateway ? cfg.gateway.port : undefined;
+  if (typeof configPort === "number" && Number.isFinite(configPort) && configPort > 0) {
+    return configPort;
+  }
+  return DEFAULT_GATEWAY_PORT;
+}
 
 function resolveAccountWithDefaultFallback(params) {
   const rawAccountId = params && params.accountId;
@@ -54174,6 +54239,82 @@ const browserCdpRuntime = {
   redactCdpUrl,
 };
 
+const DEFAULT_BROWSER_CDP_PORT_RANGE_START = 18800;
+const DEFAULT_BROWSER_CDP_PORT_RANGE_END = 18899;
+const DEFAULT_BROWSER_CDP_PORT_RANGE_SPAN =
+  DEFAULT_BROWSER_CDP_PORT_RANGE_END - DEFAULT_BROWSER_CDP_PORT_RANGE_START;
+const DEFAULT_BROWSER_CONTROL_PORT = 18791;
+
+function isValidPort(port) {
+  return Number.isFinite(port) && port > 0 && port <= 65535;
+}
+
+function clampPort(port, fallback) {
+  return isValidPort(port) ? port : fallback;
+}
+
+function derivePort(base, offset, fallback) {
+  return clampPort(base + offset, fallback);
+}
+
+function deriveDefaultBrowserControlPort(gatewayPort) {
+  return derivePort(gatewayPort, 2, DEFAULT_BROWSER_CONTROL_PORT);
+}
+
+function deriveDefaultBrowserCdpPortRange(browserControlPort) {
+  const start = derivePort(browserControlPort, 9, DEFAULT_BROWSER_CDP_PORT_RANGE_START);
+  const end = start + DEFAULT_BROWSER_CDP_PORT_RANGE_SPAN;
+  if (end <= 65535) {
+    return { start, end };
+  }
+  return {
+    start: DEFAULT_BROWSER_CDP_PORT_RANGE_START,
+    end: DEFAULT_BROWSER_CDP_PORT_RANGE_END,
+  };
+}
+
+function stripLoopbackHostPort(host) {
+  if (host.startsWith("[") && host.endsWith("]")) {
+    return host.slice(1, -1);
+  }
+  const firstColon = host.indexOf(":");
+  const lastColon = host.lastIndexOf(":");
+  if (firstColon > 0 && firstColon === lastColon && host.includes(".")) {
+    return host.slice(0, firstColon);
+  }
+  return host;
+}
+
+function isLoopbackHost(host) {
+  const normalized = String(host || "").trim().toLowerCase().replace(/\.+$/, "");
+  if (!normalized) {
+    return false;
+  }
+  const unbracketedHost = stripLoopbackHostPort(normalized);
+  if (unbracketedHost === "localhost") {
+    return true;
+  }
+  if (unbracketedHost === "::1") {
+    return true;
+  }
+  if (/^127(?:\.\d{1,3}){3}$/.test(unbracketedHost)) {
+    return true;
+  }
+  return /^::ffff:127(?:\.\d{1,3}){3}$/.test(unbracketedHost);
+}
+
+const browserConfigSupportRuntime = {
+  CONFIG_DIR,
+  DEFAULT_BROWSER_CONTROL_PORT,
+  deriveDefaultBrowserCdpPortRange,
+  deriveDefaultBrowserControlPort,
+  escapeRegExp,
+  isLoopbackHost,
+  resolveGatewayPort,
+  resolveUserPath,
+  shortenHomePath,
+};
+
 const browserSecurityRuntime = {
   SafeOpenError,
   SsrFBlockedError,
@@ -61667,6 +61808,7 @@ const genericSdk = new Proxy(
     ...runtimeStoreRuntime,
     ...fileLockRuntime,
     ...browserCdpRuntime,
+    ...browserConfigSupportRuntime,
     ...secretFileRuntime,
     ...runtimeEnvRuntime,
     ...runtimeRuntime,
@@ -63214,6 +63356,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-cdp"
   ) {
     return browserCdpRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-config-support" ||
+    request === "@openclaw/plugin-sdk/browser-config-support"
+  ) {
+    return browserConfigSupportRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||

@@ -40952,6 +40952,148 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_config_support_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-config-support.cjs"
+    runtime_entry.write_text(
+        """
+const support = require("openclaw/plugin-sdk/browser-config-support");
+const scopedSupport = require("@openclaw/plugin-sdk/browser-config-support");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_config_support",
+      description: "Use OpenClaw browser config support helpers",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(support).sort(),
+          scopedSame:
+            scopedSupport.deriveDefaultBrowserControlPort ===
+            support.deriveDefaultBrowserControlPort,
+          gatewayPorts: [
+            support.resolveGatewayPort(
+              { gateway: { port: 19002 } },
+              { OPENCLAW_GATEWAY_PORT: "127.0.0.1:18789" }
+            ),
+            support.resolveGatewayPort(
+              { gateway: { port: 19003 } },
+              { OPENCLAW_GATEWAY_PORT: "::1" }
+            ),
+            support.resolveGatewayPort({}, { OPENCLAW_GATEWAY_PORT: "2001:db8::1" })
+          ],
+          browserPorts: {
+            defaultControl: support.DEFAULT_BROWSER_CONTROL_PORT,
+            derivedControl: support.deriveDefaultBrowserControlPort(18789),
+            derivedControlFallback: support.deriveDefaultBrowserControlPort(70000),
+            cdpRange: support.deriveDefaultBrowserCdpPortRange(18791),
+            cdpOverflow: support.deriveDefaultBrowserCdpPortRange(65440)
+          },
+          loopback: [
+            support.isLoopbackHost("localhost."),
+            support.isLoopbackHost("127.0.0.1:9999"),
+            support.isLoopbackHost("[::1]"),
+            support.isLoopbackHost("0.0.0.0")
+          ],
+          pathHelpers: {
+            configDirType: typeof support.CONFIG_DIR,
+            resolveUserPathType: typeof support.resolveUserPath,
+            shortenHomePathType: typeof support.shortenHomePath,
+            escaped: support.escapeRegExp("a+b?")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-config-support-plugin",
+                    "name": "Runtime Browser Config Support Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-config-support.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_config_support"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.browser_config_support"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "CONFIG_DIR",
+            "DEFAULT_BROWSER_CONTROL_PORT",
+            "deriveDefaultBrowserCdpPortRange",
+            "deriveDefaultBrowserControlPort",
+            "escapeRegExp",
+            "isLoopbackHost",
+            "resolveGatewayPort",
+            "resolveUserPath",
+            "shortenHomePath",
+        ],
+        "scopedSame": True,
+        "gatewayPorts": [18789, 19003, 18789],
+        "browserPorts": {
+            "defaultControl": 18791,
+            "derivedControl": 18791,
+            "derivedControlFallback": 18791,
+            "cdpRange": {"start": 18800, "end": 18899},
+            "cdpOverflow": {"start": 18800, "end": 18899},
+        },
+        "loopback": [True, True, True, False],
+        "pathHelpers": {
+            "configDirType": "string",
+            "resolveUserPathType": "function",
+            "shortenHomePathType": "function",
+            "escaped": "a\\+b\\?",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
