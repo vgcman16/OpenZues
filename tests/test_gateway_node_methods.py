@@ -13912,6 +13912,288 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_media_generation_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-media-generation-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const media = require("openclaw/plugin-sdk/media-generation-runtime");
+const shared = require("openclaw/plugin-sdk/media-generation-runtime-shared");
+const scopedMedia = require("@openclaw/plugin-sdk/media-generation-runtime");
+
+function parseModelRef(raw) {
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  const slash = trimmed.indexOf("/");
+  if (!trimmed || slash <= 0 || slash === trimmed.length - 1) {
+    return null;
+  }
+  return { provider: trimmed.slice(0, slash), model: trimmed.slice(slash + 1) };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.media_generation_runtime",
+      description: "Use OpenClaw media-generation-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const attempts = [];
+        media.recordCapabilityCandidateFailure({
+          attempts,
+          provider: "openai",
+          model: "gpt-image-2",
+          error: {
+            name: "FailoverError",
+            message: "quota exceeded",
+            reason: "billing",
+            status: 402,
+            code: "billing"
+          }
+        });
+        let abortSummary = "";
+        try {
+          media.throwCapabilityGenerationFailure({
+            capabilityLabel: "music generation",
+            attempts: [
+              {
+                provider: "google",
+                model: "lyria-3",
+                error: "deadline too short"
+              },
+              {
+                provider: "minimax",
+                model: "music-2.6",
+                error: "This operation was aborted"
+              },
+              {
+                provider: "minimax-portal",
+                model: "music-2.6",
+                error: "request was aborted"
+              }
+            ],
+            lastError: new Error("request was aborted")
+          });
+        } catch (err) {
+          abortSummary = String(err && err.message ? err.message : err);
+        }
+        const candidates = media.resolveCapabilityModelCandidates({
+          cfg: {
+            agents: {
+              defaults: {
+                model: { primary: "openai-codex/gpt-5.5" }
+              }
+            }
+          },
+          modelConfig: { primary: "google/gemini-image", fallbacks: ["fal/flux"] },
+          parseModelRef,
+          listProviders: () => [
+            {
+              id: "fal",
+              defaultModel: "flux",
+              isConfigured: () => true
+            },
+            {
+              id: "openai",
+              aliases: ["openai-codex"],
+              defaultModel: "gpt-image-2",
+              isConfigured: () => true
+            },
+            {
+              id: "google",
+              defaultModel: "gemini-image",
+              isConfigured: () => true
+            }
+          ]
+        });
+        return {
+          keys: Object.keys(media).sort(),
+          sharedKeys: Object.keys(shared).sort(),
+          scopedType: typeof scopedMedia.resolveClosestSize,
+          attempts,
+          entries: {
+            present: media.hasMediaNormalizationEntry({ requested: "2K" }),
+            empty: media.hasMediaNormalizationEntry({})
+          },
+          candidates,
+          normalized: {
+            aspectFromSize: media.deriveAspectRatioFromSize("1280x720"),
+            closestSize: media.resolveClosestSize({
+              requestedSize: "1792x1024",
+              supportedSizes: ["1024x1024", "1024x1536", "1536x1024"]
+            }),
+            closestAspectRatio: media.resolveClosestAspectRatio({
+              requestedAspectRatio: "17:10",
+              supportedAspectRatios: ["1:1", "4:3", "16:9"]
+            }),
+            closestResolution: media.resolveClosestResolution({
+              requestedResolution: "2K",
+              supportedResolutions: ["1K", "4K"]
+            }),
+            duration: [
+              media.normalizeDurationToClosestMax(12, 8),
+              media.normalizeDurationToClosestMax(6, 8)
+            ]
+          },
+          metadata: media.buildMediaGenerationNormalizationMetadata({
+            requestedSizeForDerivedAspectRatio: "1280x720",
+            includeSupportedDurationSeconds: true,
+            normalization: {
+              size: { requested: "1792x1024", applied: "1536x1024" },
+              aspectRatio: {
+                requested: "17:10",
+                applied: "16:9",
+                derivedFrom: "size"
+              },
+              resolution: { requested: "2K", applied: "1K" },
+              durationSeconds: {
+                requested: 12,
+                applied: 8,
+                supportedValues: [4, 8]
+              }
+            }
+          }),
+          messages: {
+            noModel: media.buildNoCapabilityModelConfiguredMessage({
+              capabilityLabel: "image generation",
+              modelConfigKey: "imageGeneration",
+              providers: [{ id: "openai", defaultModel: "gpt-image-2" }]
+            }),
+            abortSummary,
+            sharedType: typeof shared.throwCapabilityGenerationFailure
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "media-generation-runtime-plugin",
+                    "name": "Media Generation Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-media-generation-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.media_generation_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.media_generation_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildMediaGenerationNormalizationMetadata",
+            "buildNoCapabilityModelConfiguredMessage",
+            "deriveAspectRatioFromSize",
+            "hasMediaNormalizationEntry",
+            "normalizeDurationToClosestMax",
+            "recordCapabilityCandidateFailure",
+            "resolveCapabilityModelCandidates",
+            "resolveClosestAspectRatio",
+            "resolveClosestResolution",
+            "resolveClosestSize",
+            "throwCapabilityGenerationFailure",
+        ],
+        "sharedKeys": [
+            "buildNoCapabilityModelConfiguredMessage",
+            "resolveCapabilityModelCandidates",
+            "throwCapabilityGenerationFailure",
+        ],
+        "scopedType": "function",
+        "attempts": [
+            {
+                "provider": "openai",
+                "model": "gpt-image-2",
+                "error": "quota exceeded",
+                "reason": "billing",
+                "status": 402,
+                "code": "billing",
+            }
+        ],
+        "entries": {"present": True, "empty": False},
+        "candidates": [
+            {"provider": "google", "model": "gemini-image"},
+            {"provider": "fal", "model": "flux"},
+            {"provider": "openai", "model": "gpt-image-2"},
+        ],
+        "normalized": {
+            "aspectFromSize": "16:9",
+            "closestSize": "1536x1024",
+            "closestAspectRatio": "16:9",
+            "closestResolution": "1K",
+            "duration": [8, 6],
+        },
+        "metadata": {
+            "requestedSize": "1280x720",
+            "normalizedSize": "1536x1024",
+            "requestedAspectRatio": "17:10",
+            "normalizedAspectRatio": "16:9",
+            "aspectRatioDerivedFromSize": "16:9",
+            "requestedResolution": "2K",
+            "normalizedResolution": "1K",
+            "requestedDurationSeconds": 12,
+            "normalizedDurationSeconds": 8,
+            "supportedDurationSeconds": [4, 8],
+        },
+        "messages": {
+            "noModel": (
+                "No image generation model configured. Set "
+                'agents.defaults.imageGeneration.primary to a provider/model like '
+                '"openai/gpt-image-2". If you want a specific provider, also '
+                "configure that provider's auth/API key first "
+                "(openai: OPENAI_API_KEY)."
+            ),
+            "abortSummary": (
+                "All music generation models failed (3): google/lyria-3: "
+                "deadline too short | 2 fallback(s) aborted after the request "
+                "was cancelled or timed out: minimax/music-2.6, "
+                "minimax-portal/music-2.6"
+            ),
+            "sharedType": "function",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
     tmp_path,
 ) -> None:

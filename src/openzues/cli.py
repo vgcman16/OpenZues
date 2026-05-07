@@ -40778,6 +40778,294 @@ function buildNoCapabilityModelConfiguredMessage(params = {}) {
   ].join(" ");
 }
 
+function recordCapabilityCandidateFailure(params = {}) {
+  const attempts = Array.isArray(params.attempts) ? params.attempts : [];
+  const described = isFailoverError(params.error) ? describeFailoverError(params.error) : null;
+  attempts.push({
+    provider: params.provider,
+    model: params.model,
+    error: described && described.message ? described.message : formatErrorMessage(params.error),
+    reason: described && described.reason,
+    status: described && described.status,
+    code: described && described.code,
+  });
+}
+
+function hasMediaNormalizationEntry(entry) {
+  return Boolean(
+    entry &&
+      (entry.requested !== undefined ||
+        entry.applied !== undefined ||
+        entry.derivedFrom !== undefined ||
+        (Array.isArray(entry.supportedValues) && entry.supportedValues.length > 0)),
+  );
+}
+
+function normalizeSupportedValues(values) {
+  return Array.isArray(values)
+    ? values.flatMap((entry) => (normalizeOptionalString(entry) ? [entry] : []))
+    : [];
+}
+
+function compareScores(next, best) {
+  if (!best) {
+    return true;
+  }
+  if (next.primary !== best.primary) {
+    return next.primary < best.primary;
+  }
+  if (next.secondary !== best.secondary) {
+    return next.secondary < best.secondary;
+  }
+  return next.tertiary.localeCompare(best.tertiary) < 0;
+}
+
+function parsePositiveDimensionPair(raw, pattern) {
+  const trimmed = normalizeOptionalString(raw);
+  if (!trimmed) {
+    return null;
+  }
+  const match = pattern.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+  return { width, height };
+}
+
+function parseAspectRatioValue(raw) {
+  const pair = parsePositiveDimensionPair(raw, /^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+  return pair ? { ...pair, value: pair.width / pair.height } : null;
+}
+
+function parseSizeValue(raw) {
+  const pair = parsePositiveDimensionPair(raw, /^(\d+)\s*x\s*(\d+)$/i);
+  if (!pair) {
+    return null;
+  }
+  return {
+    ...pair,
+    aspectRatio: pair.width / pair.height,
+    area: pair.width * pair.height,
+  };
+}
+
+function greatestCommonDivisor(leftValue, rightValue) {
+  let left = Math.abs(leftValue);
+  let right = Math.abs(rightValue);
+  while (right !== 0) {
+    const next = left % right;
+    left = right;
+    right = next;
+  }
+  return left || 1;
+}
+
+function deriveAspectRatioFromSize(size) {
+  const parsed = parseSizeValue(size);
+  if (!parsed) {
+    return undefined;
+  }
+  const divisor = greatestCommonDivisor(parsed.width, parsed.height);
+  return `${parsed.width / divisor}:${parsed.height / divisor}`;
+}
+
+function resolveClosestAspectRatio(params = {}) {
+  const supported = normalizeSupportedValues(params.supportedAspectRatios);
+  if (supported.length === 0) {
+    return params.requestedAspectRatio || deriveAspectRatioFromSize(params.requestedSize);
+  }
+  if (params.requestedAspectRatio && supported.includes(params.requestedAspectRatio)) {
+    return params.requestedAspectRatio;
+  }
+  const requested =
+    parseAspectRatioValue(params.requestedAspectRatio) ||
+    parseAspectRatioValue(deriveAspectRatioFromSize(params.requestedSize));
+  if (!requested) {
+    return undefined;
+  }
+  let bestValue;
+  let bestScore = null;
+  for (const candidate of supported) {
+    const parsed = parseAspectRatioValue(candidate);
+    if (!parsed) {
+      continue;
+    }
+    const score = {
+      primary: Math.abs(Math.log(parsed.value / requested.value)),
+      secondary: Math.abs(parsed.width * requested.height - requested.width * parsed.height),
+      tertiary: candidate,
+    };
+    if (compareScores(score, bestScore)) {
+      bestValue = candidate;
+      bestScore = score;
+    }
+  }
+  return bestValue;
+}
+
+function resolveClosestSize(params = {}) {
+  const supported = normalizeSupportedValues(params.supportedSizes);
+  if (supported.length === 0) {
+    return params.requestedSize;
+  }
+  if (params.requestedSize && supported.includes(params.requestedSize)) {
+    return params.requestedSize;
+  }
+  const requested = parseSizeValue(params.requestedSize);
+  const requestedAspectRatio = parseAspectRatioValue(params.requestedAspectRatio);
+  if (!requested && !requestedAspectRatio) {
+    return undefined;
+  }
+  let bestValue;
+  let bestScore = null;
+  for (const candidate of supported) {
+    const parsed = parseSizeValue(candidate);
+    if (!parsed) {
+      continue;
+    }
+    const ratio = requested ? requested.aspectRatio : requestedAspectRatio.value;
+    const score = {
+      primary: Math.abs(Math.log(parsed.aspectRatio / ratio)),
+      secondary: requested ? Math.abs(Math.log(parsed.area / requested.area)) : parsed.area,
+      tertiary: candidate,
+    };
+    if (compareScores(score, bestScore)) {
+      bestValue = candidate;
+      bestScore = score;
+    }
+  }
+  return bestValue;
+}
+
+const IMAGE_RESOLUTION_ORDER = ["1K", "2K", "4K"];
+
+function resolveClosestResolution(params = {}) {
+  const supported = normalizeSupportedValues(params.supportedResolutions);
+  if (supported.length === 0) {
+    return params.requestedResolution;
+  }
+  if (params.requestedResolution && supported.includes(params.requestedResolution)) {
+    return params.requestedResolution;
+  }
+  const order = Array.isArray(params.order) ? params.order : IMAGE_RESOLUTION_ORDER;
+  const requestedIndex = params.requestedResolution
+    ? order.indexOf(params.requestedResolution)
+    : -1;
+  if (requestedIndex < 0) {
+    return undefined;
+  }
+  let bestValue;
+  let bestScore = null;
+  for (const candidate of supported) {
+    const candidateIndex = order.indexOf(candidate);
+    if (candidateIndex < 0) {
+      continue;
+    }
+    const score = {
+      primary: Math.abs(candidateIndex - requestedIndex),
+      secondary: candidateIndex,
+      tertiary: candidate,
+    };
+    if (compareScores(score, bestScore)) {
+      bestValue = candidate;
+      bestScore = score;
+    }
+  }
+  return bestValue;
+}
+
+function normalizeDurationToClosestMax(durationSeconds, maxDurationSeconds) {
+  if (typeof durationSeconds !== "number" || !Number.isFinite(durationSeconds)) {
+    return undefined;
+  }
+  const rounded = Math.max(1, Math.round(durationSeconds));
+  if (
+    typeof maxDurationSeconds !== "number" ||
+    !Number.isFinite(maxDurationSeconds) ||
+    maxDurationSeconds <= 0
+  ) {
+    return rounded;
+  }
+  return Math.min(rounded, Math.max(1, Math.round(maxDurationSeconds)));
+}
+
+function buildMediaGenerationNormalizationMetadata(params = {}) {
+  const metadata = {};
+  const normalization = params.normalization || {};
+  if (
+    normalization.size &&
+    normalization.size.requested !== undefined &&
+    normalization.size.applied !== undefined
+  ) {
+    metadata.requestedSize = normalization.size.requested;
+    metadata.normalizedSize = normalization.size.applied;
+  }
+  if (normalization.aspectRatio && normalization.aspectRatio.applied !== undefined) {
+    if (normalization.aspectRatio.requested !== undefined) {
+      metadata.requestedAspectRatio = normalization.aspectRatio.requested;
+    }
+    metadata.normalizedAspectRatio = normalization.aspectRatio.applied;
+    if (
+      normalization.aspectRatio.derivedFrom === "size" &&
+      params.requestedSizeForDerivedAspectRatio
+    ) {
+      metadata.requestedSize = params.requestedSizeForDerivedAspectRatio;
+      metadata.aspectRatioDerivedFromSize = deriveAspectRatioFromSize(
+        params.requestedSizeForDerivedAspectRatio,
+      );
+    }
+  }
+  if (
+    normalization.resolution &&
+    normalization.resolution.requested !== undefined &&
+    normalization.resolution.applied !== undefined
+  ) {
+    metadata.requestedResolution = normalization.resolution.requested;
+    metadata.normalizedResolution = normalization.resolution.applied;
+  }
+  if (
+    normalization.durationSeconds &&
+    normalization.durationSeconds.requested !== undefined &&
+    normalization.durationSeconds.applied !== undefined
+  ) {
+    metadata.requestedDurationSeconds = normalization.durationSeconds.requested;
+    metadata.normalizedDurationSeconds = normalization.durationSeconds.applied;
+    if (
+      params.includeSupportedDurationSeconds &&
+      Array.isArray(normalization.durationSeconds.supportedValues) &&
+      normalization.durationSeconds.supportedValues.length > 0
+    ) {
+      metadata.supportedDurationSeconds = normalization.durationSeconds.supportedValues;
+    }
+  }
+  return metadata;
+}
+
+const mediaGenerationRuntime = {
+  buildMediaGenerationNormalizationMetadata,
+  buildNoCapabilityModelConfiguredMessage,
+  deriveAspectRatioFromSize,
+  hasMediaNormalizationEntry,
+  normalizeDurationToClosestMax,
+  recordCapabilityCandidateFailure,
+  resolveCapabilityModelCandidates,
+  resolveClosestAspectRatio,
+  resolveClosestResolution,
+  resolveClosestSize,
+  throwCapabilityGenerationFailure,
+};
+
+const mediaGenerationRuntimeSharedRuntime = {
+  buildNoCapabilityModelConfiguredMessage,
+  resolveCapabilityModelCandidates,
+  throwCapabilityGenerationFailure,
+};
+
 const UNSAFE_VIDEO_GENERATION_PROVIDER_IDS = new Set(["__proto__", "constructor", "prototype"]);
 
 function normalizeVideoGenerationProviderId(id) {
@@ -53245,6 +53533,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/image-generation-core"
   ) {
     return imageGenerationCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-generation-runtime" ||
+    request === "@openclaw/plugin-sdk/media-generation-runtime"
+  ) {
+    return mediaGenerationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-generation-runtime-shared" ||
+    request === "@openclaw/plugin-sdk/media-generation-runtime-shared"
+  ) {
+    return mediaGenerationRuntimeSharedRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/speech-core" ||
