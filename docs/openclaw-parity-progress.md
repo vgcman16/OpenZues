@@ -17988,6 +17988,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`310 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check`. Source/test checkpointed in `1cc947f3`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  deprecated `compat` facade from `src/plugin-sdk/compat.ts`: scoped and
+  unscoped native runtime entries expose the broad legacy migration barrel for
+  config-schema, channel policy/config/directory/reply-history helpers,
+  channel reply pipeline aliases, runtime store/queue/temp/account helpers,
+  provider auth helper aliases, command gating, diagnostics, context-engine
+  registration, memory prompt addition delegation, BlueBubbles policy/status
+  helpers, and selected channel lifecycle helpers without falling through to
+  the broad SDK proxy. This closes `OZ-PLUGIN-00300`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.99993%.
+  Remaining exact advertised SDK subpath queue head is `discord`.
+- Verified the compat facade slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_compat_facade_helpers -q`
+  (`1 passed`), adjacent compat/testing/channel/runtime/config/policy/
+  directory proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "compat_facade or testing_compat or channel_runtime_facade or channel_config_schema or channel_policy or reply_history or directory_runtime or runtime_store"`
+  (`7 passed, 1116 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`311 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `f21a22bd`.
 
 ## References
 

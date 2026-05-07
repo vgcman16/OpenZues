@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99992% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99993% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -742,6 +742,14 @@ may lag behind this tracker.
   channel activity recording, heartbeat event/visibility helpers,
   transport-ready waits, and selected lifecycle helpers.
   - Status: checkpointed in `1cc947f3`
+
+- [x] Imported plugin SDK compat facade shim for the deprecated broad
+  migration barrel, including config-schema, channel policy/config/directory/
+  reply-history helpers, channel reply pipeline aliases, runtime store/queue/
+  temp/account helpers, provider auth helper aliases, command gating,
+  diagnostics, context-engine registration, memory prompt addition delegation,
+  BlueBubbles policy/status helpers, and selected channel lifecycle helpers.
+  - Status: checkpointed in `f21a22bd`
 
 - [x] Imported plugin SDK channel-activity-runtime shim for
   `recordChannelActivity`.

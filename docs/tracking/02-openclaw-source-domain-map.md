@@ -476,6 +476,20 @@ and `src/image-generation/runtime.ts` is checkpointed in `719fcee8`.
 `src/infra/channel-activity.ts`, `src/infra/heartbeat-events.ts`,
 `src/infra/heartbeat-visibility.ts`, `src/infra/transport-ready.ts`, and
 `src/plugin-sdk/channel-lifecycle.core.ts` is checkpointed in `1cc947f3`.
+`compat` from `src/plugin-sdk/compat.ts`, adjacent
+`src/plugin-sdk/channel-reply-pipeline.ts`,
+`src/plugin-sdk/channel-lifecycle.core.ts`,
+`src/plugin-sdk/runtime-store.ts`, `src/plugin-sdk/keyed-async-queue.ts`,
+`src/plugin-sdk/account-id.ts`, `src/plugin-sdk/temp-path.ts`,
+`src/plugin-sdk/channel-config-helpers.ts`,
+`src/plugin-sdk/allow-from.ts`, `src/plugin-sdk/channel-config-schema.ts`,
+`src/plugin-sdk/channel-policy.ts`, `src/plugin-sdk/reply-history.ts`,
+`src/plugin-sdk/directory-runtime.ts`,
+`src/plugin-sdk/bluebubbles-policy.ts`, `src/plugin-sdk/bluebubbles.ts`,
+`src/channels/command-gating.ts`, `src/context-engine/delegate.ts`,
+`src/context-engine/registry.ts`, `src/infra/diagnostic-events.ts`,
+`src/agents/schema/typebox.ts`, and
+`src/plugins/provider-auth-helpers.ts` is checkpointed in `f21a22bd`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
