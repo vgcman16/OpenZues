@@ -2618,6 +2618,19 @@ may lag behind this tracker.
     adjacent imported-plugin proof (`298 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
 
+- [x] Imported plugin SDK channel-test-helpers facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/channel-test-helpers.ts` and
+    adjacent `openclaw-main/src/plugin-sdk/test-helpers/*` channel helper
+    modules plus `openclaw-main/src/test-utils/channel-plugins.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `67872a14`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused channel-test-helpers proof
+    (`1 passed`), adjacent channel helper proof (`4 passed, 1107 deselected`),
+    adjacent imported-plugin proof (`299 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
 - [x] Imported plugin SDK account-core/account-resolution shim.
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
     `openclaw-main/src/plugin-sdk/account-resolution.ts`,

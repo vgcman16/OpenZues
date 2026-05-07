@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.998%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -17744,6 +17744,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `e6307d8a`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `channel-test-helpers` facade from
+  `src/plugin-sdk/channel-test-helpers.ts` and adjacent
+  `src/plugin-sdk/test-helpers/*` / `src/test-utils/channel-plugins.ts`
+  helpers: scoped and unscoped native runtime entries expose directory
+  contract helpers, channel plugin/action/setup/status contract suites,
+  registry and outbound test plugin builders, hook registration helpers,
+  send-config threading assertions, account lifecycle helpers, bundled-entry
+  assertions, envelope timestamps, pairing reply assertions, and a lightweight
+  plugin runtime mock without importing the TypeScript runtime. This closes
+  `OZ-PLUGIN-00288`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999%.
+- Verified the channel-test-helpers slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_channel_test_helpers -q`
+  (`1 passed`), adjacent channel helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channel_test_helpers or channel_target_testing or channel_targets or channel_contract_testing"`
+  (`4 passed, 1107 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`299 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `67872a14`.
 
 ## References
 

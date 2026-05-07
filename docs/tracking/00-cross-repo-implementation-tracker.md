@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK channel-target-testing facade slice is checkpointed in
-`e6307d8a`.
+The imported plugin SDK channel-test-helpers facade slice is checkpointed in
+`67872a14`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,7 +62,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Channel target testing SDK shim checkpointed in `e6307d8a` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `channel-test-helpers` alias |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Channel test helpers SDK shim checkpointed in `67872a14` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `plugin-test-api` / `plugin-test-contracts` aliases |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
@@ -6077,6 +6077,40 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
   - Last verified: 2026-05-07, focused channel-target-testing proof
     (`1 passed`), adjacent channel target proof (`3 passed, 1107 deselected`),
     adjacent imported-plugin proof (`298 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00288` Imported channel-test-helpers facade shim
+  - Source: `openclaw-main/src/plugin-sdk/channel-test-helpers.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/directory.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/directory-ids.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/channel-contract-suites.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/outbound-delivery.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/plugin-runtime-mock.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/send-config.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/start-account-context.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/start-account-lifecycle.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/status-issues.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/subagent-hooks.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/bundled-channel-entry.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/envelope-timestamp.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/pairing-reply.ts`, and
+    `openclaw-main/src/test-utils/channel-plugins.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `channel-test-helpers` and receive the public channel testing
+    barrel for directory assertions, channel plugin/action/setup/status
+    contract suites, test registries, outbound plugin builders, hook handler
+    maps, send-config assertions, account lifecycle helpers, bundled entry
+    assertions, envelope timestamp formatting, pairing reply checks, and
+    lightweight plugin runtime mocks without importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `67872a14`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused channel-test-helpers proof
+    (`1 passed`), adjacent channel helper proof (`4 passed, 1107 deselected`),
+    adjacent imported-plugin proof (`299 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001SE` Imported account-core/account-resolution shim
