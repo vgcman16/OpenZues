@@ -72,6 +72,11 @@ The imported `agent-runtime` model-auth helper coverage from
 `src/plugin-sdk/agent-runtime.ts`, `src/agents/model-auth.ts`,
 `src/agents/model-auth-env.ts`, and adjacent auth/profile helpers is verified
 in `b93c187b` and counted with the plugin/extension system row above.
+The imported `agent-runtime` schema/typebox helper coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/schema/typebox.ts`,
+`src/agents/schema/string-enum.ts`, and `src/infra/outbound/channel-target.ts`
+is verified in `0884d4f3` and counted with the plugin/extension system row
+above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
