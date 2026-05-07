@@ -61951,6 +61951,445 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_hook_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-hook-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const hook = require("openclaw/plugin-sdk/hook-runtime");
+const scopedHook = require("@openclaw/plugin-sdk/hook-runtime");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.hook_runtime",
+      description: "Use OpenClaw hook-runtime SDK barrel",
+      parameters: { type: "object" },
+      async execute() {
+        const looseLogs = [];
+        hook.fireAndForgetHook(
+          Promise.reject(new Error("loose\\nbad")),
+          "loose",
+          (message) => looseLogs.push(message)
+        );
+        const boundedLogs = [];
+        const boundedOrder = [];
+        hook.fireAndForgetBoundedHook(
+          async () => {
+            boundedOrder.push("first-start");
+            await wait(5);
+            boundedOrder.push("first-end");
+          },
+          "first",
+          (message) => boundedLogs.push(message),
+          { maxConcurrency: 1, maxQueue: 1, timeoutMs: 50 }
+        );
+        hook.fireAndForgetBoundedHook(
+          async () => {
+            boundedOrder.push("second");
+          },
+          "second",
+          (message) => boundedLogs.push(message),
+          { maxConcurrency: 1, maxQueue: 1, timeoutMs: 50 }
+        );
+        hook.fireAndForgetBoundedHook(
+          async () => {
+            boundedOrder.push("third");
+          },
+          "third",
+          (message) => boundedLogs.push(message),
+          { maxConcurrency: 1, maxQueue: 1, timeoutMs: 50 }
+        );
+        await wait(20);
+
+        hook.clearInternalHooks();
+        hook.setInternalHooksEnabled(true);
+        const seen = [];
+        const allHandler = async (event) => {
+          seen.push(`all:${event.action}:${event.context.from}`);
+          event.messages.push("all");
+        };
+        const specificHandler = (event) => {
+          seen.push(`specific:${event.action}:${event.context.channelId}`);
+          event.messages.push("specific");
+        };
+        hook.registerInternalHook("message", allHandler);
+        hook.registerInternalHook("message:received", specificHandler);
+        const event = hook.createInternalHookEvent("message", "received", "agent:main", {
+          from: "sender",
+          channelId: "telegram"
+        });
+        await hook.triggerInternalHook(event);
+        const registeredBefore = hook.getRegisteredEventKeys().sort();
+        const hasBefore = hook.hasInternalHookListeners("message", "received");
+        hook.unregisterInternalHook("message", allHandler);
+        const eventAfterUnregister = hook.createInternalHookEvent(
+          "message",
+          "received",
+          "agent:main",
+          { from: "sender2", channelId: "telegram" }
+        );
+        await hook.triggerInternalHook(eventAfterUnregister);
+        hook.setInternalHooksEnabled(false);
+        await hook.triggerInternalHook(
+          hook.createInternalHookEvent("message", "received", "agent:main", {
+            from: "disabled",
+            channelId: "telegram"
+          })
+        );
+        hook.setInternalHooksEnabled(true);
+        const guards = {
+          agentBootstrap: hook.isAgentBootstrapEvent(
+            hook.createInternalHookEvent("agent", "bootstrap", "agent:main", {
+              workspaceDir: "C:/work",
+              bootstrapFiles: []
+            })
+          ),
+          gatewayStartup: hook.isGatewayStartupEvent(
+            hook.createInternalHookEvent("gateway", "startup", "agent:main", {
+              workspaceDir: "C:/work"
+            })
+          ),
+          messageReceived: hook.isMessageReceivedEvent(event),
+          messageSent: hook.isMessageSentEvent(
+            hook.createInternalHookEvent("message", "sent", "agent:main", {
+              to: "dest",
+              channelId: "telegram",
+              success: true
+            })
+          ),
+          messageTranscribed: hook.isMessageTranscribedEvent(
+            hook.createInternalHookEvent("message", "transcribed", "agent:main", {
+              transcript: "hello",
+              channelId: "telegram"
+            })
+          ),
+          messagePreprocessed: hook.isMessagePreprocessedEvent(
+            hook.createInternalHookEvent("message", "preprocessed", "agent:main", {
+              channelId: "telegram"
+            })
+          ),
+          sessionPatch: hook.isSessionPatchEvent(
+            hook.createInternalHookEvent("session", "patch", "agent:main", {
+              sessionEntry: { key: "agent:main" },
+              patch: { title: "Demo" },
+              cfg: {}
+            })
+          )
+        };
+        hook.clearInternalHooks();
+
+        const canonical = hook.deriveInboundMessageHookContext({
+          From: "sender",
+          To: "telegram:chat-1",
+          BodyForCommands: "/demo",
+          RawBody: "raw",
+          Body: "body",
+          Transcript: "voice text",
+          AccountId: "bot",
+          OriginatingChannel: "telegram",
+          Provider: "telegram",
+          Surface: "telegram",
+          MessageSid: "msg-1",
+          SenderId: "sender-1",
+          SenderName: "Alice",
+          SenderUsername: "alice",
+          MediaPaths: ["C:/media/a.png"],
+          MediaUrls: ["https://media.example/a.png"],
+          MediaTypes: ["image/png"],
+          GroupSubject: "Group",
+          GroupChannel: "general",
+          MessageThreadId: 7,
+          SessionKey: "agent:main"
+        });
+        const pluginMessageContext = hook.toPluginMessageContext(canonical);
+        const inboundClaimContext = hook.toPluginInboundClaimContext(canonical);
+        const inboundClaimEvent = hook.toPluginInboundClaimEvent(canonical, {
+          commandAuthorized: true,
+          wasMentioned: false
+        });
+        const receivedEvent = hook.toPluginMessageReceivedEvent(canonical);
+        const internalReceived = hook.toInternalMessageReceivedContext(canonical);
+        const transcribed = hook.toInternalMessageTranscribedContext(
+          canonical,
+          { assistantName: "OpenZues" }
+        );
+        const preprocessed = hook.toInternalMessagePreprocessedContext(
+          canonical,
+          { assistantName: "OpenZues" }
+        );
+        const sentCanonical = hook.buildCanonicalSentMessageHookContext({
+          to: "telegram:chat-2",
+          content: "sent",
+          success: false,
+          error: "failed",
+          channelId: "telegram",
+          accountId: "bot",
+          conversationId: "telegram:chat-2",
+          sessionKey: "agent:main",
+          messageId: "out-1",
+          isGroup: true,
+          groupId: "chat-2"
+        });
+        const pluginSent = hook.toPluginMessageSentEvent(sentCanonical);
+        const internalSent = hook.toInternalMessageSentContext(sentCanonical);
+
+        hook.initializeGlobalHookRunner({ hooks: [] });
+        hook.resetGlobalHookRunner();
+
+        return {
+          selectedTypes: {
+            fireAndForgetHook: typeof hook.fireAndForgetHook,
+            fireAndForgetBoundedHook: typeof hook.fireAndForgetBoundedHook,
+            registerInternalHook: typeof hook.registerInternalHook,
+            triggerInternalHook: typeof hook.triggerInternalHook,
+            deriveInboundMessageHookContext:
+              typeof hook.deriveInboundMessageHookContext,
+            toPluginInboundClaimEvent: typeof hook.toPluginInboundClaimEvent,
+            initializeGlobalHookRunner:
+              typeof hook.initializeGlobalHookRunner,
+            resetGlobalHookRunner: typeof hook.resetGlobalHookRunner
+          },
+          scopedSame: scopedHook.triggerInternalHook === hook.triggerInternalHook,
+          fireAndForget: {
+            formatted: hook.formatHookErrorForLog(new Error("boom\\nbad\\u0000tail")),
+            looseLogs,
+            boundedLogs,
+            boundedOrder
+          },
+          internal: {
+            seen,
+            eventMessages: event.messages,
+            registeredBefore,
+            hasBefore,
+            registeredAfterClear: hook.getRegisteredEventKeys()
+          },
+          guards,
+          canonical: {
+            content: canonical.content,
+            channelId: canonical.channelId,
+            conversationId: canonical.conversationId,
+            messageId: canonical.messageId,
+            isGroup: canonical.isGroup,
+            groupId: canonical.groupId
+          },
+          pluginMessageContext,
+          inboundClaimContext,
+          inboundClaimEvent: {
+            content: inboundClaimEvent.content,
+            channel: inboundClaimEvent.channel,
+            conversationId: inboundClaimEvent.conversationId,
+            commandAuthorized: inboundClaimEvent.commandAuthorized,
+            wasMentioned: inboundClaimEvent.wasMentioned,
+            mediaPath: inboundClaimEvent.metadata.mediaPath,
+            mediaUrl: inboundClaimEvent.metadata.mediaUrl
+          },
+          receivedEvent: {
+            from: receivedEvent.from,
+            content: receivedEvent.content,
+            messageId: receivedEvent.messageId,
+            senderName: receivedEvent.metadata.senderName
+          },
+          internalReceived,
+          transcribed: {
+            transcript: transcribed.transcript,
+            cfgName: transcribed.cfg.assistantName
+          },
+          preprocessed: {
+            transcript: preprocessed.transcript,
+            isGroup: preprocessed.isGroup,
+            cfgName: preprocessed.cfg.assistantName
+          },
+          sent: {
+            pluginSent,
+            internalSent
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-hook-runtime-plugin",
+                    "name": "Runtime Hook Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-hook-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.hook_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.hook_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "fireAndForgetHook": "function",
+            "fireAndForgetBoundedHook": "function",
+            "registerInternalHook": "function",
+            "triggerInternalHook": "function",
+            "deriveInboundMessageHookContext": "function",
+            "toPluginInboundClaimEvent": "function",
+            "initializeGlobalHookRunner": "function",
+            "resetGlobalHookRunner": "function",
+        },
+        "scopedSame": True,
+        "fireAndForget": {
+            "formatted": "boom bad tail",
+            "looseLogs": ["loose: loose bad"],
+            "boundedLogs": ["third: queue full; dropping hook"],
+            "boundedOrder": ["first-start", "first-end", "second"],
+        },
+        "internal": {
+            "seen": [
+                "all:received:sender",
+                "specific:received:telegram",
+                "specific:received:telegram",
+            ],
+            "eventMessages": ["all", "specific"],
+            "registeredBefore": ["message", "message:received"],
+            "hasBefore": True,
+            "registeredAfterClear": [],
+        },
+        "guards": {
+            "agentBootstrap": True,
+            "gatewayStartup": True,
+            "messageReceived": True,
+            "messageSent": True,
+            "messageTranscribed": True,
+            "messagePreprocessed": True,
+            "sessionPatch": True,
+        },
+        "canonical": {
+            "content": "/demo",
+            "channelId": "telegram",
+            "conversationId": "telegram:chat-1",
+            "messageId": "msg-1",
+            "isGroup": True,
+            "groupId": "telegram:chat-1",
+        },
+        "pluginMessageContext": {
+            "channelId": "telegram",
+            "accountId": "bot",
+            "conversationId": "telegram:chat-1",
+            "sessionKey": "agent:main",
+            "messageId": "msg-1",
+            "senderId": "sender-1",
+        },
+        "inboundClaimContext": {
+            "channelId": "telegram",
+            "accountId": "bot",
+            "conversationId": "chat-1",
+            "sessionKey": "agent:main",
+            "senderId": "sender-1",
+            "messageId": "msg-1",
+        },
+        "inboundClaimEvent": {
+            "content": "/demo",
+            "channel": "telegram",
+            "conversationId": "chat-1",
+            "commandAuthorized": True,
+            "wasMentioned": False,
+            "mediaPath": "C:/media/a.png",
+            "mediaUrl": "https://media.example/a.png",
+        },
+        "receivedEvent": {
+            "from": "sender",
+            "content": "/demo",
+            "messageId": "msg-1",
+            "senderName": "Alice",
+        },
+        "internalReceived": {
+            "from": "sender",
+            "content": "/demo",
+            "channelId": "telegram",
+            "accountId": "bot",
+            "conversationId": "telegram:chat-1",
+            "messageId": "msg-1",
+            "metadata": {
+                "to": "telegram:chat-1",
+                "provider": "telegram",
+                "surface": "telegram",
+                "threadId": 7,
+                "senderId": "sender-1",
+                "senderName": "Alice",
+                "senderUsername": "alice",
+                "channelName": "general",
+            },
+        },
+        "transcribed": {"transcript": "voice text", "cfgName": "OpenZues"},
+        "preprocessed": {
+            "transcript": "voice text",
+            "isGroup": True,
+            "cfgName": "OpenZues",
+        },
+        "sent": {
+            "pluginSent": {
+                "to": "telegram:chat-2",
+                "content": "sent",
+                "success": False,
+                "messageId": "out-1",
+                "sessionKey": "agent:main",
+                "error": "failed",
+            },
+            "internalSent": {
+                "to": "telegram:chat-2",
+                "content": "sent",
+                "success": False,
+                "error": "failed",
+                "channelId": "telegram",
+                "accountId": "bot",
+                "conversationId": "telegram:chat-2",
+                "messageId": "out-1",
+                "isGroup": True,
+                "groupId": "chat-2",
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_actions_helpers(
     tmp_path,
 ) -> None:

@@ -72358,9 +72358,15 @@ const PLUGIN_COMMAND_REGISTRY_KEY = Symbol.for("openclaw.pluginCommands");
 const PLUGIN_INTERACTIVE_REGISTRY_KEY = Symbol.for("openclaw.pluginInteractiveHandlers");
 const PLUGIN_INTERACTIVE_DEDUPE_KEY = Symbol.for("openclaw.pluginInteractiveDedupe");
 const PLUGIN_HOOK_RUNNER_STATE_KEY = Symbol.for("openclaw.plugins.hook-runner-global-state");
+const FIRE_AND_FORGET_HOOK_STATE_KEY = Symbol.for("openclaw.fireAndForgetHookState");
+const INTERNAL_HOOK_STATE_KEY = Symbol.for("openclaw.internalHooksState");
 const PLUGIN_RUNTIME_GATEWAY_REQUEST_SCOPE_KEY = Symbol.for(
   "openclaw.pluginRuntimeGatewayRequestScope",
 );
+const DEFAULT_MAX_CONCURRENT_FIRE_AND_FORGET_HOOKS = 16;
+const DEFAULT_MAX_QUEUED_FIRE_AND_FORGET_HOOKS = 256;
+const DEFAULT_FIRE_AND_FORGET_HOOK_TIMEOUT_MS = 2000;
+const MAX_HOOK_LOG_MESSAGE_LENGTH = 500;
 const RESERVED_PLUGIN_COMMAND_NAMES = new Set([
   "help",
   "commands",
@@ -72898,6 +72904,610 @@ function createInteractiveConversationBindingHelpers(params = {}) {
   };
 }
 
+function getFireAndForgetHookState() {
+  return resolveGlobalSingleton(FIRE_AND_FORGET_HOOK_STATE_KEY, () => ({
+    active: 0,
+    queue: [],
+  }));
+}
+
+function positiveHookIntegerOrDefault(value, fallback) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : fallback;
+}
+
+function replaceHookLogControlCharacters(value) {
+  let result = "";
+  for (const char of String(value || "")) {
+    const codePoint = char.codePointAt(0);
+    if (
+      codePoint === undefined ||
+      codePoint <= 0x1f ||
+      codePoint === 0x7f ||
+      codePoint === 0x2028 ||
+      codePoint === 0x2029
+    ) {
+      result += " ";
+      continue;
+    }
+    result += char;
+  }
+  return result;
+}
+
+function formatHookErrorForLog(err) {
+  const formatted = replaceHookLogControlCharacters(formatErrorMessage(err))
+    .replace(/\s+/g, " ")
+    .trim();
+  return (formatted || "unknown error").slice(0, MAX_HOOK_LOG_MESSAGE_LENGTH);
+}
+
+function fireAndForgetHook(task, label, logger = () => {}) {
+  void Promise.resolve(task).catch((err) => {
+    logger(`${label}: ${formatHookErrorForLog(err)}`);
+  });
+}
+
+function runFireAndForgetHookJob(state, job, limits) {
+  state.active += 1;
+  let didLogTimeout = false;
+  const timeout =
+    job.timeoutMs > 0
+      ? setTimeout(() => {
+          didLogTimeout = true;
+          job.logger(`${job.label}: timed out after ${job.timeoutMs}ms`);
+        }, job.timeoutMs)
+      : undefined;
+  void Promise.resolve()
+    .then(job.task)
+    .catch((err) => {
+      if (!didLogTimeout) {
+        job.logger(`${job.label}: ${formatHookErrorForLog(err)}`);
+      }
+    })
+    .finally(() => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      state.active -= 1;
+      drainFireAndForgetHookQueue(state, limits);
+    });
+}
+
+function drainFireAndForgetHookQueue(state, limits) {
+  while (state.active < limits.maxConcurrency) {
+    const next = state.queue.shift();
+    if (!next) {
+      return;
+    }
+    runFireAndForgetHookJob(state, next, limits);
+  }
+}
+
+function fireAndForgetBoundedHook(task, label, logger = () => {}, options = {}) {
+  const state = getFireAndForgetHookState();
+  const maxConcurrency = positiveHookIntegerOrDefault(
+    options.maxConcurrency,
+    DEFAULT_MAX_CONCURRENT_FIRE_AND_FORGET_HOOKS,
+  );
+  const maxQueue = positiveHookIntegerOrDefault(
+    options.maxQueue,
+    DEFAULT_MAX_QUEUED_FIRE_AND_FORGET_HOOKS,
+  );
+  const timeoutMs = positiveHookIntegerOrDefault(
+    options.timeoutMs,
+    DEFAULT_FIRE_AND_FORGET_HOOK_TIMEOUT_MS,
+  );
+  if (state.active >= maxConcurrency && state.queue.length >= maxQueue) {
+    logger(`${label}: queue full; dropping hook`);
+    return;
+  }
+  state.queue.push({ task, label, logger, timeoutMs });
+  drainFireAndForgetHookQueue(state, { maxConcurrency });
+}
+
+function getInternalHookState() {
+  return resolveGlobalSingleton(INTERNAL_HOOK_STATE_KEY, () => ({
+    handlers: new Map(),
+    enabled: true,
+  }));
+}
+
+function registerInternalHook(eventKey, handler) {
+  const normalizedKey = String(eventKey || "");
+  if (!normalizedKey || typeof handler !== "function") {
+    return;
+  }
+  const state = getInternalHookState();
+  if (!state.handlers.has(normalizedKey)) {
+    state.handlers.set(normalizedKey, []);
+  }
+  state.handlers.get(normalizedKey).push(handler);
+}
+
+function unregisterInternalHook(eventKey, handler) {
+  const state = getInternalHookState();
+  const eventHandlers = state.handlers.get(String(eventKey || ""));
+  if (!eventHandlers) {
+    return;
+  }
+  const index = eventHandlers.indexOf(handler);
+  if (index !== -1) {
+    eventHandlers.splice(index, 1);
+  }
+  if (eventHandlers.length === 0) {
+    state.handlers.delete(String(eventKey || ""));
+  }
+}
+
+function clearInternalHooks() {
+  getInternalHookState().handlers.clear();
+}
+
+function setInternalHooksEnabled(enabled) {
+  getInternalHookState().enabled = Boolean(enabled);
+}
+
+function getRegisteredEventKeys() {
+  return Array.from(getInternalHookState().handlers.keys());
+}
+
+function hasInternalHookListeners(type, action) {
+  const state = getInternalHookState();
+  return (
+    (state.handlers.get(type) || []).length > 0 ||
+    (state.handlers.get(`${type}:${action}`) || []).length > 0
+  );
+}
+
+async function triggerInternalHook(event) {
+  const state = getInternalHookState();
+  if (!state.enabled || !hasInternalHookListeners(event.type, event.action)) {
+    return;
+  }
+  const typeHandlers = state.handlers.get(event.type) || [];
+  const specificHandlers = state.handlers.get(`${event.type}:${event.action}`) || [];
+  for (const handler of [...typeHandlers, ...specificHandlers]) {
+    try {
+      await handler(event);
+    } catch {
+      // OpenClaw hook dispatch swallows individual hook failures.
+    }
+  }
+}
+
+function createInternalHookEvent(type, action, sessionKey, context = {}) {
+  return {
+    type,
+    action,
+    sessionKey,
+    context,
+    timestamp: new Date(),
+    messages: [],
+  };
+}
+
+function isHookEventTypeAndAction(event, type, action) {
+  return Boolean(event && event.type === type && event.action === action);
+}
+
+function getHookContext(event) {
+  const context = event && event.context;
+  return context && typeof context === "object" ? context : null;
+}
+
+function hasStringContextField(context, key) {
+  return typeof context[key] === "string";
+}
+
+function hasBooleanContextField(context, key) {
+  return typeof context[key] === "boolean";
+}
+
+function isAgentBootstrapEvent(event) {
+  if (!isHookEventTypeAndAction(event, "agent", "bootstrap")) {
+    return false;
+  }
+  const context = getHookContext(event);
+  return Boolean(
+    context &&
+      hasStringContextField(context, "workspaceDir") &&
+      Array.isArray(context.bootstrapFiles),
+  );
+}
+
+function isGatewayStartupEvent(event) {
+  return isHookEventTypeAndAction(event, "gateway", "startup") && Boolean(getHookContext(event));
+}
+
+function isMessageReceivedEvent(event) {
+  const context = getHookContext(event);
+  return Boolean(
+    isHookEventTypeAndAction(event, "message", "received") &&
+      context &&
+      hasStringContextField(context, "from") &&
+      hasStringContextField(context, "channelId"),
+  );
+}
+
+function isMessageSentEvent(event) {
+  const context = getHookContext(event);
+  return Boolean(
+    isHookEventTypeAndAction(event, "message", "sent") &&
+      context &&
+      hasStringContextField(context, "to") &&
+      hasStringContextField(context, "channelId") &&
+      hasBooleanContextField(context, "success"),
+  );
+}
+
+function isMessageTranscribedEvent(event) {
+  const context = getHookContext(event);
+  return Boolean(
+    isHookEventTypeAndAction(event, "message", "transcribed") &&
+      context &&
+      hasStringContextField(context, "transcript") &&
+      hasStringContextField(context, "channelId"),
+  );
+}
+
+function isMessagePreprocessedEvent(event) {
+  const context = getHookContext(event);
+  return Boolean(
+    isHookEventTypeAndAction(event, "message", "preprocessed") &&
+      context &&
+      hasStringContextField(context, "channelId"),
+  );
+}
+
+function isSessionPatchEvent(event) {
+  const context = getHookContext(event);
+  return Boolean(
+    isHookEventTypeAndAction(event, "session", "patch") &&
+      context &&
+      typeof context.patch === "object" &&
+      context.patch !== null &&
+      typeof context.cfg === "object" &&
+      context.cfg !== null &&
+      typeof context.sessionEntry === "object" &&
+      context.sessionEntry !== null,
+  );
+}
+
+function readHookNonBlankString(value) {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function compactHookStringArray(value) {
+  return Array.isArray(value)
+    ? value.filter((entry) => typeof entry === "string" && entry.length > 0)
+    : undefined;
+}
+
+function deriveInboundMessageHookContext(ctx = {}, overrides = {}) {
+  const content =
+    overrides.content ??
+    readHookNonBlankString(ctx.BodyForCommands) ??
+    readHookNonBlankString(ctx.RawBody) ??
+    readHookNonBlankString(ctx.Body) ??
+    "";
+  const channelId = normalizeLowercaseStringOrEmpty(
+    ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider ?? "",
+  );
+  const conversationId = ctx.OriginatingTo ?? ctx.To ?? ctx.From ?? undefined;
+  const mediaPaths = compactHookStringArray(ctx.MediaPaths);
+  const mediaTypes = compactHookStringArray(ctx.MediaTypes);
+  const mediaUrls = compactHookStringArray(ctx.MediaUrls);
+  const isGroup = Boolean(ctx.GroupSubject || ctx.GroupChannel);
+  return {
+    from: ctx.From ?? "",
+    to: ctx.To,
+    content,
+    body: ctx.Body,
+    bodyForAgent: ctx.BodyForAgent,
+    transcript: ctx.Transcript,
+    timestamp:
+      typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp)
+        ? ctx.Timestamp
+        : undefined,
+    channelId,
+    accountId: ctx.AccountId,
+    conversationId,
+    sessionKey: ctx.SessionKey,
+    runId: ctx.RunId,
+    messageId:
+      overrides.messageId ??
+      ctx.MessageSidFull ??
+      ctx.MessageSid ??
+      ctx.MessageSidFirst ??
+      ctx.MessageSidLast,
+    senderId: ctx.SenderId,
+    senderName: ctx.SenderName,
+    senderUsername: ctx.SenderUsername,
+    senderE164: ctx.SenderE164,
+    provider: ctx.Provider,
+    surface: ctx.Surface,
+    threadId: ctx.MessageThreadId,
+    mediaPath: ctx.MediaPath ?? (mediaPaths ? mediaPaths[0] : undefined),
+    mediaUrl: ctx.MediaUrl ?? (mediaUrls ? mediaUrls[0] : undefined),
+    mediaType: ctx.MediaType ?? (mediaTypes ? mediaTypes[0] : undefined),
+    mediaPaths,
+    mediaUrls,
+    mediaTypes,
+    originatingChannel: ctx.OriginatingChannel,
+    originatingTo: ctx.OriginatingTo,
+    guildId: ctx.GroupSpace,
+    channelName: ctx.GroupChannel,
+    isGroup,
+    groupId: isGroup ? conversationId : undefined,
+    topicName: ctx.TopicName,
+    trace: ctx.Trace,
+    callDepth: ctx.CallDepth,
+  };
+}
+
+function assignDefinedHookField(target, key, value) {
+  if (value !== undefined) {
+    target[key] = value;
+  }
+}
+
+function assignHookTraceFields(target, trace) {
+  if (!trace || typeof trace !== "object") {
+    return;
+  }
+  const safeTrace = { ...trace };
+  target.trace = safeTrace;
+  assignDefinedHookField(target, "traceId", safeTrace.traceId);
+  assignDefinedHookField(target, "spanId", safeTrace.spanId);
+  assignDefinedHookField(target, "parentSpanId", safeTrace.parentSpanId);
+}
+
+function toPluginMessageContext(canonical = {}) {
+  const context = {
+    channelId: canonical.channelId,
+    accountId: canonical.accountId,
+    conversationId: canonical.conversationId,
+  };
+  assignDefinedHookField(context, "sessionKey", canonical.sessionKey);
+  assignDefinedHookField(context, "runId", canonical.runId);
+  assignDefinedHookField(context, "messageId", canonical.messageId);
+  assignDefinedHookField(context, "senderId", canonical.senderId);
+  assignHookTraceFields(context, canonical.trace);
+  assignDefinedHookField(context, "callDepth", canonical.callDepth);
+  return context;
+}
+
+function stripHookChannelPrefix(value, channelId) {
+  if (!value) {
+    return undefined;
+  }
+  const text = String(value);
+  for (const prefix of ["channel:", "chat:", "user:"]) {
+    if (text.startsWith(prefix)) {
+      return text.slice(prefix.length);
+    }
+  }
+  const channelPrefix = `${channelId}:`;
+  return text.startsWith(channelPrefix) ? text.slice(channelPrefix.length) : text;
+}
+
+function resolveInboundHookConversation(canonical = {}) {
+  return {
+    conversationId: stripHookChannelPrefix(
+      canonical.to ?? canonical.originatingTo ?? canonical.conversationId,
+      canonical.channelId,
+    ),
+  };
+}
+
+function toPluginInboundClaimContext(canonical = {}) {
+  const conversation = resolveInboundHookConversation(canonical);
+  const context = {
+    channelId: canonical.channelId,
+    accountId: canonical.accountId,
+    conversationId: conversation.conversationId,
+    sessionKey: canonical.sessionKey,
+    parentConversationId: conversation.parentConversationId,
+    senderId: canonical.senderId,
+    messageId: canonical.messageId,
+    runId: canonical.runId,
+    callDepth: canonical.callDepth,
+  };
+  assignHookTraceFields(context, canonical.trace);
+  return context;
+}
+
+function toPluginInboundClaimEvent(canonical = {}, extras = {}) {
+  const context = toPluginInboundClaimContext(canonical);
+  const event = {
+    content: canonical.content,
+    body: canonical.body,
+    bodyForAgent: canonical.bodyForAgent,
+    transcript: canonical.transcript,
+    timestamp: canonical.timestamp,
+    channel: canonical.channelId,
+    accountId: canonical.accountId,
+    conversationId: context.conversationId,
+    parentConversationId: context.parentConversationId,
+    senderId: canonical.senderId,
+    senderName: canonical.senderName,
+    senderUsername: canonical.senderUsername,
+    threadId: canonical.threadId,
+    messageId: canonical.messageId,
+    sessionKey: canonical.sessionKey,
+    runId: canonical.runId,
+    isGroup: canonical.isGroup,
+    commandAuthorized: extras.commandAuthorized,
+    wasMentioned: extras.wasMentioned,
+    metadata: {
+      from: canonical.from,
+      to: canonical.to,
+      provider: canonical.provider,
+      surface: canonical.surface,
+      originatingChannel: canonical.originatingChannel,
+      originatingTo: canonical.originatingTo,
+      senderE164: canonical.senderE164,
+      mediaPath: canonical.mediaPath,
+      mediaUrl: canonical.mediaUrl,
+      mediaType: canonical.mediaType,
+      mediaPaths: canonical.mediaPaths,
+      mediaUrls: canonical.mediaUrls,
+      mediaTypes: canonical.mediaTypes,
+      guildId: canonical.guildId,
+      channelName: canonical.channelName,
+      groupId: canonical.groupId,
+      topicName: canonical.topicName,
+    },
+  };
+  assignHookTraceFields(event, canonical.trace);
+  return event;
+}
+
+function toPluginMessageReceivedEvent(canonical = {}) {
+  const event = {
+    from: canonical.from,
+    content: canonical.content,
+    timestamp: canonical.timestamp,
+    threadId: canonical.threadId,
+    messageId: canonical.messageId,
+    senderId: canonical.senderId,
+    sessionKey: canonical.sessionKey,
+    runId: canonical.runId,
+    metadata: {
+      to: canonical.to,
+      provider: canonical.provider,
+      surface: canonical.surface,
+      threadId: canonical.threadId,
+      originatingChannel: canonical.originatingChannel,
+      originatingTo: canonical.originatingTo,
+      messageId: canonical.messageId,
+      senderId: canonical.senderId,
+      senderName: canonical.senderName,
+      senderUsername: canonical.senderUsername,
+      senderE164: canonical.senderE164,
+      guildId: canonical.guildId,
+      channelName: canonical.channelName,
+      topicName: canonical.topicName,
+    },
+  };
+  assignHookTraceFields(event, canonical.trace);
+  return event;
+}
+
+function toInternalMessageReceivedContext(canonical = {}) {
+  return {
+    from: canonical.from,
+    content: canonical.content,
+    timestamp: canonical.timestamp,
+    channelId: canonical.channelId,
+    accountId: canonical.accountId,
+    conversationId: canonical.conversationId,
+    messageId: canonical.messageId,
+    metadata: {
+      to: canonical.to,
+      provider: canonical.provider,
+      surface: canonical.surface,
+      threadId: canonical.threadId,
+      senderId: canonical.senderId,
+      senderName: canonical.senderName,
+      senderUsername: canonical.senderUsername,
+      senderE164: canonical.senderE164,
+      guildId: canonical.guildId,
+      channelName: canonical.channelName,
+      topicName: canonical.topicName,
+    },
+  };
+}
+
+function toInternalInboundMessageHookContextBase(canonical = {}) {
+  return {
+    from: canonical.from,
+    to: canonical.to,
+    body: canonical.body,
+    bodyForAgent: canonical.bodyForAgent,
+    timestamp: canonical.timestamp,
+    channelId: canonical.channelId,
+    conversationId: canonical.conversationId,
+    messageId: canonical.messageId,
+    senderId: canonical.senderId,
+    senderName: canonical.senderName,
+    senderUsername: canonical.senderUsername,
+    provider: canonical.provider,
+    surface: canonical.surface,
+    mediaPath: canonical.mediaPath,
+    mediaType: canonical.mediaType,
+  };
+}
+
+function toInternalMessageTranscribedContext(canonical = {}, cfg = {}) {
+  return {
+    ...toInternalInboundMessageHookContextBase(canonical),
+    transcript: canonical.transcript ?? "",
+    cfg,
+  };
+}
+
+function toInternalMessagePreprocessedContext(canonical = {}, cfg = {}) {
+  return {
+    ...toInternalInboundMessageHookContextBase(canonical),
+    transcript: canonical.transcript,
+    isGroup: canonical.isGroup,
+    groupId: canonical.groupId,
+    cfg,
+  };
+}
+
+function buildCanonicalSentMessageHookContext(params = {}) {
+  return {
+    to: params.to,
+    content: params.content,
+    success: params.success,
+    error: params.error,
+    channelId: params.channelId,
+    accountId: params.accountId,
+    conversationId: params.conversationId ?? params.to,
+    sessionKey: params.sessionKey,
+    runId: params.runId,
+    messageId: params.messageId,
+    trace: params.trace,
+    callDepth: params.callDepth,
+    isGroup: params.isGroup,
+    groupId: params.groupId,
+  };
+}
+
+function toPluginMessageSentEvent(canonical = {}) {
+  const event = {
+    to: canonical.to,
+    content: canonical.content,
+    success: canonical.success,
+  };
+  assignDefinedHookField(event, "messageId", canonical.messageId);
+  assignDefinedHookField(event, "sessionKey", canonical.sessionKey);
+  assignDefinedHookField(event, "runId", canonical.runId);
+  assignDefinedHookField(event, "error", canonical.error);
+  assignHookTraceFields(event, canonical.trace);
+  return event;
+}
+
+function toInternalMessageSentContext(canonical = {}) {
+  const context = {
+    to: canonical.to,
+    content: canonical.content,
+    success: canonical.success,
+    channelId: canonical.channelId,
+    accountId: canonical.accountId,
+    conversationId: canonical.conversationId,
+    messageId: canonical.messageId,
+  };
+  assignDefinedHookField(context, "error", canonical.error);
+  assignDefinedHookField(context, "isGroup", canonical.isGroup);
+  assignDefinedHookField(context, "groupId", canonical.groupId);
+  return context;
+}
+
 function getPluginHookRunnerState() {
   return resolveGlobalSingleton(PLUGIN_HOOK_RUNNER_STATE_KEY, () => ({
     hookRunner: null,
@@ -73027,6 +73637,40 @@ const pluginRuntime = {
   getPluginRuntimeGatewayRequestScope,
   withPluginRuntimeGatewayRequestScope,
   withPluginRuntimePluginIdScope,
+};
+
+const hookRuntime = {
+  fireAndForgetHook,
+  fireAndForgetBoundedHook,
+  formatHookErrorForLog,
+  registerInternalHook,
+  unregisterInternalHook,
+  clearInternalHooks,
+  setInternalHooksEnabled,
+  getRegisteredEventKeys,
+  hasInternalHookListeners,
+  triggerInternalHook,
+  createInternalHookEvent,
+  isAgentBootstrapEvent,
+  isGatewayStartupEvent,
+  isMessageReceivedEvent,
+  isMessageSentEvent,
+  isMessageTranscribedEvent,
+  isMessagePreprocessedEvent,
+  isSessionPatchEvent,
+  deriveInboundMessageHookContext,
+  buildCanonicalSentMessageHookContext,
+  toPluginMessageContext,
+  toPluginInboundClaimContext,
+  toPluginInboundClaimEvent,
+  toPluginMessageReceivedEvent,
+  toPluginMessageSentEvent,
+  toInternalMessageReceivedContext,
+  toInternalMessageTranscribedContext,
+  toInternalMessagePreprocessedContext,
+  toInternalMessageSentContext,
+  initializeGlobalHookRunner,
+  resetGlobalHookRunner,
 };
 
 const configMutationRuntime = {
@@ -74835,6 +75479,7 @@ const genericSdk = new Proxy(
     ...providerAuthLoginRuntime,
     ...providerAuthFacadeRuntime,
     ...pluginRuntime,
+    ...hookRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -76399,6 +77044,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-runtime"
   ) {
     return pluginRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/hook-runtime" ||
+    request === "@openclaw/plugin-sdk/hook-runtime"
+  ) {
+    return hookRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/plugin-entry" ||
