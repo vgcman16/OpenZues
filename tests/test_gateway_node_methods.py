@@ -24786,6 +24786,292 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_migration_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-migration.cjs"
+    runtime_entry.write_text(
+        """
+const migration = require("openclaw/plugin-sdk/migration");
+const scopedMigration = require("@openclaw/plugin-sdk/migration");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.migration",
+      description: "Use OpenClaw migration SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const config = {
+          agents: {
+            defaults: {
+              model: { primary: "openai/base" },
+              tools: { web: true }
+            }
+          }
+        };
+        const patchItem = migration.createMigrationConfigPatchItem({
+          id: "config:model",
+          target: "openclaw.json",
+          path: ["agents", "defaults"],
+          value: {
+            model: { fallback: ["openai/fallback"] },
+            tools: { code: true }
+          },
+          message: "Merge defaults"
+        });
+        const manualItem = migration.createMigrationManualItem({
+          id: "manual:note",
+          source: "hermes",
+          message: "Manual step",
+          recommendation: "review manually"
+        });
+        const beforePath = migration.readMigrationConfigPath(config, [
+          "agents",
+          "defaults",
+          "model",
+          "primary"
+        ]);
+        const merged = migration.mergeMigrationConfigValue(
+          { a: { b: 1 }, keep: true },
+          { a: { c: 2 }, added: "yes" }
+        );
+        migration.writeMigrationConfigPath(config, patchItem.details.path, patchItem.details.value);
+        const afterPath = migration.readMigrationConfigPath(config, [
+          "agents",
+          "defaults",
+          "model",
+          "fallback"
+        ]);
+        const conflict = migration.hasMigrationConfigPatchConflict(
+          { agents: { defaults: { tools: { web: true } } } },
+          ["agents", "defaults", "tools"],
+          { web: false }
+        );
+        const conflictItem = migration.createMigrationConfigPatchItem({
+          id: "config:conflict",
+          target: "openclaw.json",
+          path: ["agents", "defaults"],
+          value: { model: { primary: "openai/new" } },
+          message: "Conflict defaults",
+          conflict: true
+        });
+        const details = migration.readMigrationConfigPatchDetails(patchItem);
+        let runtimeConfig = { agents: { defaults: { tools: { web: true } } } };
+        const applied = await migration.applyMigrationConfigPatchItem({
+          config: runtimeConfig,
+          overwrite: true,
+          runtime: {
+            config: {
+              current: () => runtimeConfig,
+              mutateConfigFile: async (params) => {
+                const draft = structuredClone(runtimeConfig);
+                await params.mutate(draft, { snapshot: {}, previousHash: null });
+                runtimeConfig = draft;
+                return {
+                  path: "openclaw.json",
+                  previousHash: null,
+                  snapshot: {},
+                  nextConfig: runtimeConfig,
+                  afterWrite: { mode: "auto" },
+                  followUp: { mode: "auto", requiresRestart: false }
+                };
+              }
+            }
+          }
+        }, patchItem);
+        const unavailable = await migration.applyMigrationConfigPatchItem({
+          config: {},
+          overwrite: false,
+          runtime: {}
+        }, patchItem);
+        const skippedManual = migration.applyMigrationManualItem(manualItem);
+        const redactedPlan = migration.redactMigrationPlan({
+          items: [{
+            id: "secret",
+            kind: "config",
+            action: "merge",
+            status: "planned",
+            details: {
+              value: {
+                Authorization: "Bearer short-dev-key",
+                token: "plain-token",
+                keep: { source: "env", id: "OPENAI_API_KEY" }
+              }
+            }
+          }]
+        });
+        const summary = migration.summarizeMigrationItems([
+          migration.createMigrationItem({ id: "planned", kind: "file", action: "copy" }),
+          { ...applied, sensitive: true },
+          conflictItem,
+          unavailable,
+          skippedManual
+        ]);
+
+        return {
+          keys: Object.keys(migration).sort(),
+          scopedSame: scopedMigration.createMigrationItem === migration.createMigrationItem,
+          constants: [
+            migration.MIGRATION_REASON_MISSING_SOURCE_OR_TARGET,
+            migration.MIGRATION_REASON_TARGET_EXISTS
+          ],
+          itemStatus: [
+            migration.createMigrationItem({ id: "x", kind: "file", action: "copy" }).status,
+            migration.markMigrationItemConflict(patchItem, "nope").status,
+            migration.markMigrationItemError(patchItem, "bad").status,
+            migration.markMigrationItemSkipped(patchItem, "later").reason
+          ],
+          config: {
+            beforePath,
+            merged,
+            afterPath,
+            conflict,
+            details,
+            appliedStatus: applied.status,
+            runtimeConfig,
+            unavailable: {
+              status: unavailable.status,
+              reason: unavailable.reason
+            }
+          },
+          manual: {
+            initial: manualItem.status,
+            skipped: skippedManual.status,
+            reason: skippedManual.reason
+          },
+          redacted: redactedPlan.items[0].details.value,
+          summary
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "migration-plugin",
+                    "name": "Migration Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-migration.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.migration"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.migration"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "MIGRATION_REASON_MISSING_SOURCE_OR_TARGET",
+            "MIGRATION_REASON_TARGET_EXISTS",
+            "applyMigrationConfigPatchItem",
+            "applyMigrationManualItem",
+            "createMigrationConfigPatchItem",
+            "createMigrationItem",
+            "createMigrationManualItem",
+            "hasMigrationConfigPatchConflict",
+            "markMigrationItemConflict",
+            "markMigrationItemError",
+            "markMigrationItemSkipped",
+            "mergeMigrationConfigValue",
+            "readMigrationConfigPatchDetails",
+            "readMigrationConfigPath",
+            "redactMigrationItem",
+            "redactMigrationPlan",
+            "redactMigrationValue",
+            "summarizeMigrationItems",
+            "writeMigrationConfigPath",
+        ],
+        "scopedSame": True,
+        "constants": ["missing source or target", "target exists"],
+        "itemStatus": ["planned", "conflict", "error", "later"],
+        "config": {
+            "beforePath": "openai/base",
+            "merged": {
+                "a": {"b": 1, "c": 2},
+                "keep": True,
+                "added": "yes",
+            },
+            "afterPath": ["openai/fallback"],
+            "conflict": True,
+            "details": {
+                "path": ["agents", "defaults"],
+                "value": {
+                    "model": {"fallback": ["openai/fallback"]},
+                    "tools": {"code": True},
+                },
+            },
+            "appliedStatus": "migrated",
+            "runtimeConfig": {
+                "agents": {
+                    "defaults": {
+                        "tools": {"web": True, "code": True},
+                        "model": {"fallback": ["openai/fallback"]},
+                    }
+                }
+            },
+            "unavailable": {"status": "error", "reason": "config runtime unavailable"},
+        },
+        "manual": {
+            "initial": "skipped",
+            "skipped": "skipped",
+            "reason": "review manually",
+        },
+        "redacted": {
+            "Authorization": "[redacted]",
+            "token": "[redacted]",
+            "keep": {"source": "env", "id": "OPENAI_API_KEY"},
+        },
+        "summary": {
+            "total": 5,
+            "planned": 1,
+            "migrated": 1,
+            "skipped": 1,
+            "conflicts": 1,
+            "errors": 1,
+            "sensitive": 1,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_migration_runtime_helpers(
     tmp_path,
 ) -> None:

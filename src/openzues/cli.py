@@ -46871,6 +46871,30 @@ function markMigrationItemError(item, reason) {
   return { ...item, status: "error", reason };
 }
 
+function markMigrationItemSkipped(item, reason) {
+  return { ...item, status: "skipped", reason };
+}
+
+function createMigrationItem(params) {
+  return {
+    ...params,
+    status: params.status || "planned",
+  };
+}
+
+function summarizeMigrationItems(items) {
+  const list = Array.isArray(items) ? items : [];
+  return {
+    total: list.length,
+    planned: list.filter((item) => item.status === "planned").length,
+    migrated: list.filter((item) => item.status === "migrated").length,
+    skipped: list.filter((item) => item.status === "skipped").length,
+    conflicts: list.filter((item) => item.status === "conflict").length,
+    errors: list.filter((item) => item.status === "error").length,
+    sensitive: list.filter((item) => item.sensitive).length,
+  };
+}
+
 function isMigrationRecord(value) {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -46934,6 +46958,166 @@ function redactMigrationValueInternal(value, seen) {
 
 function redactMigrationPlan(plan) {
   return redactMigrationValueInternal(plan, new WeakSet());
+}
+
+function redactMigrationValue(value) {
+  return redactMigrationValueInternal(value, new WeakSet());
+}
+
+function redactMigrationItem(item) {
+  return redactMigrationValue(item);
+}
+
+function readMigrationConfigPath(root, pathSegments) {
+  let current = root;
+  for (const segment of Array.isArray(pathSegments) ? pathSegments : []) {
+    if (!isMigrationRecord(current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function mergeMigrationConfigValue(left, right) {
+  if (!isMigrationRecord(left) || !isMigrationRecord(right)) {
+    return cloneMigrationValue(right);
+  }
+  const next = { ...left };
+  for (const [key, value] of Object.entries(right)) {
+    next[key] = mergeMigrationConfigValue(next[key], value);
+  }
+  return next;
+}
+
+function writeMigrationConfigPath(root, pathSegments, value) {
+  if (!isMigrationRecord(root) || !Array.isArray(pathSegments)) {
+    return;
+  }
+  let current = root;
+  for (const segment of pathSegments.slice(0, -1)) {
+    const existing = current[segment];
+    if (!isMigrationRecord(existing)) {
+      current[segment] = {};
+    }
+    current = current[segment];
+  }
+  const leaf = pathSegments.at(-1);
+  if (!leaf) {
+    return;
+  }
+  current[leaf] = mergeMigrationConfigValue(current[leaf], value);
+}
+
+function hasMigrationConfigPatchConflict(config, pathSegments, value) {
+  if (!isMigrationRecord(value)) {
+    return readMigrationConfigPath(config || {}, pathSegments) !== undefined;
+  }
+  const existing = readMigrationConfigPath(config || {}, pathSegments);
+  if (!isMigrationRecord(existing)) {
+    return false;
+  }
+  return Object.keys(value).some((key) => existing[key] !== undefined);
+}
+
+function createMigrationConfigPatchItem(params) {
+  return createMigrationItem({
+    id: params.id,
+    kind: "config",
+    action: "merge",
+    source: params.source,
+    target: params.target,
+    status: params.conflict ? "conflict" : "planned",
+    reason: params.conflict
+      ? params.reason || MIGRATION_REASON_TARGET_EXISTS
+      : undefined,
+    message: params.message,
+    details: { ...(params.details || {}), path: params.path, value: params.value },
+  });
+}
+
+function createMigrationManualItem(params) {
+  return createMigrationItem({
+    id: params.id,
+    kind: "manual",
+    action: "manual",
+    source: params.source,
+    status: "skipped",
+    message: params.message,
+    reason: params.recommendation,
+  });
+}
+
+function readMigrationConfigPatchDetails(item) {
+  const pathValue = item && item.details && item.details.path;
+  if (
+    !Array.isArray(pathValue) ||
+    !pathValue.every((segment) => typeof segment === "string")
+  ) {
+    return undefined;
+  }
+  return {
+    path: pathValue,
+    value: item.details && item.details.value,
+  };
+}
+
+class MigrationConfigPatchConflictError extends Error {
+  constructor(reason) {
+    super(reason);
+    this.name = "MigrationConfigPatchConflictError";
+    this.reason = reason;
+  }
+}
+
+async function applyMigrationConfigPatchItem(ctx, item) {
+  if (item.status !== "planned") {
+    return item;
+  }
+  const details = readMigrationConfigPatchDetails(item);
+  if (!details) {
+    return markMigrationItemError(item, "missing config patch");
+  }
+  const configApi = ctx && ctx.runtime && ctx.runtime.config;
+  if (
+    !configApi ||
+    typeof configApi.current !== "function" ||
+    typeof configApi.mutateConfigFile !== "function"
+  ) {
+    return markMigrationItemError(item, "config runtime unavailable");
+  }
+  try {
+    const currentConfig = configApi.current();
+    if (
+      !(ctx && ctx.overwrite) &&
+      hasMigrationConfigPatchConflict(currentConfig || {}, details.path, details.value)
+    ) {
+      return markMigrationItemConflict(item, MIGRATION_REASON_TARGET_EXISTS);
+    }
+    await configApi.mutateConfigFile({
+      base: "runtime",
+      afterWrite: { mode: "auto" },
+      mutate(draft) {
+        if (
+          !(ctx && ctx.overwrite) &&
+          hasMigrationConfigPatchConflict(draft || {}, details.path, details.value)
+        ) {
+          throw new MigrationConfigPatchConflictError(MIGRATION_REASON_TARGET_EXISTS);
+        }
+        writeMigrationConfigPath(draft, details.path, details.value);
+      },
+    });
+    return { ...item, status: "migrated" };
+  } catch (err) {
+    if (err instanceof MigrationConfigPatchConflictError) {
+      return markMigrationItemConflict(item, err.reason);
+    }
+    return markMigrationItemError(item, err instanceof Error ? err.message : String(err));
+  }
+}
+
+function applyMigrationManualItem(item) {
+  return markMigrationItemSkipped(item, item.reason || "manual follow-up required");
 }
 
 async function migrationPathExists(filePath) {
@@ -47147,6 +47331,28 @@ const migrationRuntime = {
   copyMigrationFileItem,
   withCachedMigrationConfigRuntime,
   writeMigrationReport,
+};
+
+const migrationHelperRuntime = {
+  MIGRATION_REASON_MISSING_SOURCE_OR_TARGET,
+  MIGRATION_REASON_TARGET_EXISTS,
+  applyMigrationConfigPatchItem,
+  applyMigrationManualItem,
+  createMigrationConfigPatchItem,
+  createMigrationItem,
+  createMigrationManualItem,
+  hasMigrationConfigPatchConflict,
+  markMigrationItemConflict,
+  markMigrationItemError,
+  markMigrationItemSkipped,
+  mergeMigrationConfigValue,
+  readMigrationConfigPatchDetails,
+  readMigrationConfigPath,
+  redactMigrationItem,
+  redactMigrationPlan,
+  redactMigrationValue,
+  summarizeMigrationItems,
+  writeMigrationConfigPath,
 };
 
 const providerAuthResultRuntime = {
@@ -71979,6 +72185,7 @@ const genericSdk = new Proxy(
     ...outboundRuntime,
     ...deliveryQueueRuntime,
     ...migrationRuntime,
+    ...migrationHelperRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -73057,6 +73264,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/migration-runtime"
   ) {
     return migrationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/migration" ||
+    request === "@openclaw/plugin-sdk/migration"
+  ) {
+    return migrationHelperRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||
