@@ -41475,6 +41475,94 @@ const webMediaRuntime = {
   optimizeImageToPng,
 };
 
+function resolveOutboundMediaLocalRoots(mediaLocalRoots) {
+  if (mediaLocalRoots === "any") {
+    return mediaLocalRoots;
+  }
+  return Array.isArray(mediaLocalRoots) && mediaLocalRoots.length > 0
+    ? mediaLocalRoots
+    : undefined;
+}
+
+function resolveOutboundMediaAccess(params = {}) {
+  const resolvedLocalRoots = resolveOutboundMediaLocalRoots(
+    (params.mediaAccess && params.mediaAccess.localRoots) || params.mediaLocalRoots,
+  );
+  const localRoots = resolvedLocalRoots === "any" ? undefined : resolvedLocalRoots;
+  const readFile = (params.mediaAccess && params.mediaAccess.readFile) || params.mediaReadFile;
+  const workspaceDir = params.mediaAccess && params.mediaAccess.workspaceDir;
+  if (!localRoots && !readFile && !workspaceDir) {
+    return undefined;
+  }
+  return {
+    ...(localRoots ? { localRoots } : {}),
+    ...(readFile ? { readFile } : {}),
+    ...(workspaceDir ? { workspaceDir } : {}),
+  };
+}
+
+function buildOutboundMediaLoadOptions(params = {}) {
+  const explicitLocalRoots = resolveOutboundMediaLocalRoots(params.mediaLocalRoots);
+  const mediaAccess = resolveOutboundMediaAccess({
+    mediaAccess: params.mediaAccess,
+    mediaLocalRoots: explicitLocalRoots === "any" ? undefined : explicitLocalRoots,
+    mediaReadFile:
+      params.mediaAccess && params.mediaAccess.readFile ? undefined : params.mediaReadFile,
+  });
+  const workspaceDir = (mediaAccess && mediaAccess.workspaceDir) || params.workspaceDir;
+  const readFile = (mediaAccess && mediaAccess.readFile) || params.mediaReadFile;
+  const localRoots = (mediaAccess && mediaAccess.localRoots) || explicitLocalRoots;
+  const common = {
+    ...(params.maxBytes !== undefined ? { maxBytes: params.maxBytes } : {}),
+    ...(params.fetchImpl ? { fetchImpl: params.fetchImpl } : {}),
+    ...(params.proxyUrl ? { proxyUrl: params.proxyUrl } : {}),
+    ...(params.requestInit ? { requestInit: params.requestInit } : {}),
+    ...(params.trustExplicitProxyDns !== undefined
+      ? { trustExplicitProxyDns: params.trustExplicitProxyDns }
+      : {}),
+    ...(params.optimizeImages !== undefined ? { optimizeImages: params.optimizeImages } : {}),
+    ...(workspaceDir ? { workspaceDir } : {}),
+  };
+  if (readFile) {
+    if (!localRoots) {
+      throw new Error(
+        "Host media read requires explicit localRoots. Pass mediaAccess.localRoots " +
+          'or opt in with localRoots: "any".',
+      );
+    }
+    return {
+      ...common,
+      localRoots,
+      readFile,
+      hostReadCapability: true,
+    };
+  }
+  return {
+    ...common,
+    ...(localRoots ? { localRoots } : {}),
+  };
+}
+
+async function loadOutboundMediaFromUrl(mediaUrl, options = {}) {
+  return await loadWebMedia(
+    mediaUrl,
+    buildOutboundMediaLoadOptions({
+      maxBytes: options.maxBytes,
+      mediaAccess: options.mediaAccess,
+      mediaLocalRoots: options.mediaLocalRoots,
+      mediaReadFile: options.mediaReadFile,
+      proxyUrl: options.proxyUrl,
+      fetchImpl: options.fetchImpl,
+      requestInit: options.requestInit,
+      trustExplicitProxyDns: options.trustExplicitProxyDns,
+    }),
+  );
+}
+
+const outboundMediaRuntime = {
+  loadOutboundMediaFromUrl,
+};
+
 const stringNormalizationRuntime = {
   normalizeAtHashSlug,
   normalizeHyphenSlug,
@@ -72049,6 +72137,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/web-media"
   ) {
     return webMediaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/outbound-media" ||
+    request === "@openclaw/plugin-sdk/outbound-media"
+  ) {
+    return outboundMediaRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/error-runtime" ||

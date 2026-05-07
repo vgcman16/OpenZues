@@ -58174,6 +58174,129 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_outbound_media_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    media_root = tmp_path / "outbound-media-root"
+    media_root.mkdir()
+    sample_file = media_root / "sample.csv"
+    sample_file.write_text("name,value\nalpha,1\n", encoding="utf-8", newline="\n")
+    runtime_entry = tmp_path / "runtime-plugin-outbound-media.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const outbound = require("openclaw/plugin-sdk/outbound-media");
+const scopedOutbound = require("@openclaw/plugin-sdk/outbound-media");
+
+const mediaRoot = {json.dumps(str(media_root))};
+const filePath = path.join(mediaRoot, "sample.csv");
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.outbound_media",
+      description: "Use OpenClaw outbound-media SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const loaded = await outbound.loadOutboundMediaFromUrl(filePath, {{
+          maxBytes: 1024,
+          mediaAccess: {{
+            localRoots: [mediaRoot],
+            readFile: async (sourcePath) => await fs.readFile(sourcePath)
+          }}
+        }});
+        let missingRootsError = "";
+        try {{
+          await scopedOutbound.loadOutboundMediaFromUrl(filePath, {{
+            mediaReadFile: async (sourcePath) => await fs.readFile(sourcePath)
+          }});
+        }} catch (error) {{
+          missingRootsError = error.message;
+        }}
+        return {{
+          keys: Object.keys(outbound).sort(),
+          scopedSame:
+            scopedOutbound.loadOutboundMediaFromUrl === outbound.loadOutboundMediaFromUrl,
+          loaded: {{
+            text: loaded.buffer.toString("utf8"),
+            contentType: loaded.contentType,
+            kind: loaded.kind,
+            fileName: loaded.fileName
+          }},
+          missingRootsError
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-outbound-media-plugin",
+                    "name": "Runtime Outbound Media Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-outbound-media-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.outbound_media"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.outbound_media"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["loadOutboundMediaFromUrl"],
+        "scopedSame": True,
+        "loaded": {
+            "text": "name,value\nalpha,1\n",
+            "contentType": "text/csv",
+            "kind": "document",
+            "fileName": "sample.csv",
+        },
+        "missingRootsError": (
+            "Host media read requires explicit localRoots. "
+            'Pass mediaAccess.localRoots or opt in with localRoots: "any".'
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_actions_helpers(
     tmp_path,
 ) -> None:
