@@ -34193,6 +34193,227 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_testing_compat_barrel(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-testing-compat.cjs"
+    runtime_entry.write_text(
+        """
+const testing = require("openclaw/plugin-sdk/testing");
+const scopedTesting = require("@openclaw/plugin-sdk/testing");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.testing_compat",
+      description: "Use OpenClaw testing compatibility SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const capture = testing.createCliRuntimeCapture();
+        capture.defaultRuntime.log("hello");
+        const registry = testing.createEmptyPluginRegistry();
+        testing.addTestHook({
+          registry,
+          pluginId: "demo",
+          hookName: "beforeTool",
+          handler: () => "ok",
+          priority: 2
+        });
+        const outboundPlugin = testing.createOutboundTestPlugin({
+          id: "demo",
+          outbound: { send: async () => ({ ok: true }) }
+        });
+        const captured = testing.capturePluginRegistration({
+          register(api) {
+            api.registerProvider({ id: "provider-demo" });
+            api.registerTool({ name: "tool.demo" });
+          }
+        });
+        const runtime = testing.createRuntimeEnv({ throwOnExit: false });
+        runtime.log("hi");
+        const exitResult = runtime.exit(3);
+        const choice = await testing.selectFirstWizardOption({
+          options: [{ value: "first" }, { value: "second" }]
+        });
+        const flow = testing
+          .createRuntimeTaskFlow()
+          .bindSession({ sessionKey: "agent:main:main" })
+          .createManaged({ flowId: "flow-1", status: "running" });
+        let duplicateError = "";
+        try {
+          testing.assertUniqueValues(["a", "b", "a"], "demo value");
+        } catch (error) {
+          duplicateError = error.message;
+        }
+
+        return {
+          keysPresent: [
+            "BUNDLED_RUNTIME_SIDECAR_PATHS",
+            "addTestHook",
+            "assertUniqueValues",
+            "capturePluginRegistration",
+            "createCliRuntimeCapture",
+            "createEmptyPluginRegistry",
+            "createOutboundTestPlugin",
+            "createRuntimeEnv",
+            "createRuntimeTaskFlow",
+            "isAtLeast",
+            "parseMinHostVersionRequirement",
+            "parseSemver",
+            "selectFirstWizardOption",
+            "withEnv"
+          ].every((key) => Object.prototype.hasOwnProperty.call(testing, key)),
+          scopedSame:
+            scopedTesting.createEmptyPluginRegistry ===
+            testing.createEmptyPluginRegistry,
+          semver: {
+            parsed: testing.parseSemver("v1.2.3"),
+            atLeast: [
+              testing.isAtLeast(
+                { major: 1, minor: 2, patch: 3 },
+                { major: 1, minor: 2, patch: 0 }
+              ),
+              testing.isAtLeast(
+                { major: 1, minor: 1, patch: 9 },
+                { major: 1, minor: 2, patch: 0 }
+              )
+            ],
+            minHost: testing.parseMinHostVersionRequirement(
+              ">=1.2.3-beta+build"
+            ),
+            legacyMinHost: testing.parseMinHostVersionRequirement("1.2.3", {
+              allowLegacyBareSemver: true
+            })
+          },
+          unique: {
+            ok: testing.assertUniqueValues(["a", "b"], "demo value"),
+            duplicateError,
+            sidecarCount: testing.BUNDLED_RUNTIME_SIDECAR_PATHS.length,
+            sidecarFirst: testing.BUNDLED_RUNTIME_SIDECAR_PATHS[0] || null
+          },
+          registry: {
+            typedHooks: registry.typedHooks.map((hook) => ({
+              pluginId: hook.pluginId,
+              hookName: hook.hookName,
+              priority: hook.priority,
+              source: hook.source
+            })),
+            providers: captured.providers.map((provider) => provider.id),
+            tools: captured.tools.map((tool) => tool.name),
+            outboundMeta: {
+              id: outboundPlugin.id,
+              label: outboundPlugin.meta.label,
+              chatTypes: outboundPlugin.capabilities.chatTypes
+            }
+          },
+          runtime: {
+            captureLog: capture.runtimeLogs[0],
+            logCalls: runtime.log.mock.calls.length,
+            exitCalls: runtime.exit.mock.calls.length,
+            exitReturnedUndefined: exitResult === undefined
+          },
+          wizard: { choice },
+          flow
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-testing-compat-plugin",
+                    "name": "Runtime Testing Compat Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-testing-compat.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.testing_compat"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.testing_compat"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keysPresent"] is True
+    assert result["scopedSame"] is True
+    assert result["semver"] == {
+        "parsed": {"major": 1, "minor": 2, "patch": 3},
+        "atLeast": [True, False],
+        "minHost": {"raw": ">=1.2.3-beta+build", "minimumLabel": "1.2.3-beta+build"},
+        "legacyMinHost": {"raw": "1.2.3", "minimumLabel": "1.2.3"},
+    }
+    assert result["unique"]["ok"] == ["a", "b"]
+    assert result["unique"]["duplicateError"] == "Duplicate demo value: a"
+    assert result["unique"]["sidecarCount"] >= 1
+    assert isinstance(result["unique"]["sidecarFirst"], str)
+    assert result["registry"] == {
+        "typedHooks": [
+            {
+                "pluginId": "demo",
+                "hookName": "beforeTool",
+                "priority": 2,
+                "source": "test",
+            }
+        ],
+        "providers": ["provider-demo"],
+        "tools": ["tool.demo"],
+        "outboundMeta": {
+            "id": "demo",
+            "label": "demo",
+            "chatTypes": ["direct"],
+        },
+    }
+    assert result["runtime"] == {
+        "captureLog": "hello",
+        "logCalls": 1,
+        "exitCalls": 1,
+        "exitReturnedUndefined": True,
+    }
+    assert result["wizard"] == {"choice": "first"}
+    assert result["flow"] == {
+        "flowId": "flow-1",
+        "status": "running",
+        "sessionKey": "agent:main:main",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:

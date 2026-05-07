@@ -77030,6 +77030,198 @@ const providerHttpTestProviderHttpRuntime = {
   waitProviderOperationPollInterval: async () => {},
 };
 
+const SEMVER_RE = /(\d+)\.(\d+)\.(\d+)/u;
+
+function parseSemver(version) {
+  if (!version) {
+    return null;
+  }
+  const match = String(version).match(SEMVER_RE);
+  if (!match) {
+    return null;
+  }
+  return {
+    major: Number.parseInt(match[1], 10),
+    minor: Number.parseInt(match[2], 10),
+    patch: Number.parseInt(match[3], 10),
+  };
+}
+
+function isAtLeast(version, minimum) {
+  if (!version || !minimum) {
+    return false;
+  }
+  if (version.major !== minimum.major) {
+    return version.major > minimum.major;
+  }
+  if (version.minor !== minimum.minor) {
+    return version.minor > minimum.minor;
+  }
+  return version.patch >= minimum.patch;
+}
+
+const MIN_HOST_VERSION_FORMAT =
+  "openclaw.install.minHostVersion must use a semver floor in the " +
+  'form ">=x.y.z[-prerelease][+build]"';
+const MIN_HOST_VERSION_RE =
+  /^>=(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/u;
+const LEGACY_MIN_HOST_VERSION_RE = /^(\d+)\.(\d+)\.(\d+)$/u;
+
+function parseMinHostVersionRequirement(raw, options = {}) {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const match =
+    trimmed.match(MIN_HOST_VERSION_RE) ||
+    (options.allowLegacyBareSemver ? trimmed.match(LEGACY_MIN_HOST_VERSION_RE) : null);
+  if (!match) {
+    return null;
+  }
+  const minimumLabel =
+    match.length >= 4 ? `${match[1]}.${match[2]}.${match[3]}` : match[1] || "";
+  if (!parseSemver(minimumLabel)) {
+    return null;
+  }
+  return {
+    raw: trimmed,
+    minimumLabel,
+  };
+}
+
+function validateMinHostVersion(raw) {
+  if (raw === undefined) {
+    return null;
+  }
+  return parseMinHostVersionRequirement(raw) ? null : MIN_HOST_VERSION_FORMAT;
+}
+
+function checkMinHostVersion(params = {}) {
+  if (params.minHostVersion === undefined) {
+    return { ok: true, requirement: null };
+  }
+  const requirement = parseMinHostVersionRequirement(params.minHostVersion, {
+    allowLegacyBareSemver: params.allowLegacyBareSemver,
+  });
+  if (!requirement) {
+    return { ok: false, kind: "invalid", error: MIN_HOST_VERSION_FORMAT };
+  }
+  const currentVersion = normalizeOptionalString(params.currentVersion) || "unknown";
+  const currentSemver = parseSemver(currentVersion);
+  if (!currentSemver) {
+    return { ok: false, kind: "unknown_host_version", requirement };
+  }
+  if (!isAtLeast(currentSemver, parseSemver(requirement.minimumLabel))) {
+    return {
+      ok: false,
+      kind: "incompatible",
+      requirement,
+      currentVersion,
+    };
+  }
+  return { ok: true, requirement };
+}
+
+function assertUniqueValues(values, label) {
+  const seen = new Set();
+  const duplicates = new Set();
+  for (const value of values || []) {
+    if (seen.has(value)) {
+      duplicates.add(value);
+      continue;
+    }
+    seen.add(value);
+  }
+  if (duplicates.size > 0) {
+    throw new Error(`Duplicate ${label}: ${Array.from(duplicates).join(", ")}`);
+  }
+  return values;
+}
+
+const BUNDLED_RUNTIME_SIDECAR_PATHS = assertUniqueValues(
+  [
+    "dist/extensions/acpx/runtime-api.js",
+    "dist/extensions/bluebubbles/runtime-api.js",
+    "dist/extensions/browser/runtime-api.js",
+    "dist/extensions/copilot-proxy/runtime-api.js",
+    "dist/extensions/diffs/runtime-api.js",
+    "dist/extensions/discord/runtime-api.js",
+    "dist/extensions/discord/runtime-setter-api.js",
+    "dist/extensions/feishu/runtime-api.js",
+    "dist/extensions/google/runtime-api.js",
+    "dist/extensions/googlechat/runtime-api.js",
+    "dist/extensions/imessage/runtime-api.js",
+    "dist/extensions/irc/runtime-api.js",
+    "dist/extensions/line/runtime-api.js",
+    "dist/extensions/lmstudio/runtime-api.js",
+    "dist/extensions/lobster/runtime-api.js",
+    "dist/extensions/matrix/helper-api.js",
+    "dist/extensions/matrix/runtime-api.js",
+    "dist/extensions/matrix/runtime-setter-api.js",
+    "dist/extensions/matrix/thread-bindings-runtime.js",
+    "dist/extensions/mattermost/runtime-api.js",
+    "dist/extensions/memory-core/runtime-api.js",
+    "dist/extensions/msteams/runtime-api.js",
+    "dist/extensions/nextcloud-talk/runtime-api.js",
+    "dist/extensions/nostr/runtime-api.js",
+    "dist/extensions/ollama/runtime-api.js",
+    "dist/extensions/open-prose/runtime-api.js",
+    "dist/extensions/qqbot/runtime-api.js",
+    "dist/extensions/signal/runtime-api.js",
+    "dist/extensions/slack/runtime-api.js",
+    "dist/extensions/slack/runtime-setter-api.js",
+    "dist/extensions/telegram/runtime-api.js",
+    "dist/extensions/telegram/runtime-setter-api.js",
+    "dist/extensions/tlon/runtime-api.js",
+    "dist/extensions/tokenjuice/runtime-api.js",
+    "dist/extensions/twitch/runtime-api.js",
+    "dist/extensions/voice-call/runtime-api.js",
+    "dist/extensions/webhooks/runtime-api.js",
+    "dist/extensions/whatsapp/light-runtime-api.js",
+    "dist/extensions/whatsapp/runtime-api.js",
+    "dist/extensions/zai/runtime-api.js",
+    "dist/extensions/zalo/runtime-api.js",
+    "dist/extensions/zalouser/runtime-api.js",
+  ],
+  "bundled runtime sidecar path",
+);
+
+async function callGateway(params = {}) {
+  return {
+    ok: false,
+    error: "gateway calls are unavailable inside the native plugin testing shim",
+    method: params.method,
+  };
+}
+
+const testingRuntime = {
+  BUNDLED_RUNTIME_SIDECAR_PATHS,
+  MIN_HOST_VERSION_FORMAT,
+  __testing: acpRuntimeTesting,
+  acpManagerTesting: acpRuntimeTesting,
+  assertUniqueValues,
+  callGateway,
+  checkMinHostVersion,
+  isAtLeast,
+  parseMinHostVersionRequirement,
+  parseSemver,
+  validateMinHostVersion,
+  ...channelContractTestingRuntime,
+  ...channelTargetTestingRuntime,
+  ...channelTestHelpersRuntime,
+  ...pluginTestApiRuntime,
+  ...pluginTestContractsRuntime,
+  ...pluginTestRuntimeRuntime,
+  ...providerTestContractsRuntime,
+  ...providerHttpTestMocksRuntime,
+  ...testEnvRuntime,
+  ...testFixturesRuntime,
+  ...testNodeMocksRuntime,
+};
+
 const runtimeSecretResolutionRuntime = {
   applyResolvedAssignments,
   createResolverContext,
@@ -80586,6 +80778,7 @@ const genericSdk = new Proxy(
     ...providerWebSearchRuntime,
     ...providerHttpRuntime,
     ...providerHttpTestMocksRuntime,
+    ...testingRuntime,
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
     ...fileLockRuntime,
@@ -82638,6 +82831,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/test-node-mocks"
   ) {
     return testNodeMocksRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/testing" ||
+    request === "@openclaw/plugin-sdk/testing"
+  ) {
+    return testingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||
