@@ -65,6 +65,11 @@ The imported `image-generation-runtime` SDK helper coverage from
 `src/plugin-sdk/image-generation-runtime.ts` and
 `src/image-generation/runtime.ts` is verified in `719fcee8` and is counted
 with the plugin/extension system row above.
+The imported `video-generation-runtime` SDK helper coverage from
+`src/plugin-sdk/video-generation-runtime.ts`, `src/video-generation/runtime.ts`,
+`src/video-generation/normalization.ts`, `src/video-generation/capabilities.ts`,
+and `src/video-generation/duration-support.ts` is verified in `2cf18309` and
+is counted with the plugin/extension system row above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -187,6 +192,10 @@ logging, and provider env-var helpers is checkpointed in `a17da4e3`.
 `src/media-generation/runtime-shared.ts` are checkpointed in `f475d85a`.
 `image-generation-runtime` from `src/plugin-sdk/image-generation-runtime.ts`
 and `src/image-generation/runtime.ts` is checkpointed in `719fcee8`.
+`video-generation-runtime` from `src/plugin-sdk/video-generation-runtime.ts`,
+`src/video-generation/runtime.ts`, `src/video-generation/normalization.ts`,
+`src/video-generation/capabilities.ts`, and
+`src/video-generation/duration-support.ts` is checkpointed in `2cf18309`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
