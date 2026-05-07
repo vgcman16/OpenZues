@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~95.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~95.8% overall, with a reasonable
   band of ~80-96%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9216,6 +9216,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Source/test checkpointed in `9a90555e`; browser-support aggregation and
   browser node/runtime helper surfaces remain nearby plugin-runtime queue
   heads.
+- Current queue-head adjustment: imported plugin SDK `browser-maintenance`
+  now exposes the source-backed exact helper subset for scoped and unscoped
+  imports: `movePathToTrash` plus no-session no-op and unavailable-warning
+  `closeTrackedBrowserTabsForSessions` behavior. Source/test checkpointed in
+  `ce39d8c6`; browser-support aggregation and browser node/runtime helper
+  surfaces remain nearby plugin-runtime queue heads.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

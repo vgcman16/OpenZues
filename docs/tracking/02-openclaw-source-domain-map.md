@@ -124,8 +124,9 @@ imported `browser-config-runtime` helper coverage from
 `src/config/paths.ts`, `src/plugins/config-state.ts`, and
 `src/utils/boolean.ts` is verified in `7a4ef6f0`, and imported
 `browser-trash` exact helper coverage from `src/plugin-sdk/browser-trash.ts`
-is verified in `9a90555e`. All are counted with the plugin/extension system
-row above.
+is verified in `9a90555e`, and imported `browser-maintenance` exact helper
+coverage from `src/plugin-sdk/browser-maintenance.ts` is verified in
+`ce39d8c6`. All are counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
