@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK reply-dispatch-runtime facade slice is checkpointed in
-`c587ef3e`.
+The imported plugin SDK inbound-reply-dispatch facade slice is checkpointed in
+`25231852`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,7 +62,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Reply dispatch runtime SDK shim checkpointed in `c587ef3e` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `inbound-reply-dispatch` alias |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Inbound reply dispatch SDK shim checkpointed in `25231852` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `interactive-runtime` alias |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
@@ -5824,6 +5824,29 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     (`1 passed`), adjacent reply dispatch proof (`4 passed, 1096 deselected`),
     adjacent imported-plugin proof (`288 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00278` Imported inbound-reply-dispatch facade shim
+  - Source: `openclaw-main/src/plugin-sdk/inbound-reply-dispatch.ts`,
+    `openclaw-main/src/channels/turn/kernel.ts`,
+    `openclaw-main/src/channels/turn/dispatch-result.ts`,
+    `openclaw-main/src/auto-reply/dispatch.ts`, and
+    `openclaw-main/src/auto-reply/reply/dispatch-from-config.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `inbound-reply-dispatch` and receive the exact channel-turn
+    orchestration facade for prepared/full inbound turns, dispatch-count
+    helpers, settled dispatch-from-config callbacks, dispatch-base assembly,
+    record then dispatch ordering, native reply dispatch delegation, and
+    normalized outbound delivery.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `25231852`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused inbound-reply-dispatch proof
+    (`1 passed`), adjacent inbound/reply dispatch proof (`4 passed, 1097
+    deselected`), adjacent imported-plugin proof (`289 passed, 812
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001SE` Imported account-core/account-resolution shim
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
