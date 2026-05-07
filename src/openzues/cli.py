@@ -41998,6 +41998,604 @@ const realtimeTranscriptionRuntime = {
   normalizeRealtimeTranscriptionProviderId,
 };
 
+const REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ = {
+  encoding: "g711_ulaw",
+  sampleRateHz: 8000,
+  channels: 1,
+};
+const REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ = {
+  encoding: "pcm16",
+  sampleRateHz: 24000,
+  channels: 1,
+};
+const REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME = "openclaw_agent_consult";
+const REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES = [
+  "safe-read-only",
+  "owner",
+  "none",
+];
+const REALTIME_VOICE_AGENT_CONSULT_TOOL = {
+  type: "function",
+  name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+  description:
+    "Ask the full OpenClaw agent for deeper reasoning, current information, " +
+    "or tool-backed help before speaking.",
+  parameters: {
+    type: "object",
+    properties: {
+      question: {
+        type: "string",
+        description: "The concrete question or task the user asked.",
+      },
+      context: {
+        type: "string",
+        description: "Optional relevant context or transcript summary.",
+      },
+      responseStyle: {
+        type: "string",
+        description: "Optional style hint for the spoken answer.",
+      },
+    },
+    required: ["question"],
+  },
+};
+const REALTIME_VOICE_SAFE_READ_ONLY_TOOLS = [
+  "read",
+  "web_search",
+  "web_fetch",
+  "x_search",
+  "memory_search",
+  "memory_get",
+];
+const REALTIME_VOICE_TELEPHONY_SAMPLE_RATE = 8000;
+const REALTIME_VOICE_RESAMPLE_FILTER_TAPS = 31;
+const REALTIME_VOICE_RESAMPLE_CUTOFF_GUARD = 0.94;
+
+function normalizeRealtimeVoiceProviderId(providerId) {
+  return normalizeCapabilityProviderId(providerId);
+}
+
+function listRealtimeVoiceProviders(cfg) {
+  return [
+    ...buildCapabilityProviderMaps(
+      resolvePluginCapabilityProviders({
+        key: "realtimeVoiceProviders",
+        cfg,
+      }),
+      normalizeRealtimeVoiceProviderId,
+    ).canonical.values(),
+  ];
+}
+
+function getRealtimeVoiceProvider(providerId, cfg) {
+  const normalized = normalizeRealtimeVoiceProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  return buildCapabilityProviderMaps(
+    listRealtimeVoiceProviders(cfg),
+    normalizeRealtimeVoiceProviderId,
+  ).aliases.get(normalized);
+}
+
+function canonicalizeRealtimeVoiceProviderId(providerId, cfg) {
+  const normalized = normalizeRealtimeVoiceProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const provider = getRealtimeVoiceProvider(normalized, cfg);
+  return (provider && provider.id) || normalized;
+}
+
+function resolveConfiguredRealtimeVoiceProvider(params = {}) {
+  const cfgForResolve = params.cfgForResolve || params.cfg || {};
+  const providers = params.providers || listRealtimeVoiceProviders(params.cfg);
+  const resolution = resolveConfiguredCapabilityProvider({
+    configuredProviderId: params.configuredProviderId,
+    providerConfigs: params.providerConfigs,
+    cfg: params.cfg,
+    cfgForResolve,
+    getConfiguredProvider: (providerId) =>
+      params.providers
+        ? params.providers.find((entry) => entry && entry.id === providerId)
+        : getRealtimeVoiceProvider(providerId, params.cfg),
+    listProviders: () => providers,
+    resolveProviderConfig: ({ provider, cfg, rawConfig }) => {
+      const rawConfigWithModel =
+        params.defaultModel && rawConfig.model === undefined
+          ? { ...rawConfig, model: params.defaultModel }
+          : rawConfig;
+      if (provider && typeof provider.resolveConfig === "function") {
+        return provider.resolveConfig({ cfg, rawConfig: rawConfigWithModel });
+      }
+      return rawConfigWithModel;
+    },
+    isProviderConfigured: ({ provider, cfg, providerConfig }) =>
+      provider.isConfigured({ cfg, providerConfig }),
+  });
+  if (!resolution.ok && resolution.code === "missing-configured-provider") {
+    throw new Error(
+      `Realtime voice provider "${resolution.configuredProviderId}" is not registered`,
+    );
+  }
+  if (!resolution.ok && resolution.code === "no-registered-provider") {
+    throw new Error(
+      params.noRegisteredProviderMessage || "No realtime voice provider registered",
+    );
+  }
+  if (!resolution.ok) {
+    throw new Error(`Realtime voice provider "${resolution.provider && resolution.provider.id}" ` +
+      "is not configured");
+  }
+  return {
+    provider: resolution.provider,
+    providerConfig: resolution.providerConfig,
+  };
+}
+
+function buildRealtimeVoiceAgentConsultWorkingResponse(audienceLabel = "person") {
+  return {
+    status: "working",
+    tool: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+    message:
+      `Tell the ${audienceLabel} briefly that you are checking, then wait for the ` +
+      "final OpenClaw result before answering with the actual result.",
+  };
+}
+
+function isRealtimeVoiceAgentConsultToolPolicy(value) {
+  return (
+    typeof value === "string" && REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES.includes(value)
+  );
+}
+
+function resolveRealtimeVoiceAgentConsultToolPolicy(value, fallback) {
+  const normalized = normalizeOptionalLowercaseString(value);
+  return isRealtimeVoiceAgentConsultToolPolicy(normalized) ? normalized : fallback;
+}
+
+function resolveRealtimeVoiceAgentConsultTools(policy, customTools = []) {
+  const tools = new Map();
+  if (policy !== "none") {
+    tools.set(REALTIME_VOICE_AGENT_CONSULT_TOOL.name, REALTIME_VOICE_AGENT_CONSULT_TOOL);
+  }
+  for (const tool of customTools || []) {
+    if (tool && tool.name && !tools.has(tool.name)) {
+      tools.set(tool.name, tool);
+    }
+  }
+  return [...tools.values()];
+}
+
+function resolveRealtimeVoiceAgentConsultToolsAllow(policy) {
+  if (policy === "owner") {
+    return undefined;
+  }
+  if (policy === "safe-read-only") {
+    return [...REALTIME_VOICE_SAFE_READ_ONLY_TOOLS];
+  }
+  return [];
+}
+
+function readRealtimeVoiceConsultStringArg(args, key) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return undefined;
+  }
+  return normalizeOptionalString(args[key]);
+}
+
+function parseRealtimeVoiceAgentConsultArgs(args) {
+  const question = readRealtimeVoiceConsultStringArg(args, "question");
+  if (!question) {
+    throw new Error("question required");
+  }
+  return {
+    question,
+    context: readRealtimeVoiceConsultStringArg(args, "context"),
+    responseStyle: readRealtimeVoiceConsultStringArg(args, "responseStyle"),
+  };
+}
+
+function buildRealtimeVoiceAgentConsultChatMessage(args) {
+  const parsed = parseRealtimeVoiceAgentConsultArgs(args);
+  return [
+    parsed.question,
+    parsed.context ? `Context:\n${parsed.context}` : undefined,
+    parsed.responseStyle ? `Spoken style:\n${parsed.responseStyle}` : undefined,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function buildRealtimeVoiceAgentConsultPrompt(params) {
+  const parsed = parseRealtimeVoiceAgentConsultArgs(params.args);
+  const assistantLabel = params.assistantLabel || "Agent";
+  const questionSourceLabel = params.questionSourceLabel || params.userLabel.toLowerCase();
+  const transcript = (params.transcript || [])
+    .slice(-12)
+    .map((entry) => {
+      const label = entry.role === "assistant" ? assistantLabel : params.userLabel;
+      return `${label}: ${entry.text}`;
+    })
+    .join("\n");
+  return [
+    `You are helping an OpenClaw realtime voice agent during ${params.surface}.`,
+    `Answer the ${questionSourceLabel}'s question with the strongest useful reasoning ` +
+      "and available tools.",
+    "Return only the concise answer the realtime voice agent should speak next.",
+    "Do not include markdown, citations unless needed, tool logs, or private reasoning.",
+    parsed.responseStyle ? `Spoken style: ${parsed.responseStyle}` : undefined,
+    transcript ? `Recent transcript:\n${transcript}` : undefined,
+    parsed.context ? `Additional context:\n${parsed.context}` : undefined,
+    `Question:\n${parsed.question}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function collectRealtimeVoiceAgentConsultVisibleText(payloads) {
+  const chunks = [];
+  for (const payload of payloads || []) {
+    if (!payload || payload.isError || payload.isReasoning) {
+      continue;
+    }
+    const text = normalizeOptionalString(payload.text);
+    if (text) {
+      chunks.push(text);
+    }
+  }
+  return chunks.length > 0 ? chunks.join("\n\n").trim() : null;
+}
+
+function resolveRealtimeVoiceAgentSandboxSessionKey(agentId, sessionKey) {
+  const trimmed = String(sessionKey || "").trim();
+  if (trimmed.toLowerCase().startsWith("agent:")) {
+    return trimmed;
+  }
+  return `agent:${agentId}:${trimmed}`;
+}
+
+async function consultRealtimeVoiceAgent(params) {
+  const agentId = params.agentId || "main";
+  const agentRuntime = params.agentRuntime;
+  const agentDir = agentRuntime.resolveAgentDir(params.cfg, agentId);
+  const workspaceDir = agentRuntime.resolveAgentWorkspaceDir(params.cfg, agentId);
+  await agentRuntime.ensureAgentWorkspace({ dir: workspaceDir });
+  const storePath = agentRuntime.session.resolveStorePath(
+    params.cfg && params.cfg.session && params.cfg.session.store,
+    { agentId },
+  );
+  const sessionStore = agentRuntime.session.loadSessionStore(storePath) || {};
+  const existing = sessionStore[params.sessionKey] || {};
+  const sessionId =
+    normalizeOptionalString(existing.sessionId) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
+  sessionStore[params.sessionKey] = {
+    ...existing,
+    sessionId,
+    updatedAt: Date.now(),
+  };
+  await agentRuntime.session.saveSessionStore(storePath, sessionStore);
+  const sessionFile = agentRuntime.session.resolveSessionFilePath(
+    sessionId,
+    sessionStore[params.sessionKey],
+    { agentId },
+  );
+  const result = await agentRuntime.runEmbeddedPiAgent({
+    sessionId,
+    sessionKey: params.sessionKey,
+    sandboxSessionKey: resolveRealtimeVoiceAgentSandboxSessionKey(agentId, params.sessionKey),
+    agentId,
+    messageProvider: params.messageProvider,
+    sessionFile,
+    workspaceDir,
+    config: params.cfg,
+    prompt: buildRealtimeVoiceAgentConsultPrompt({
+      args: params.args,
+      transcript: params.transcript,
+      surface: params.surface,
+      userLabel: params.userLabel,
+      assistantLabel: params.assistantLabel,
+      questionSourceLabel: params.questionSourceLabel,
+    }),
+    provider: params.provider,
+    model: params.model,
+    thinkLevel: params.thinkLevel || "high",
+    verboseLevel: "off",
+    reasoningLevel: "off",
+    toolResultFormat: "plain",
+    toolsAllow: params.toolsAllow,
+    timeoutMs:
+      params.timeoutMs ||
+      agentRuntime.resolveAgentTimeoutMs({
+        cfg: params.cfg,
+      }),
+    runId: `${params.runIdPrefix}:${Date.now()}`,
+    lane: params.lane,
+    extraSystemPrompt:
+      params.extraSystemPrompt ||
+      "You are a behind-the-scenes consultant for a live voice agent. " +
+        "Be accurate, brief, and speakable.",
+    agentDir,
+  });
+  const text = collectRealtimeVoiceAgentConsultVisibleText(result.payloads || []);
+  if (!text) {
+    const reason = result.meta && result.meta.aborted
+      ? "agent run aborted"
+      : "agent returned no speakable text";
+    if (params.logger && typeof params.logger.warn === "function") {
+      params.logger.warn(`[realtime-voice] agent consult produced no answer: ${reason}`);
+    }
+    return {
+      text: params.fallbackText || "I need a moment to verify that before answering.",
+    };
+  }
+  return { text };
+}
+
+function createRealtimeVoiceBridgeSession(params) {
+  let bridge;
+  const requireBridge = () => {
+    if (!bridge) {
+      throw new Error("Realtime voice bridge is not ready");
+    }
+    return bridge;
+  };
+  const session = {
+    get bridge() {
+      return requireBridge();
+    },
+    acknowledgeMark() {
+      return requireBridge().acknowledgeMark();
+    },
+    close() {
+      return requireBridge().close();
+    },
+    connect() {
+      return requireBridge().connect();
+    },
+    sendAudio(audio) {
+      return requireBridge().sendAudio(audio);
+    },
+    sendUserMessage(text) {
+      const activeBridge = requireBridge();
+      if (typeof activeBridge.sendUserMessage === "function") {
+        return activeBridge.sendUserMessage(text);
+      }
+      return undefined;
+    },
+    handleBargeIn(options) {
+      const activeBridge = requireBridge();
+      if (typeof activeBridge.handleBargeIn === "function") {
+        return activeBridge.handleBargeIn(options);
+      }
+      return undefined;
+    },
+    setMediaTimestamp(ts) {
+      return requireBridge().setMediaTimestamp(ts);
+    },
+    submitToolResult(callId, result, options) {
+      return requireBridge().submitToolResult(callId, result, options);
+    },
+    triggerGreeting(instructions) {
+      const activeBridge = requireBridge();
+      if (typeof activeBridge.triggerGreeting === "function") {
+        return activeBridge.triggerGreeting(instructions);
+      }
+      return undefined;
+    },
+  };
+  const canSendAudio = () =>
+    params.audioSink && typeof params.audioSink.isOpen === "function"
+      ? params.audioSink.isOpen()
+      : true;
+  bridge = params.provider.createBridge({
+    providerConfig: params.providerConfig,
+    audioFormat: params.audioFormat,
+    instructions: params.instructions,
+    tools: params.tools,
+    onAudio(audio) {
+      if (canSendAudio()) {
+        params.audioSink.sendAudio(audio);
+      }
+    },
+    onClearAudio() {
+      if (canSendAudio() && params.audioSink && typeof params.audioSink.clearAudio === "function") {
+        params.audioSink.clearAudio();
+      }
+    },
+    onMark(markName) {
+      if (!canSendAudio() || params.markStrategy === "ignore") {
+        return;
+      }
+      if (params.markStrategy === "ack-immediately") {
+        if (bridge && typeof bridge.acknowledgeMark === "function") {
+          bridge.acknowledgeMark();
+        }
+        return;
+      }
+      if (
+        (params.markStrategy === undefined || params.markStrategy === "transport") &&
+        params.audioSink &&
+        typeof params.audioSink.sendMark === "function"
+      ) {
+        params.audioSink.sendMark(markName);
+      }
+    },
+    onTranscript: params.onTranscript,
+    onToolCall(event) {
+      if (!bridge || typeof params.onToolCall !== "function") {
+        return;
+      }
+      params.onToolCall(event, session);
+    },
+    onReady() {
+      if (!bridge) {
+        return;
+      }
+      if (params.triggerGreetingOnReady && typeof bridge.triggerGreeting === "function") {
+        bridge.triggerGreeting(params.initialGreetingInstructions);
+      }
+      if (typeof params.onReady === "function") {
+        params.onReady(session);
+      }
+    },
+    onError: params.onError,
+    onClose: params.onClose,
+  });
+  return session;
+}
+
+function realtimeVoiceClamp16(value) {
+  return Math.max(-32768, Math.min(32767, value));
+}
+
+function realtimeVoiceSinc(x) {
+  if (x === 0) {
+    return 1;
+  }
+  return Math.sin(Math.PI * x) / (Math.PI * x);
+}
+
+function sampleRealtimeVoiceBandlimited(input, inputSamples, srcPos, cutoffCyclesPerSample) {
+  const half = Math.floor(REALTIME_VOICE_RESAMPLE_FILTER_TAPS / 2);
+  const center = Math.floor(srcPos);
+  let weighted = 0;
+  let weightSum = 0;
+  for (let tap = -half; tap <= half; tap += 1) {
+    const sampleIndex = center + tap;
+    if (sampleIndex < 0 || sampleIndex >= inputSamples) {
+      continue;
+    }
+    const distance = sampleIndex - srcPos;
+    const lowPass =
+      2 * cutoffCyclesPerSample * realtimeVoiceSinc(2 * cutoffCyclesPerSample * distance);
+    const tapIndex = tap + half;
+    const window =
+      0.5 -
+      0.5 * Math.cos((2 * Math.PI * tapIndex) / (REALTIME_VOICE_RESAMPLE_FILTER_TAPS - 1));
+    const coeff = lowPass * window;
+    weighted += input.readInt16LE(sampleIndex * 2) * coeff;
+    weightSum += coeff;
+  }
+  if (weightSum === 0) {
+    const nearest = Math.max(0, Math.min(inputSamples - 1, Math.round(srcPos)));
+    return input.readInt16LE(nearest * 2);
+  }
+  return weighted / weightSum;
+}
+
+function resamplePcm(input, inputSampleRate, outputSampleRate) {
+  if (inputSampleRate === outputSampleRate) {
+    return input;
+  }
+  const inputSamples = Math.floor(input.length / 2);
+  if (inputSamples === 0) {
+    return Buffer.alloc(0);
+  }
+  const ratio = inputSampleRate / outputSampleRate;
+  const outputSamples = Math.floor(inputSamples / ratio);
+  const output = Buffer.alloc(outputSamples * 2);
+  const maxCutoff = 0.5;
+  const downsampleCutoff = ratio > 1 ? maxCutoff / ratio : maxCutoff;
+  const cutoffCyclesPerSample = Math.max(
+    0.01,
+    downsampleCutoff * REALTIME_VOICE_RESAMPLE_CUTOFF_GUARD,
+  );
+  for (let index = 0; index < outputSamples; index += 1) {
+    const sample = Math.round(
+      sampleRealtimeVoiceBandlimited(input, inputSamples, index * ratio, cutoffCyclesPerSample),
+    );
+    output.writeInt16LE(realtimeVoiceClamp16(sample), index * 2);
+  }
+  return output;
+}
+
+function resamplePcmTo8k(input, inputSampleRate) {
+  return resamplePcm(input, inputSampleRate, REALTIME_VOICE_TELEPHONY_SAMPLE_RATE);
+}
+
+function realtimeVoiceLinearToMulaw(sample) {
+  const BIAS = 132;
+  const CLIP = 32635;
+  const sign = sample < 0 ? 0x80 : 0;
+  let magnitude = sample < 0 ? -sample : sample;
+  if (magnitude > CLIP) {
+    magnitude = CLIP;
+  }
+  magnitude += BIAS;
+  let exponent = 7;
+  for (let expMask = 0x4000; (magnitude & expMask) === 0 && exponent > 0; exponent -= 1) {
+    expMask >>= 1;
+  }
+  const mantissa = (magnitude >> (exponent + 3)) & 0x0f;
+  return ~(sign | (exponent << 4) | mantissa) & 0xff;
+}
+
+function realtimeVoiceMulawToLinear(value) {
+  const muLaw = ~value & 0xff;
+  const sign = muLaw & 0x80;
+  const exponent = (muLaw >> 4) & 0x07;
+  const mantissa = muLaw & 0x0f;
+  let sample = ((mantissa << 3) + 132) << exponent;
+  sample -= 132;
+  return sign ? -sample : sample;
+}
+
+function pcmToMulaw(pcm) {
+  const samples = Math.floor(pcm.length / 2);
+  const mulaw = Buffer.alloc(samples);
+  for (let index = 0; index < samples; index += 1) {
+    const sample = pcm.readInt16LE(index * 2);
+    mulaw[index] = realtimeVoiceLinearToMulaw(sample);
+  }
+  return mulaw;
+}
+
+function mulawToPcm(mulaw) {
+  const pcm = Buffer.alloc(mulaw.length * 2);
+  for (let index = 0; index < mulaw.length; index += 1) {
+    pcm.writeInt16LE(
+      realtimeVoiceClamp16(realtimeVoiceMulawToLinear(mulaw[index] || 0)),
+      index * 2,
+    );
+  }
+  return pcm;
+}
+
+function convertPcmToMulaw8k(pcm, inputSampleRate) {
+  return pcmToMulaw(resamplePcmTo8k(pcm, inputSampleRate));
+}
+
+const realtimeVoiceRuntime = {
+  REALTIME_VOICE_AGENT_CONSULT_TOOL,
+  REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+  REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES,
+  REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ,
+  REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
+  buildRealtimeVoiceAgentConsultChatMessage,
+  buildRealtimeVoiceAgentConsultPrompt,
+  buildRealtimeVoiceAgentConsultWorkingResponse,
+  canonicalizeRealtimeVoiceProviderId,
+  collectRealtimeVoiceAgentConsultVisibleText,
+  consultRealtimeVoiceAgent,
+  convertPcmToMulaw8k,
+  createRealtimeVoiceBridgeSession,
+  getRealtimeVoiceProvider,
+  isRealtimeVoiceAgentConsultToolPolicy,
+  listRealtimeVoiceProviders,
+  mulawToPcm,
+  normalizeRealtimeVoiceProviderId,
+  parseRealtimeVoiceAgentConsultArgs,
+  pcmToMulaw,
+  resamplePcm,
+  resamplePcmTo8k,
+  resolveConfiguredRealtimeVoiceProvider,
+  resolveRealtimeVoiceAgentConsultToolPolicy,
+  resolveRealtimeVoiceAgentConsultTools,
+  resolveRealtimeVoiceAgentConsultToolsAllow,
+};
+
 const videoGenerationCoreRuntime = {
   buildNoCapabilityModelConfiguredMessage,
   createSubsystemLogger,
@@ -54774,6 +55372,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/realtime-transcription"
   ) {
     return realtimeTranscriptionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/realtime-voice" ||
+    request === "@openclaw/plugin-sdk/realtime-voice"
+  ) {
+    return realtimeVoiceRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/music-generation-core" ||

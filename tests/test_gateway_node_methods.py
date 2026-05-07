@@ -14966,6 +14966,385 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_realtime_voice_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-realtime-voice.cjs"
+    runtime_entry.write_text(
+        """
+const voice = require("openclaw/plugin-sdk/realtime-voice");
+const scopedVoice = require("@openclaw/plugin-sdk/realtime-voice");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.realtime_voice",
+      description: "Use OpenClaw realtime-voice SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const providers = [
+          {
+            id: "first",
+            aliases: ["one"],
+            autoSelectOrder: 1,
+            isConfigured: () => false,
+            createBridge() {
+              throw new Error("unused");
+            }
+          },
+          {
+            id: "second",
+            aliases: ["two"],
+            autoSelectOrder: 2,
+            resolveConfig: ({ rawConfig }) => ({ ...rawConfig, resolved: true }),
+            isConfigured: ({ providerConfig }) => providerConfig.enabled === true,
+            createBridge() {
+              throw new Error("unused");
+            }
+          }
+        ];
+        const resolved = voice.resolveConfiguredRealtimeVoiceProvider({
+          cfg: {},
+          providers,
+          providerConfigs: {
+            second: { enabled: true }
+          },
+          defaultModel: "gpt-realtime"
+        });
+        const explicit = voice.resolveConfiguredRealtimeVoiceProvider({
+          cfg: {},
+          configuredProviderId: "second",
+          providers,
+          providerConfigs: {
+            second: { enabled: true, model: "custom-realtime" }
+          },
+          defaultModel: "gpt-realtime"
+        });
+        let noProviderMessage = "";
+        try {
+          voice.resolveConfiguredRealtimeVoiceProvider({
+            cfg: {},
+            providers: [],
+            noRegisteredProviderMessage: "No configured realtime voice provider registered"
+          });
+        } catch (err) {
+          noProviderMessage = String(err && err.message ? err.message : err);
+        }
+
+        const events = [];
+        let callbacks = null;
+        let session = null;
+        const bridge = {
+          acknowledgeMark() {
+            events.push("ack");
+          },
+          async connect() {
+            events.push("connect");
+          },
+          sendAudio(audio) {
+            events.push(`bridge-audio:${audio.toString("utf8")}`);
+          },
+          setMediaTimestamp(ts) {
+            events.push(`ts:${ts}`);
+          },
+          sendUserMessage(text) {
+            events.push(`user:${text}`);
+          },
+          handleBargeIn(options) {
+            events.push(`barge:${Boolean(options && options.audioPlaybackActive)}`);
+          },
+          submitToolResult(callId, result, options) {
+            events.push(`tool-result:${callId}:${Boolean(options && options.willContinue)}`);
+          },
+          triggerGreeting(instructions) {
+            events.push(`greeting:${instructions}`);
+          },
+          close() {
+            events.push("close");
+          },
+          isConnected() {
+            return true;
+          }
+        };
+        const bridgeProvider = {
+          id: "bridge",
+          isConfigured: () => true,
+          createBridge(request) {
+            callbacks = request;
+            return bridge;
+          }
+        };
+        session = voice.createRealtimeVoiceBridgeSession({
+          provider: bridgeProvider,
+          providerConfig: { token: "secret" },
+          audioFormat: voice.REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
+          audioSink: {
+            isOpen: () => true,
+            sendAudio(audio) {
+              events.push(`sink-audio:${audio.toString("hex")}`);
+            },
+            clearAudio() {
+              events.push("clear");
+            },
+            sendMark(markName) {
+              events.push(`mark:${markName}`);
+            }
+          },
+          markStrategy: "ack-immediately",
+          triggerGreetingOnReady: true,
+          initialGreetingInstructions: "Say hello",
+          onReady(activeSession) {
+            events.push(`ready:${activeSession === session}`);
+          },
+          onToolCall(event, activeSession) {
+            events.push(`tool:${event.name}:${activeSession === session}`);
+          }
+        });
+        callbacks.onAudio(Buffer.from([1, 2]));
+        callbacks.onClearAudio();
+        callbacks.onMark("m1");
+        callbacks.onReady();
+        callbacks.onToolCall({ itemId: "item-1", callId: "call-1", name: "lookup", args: {} });
+        session.sendAudio(Buffer.from("input"));
+        session.sendUserMessage("hello");
+        session.handleBargeIn({ audioPlaybackActive: true });
+        session.setMediaTimestamp(42);
+        session.submitToolResult("call-1", { ok: true }, { willContinue: true });
+        session.triggerGreeting("manual");
+        session.close();
+
+        const pcm = Buffer.alloc(4);
+        pcm.writeInt16LE(0, 0);
+        pcm.writeInt16LE(1000, 2);
+        const mulaw = voice.pcmToMulaw(pcm);
+        const roundtrip = voice.mulawToPcm(mulaw);
+
+        return {
+          keys: Object.keys(voice).sort(),
+          scopedHasBridge: typeof scopedVoice.createRealtimeVoiceBridgeSession,
+          constants: {
+            pcm: voice.REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
+            mulaw: voice.REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ
+          },
+          registry: {
+            normalized: voice.normalizeRealtimeVoiceProviderId(" Two "),
+            listed: voice.listRealtimeVoiceProviders({ realtimeVoiceProviders: providers }).map(
+              (entry) => entry.id
+            ),
+            disabled: voice.listRealtimeVoiceProviders({
+              plugins: { enabled: false },
+              realtimeVoiceProviders: providers
+            }).length,
+            getAlias: voice.getRealtimeVoiceProvider(
+              "one",
+              { realtimeVoiceProviders: providers }
+            ).id,
+            canonical: voice.canonicalizeRealtimeVoiceProviderId(
+              "two",
+              { realtimeVoiceProviders: providers }
+            )
+          },
+          resolved: {
+            provider: resolved.provider.id,
+            config: resolved.providerConfig,
+            explicitConfig: explicit.providerConfig,
+            noProviderMessage
+          },
+          consult: {
+            name: voice.REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+            policy: voice.resolveRealtimeVoiceAgentConsultToolPolicy(" OWNER ", "safe-read-only"),
+            allowReadOnly: voice.resolveRealtimeVoiceAgentConsultToolsAllow("safe-read-only"),
+            allowOwner: voice.resolveRealtimeVoiceAgentConsultToolsAllow("owner") ?? null,
+            allowNone: voice.resolveRealtimeVoiceAgentConsultToolsAllow("none"),
+            tools: voice.resolveRealtimeVoiceAgentConsultTools("none", [
+              {
+                type: "function",
+                name: "custom_lookup",
+                description: "Lookup",
+                parameters: { type: "object", properties: {} }
+              }
+            ]).map((entry) => entry.name),
+            message: voice.buildRealtimeVoiceAgentConsultChatMessage({
+              question: " What changed? ",
+              context: " PR #123 ",
+              responseStyle: " concise "
+            }),
+            visible: voice.collectRealtimeVoiceAgentConsultVisibleText([
+              { text: "thinking", isReasoning: true },
+              { text: "first" },
+              { text: "error", isError: true },
+              { text: "second" }
+            ]),
+            promptIncludes: voice.buildRealtimeVoiceAgentConsultPrompt({
+              args: { question: "Do we support realtime tools?" },
+              transcript: [
+                { role: "user", text: "Can you check the repo?" },
+                { role: "assistant", text: "I'll verify." }
+              ],
+              surface: "a private call",
+              userLabel: "Participant",
+              assistantLabel: "Agent",
+              questionSourceLabel: "participant"
+            }).includes("Question:\\nDo we support realtime tools?")
+          },
+          bridge: {
+            requestedFormat: callbacks.audioFormat,
+            events
+          },
+          codec: {
+            mulaw: Array.from(mulaw),
+            roundtripLength: roundtrip.length,
+            sameRateLength: voice.resamplePcm(pcm, 24000, 24000).length
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "realtime-voice-plugin",
+                    "name": "Realtime Voice Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-realtime-voice.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.realtime_voice"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.realtime_voice"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    expected_keys = {
+        "REALTIME_VOICE_AGENT_CONSULT_TOOL",
+        "REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME",
+        "REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES",
+        "REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ",
+        "REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ",
+        "buildRealtimeVoiceAgentConsultChatMessage",
+        "buildRealtimeVoiceAgentConsultPrompt",
+        "buildRealtimeVoiceAgentConsultWorkingResponse",
+        "canonicalizeRealtimeVoiceProviderId",
+        "collectRealtimeVoiceAgentConsultVisibleText",
+        "consultRealtimeVoiceAgent",
+        "convertPcmToMulaw8k",
+        "createRealtimeVoiceBridgeSession",
+        "getRealtimeVoiceProvider",
+        "isRealtimeVoiceAgentConsultToolPolicy",
+        "listRealtimeVoiceProviders",
+        "mulawToPcm",
+        "normalizeRealtimeVoiceProviderId",
+        "parseRealtimeVoiceAgentConsultArgs",
+        "pcmToMulaw",
+        "resamplePcm",
+        "resamplePcmTo8k",
+        "resolveConfiguredRealtimeVoiceProvider",
+        "resolveRealtimeVoiceAgentConsultToolPolicy",
+        "resolveRealtimeVoiceAgentConsultTools",
+        "resolveRealtimeVoiceAgentConsultToolsAllow",
+    }
+    assert expected_keys.issubset(set(result["keys"]))
+    assert result["scopedHasBridge"] == "function"
+    assert result["constants"] == {
+        "pcm": {"encoding": "pcm16", "sampleRateHz": 24000, "channels": 1},
+        "mulaw": {"encoding": "g711_ulaw", "sampleRateHz": 8000, "channels": 1},
+    }
+    assert result["registry"] == {
+        "normalized": "two",
+        "listed": ["first", "second"],
+        "disabled": 0,
+        "getAlias": "first",
+        "canonical": "second",
+    }
+    assert result["resolved"] == {
+        "provider": "second",
+        "config": {"enabled": True, "model": "gpt-realtime", "resolved": True},
+        "explicitConfig": {
+            "enabled": True,
+            "model": "custom-realtime",
+            "resolved": True,
+        },
+        "noProviderMessage": "No configured realtime voice provider registered",
+    }
+    assert result["consult"] == {
+        "name": "openclaw_agent_consult",
+        "policy": "owner",
+        "allowReadOnly": [
+            "read",
+            "web_search",
+            "web_fetch",
+            "x_search",
+            "memory_search",
+            "memory_get",
+        ],
+        "allowOwner": None,
+        "allowNone": [],
+        "tools": ["custom_lookup"],
+        "message": "What changed?\n\nContext:\nPR #123\n\nSpoken style:\nconcise",
+        "visible": "first\n\nsecond",
+        "promptIncludes": True,
+    }
+    assert result["bridge"] == {
+        "requestedFormat": {"encoding": "pcm16", "sampleRateHz": 24000, "channels": 1},
+        "events": [
+            "sink-audio:0102",
+            "clear",
+            "ack",
+            "greeting:Say hello",
+            "ready:true",
+            "tool:lookup:true",
+            "bridge-audio:input",
+            "user:hello",
+            "barge:true",
+            "ts:42",
+            "tool-result:call-1:true",
+            "greeting:manual",
+            "close",
+        ],
+    }
+    assert result["codec"]["roundtripLength"] == 4
+    assert result["codec"]["sameRateLength"] == 4
+    assert len(result["codec"]["mulaw"]) == 2
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
     tmp_path,
 ) -> None:
