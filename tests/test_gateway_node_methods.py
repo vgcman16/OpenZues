@@ -36454,6 +36454,316 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_transport_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-transport.cjs"
+    runtime_entry.write_text(
+        """
+const transport = require("openclaw/plugin-sdk/provider-transport-runtime");
+const scopedTransport = require("@openclaw/plugin-sdk/provider-transport-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.providerTransport",
+      description: "Use OpenClaw provider-transport-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const high = String.fromCharCode(0xd83d);
+        const low = String.fromCharCode(0xdc00);
+        const doneEvents = [];
+        const doneStream = {
+          push(event) {
+            doneEvents.push(event);
+          },
+          end() {
+            doneEvents.push({ type: "ended" });
+          }
+        };
+        const doneOutput = { stopReason: "stop" };
+        transport.finalizeTransportStream({ stream: doneStream, output: doneOutput });
+
+        const failureEvents = [];
+        let cleaned = false;
+        const failureOutput = { stopReason: "stop" };
+        transport.failTransportStream({
+          stream: {
+            push(event) {
+              failureEvents.push(event);
+            },
+            end() {
+              failureEvents.push({ type: "ended" });
+            }
+          },
+          output: failureOutput,
+          error: new Error("boom"),
+          cleanup() {
+            cleaned = true;
+          }
+        });
+
+        const transformed = transport.transformTransportMessages(
+          [
+            {
+              role: "assistant",
+              provider: "openai",
+              api: "openai-responses",
+              model: "gpt-5.4",
+              stopReason: "toolUse",
+              timestamp: 1,
+              content: [{ type: "toolCall", id: "call_missing", name: "read", arguments: {} }]
+            },
+            { role: "user", content: "continue", timestamp: 2 }
+          ],
+          { api: "openai-responses", provider: "openai", id: "gpt-5.4" }
+        );
+        const dropped = transport.transformTransportMessages(
+          [
+            {
+              role: "assistant",
+              provider: "openai",
+              api: "openai-responses",
+              model: "gpt-5.4",
+              stopReason: "aborted",
+              timestamp: 1,
+              content: [{ type: "text", text: "partial" }]
+            },
+            { role: "user", content: "retry", timestamp: 2 }
+          ],
+          { api: "openai-responses", provider: "openai", id: "gpt-5.4" }
+        );
+
+        const params = transport.buildOpenAICompletionsParams(
+          {
+            api: "openai-completions",
+            provider: "openai",
+            id: "gpt-5.4",
+            input: ["text"],
+            output: ["text"],
+            reasoning: true,
+            compat: {
+              supportsStore: true,
+              supportsPromptCacheKey: true,
+              maxTokensField: "max_completion_tokens"
+            }
+          },
+          {
+            systemPrompt:
+              "Stable\\n<!-- OPENCLAW_CACHE_BOUNDARY -->\\nDynamic",
+            messages: [{ role: "user", content: "hello", timestamp: 1 }],
+            tools: [
+              {
+                name: "read",
+                description: "Read a file",
+                parameters: { type: "object", properties: { path: { type: "string" } } }
+              }
+            ]
+          },
+          {
+            maxTokens: 128,
+            temperature: 0.2,
+            toolChoice: "auto",
+            reasoningEffort: "medium",
+            sessionId: "session-1",
+            cacheRetention: "long"
+          }
+        );
+
+        const writable = transport.createWritableTransportEventStream();
+        writable.stream.push({ type: "probe" });
+        writable.stream.end();
+
+        return {
+          keys: Object.keys(transport).filter((key) => [
+            "buildGuardedModelFetch",
+            "buildOpenAICompletionsParams",
+            "coerceTransportToolCallArguments",
+            "createEmptyTransportUsage",
+            "createWritableTransportEventStream",
+            "failTransportStream",
+            "finalizeTransportStream",
+            "mergeTransportHeaders",
+            "sanitizeTransportPayloadText",
+            "stripSystemPromptCacheBoundary",
+            "transformTransportMessages"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedTransport.buildOpenAICompletionsParams,
+          sanitized: [
+            transport.sanitizeTransportPayloadText(`left${high}right`),
+            transport.sanitizeTransportPayloadText(`left${low}right`),
+            transport.sanitizeTransportPayloadText("emoji 🙈 ok")
+          ],
+          coerced: [
+            transport.coerceTransportToolCallArguments('{"path":"README.md"}'),
+            transport.coerceTransportToolCallArguments("not-json"),
+            transport.coerceTransportToolCallArguments({ ok: true })
+          ],
+          headers: [
+            transport.mergeTransportHeaders(
+              { accept: "text/event-stream", "x-base": "one" },
+              { authorization: "Bearer token" },
+              { "x-base": "two" }
+            ),
+            transport.mergeTransportHeaders(undefined, undefined) ?? null
+          ],
+          usage: transport.createEmptyTransportUsage(),
+          doneEvents,
+          failureEvents,
+          failureOutput,
+          cleaned,
+          transformedRoles: transformed.map((msg) => msg.role),
+          transformedToolResult: transformed[1],
+          droppedRoles: dropped.map((msg) => msg.role),
+          strippedPrompt: transport.stripSystemPromptCacheBoundary(
+            "Stable\\n<!-- OPENCLAW_CACHE_BOUNDARY -->\\nDynamic"
+          ),
+          params,
+          guardedFetchType: typeof transport.buildGuardedModelFetch({
+            api: "openai-completions",
+            provider: "openai",
+            id: "gpt-5.4",
+            baseUrl: "https://api.openai.com/v1"
+          }),
+          writableShape: {
+            eventCount: writable.eventStream.events.length,
+            ended: writable.eventStream.ended
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-transport-plugin",
+                    "name": "Runtime Provider Transport Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-transport.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.providerTransport"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.providerTransport"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "buildGuardedModelFetch",
+        "buildOpenAICompletionsParams",
+        "coerceTransportToolCallArguments",
+        "createEmptyTransportUsage",
+        "createWritableTransportEventStream",
+        "failTransportStream",
+        "finalizeTransportStream",
+        "mergeTransportHeaders",
+        "sanitizeTransportPayloadText",
+        "stripSystemPromptCacheBoundary",
+        "transformTransportMessages",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["sanitized"] == ["leftright", "leftright", "emoji 🙈 ok"]
+    assert payload["result"]["coerced"] == [{"path": "README.md"}, {}, {"ok": True}]
+    assert payload["result"]["headers"] == [
+        {
+            "accept": "text/event-stream",
+            "authorization": "Bearer token",
+            "x-base": "two",
+        },
+        None,
+    ]
+    assert payload["result"]["usage"] == {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0},
+    }
+    assert payload["result"]["doneEvents"] == [
+        {"type": "done", "reason": "stop", "message": {"stopReason": "stop"}},
+        {"type": "ended"},
+    ]
+    assert payload["result"]["failureOutput"] == {
+        "stopReason": "error",
+        "errorMessage": "boom",
+    }
+    assert payload["result"]["failureEvents"] == [
+        {
+            "type": "error",
+            "reason": "error",
+            "error": {"stopReason": "error", "errorMessage": "boom"},
+        },
+        {"type": "ended"},
+    ]
+    assert payload["result"]["cleaned"] is True
+    assert payload["result"]["transformedRoles"] == ["assistant", "toolResult", "user"]
+    assert payload["result"]["transformedToolResult"] == {
+        "role": "toolResult",
+        "toolCallId": "call_missing",
+        "toolName": "read",
+        "content": [{"type": "text", "text": "aborted"}],
+        "isError": True,
+    }
+    assert payload["result"]["droppedRoles"] == ["user"]
+    assert payload["result"]["strippedPrompt"] == "Stable\nDynamic"
+    assert payload["result"]["params"]["model"] == "gpt-5.4"
+    assert payload["result"]["params"]["stream"] is True
+    assert payload["result"]["params"]["messages"][0] == {
+        "role": "system",
+        "content": "Stable\nDynamic",
+    }
+    assert payload["result"]["params"]["messages"][1] == {
+        "role": "user",
+        "content": "hello",
+    }
+    assert payload["result"]["params"]["max_completion_tokens"] == 128
+    assert payload["result"]["params"]["temperature"] == 0.2
+    assert payload["result"]["params"]["tool_choice"] == "auto"
+    assert payload["result"]["params"]["reasoning_effort"] == "medium"
+    assert payload["result"]["params"]["prompt_cache_key"] == "session-1"
+    assert payload["result"]["params"]["tools"][0]["function"]["name"] == "read"
+    assert payload["result"]["guardedFetchType"] == "function"
+    assert payload["result"]["writableShape"] == {"eventCount": 1, "ended": True}
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:

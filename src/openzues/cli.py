@@ -66842,6 +66842,306 @@ const providerStreamRuntime = {
   resolveOpenAITextVerbosity,
 };
 
+const SYSTEM_PROMPT_CACHE_BOUNDARY = "\n<!-- OPENCLAW_CACHE_BOUNDARY -->\n";
+
+function stripSystemPromptCacheBoundary(text) {
+  return String(text).split(SYSTEM_PROMPT_CACHE_BOUNDARY).join("\n");
+}
+
+function sanitizeTransportPayloadText(text) {
+  return String(text).replace(
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+    "",
+  );
+}
+
+function coerceTransportToolCallArguments(argumentsValue) {
+  if (argumentsValue && typeof argumentsValue === "object" && !Array.isArray(argumentsValue)) {
+    return argumentsValue;
+  }
+  if (typeof argumentsValue === "string") {
+    try {
+      const parsed = JSON.parse(argumentsValue);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function mergeTransportHeaders(...headerSources) {
+  const merged = {};
+  for (const headers of headerSources) {
+    if (headers && typeof headers === "object") {
+      Object.assign(merged, headers);
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function createEmptyTransportUsage() {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+function createWritableTransportEventStream() {
+  const eventStream = {
+    events: [],
+    ended: false,
+  };
+  const stream = {
+    push(event) {
+      eventStream.events.push(event);
+    },
+    end() {
+      eventStream.ended = true;
+    },
+  };
+  return { eventStream, stream };
+}
+
+function finalizeTransportStream(params) {
+  const { stream, output, signal } = params;
+  if (signal && signal.aborted) {
+    throw new Error("Request was aborted");
+  }
+  if (output.stopReason === "aborted" || output.stopReason === "error") {
+    throw new Error("An unknown error occurred");
+  }
+  stream.push({ type: "done", reason: output.stopReason, message: output });
+  stream.end();
+}
+
+function failTransportStream(params) {
+  const { stream, output, signal, error, cleanup } = params;
+  if (typeof cleanup === "function") {
+    cleanup();
+  }
+  output.stopReason = signal && signal.aborted ? "aborted" : "error";
+  output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+  stream.push({ type: "error", reason: output.stopReason, error: output });
+  stream.end();
+}
+
+const SYNTHETIC_TOOL_RESULT_APIS = new Set([
+  "anthropic-messages",
+  "openclaw-anthropic-messages-transport",
+  "bedrock-converse-stream",
+  "google-generative-ai",
+  "openclaw-google-generative-ai-transport",
+  "openai-responses",
+  "openai-codex-responses",
+  "azure-openai-responses",
+  "openclaw-openai-responses-transport",
+  "openclaw-azure-openai-responses-transport",
+]);
+
+const CODEX_STYLE_ABORTED_OUTPUT_APIS = new Set([
+  "openai-responses",
+  "openai-codex-responses",
+  "azure-openai-responses",
+  "openclaw-openai-responses-transport",
+  "openclaw-azure-openai-responses-transport",
+]);
+
+function isFailedTransportAssistantTurn(message) {
+  return (
+    message &&
+    message.role === "assistant" &&
+    (message.stopReason === "error" || message.stopReason === "aborted")
+  );
+}
+
+function transportAssistantToolCalls(message) {
+  if (!message || message.role !== "assistant" || !Array.isArray(message.content)) {
+    return [];
+  }
+  return message.content.filter((block) => block && block.type === "toolCall");
+}
+
+function transformTransportMessages(messages, model, normalizeToolCallId) {
+  const allowSynthetic = SYNTHETIC_TOOL_RESULT_APIS.has(model && model.api);
+  const syntheticText = CODEX_STYLE_ABORTED_OUTPUT_APIS.has(model && model.api)
+    ? "aborted"
+    : "No result provided";
+  const realResultsById = new Map();
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (message && message.role === "toolResult" && typeof message.toolCallId === "string") {
+      realResultsById.set(message.toolCallId, message);
+    }
+  }
+  const emittedRealResults = new Set();
+  const output = [];
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (isFailedTransportAssistantTurn(message)) {
+      continue;
+    }
+    if (message.role === "toolResult") {
+      if (!emittedRealResults.has(message.toolCallId)) {
+        output.push(message);
+        emittedRealResults.add(message.toolCallId);
+      }
+      continue;
+    }
+    if (message.role !== "assistant") {
+      output.push(message);
+      continue;
+    }
+    const nextAssistant = { ...message };
+    if (Array.isArray(message.content)) {
+      nextAssistant.content = message.content.map((block) => {
+        if (
+          block &&
+          block.type === "toolCall" &&
+          typeof block.id === "string" &&
+          typeof normalizeToolCallId === "function"
+        ) {
+          const normalizedId = normalizeToolCallId(block.id, model, message);
+          return normalizedId !== block.id ? { ...block, id: normalizedId } : block;
+        }
+        return block;
+      });
+    }
+    output.push(nextAssistant);
+    if (!allowSynthetic) {
+      continue;
+    }
+    for (const toolCall of transportAssistantToolCalls(nextAssistant)) {
+      const existing = realResultsById.get(toolCall.id);
+      if (existing && !emittedRealResults.has(toolCall.id)) {
+        output.push(existing);
+        emittedRealResults.add(toolCall.id);
+        continue;
+      }
+      if (!existing) {
+        output.push({
+          role: "toolResult",
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          content: [{ type: "text", text: syntheticText }],
+          isError: true,
+        });
+      }
+    }
+  }
+  return output;
+}
+
+function convertTransportCompletionMessage(message) {
+  if (message.role === "user" && typeof message.content === "string") {
+    return { role: "user", content: sanitizeTransportPayloadText(message.content) };
+  }
+  if (message.role === "assistant" && Array.isArray(message.content)) {
+    return {
+      role: "assistant",
+      content: message.content
+        .filter((block) => block && block.type === "text")
+        .map((block) => sanitizeTransportPayloadText(block.text || ""))
+        .join(""),
+    };
+  }
+  if (message.role === "toolResult") {
+    return {
+      role: "tool",
+      tool_call_id: message.toolCallId,
+      content: (message.content || [])
+        .filter((block) => block && block.type === "text")
+        .map((block) => sanitizeTransportPayloadText(block.text || ""))
+        .join("\n"),
+    };
+  }
+  return message;
+}
+
+function buildOpenAICompletionsParams(model, context, options) {
+  const compat = (model && model.compat) || {};
+  const params = {
+    model: model.id,
+    messages: [],
+    stream: true,
+    stream_options: { include_usage: true },
+  };
+  if (context && context.systemPrompt) {
+    params.messages.push({
+      role: "system",
+      content: sanitizeTransportPayloadText(
+        stripSystemPromptCacheBoundary(context.systemPrompt),
+      ),
+    });
+  }
+  for (const message of (context && context.messages) || []) {
+    params.messages.push(convertTransportCompletionMessage(message));
+  }
+  if (compat.supportsStore === true) {
+    params.store = false;
+  }
+  if (
+    compat.supportsPromptCacheKey === true &&
+    options &&
+    options.cacheRetention !== "none" &&
+    options.sessionId
+  ) {
+    params.prompt_cache_key = options.sessionId;
+  }
+  if (options && options.maxTokens) {
+    const maxTokensField =
+      compat.maxTokensField === "max_tokens" ? "max_tokens" : "max_completion_tokens";
+    params[maxTokensField] = options.maxTokens;
+  }
+  if (options && options.temperature !== undefined) {
+    params.temperature = options.temperature;
+  }
+  if (context && Array.isArray(context.tools)) {
+    params.tools = context.tools.map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters || {},
+      },
+    }));
+    if (options && options.toolChoice) {
+      params.tool_choice = options.toolChoice;
+    }
+  }
+  const reasoningEffort = options && (options.reasoningEffort || options.reasoning);
+  if (reasoningEffort && model && model.reasoning) {
+    if (compat.thinkingFormat === "openrouter") {
+      params.reasoning = { effort: reasoningEffort };
+    } else {
+      params.reasoning_effort = reasoningEffort;
+    }
+  }
+  return params;
+}
+
+function buildGuardedModelFetch(_model, _timeoutMs) {
+  return async (input, init) => fetch(input, init);
+}
+
+const providerTransportRuntime = {
+  buildGuardedModelFetch,
+  buildOpenAICompletionsParams,
+  coerceTransportToolCallArguments,
+  createEmptyTransportUsage,
+  createWritableTransportEventStream,
+  failTransportStream,
+  finalizeTransportStream,
+  mergeTransportHeaders,
+  sanitizeTransportPayloadText,
+  stripSystemPromptCacheBoundary,
+  transformTransportMessages,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -68409,6 +68709,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-stream-family"
   ) {
     return providerStreamRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-transport-runtime" ||
+    request === "@openclaw/plugin-sdk/provider-transport-runtime"
+  ) {
+    return providerTransportRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||
