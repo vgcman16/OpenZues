@@ -490,6 +490,9 @@ and `src/image-generation/runtime.ts` is checkpointed in `719fcee8`.
 `src/context-engine/registry.ts`, `src/infra/diagnostic-events.ts`,
 `src/agents/schema/typebox.ts`, and
 `src/plugins/provider-auth-helpers.ts` is checkpointed in `f21a22bd`.
+`discord` from `src/plugin-sdk/discord.ts`, adjacent channel common/status/
+config schema contracts, and bundled Discord public-surface delegation for
+`api.js` and `runtime-api.js` is checkpointed in `307777d8`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map

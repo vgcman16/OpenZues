@@ -18009,6 +18009,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`311 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check`. Source/test checkpointed in `f21a22bd`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  deprecated `discord` facade from `src/plugin-sdk/discord.ts`: scoped and
+  unscoped native runtime entries expose the Discord compatibility barrel for
+  channel-common helpers, `DiscordConfigSchema`, status snapshot helpers,
+  account/default-account inspection and resolution, target normalization,
+  directory lists, component build/edit/register helpers, audit channel ids,
+  group mention/tool policy resolution, status issue projection, runtime-config
+  filled subagent thread auto-binding, thread binding list/unbind helpers, and
+  host-fakeable bundled Discord public-surface delegation without falling
+  through to the broad SDK proxy. This closes `OZ-PLUGIN-00301`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99994%. Remaining exact advertised SDK subpath queue head is
+  `extension-shared`.
+- Verified the discord facade slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_discord_facade_helpers -q`
+  (`1 passed`), adjacent discord/compat/channel-status/channel-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "discord_facade or compat_facade or channel_status or channel_plugin_common or bundled_channel_config_schema or channel_config_schema"`
+  (`4 passed, 1120 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`312 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `307777d8`.
 
 ## References
 

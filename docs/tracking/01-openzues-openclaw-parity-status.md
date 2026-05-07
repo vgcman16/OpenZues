@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99993% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99994% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -750,6 +750,15 @@ may lag behind this tracker.
   diagnostics, context-engine registration, memory prompt addition delegation,
   BlueBubbles policy/status helpers, and selected channel lifecycle helpers.
   - Status: checkpointed in `f21a22bd`
+
+- [x] Imported plugin SDK discord facade shim for the deprecated Discord
+  compatibility barrel, including channel-common helpers, `DiscordConfigSchema`,
+  status helpers, account/default-account inspection and resolution, target
+  normalization, directory lists, component helpers, audit channel ids, group
+  mention/tool policy resolution, runtime-config filled subagent thread
+  auto-binding, thread binding list/unbind helpers, and fakeable bundled
+  Discord public-surface delegation.
+  - Status: checkpointed in `307777d8`
 
 - [x] Imported plugin SDK channel-activity-runtime shim for
   `recordChannelActivity`.

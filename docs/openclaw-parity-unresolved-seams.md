@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99993%.
+  band of ~80-99.99994%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -9644,8 +9644,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   lifecycle helpers. Source/test checkpointed in `f21a22bd`; repo-wide parity
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.99993%.
+- Current queue-head adjustment: imported plugin SDK `discord` now exposes the
+  source-backed deprecated compatibility facade for scoped and unscoped
+  imports, including channel-common helpers, `DiscordConfigSchema`, status
+  snapshot helpers, account/default-account inspection and resolution, target
+  normalization, directory lists, component build/edit/register helpers, audit
+  channel ids, group mention/tool policy resolution, status issue projection,
+  runtime-config filled subagent thread auto-binding, thread binding
+  list/unbind helpers, and fakeable bundled Discord public-surface delegation.
+  Source/test checkpointed in `307777d8`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99994%.
 - The queue head now tracks the remaining exact advertised SDK subpath
-  `discord`, followed by `extension-shared`, generation/provider/document
-  helper facades, and any newly exposed repo-wide OpenClaw namespaces.
+  `extension-shared`, followed by generation/provider/document helper facades,
+  and any newly exposed repo-wide OpenClaw namespaces.
   `config-types` was re-verified on 2026-05-07 as an upstream type-only barrel
   through the existing empty runtime module proof.
