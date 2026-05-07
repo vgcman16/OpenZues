@@ -60931,6 +60931,426 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_plugin_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-plugin-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const pluginRuntime = require("openclaw/plugin-sdk/plugin-runtime");
+const scopedPluginRuntime = require("@openclaw/plugin-sdk/plugin-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.plugin_runtime",
+      description: "Use OpenClaw plugin-runtime SDK barrel",
+      parameters: { type: "object" },
+      async execute() {
+        pluginRuntime.clearPluginCommands();
+        const invalidName = pluginRuntime.validateCommandName("bad command");
+        const validName = pluginRuntime.validateCommandName("demo");
+        const invalidDefinition = pluginRuntime.validatePluginCommandDefinition({
+          name: "demo2",
+          description: "No handler"
+        });
+        const first = pluginRuntime.registerPluginCommand(
+          "demo-plugin",
+          {
+            name: "demo",
+            description: " Demo command ",
+            acceptsArgs: true,
+            nativeNames: { telegram: "demo_tg" },
+            requiredScopes: ["operator.write"],
+            handler: async (ctx) => ({
+              text: ctx.args,
+              meta: {
+                senderId: ctx.senderId,
+                scopes: ctx.gatewayClientScopes,
+                channel: ctx.channel,
+                commandBody: ctx.commandBody
+              }
+            })
+          },
+          { pluginName: "Demo Plugin" }
+        );
+        const duplicate = pluginRuntime.registerPluginCommand(
+          "demo-plugin-2",
+          {
+            name: "demo",
+            description: "Duplicate command",
+            handler: async () => ({ text: "duplicate" })
+          }
+        );
+        const match = pluginRuntime.matchPluginCommand("/demo hello\\u0000world");
+        const alternate = pluginRuntime.matchPluginCommand("/demo-tg alias");
+        const noMatch = pluginRuntime.matchPluginCommand("demo hello");
+        const unauthorized = await pluginRuntime.executePluginCommand({
+          command: match.command,
+          args: match.args,
+          senderId: "user-1",
+          channel: "telegram",
+          isAuthorizedSender: false,
+          gatewayClientScopes: ["operator.write"],
+          commandBody: "/demo hello",
+          config: {}
+        });
+        const missingScope = await pluginRuntime.executePluginCommand({
+          command: match.command,
+          args: match.args,
+          senderId: "user-1",
+          channel: "telegram",
+          isAuthorizedSender: true,
+          gatewayClientScopes: ["operator.read"],
+          commandBody: "/demo hello",
+          config: {}
+        });
+        const executed = await pluginRuntime.executePluginCommand({
+          command: match.command,
+          args: match.args,
+          senderId: "user-1",
+          channel: "telegram",
+          isAuthorizedSender: true,
+          gatewayClientScopes: ["operator.write"],
+          commandBody: "/demo hello",
+          config: {}
+        });
+        const registry = { httpRoutes: [] };
+        const logs = [];
+        const unregister = pluginRuntime.registerPluginHttpRoute({
+          registry,
+          path: "hook",
+          auth: "none",
+          handler: () => true,
+          pluginId: "demo-plugin",
+          source: "test",
+          log: (message) => logs.push(message)
+        });
+        const duplicateRouteUnregister = pluginRuntime.registerPluginHttpRoute({
+          registry,
+          path: "/hook",
+          auth: "none",
+          handler: () => false,
+          pluginId: "demo-plugin",
+          source: "test-duplicate",
+          log: (message) => logs.push(message)
+        });
+        const routeSnapshot = registry.httpRoutes.map((route) => ({
+          path: route.path,
+          auth: route.auth,
+          match: route.match,
+          pluginId: route.pluginId,
+          source: route.source
+        }));
+        duplicateRouteUnregister();
+        unregister();
+        const bindingHelpers = pluginRuntime.createInteractiveConversationBindingHelpers({
+          registration: { pluginId: "demo-plugin" },
+          senderId: "user-1",
+          conversation: {
+            channel: "telegram",
+            accountId: "main",
+            conversationId: "chat-1"
+          }
+        });
+        const binding = await bindingHelpers.requestConversationBinding({
+          label: "demo"
+        });
+        const detached = await bindingHelpers.detachConversationBinding();
+        const currentBinding = await bindingHelpers.getCurrentConversationBinding();
+        let started = 0;
+        let stopped = 0;
+        const lazyHandle = await pluginRuntime.startLazyPluginServiceModule({
+          loadDefaultModule: async () => ({
+            start: async () => { started += 1; },
+            stop: async () => { stopped += 1; }
+          }),
+          startExportNames: ["start"],
+          stopExportNames: ["stop"]
+        });
+        await lazyHandle.stop();
+        process.env.OPENZUES_PLUGIN_RUNTIME_SKIP_TEST = "1";
+        const skipped = await pluginRuntime.startLazyPluginServiceModule({
+          skipEnvVar: "OPENZUES_PLUGIN_RUNTIME_SKIP_TEST",
+          loadDefaultModule: async () => ({
+            start: async () => { started += 100; }
+          }),
+          startExportNames: ["start"]
+        });
+        delete process.env.OPENZUES_PLUGIN_RUNTIME_SKIP_TEST;
+        const overrideLoaded = await pluginRuntime.defaultLoadOverrideModule(
+          "demo-module",
+          async (specifier) => ({ specifier })
+        );
+        const scopedValue = pluginRuntime.withPluginRuntimeGatewayRequestScope(
+          { client: { id: "client-1" }, isWebchatConnect: () => false },
+          () => pluginRuntime.withPluginRuntimePluginIdScope(
+            "demo-plugin",
+            () => pluginRuntime.getPluginRuntimeGatewayRequestScope()
+          )
+        );
+        pluginRuntime.clearPluginInteractiveHandlers();
+        const unregisterInteractive = pluginRuntime.registerPluginInteractiveHandler(
+          "demo-plugin",
+          { channel: "telegram", namespace: "card.open" }
+        );
+        const interactiveResult = await pluginRuntime.dispatchPluginInteractiveHandler({
+          channel: "telegram",
+          data: "card.open:payload-1",
+          invoke: async (match) => ({
+            handled: match.payload === "payload-1",
+            pluginId: match.registration.pluginId,
+            namespace: match.namespace
+          })
+        });
+        pluginRuntime.clearPluginInteractiveHandlersForPlugin("demo-plugin");
+        const missingInteractive = await pluginRuntime.dispatchPluginInteractiveHandler({
+          channel: "telegram",
+          data: "card.open:payload-1",
+          invoke: async () => ({ handled: true })
+        });
+        return {
+          selectedTypes: {
+            clearPluginCommands: typeof pluginRuntime.clearPluginCommands,
+            registerPluginCommand: typeof pluginRuntime.registerPluginCommand,
+            matchPluginCommand: typeof pluginRuntime.matchPluginCommand,
+            executePluginCommand: typeof pluginRuntime.executePluginCommand,
+            registerPluginHttpRoute: typeof pluginRuntime.registerPluginHttpRoute,
+            startLazyPluginServiceModule: typeof pluginRuntime.startLazyPluginServiceModule,
+            getPluginRuntimeGatewayRequestScope:
+              typeof pluginRuntime.getPluginRuntimeGatewayRequestScope
+          },
+          scopedSame:
+            scopedPluginRuntime.registerPluginCommand === pluginRuntime.registerPluginCommand,
+          validation: {
+            invalidName,
+            validName,
+            invalidDefinition
+          },
+          registration: {
+            first,
+            duplicate,
+            listed: pluginRuntime.listPluginCommands(),
+            providerSpecs: pluginRuntime.listProviderPluginCommandSpecs("telegram"),
+            allSpecs: pluginRuntime.getPluginCommandSpecs("telegram")
+          },
+          matching: {
+            args: match.args,
+            alternateArgs: alternate.args,
+            noMatch
+          },
+          execution: {
+            unauthorized,
+            missingScope,
+            executed
+          },
+          http: {
+            normalized: pluginRuntime.normalizePluginHttpPath("hook"),
+            fallback: pluginRuntime.normalizePluginHttpPath("", "fallback"),
+            routes: routeSnapshot,
+            logs,
+            remaining: registry.httpRoutes.length
+          },
+          binding: {
+            binding,
+            detached,
+            currentBinding
+          },
+          lazy: {
+            started,
+            stopped,
+            skipped,
+            overrideLoaded
+          },
+          scope: {
+            pluginId: scopedValue.pluginId,
+            clientId: scopedValue.client.id,
+            webchat: scopedValue.isWebchatConnect()
+          },
+          interactive: {
+            interactiveResult,
+            missingInteractive
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-plugin-runtime-plugin",
+                    "name": "Runtime Plugin Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-plugin-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.plugin_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.plugin_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "clearPluginCommands": "function",
+            "registerPluginCommand": "function",
+            "matchPluginCommand": "function",
+            "executePluginCommand": "function",
+            "registerPluginHttpRoute": "function",
+            "startLazyPluginServiceModule": "function",
+            "getPluginRuntimeGatewayRequestScope": "function",
+        },
+        "scopedSame": True,
+        "validation": {
+            "invalidName": (
+                "Command name must start with a letter and contain only letters, "
+                "numbers, hyphens, and underscores"
+            ),
+            "validName": None,
+            "invalidDefinition": "Command handler must be a function",
+        },
+        "registration": {
+            "first": {"ok": True},
+            "duplicate": {
+                "ok": False,
+                "error": 'Command "demo" already registered by plugin "demo-plugin"',
+            },
+            "listed": [
+                {
+                    "name": "demo",
+                    "description": "Demo command",
+                    "pluginId": "demo-plugin",
+                    "acceptsArgs": True,
+                }
+            ],
+            "providerSpecs": [
+                {
+                    "name": "demo_tg",
+                    "description": "Demo command",
+                    "pluginId": "demo-plugin",
+                    "acceptsArgs": True,
+                }
+            ],
+            "allSpecs": [
+                {
+                    "name": "demo_tg",
+                    "description": "Demo command",
+                    "pluginId": "demo-plugin",
+                    "acceptsArgs": True,
+                }
+            ],
+        },
+        "matching": {
+            "args": "hello\u0000world",
+            "alternateArgs": "alias",
+            "noMatch": None,
+        },
+        "execution": {
+            "unauthorized": {"text": "This command requires authorization."},
+            "missingScope": {
+                "text": "This command requires gateway scope: operator.write."
+            },
+            "executed": {
+                "text": "helloworld",
+                "meta": {
+                    "senderId": "user-1",
+                    "scopes": ["operator.write"],
+                    "channel": "telegram",
+                    "commandBody": "/demo hello",
+                },
+            },
+        },
+        "http": {
+            "normalized": "/hook",
+            "fallback": "/fallback",
+            "routes": [
+                {
+                    "path": "/hook",
+                    "auth": "none",
+                    "match": "exact",
+                    "pluginId": "demo-plugin",
+                    "source": "test",
+                }
+            ],
+            "logs": [
+                (
+                    "plugin: route conflict at /hook (exact); "
+                    "owned by demo-plugin (test)"
+                )
+            ],
+            "remaining": 0,
+        },
+        "binding": {
+            "binding": {
+                "status": "error",
+                "message": "This interaction cannot bind the current conversation.",
+            },
+            "detached": {"removed": False},
+            "currentBinding": None,
+        },
+        "lazy": {
+            "started": 1,
+            "stopped": 1,
+            "skipped": None,
+            "overrideLoaded": {"specifier": "demo-module"},
+        },
+        "scope": {
+            "pluginId": "demo-plugin",
+            "clientId": "client-1",
+            "webchat": False,
+        },
+        "interactive": {
+            "interactiveResult": {
+                "matched": True,
+                "handled": True,
+                "duplicate": False,
+            },
+            "missingInteractive": {
+                "matched": False,
+                "handled": False,
+                "duplicate": False,
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_actions_helpers(
     tmp_path,
 ) -> None:
