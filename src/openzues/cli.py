@@ -39613,6 +39613,7 @@ const pluginSdkEntrypoints = [
   "browser-host-inspection",
   "browser-maintenance",
   "browser-node-host",
+  "browser-node-runtime",
   "browser-profiles",
   "browser-trash",
   "boolean-param",
@@ -39796,6 +39797,7 @@ const publicPluginOwnedSdkEntrypoints = [
   "browser-host-inspection",
   "browser-maintenance",
   "browser-node-host",
+  "browser-node-runtime",
   "browser-profiles",
   "browser-trash",
   "image-generation-core",
@@ -55021,6 +55023,223 @@ const browserHostInspectionRuntime = {
   resolveGoogleChromeExecutableForPlatform,
 };
 
+const ErrorCodes = {
+  NOT_LINKED: "NOT_LINKED",
+  NOT_PAIRED: "NOT_PAIRED",
+  AGENT_TIMEOUT: "AGENT_TIMEOUT",
+  INVALID_REQUEST: "INVALID_REQUEST",
+  APPROVAL_NOT_FOUND: "APPROVAL_NOT_FOUND",
+  UNAVAILABLE: "UNAVAILABLE",
+};
+
+function errorShape(code, message, opts = {}) {
+  return {
+    code,
+    message,
+    ...(opts || {}),
+  };
+}
+
+function safeParseJson(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch (_error) {
+    return { payloadJSON: value };
+  }
+}
+
+function resolveGatewayAuth(params = {}) {
+  const baseConfig = params.authConfig || {};
+  const override = params.authOverride || {};
+  const authConfig = { ...baseConfig, ...override };
+  const env = params.env || process.env;
+  const token =
+    normalizeOptionalString(authConfig.token) ||
+    normalizeOptionalString(env && env.OPENCLAW_GATEWAY_TOKEN);
+  const password =
+    normalizeOptionalString(authConfig.password) ||
+    normalizeOptionalString(env && env.OPENCLAW_GATEWAY_PASSWORD);
+  let mode = "token";
+  let modeSource = "default";
+  if (override.mode !== undefined) {
+    mode = override.mode;
+    modeSource = "override";
+  } else if (authConfig.mode) {
+    mode = authConfig.mode;
+    modeSource = "config";
+  } else if (password) {
+    mode = "password";
+    modeSource = "password";
+  } else if (token) {
+    mode = "token";
+    modeSource = "token";
+  }
+  const allowTailscale =
+    authConfig.allowTailscale !== undefined
+      ? Boolean(authConfig.allowTailscale)
+      : params.tailscaleMode === "serve" && mode !== "password" && mode !== "trusted-proxy";
+  return {
+    mode,
+    modeSource,
+    ...(token ? { token } : {}),
+    ...(password ? { password } : {}),
+    allowTailscale,
+    ...(authConfig.trustedProxy ? { trustedProxy: authConfig.trustedProxy } : {}),
+  };
+}
+
+async function ensureGatewayStartupAuth(params = {}) {
+  return {
+    cfg: params.cfg || {},
+    auth: resolveGatewayAuth({
+      authConfig: params.cfg && params.cfg.gateway && params.cfg.gateway.auth,
+      authOverride: params.authOverride,
+      env: params.env,
+      tailscaleMode:
+        params.tailscaleOverride && params.tailscaleOverride.mode
+          ? params.tailscaleOverride.mode
+          : params.cfg &&
+              params.cfg.gateway &&
+              params.cfg.gateway.tailscale &&
+              params.cfg.gateway.tailscale.mode,
+    }),
+    persistedGeneratedToken: false,
+  };
+}
+
+function resolveNodeCommandAllowlist(cfg = {}) {
+  const nodes = cfg && cfg.gateway && cfg.gateway.nodes ? cfg.gateway.nodes : {};
+  const allow = new Set(
+    Array.isArray(nodes.allowCommands)
+      ? nodes.allowCommands.map((cmd) => String(cmd || "").trim()).filter(Boolean)
+      : [],
+  );
+  const deny = Array.isArray(nodes.denyCommands)
+    ? nodes.denyCommands.map((cmd) => String(cmd || "").trim()).filter(Boolean)
+    : [];
+  for (const blocked of deny) {
+    allow.delete(blocked);
+  }
+  return allow;
+}
+
+function isNodeCommandAllowed(params = {}) {
+  const command = String(params.command || "").trim();
+  if (!command) {
+    return { ok: false, reason: "command required" };
+  }
+  if (!params.allowlist || !params.allowlist.has(command)) {
+    return { ok: false, reason: "command not allowlisted" };
+  }
+  if (Array.isArray(params.declaredCommands) && params.declaredCommands.length > 0) {
+    if (!params.declaredCommands.includes(command)) {
+      return { ok: false, reason: "command not declared by node" };
+    }
+  } else {
+    return { ok: false, reason: "node did not declare commands" };
+  }
+  return { ok: true };
+}
+
+function respondUnavailableOnNodeInvokeError(respond, res) {
+  if (res && res.ok) {
+    return true;
+  }
+  const nodeError = res && res.error && typeof res.error === "object" ? res.error : null;
+  const nodeCode = normalizeOptionalString(nodeError && nodeError.code) || "";
+  const nodeMessage =
+    normalizeOptionalString(nodeError && nodeError.message) || "node invoke failed";
+  const message = nodeCode ? `${nodeCode}: ${nodeMessage}` : nodeMessage;
+  respond(
+    false,
+    undefined,
+    errorShape(ErrorCodes.UNAVAILABLE, message, {
+      details: { nodeError: (res && res.error) || null },
+    }),
+  );
+  return false;
+}
+
+function rawDataToString(data, encoding = "utf8") {
+  if (typeof data === "string") {
+    return data;
+  }
+  if (Buffer.isBuffer(data)) {
+    return data.toString(encoding);
+  }
+  if (Array.isArray(data)) {
+    return Buffer.concat(data).toString(encoding);
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString(encoding);
+  }
+  return Buffer.from(String(data)).toString(encoding);
+}
+
+function addGatewayClientOptions(command) {
+  return command;
+}
+
+async function callGatewayFromCli() {
+  throw new Error("UNAVAILABLE: gateway RPC unavailable in OpenZues plugin runtime");
+}
+
+async function startLazyPluginServiceModule() {
+  throw new Error("UNAVAILABLE: lazy plugin service unavailable in OpenZues plugin runtime");
+}
+
+async function withAbortableTimeout(work, timeoutMs, label) {
+  const resolved =
+    typeof timeoutMs === "number" && Number.isFinite(timeoutMs)
+      ? Math.max(1, Math.floor(timeoutMs))
+      : undefined;
+  if (!resolved) {
+    return await work(undefined);
+  }
+  const abortCtrl = new AbortController();
+  const timeoutError = new Error(`${label || "request"} timed out`);
+  const timer = setTimeout(() => abortCtrl.abort(timeoutError), resolved);
+  let abortListener;
+  const abortPromise = abortCtrl.signal.aborted
+    ? Promise.reject(abortCtrl.signal.reason || timeoutError)
+    : new Promise((_resolve, reject) => {
+        abortListener = () => reject(abortCtrl.signal.reason || timeoutError);
+        abortCtrl.signal.addEventListener("abort", abortListener, { once: true });
+      });
+  try {
+    return await Promise.race([work(abortCtrl.signal), abortPromise]);
+  } finally {
+    clearTimeout(timer);
+    if (abortListener) {
+      abortCtrl.signal.removeEventListener("abort", abortListener);
+    }
+  }
+}
+
+const browserNodeRuntime = {
+  ErrorCodes,
+  addGatewayClientOptions,
+  callGatewayFromCli,
+  defaultRuntime,
+  ensureGatewayStartupAuth,
+  errorShape,
+  isLoopbackHost,
+  isNodeCommandAllowed,
+  rawDataToString,
+  respondUnavailableOnNodeInvokeError,
+  resolveGatewayAuth,
+  resolveNodeCommandAllowlist,
+  runCommandWithRuntime,
+  runExec,
+  safeParseJson,
+  startLazyPluginServiceModule,
+  withTimeout: withAbortableTimeout,
+};
+
 function decodeBrowserProxyParams(paramsJSON) {
   if (!paramsJSON) {
     throw new Error("INVALID_REQUEST: paramsJSON required");
@@ -64137,6 +64356,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-node-host"
   ) {
     return browserNodeHostRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-node-runtime" ||
+    request === "@openclaw/plugin-sdk/browser-node-runtime"
+  ) {
+    return browserNodeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||

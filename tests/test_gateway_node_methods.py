@@ -42210,6 +42210,192 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_node_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-node-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const runtime = require("openclaw/plugin-sdk/browser-node-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/browser-node-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_node_runtime",
+      description: "Use OpenClaw browser node-runtime helpers",
+      parameters: { type: "object" },
+      async execute() {
+        let timeoutMessage = null;
+        try {
+          await runtime.withTimeout(async () => new Promise(() => {}), 1, "browser request");
+        } catch (error) {
+          timeoutMessage = String(error && error.message ? error.message : error);
+        }
+        const timeoutResult = await runtime.withTimeout(async (signal) => ({
+          hasSignal: Boolean(signal),
+          aborted: signal ? signal.aborted : null
+        }), 50, "quick work");
+        const responses = [];
+        const nodeAllowed = runtime.isNodeCommandAllowed({
+          command: "browser.proxy",
+          declaredCommands: ["browser.proxy"],
+          allowlist: new Set(["browser.proxy"])
+        });
+        const nodeDenied = runtime.isNodeCommandAllowed({
+          command: "browser.proxy",
+          declaredCommands: [],
+          allowlist: new Set(["browser.proxy"])
+        });
+        const unavailableReturn = runtime.respondUnavailableOnNodeInvokeError(
+          (ok, result, error) => responses.push({ ok, result, error }),
+          { ok: false, error: { code: "NODE_OFFLINE", message: "node offline" } }
+        );
+        return {
+          keys: Object.keys(runtime).sort(),
+          scopedSame: scopedRuntime.withTimeout === runtime.withTimeout,
+          safeJson: runtime.safeParseJson('{"ok":true}'),
+          safeJsonFallback: runtime.safeParseJson("{bad"),
+          loopback: [
+            runtime.isLoopbackHost("localhost"),
+            runtime.isLoopbackHost("127.0.0.1"),
+            runtime.isLoopbackHost("example.com")
+          ],
+          auth: runtime.resolveGatewayAuth({
+            authConfig: { mode: "password", password: "pw" },
+            env: {}
+          }),
+          errorShape: runtime.errorShape(runtime.ErrorCodes.UNAVAILABLE, "down", {
+            retryable: true
+          }),
+          nodeAllowed,
+          nodeDenied,
+          unavailableReturn,
+          responses,
+          rawText: runtime.rawDataToString(Buffer.from("hi")),
+          timeoutResult,
+          timeoutMessage,
+          defaultRuntimeWriteJson: typeof runtime.defaultRuntime.writeJson,
+          runExecType: typeof runtime.runExec
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-node-runtime-plugin",
+                    "name": "Runtime Browser Node Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-node-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_node_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.browser_node_runtime", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert set(result.pop("keys")) >= {
+        "ErrorCodes",
+        "addGatewayClientOptions",
+        "callGatewayFromCli",
+        "defaultRuntime",
+        "ensureGatewayStartupAuth",
+        "errorShape",
+        "isLoopbackHost",
+        "isNodeCommandAllowed",
+        "rawDataToString",
+        "respondUnavailableOnNodeInvokeError",
+        "resolveGatewayAuth",
+        "resolveNodeCommandAllowlist",
+        "runCommandWithRuntime",
+        "runExec",
+        "safeParseJson",
+        "startLazyPluginServiceModule",
+        "withTimeout",
+    }
+    assert result == {
+        "scopedSame": True,
+        "safeJson": {"ok": True},
+        "safeJsonFallback": {"payloadJSON": "{bad"},
+        "loopback": [True, True, False],
+        "auth": {
+            "mode": "password",
+            "modeSource": "config",
+            "password": "pw",
+            "allowTailscale": False,
+        },
+        "errorShape": {
+            "code": "UNAVAILABLE",
+            "message": "down",
+            "retryable": True,
+        },
+        "nodeAllowed": {"ok": True},
+        "nodeDenied": {"ok": False, "reason": "node did not declare commands"},
+        "unavailableReturn": False,
+        "responses": [
+            {
+                "ok": False,
+                "error": {
+                    "code": "UNAVAILABLE",
+                    "message": "NODE_OFFLINE: node offline",
+                    "details": {
+                        "nodeError": {"code": "NODE_OFFLINE", "message": "node offline"}
+                    },
+                },
+            }
+        ],
+        "rawText": "hi",
+        "timeoutResult": {"hasSignal": True, "aborted": False},
+        "timeoutMessage": "browser request timed out",
+        "defaultRuntimeWriteJson": "function",
+        "runExecType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -44413,11 +44599,11 @@ module.exports = {
         ],
         "scopedType": "function",
         "counts": {
-            "entrypoints": 301,
-            "subpaths": 300,
-            "specifiers": 301,
-            "exports": 301,
-            "artifacts": 602,
+            "entrypoints": 302,
+            "subpaths": 301,
+            "specifiers": 302,
+            "exports": 302,
+            "artifacts": 604,
         },
         "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
         "last": [
