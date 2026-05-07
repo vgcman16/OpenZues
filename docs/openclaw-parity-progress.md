@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~92.4% overall, with a reasonable band of ~80-93%.
+- Estimated repo-wide parity: ~92.5% overall, with a reasonable band of ~80-93%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -3406,7 +3406,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Imported OpenClaw plugin runtime entries now have the
   `media-understanding-runtime` SDK subpath for image/audio/video file
   execution; the broader plugin SDK helper queue continues with
-  `media-understanding`.
+  `messaging-targets`.
 - Browser command productization is now effectively closed for the current installed-command queue, with persistent proxy/profile mutation left intentionally guarded.
 - Cron expression schedules now create, update, list, compute due state, and launch through `cron.run mode=due`; richer upstream cron runtime semantics such as full Croner expression breadth and persisted scheduler error telemetry remain future hardening.
 - `agents.files.*` now covers OpenClaw bootstrap and memory filenames (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, `memory.md`) while retaining the existing OpenZues `.codex/AGENTS.md` path.
@@ -15930,6 +15930,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `65d2ce12`.
+- Imported OpenClaw plugin runtime entries now have the `media-understanding`
+  SDK subpath from `src/plugin-sdk/media-understanding.ts`,
+  `src/media-understanding/openai-compatible-video.ts`,
+  `src/media-understanding/openai-compatible-audio.ts`, and
+  `src/media-understanding/shared.ts`. The native shim covers scoped and
+  unscoped imports, OpenAI-compatible video request/coercion helpers,
+  media-understanding string fallback normalization, OpenAI-compatible audio
+  transcription FormData upload construction, base URL/header shaping, HTTP
+  error/text handling, and exported image helper call surfaces backed by an
+  injectable image runtime. This closes `OZ-PLUGIN-00205`; repo-wide parity is
+  now estimated at ~92.5%. Remaining plugin SDK breadth continues with
+  `messaging-targets`.
+- Verified the media-understanding helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_media_understanding_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "media_understanding_helpers or media_understanding_runtime or realtime_voice"`
+  (`3 passed, 1026 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`217 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `4a383013`.
 
 ## References
 
