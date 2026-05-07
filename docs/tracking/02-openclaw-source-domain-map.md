@@ -171,8 +171,11 @@ imported `provider-stream-shared` exact helper coverage from
 wrappers, and `src/shared/message-content-blocks.ts` is verified in
 `711865e0`, and imported `provider-stream` / `provider-stream-family` exact
 helper coverage from `src/plugin-sdk/provider-stream.ts` and
-`src/plugin-sdk/provider-stream-family.ts` is verified in `da9a3e66`. All are
-counted with the plugin/extension system row above.
+`src/plugin-sdk/provider-stream-family.ts` is verified in `da9a3e66`, and
+imported `provider-transport-runtime` exact helper coverage from
+`src/plugin-sdk/provider-transport-runtime.ts` plus adjacent transport stream,
+message-transform, prompt-boundary, and OpenAI completions helpers is verified
+in `dd8bcfd8`. All are counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted

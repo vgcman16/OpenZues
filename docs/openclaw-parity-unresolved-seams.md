@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~97.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~97.6% overall, with a reasonable
   band of ~80-98%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -104,6 +104,7 @@ Current percentage rollup:
   setup-runtime helper, setup-tools helper, config-runtime helper,
   plugin-config-runtime helper, config-mutation helper, provider-tools helper,
   provider-stream-shared helper, provider-stream helper,
+  provider-transport-runtime helper,
   fetch-runtime helper, cli-backend helper,
   type-only SDK barrel helper, config-schema helper, entrypoints helper,
   diffs helper, acpx helper, ACP runtime-backend helper, ACP runtime facade
@@ -9311,7 +9312,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Minimax fast-mode model rewriting, OpenAI response defaults, OpenRouter and
   Kilocode reasoning wrappers, and tool-stream default-on behavior. Source/test
   checkpointed in `da9a3e66`; `provider-transport-runtime` remains the nearby
-  plugin-runtime queue head. Repo-wide parity is now estimated at ~97.5%.
+  plugin-runtime queue head. Repo-wide parity was estimated at ~97.5% at that
+  checkpoint.
+- Current queue-head adjustment: imported plugin SDK
+  `provider-transport-runtime` now exposes the source-backed exact helper
+  subset for scoped and unscoped imports: guarded fetch shape, OpenAI
+  completions parameter shaping, prompt-boundary stripping, transport replay
+  repair, header merging, payload sanitization, usage initialization, writable
+  stream shape, and stream finalization/failure helpers. Source/test
+  checkpointed in `dd8bcfd8`; adjacent provider runtime breadth remains open.
+  Repo-wide parity is now estimated at ~97.6%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
