@@ -27758,6 +27758,336 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_inbound_reply_dispatch_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-inbound-reply-dispatch.cjs"
+    runtime_entry.write_text(
+        """
+const inboundDispatch = require("openclaw/plugin-sdk/inbound-reply-dispatch");
+const scopedInboundDispatch =
+  require("@openclaw/plugin-sdk/inbound-reply-dispatch");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.inbound_reply_dispatch",
+      description: "Use OpenClaw inbound-reply-dispatch SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const recordCalls = [];
+        const dispatchCalls = [];
+        const deliverCalls = [];
+        const turnEvents = [];
+        const settled = [];
+        const recordInboundSession = async (params) => {
+          recordCalls.push({
+            storePath: params.storePath,
+            sessionKey: params.sessionKey,
+            ctxBody: params.ctx.Body,
+            hasOnRecordError: typeof params.onRecordError === "function"
+          });
+        };
+        const dispatchReplyWithBufferedBlockDispatcher = async (params) => {
+          dispatchCalls.push({
+            ctxBody: params.ctx.Body,
+            replyRequest: params.replyOptions.requestId,
+            hasModelSelected:
+              typeof params.replyOptions.onModelSelected === "function",
+            hasDeliver: typeof params.dispatcherOptions.deliver === "function"
+          });
+          await params.dispatcherOptions.deliver({
+            text: "hello",
+            mediaUrls: ["https://example.com/a.png"]
+          }, { kind: "final" });
+          return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
+        };
+        const ctxPayload = {
+          Body: "body",
+          RawBody: "body",
+          CommandBody: "body",
+          SessionKey: "agent:main:test:peer"
+        };
+        const base = inboundDispatch.buildInboundReplyDispatchBase({
+          cfg: { messages: { responsePrefix: "prefix" } },
+          channel: "test",
+          accountId: "acct",
+          route: { agentId: "main", sessionKey: "agent:main:test:peer" },
+          storePath: "sessions.json",
+          ctxPayload,
+          core: {
+            channel: {
+              session: { recordInboundSession },
+              reply: { dispatchReplyWithBufferedBlockDispatcher }
+            }
+          }
+        });
+        await scopedInboundDispatch.recordInboundSessionAndDispatchReply({
+          ...base,
+          deliver: async (payload) => {
+            deliverCalls.push(payload);
+          },
+          onRecordError: () => {
+            throw new Error("record should not fail");
+          },
+          onDispatchError: () => {
+            throw new Error("dispatch should not fail");
+          },
+          replyOptions: { requestId: "r1" }
+        });
+        const prepared = await inboundDispatch.runPreparedInboundReplyTurn({
+          channel: "test",
+          accountId: "acct",
+          routeSessionKey: "agent:main:test:prepared",
+          storePath: "sessions.json",
+          ctxPayload: {
+            Body: "prepared",
+            SessionKey: "agent:main:test:prepared"
+          },
+          recordInboundSession,
+          runDispatch: async () => ({
+            queuedFinal: false,
+            counts: { tool: 1, block: 0, final: 0 }
+          })
+        });
+        const turn = await inboundDispatch.runInboundReplyTurn({
+          channel: "test",
+          accountId: "acct",
+          raw: { id: "raw1" },
+          adapter: {
+            ingest: async (raw) => ({ id: raw.id, body: "ingested" }),
+            resolveTurn: async (input) => ({
+              channel: "test",
+              accountId: "acct",
+              routeSessionKey: "agent:main:test:turn",
+              storePath: "sessions.json",
+              ctxPayload: {
+                Body: input.body,
+                SessionKey: "agent:main:test:turn"
+              },
+              recordInboundSession,
+              runDispatch: async () => ({
+                queuedFinal: false,
+                counts: { tool: 0, block: 1, final: 0 }
+              })
+            }),
+            onFinalize: async (result) => {
+              turnEvents.push({
+                dispatched: result.dispatched,
+                sessionKey: result.routeSessionKey
+              });
+            }
+          }
+        });
+        globalThis.__openzuesReplyRuntime = {
+          async dispatchReplyFromConfig(params) {
+            return {
+              queuedFinal: false,
+              counts: { tool: 0, block: 1, final: 0 },
+              ctxBody: params.ctx.Body,
+              hasDispatcher: Boolean(params.dispatcher),
+              configOverrideName: params.configOverride.name
+            };
+          }
+        };
+        const settledResult =
+          await inboundDispatch.dispatchReplyFromConfigWithSettledDispatcher({
+            cfg: {},
+            ctxPayload: { Body: "settled" },
+            dispatcher: {},
+            onSettled: () => settled.push("done"),
+            configOverride: { name: "override" }
+          });
+        delete globalThis.__openzuesReplyRuntime;
+        const visibleResult = {
+          queuedFinal: false,
+          counts: { tool: 0, block: 1, final: 0 }
+        };
+        return {
+          keys: Object.keys(inboundDispatch).sort(),
+          scopedSame:
+            scopedInboundDispatch.recordInboundSessionAndDispatchReply ===
+            inboundDispatch.recordInboundSessionAndDispatchReply,
+          base: {
+            channel: base.channel,
+            accountId: base.accountId,
+            agentId: base.agentId,
+            routeSessionKey: base.routeSessionKey,
+            sameRecord: base.recordInboundSession === recordInboundSession,
+            sameDispatch:
+              base.dispatchReplyWithBufferedBlockDispatcher ===
+              dispatchReplyWithBufferedBlockDispatcher
+          },
+          helpers: {
+            defaultCounts: inboundDispatch.resolveInboundReplyDispatchCounts(
+              undefined
+            ),
+            visible: inboundDispatch.hasVisibleInboundReplyDispatch(
+              visibleResult
+            ),
+            finalFromVisible:
+              inboundDispatch.hasFinalInboundReplyDispatch(visibleResult),
+            finalFromSignal:
+              inboundDispatch.hasFinalInboundReplyDispatch(undefined, {
+                fallbackDelivered: true
+              })
+          },
+          recordCalls,
+          dispatchCalls,
+          deliverCalls,
+          prepared: {
+            dispatched: prepared.dispatched,
+            sessionKey: prepared.routeSessionKey,
+            toolCount: prepared.dispatchResult.counts.tool
+          },
+          turn: {
+            dispatched: turn.dispatched,
+            sessionKey: turn.routeSessionKey,
+            blockCount: turn.dispatchResult.counts.block
+          },
+          turnEvents,
+          settled,
+          settledResult
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-inbound-reply-dispatch-plugin",
+                    "name": "Runtime Inbound Reply Dispatch Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-inbound-reply-dispatch.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.inbound_reply_dispatch"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.inbound_reply_dispatch"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildInboundReplyDispatchBase",
+            "dispatchInboundReplyWithBase",
+            "dispatchReplyFromConfigWithSettledDispatcher",
+            "hasFinalInboundReplyDispatch",
+            "hasVisibleInboundReplyDispatch",
+            "recordInboundSessionAndDispatchReply",
+            "resolveInboundReplyDispatchCounts",
+            "runInboundReplyTurn",
+            "runPreparedInboundReplyTurn",
+        ],
+        "scopedSame": True,
+        "base": {
+            "channel": "test",
+            "accountId": "acct",
+            "agentId": "main",
+            "routeSessionKey": "agent:main:test:peer",
+            "sameRecord": True,
+            "sameDispatch": True,
+        },
+        "helpers": {
+            "defaultCounts": {"tool": 0, "block": 0, "final": 0},
+            "visible": True,
+            "finalFromVisible": False,
+            "finalFromSignal": True,
+        },
+        "recordCalls": [
+            {
+                "storePath": "sessions.json",
+                "sessionKey": "agent:main:test:peer",
+                "ctxBody": "body",
+                "hasOnRecordError": True,
+            },
+            {
+                "storePath": "sessions.json",
+                "sessionKey": "agent:main:test:prepared",
+                "ctxBody": "prepared",
+                "hasOnRecordError": False,
+            },
+            {
+                "storePath": "sessions.json",
+                "sessionKey": "agent:main:test:turn",
+                "ctxBody": "ingested",
+                "hasOnRecordError": False,
+            },
+        ],
+        "dispatchCalls": [
+            {
+                "ctxBody": "body",
+                "replyRequest": "r1",
+                "hasModelSelected": True,
+                "hasDeliver": True,
+            }
+        ],
+        "deliverCalls": [
+            {"text": "hello", "mediaUrls": ["https://example.com/a.png"]}
+        ],
+        "prepared": {
+            "dispatched": True,
+            "sessionKey": "agent:main:test:prepared",
+            "toolCount": 1,
+        },
+        "turn": {
+            "dispatched": True,
+            "sessionKey": "agent:main:test:turn",
+            "blockCount": 1,
+        },
+        "turnEvents": [{"dispatched": True, "sessionKey": "agent:main:test:turn"}],
+        "settled": ["done"],
+        "settledResult": {
+            "queuedFinal": False,
+            "counts": {"tool": 0, "block": 1, "final": 0},
+            "ctxBody": "settled",
+            "hasDispatcher": True,
+            "configOverrideName": "override",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_reply_runtime_helpers(
     tmp_path,
 ) -> None:

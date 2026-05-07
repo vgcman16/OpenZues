@@ -37805,6 +37805,207 @@ function createNormalizedOutboundDeliverer(handler) {
   };
 }
 
+function resolvePreparedChannelTurnAdmission(value) {
+  if (
+    value &&
+    typeof value === "object" &&
+    ["dispatch", "observeOnly"].includes(value.kind)
+  ) {
+    return value;
+  }
+  return { kind: "dispatch" };
+}
+
+function normalizeInboundReplyPreflight(value) {
+  if (!value) {
+    return {};
+  }
+  if (value && typeof value === "object" && typeof value.kind === "string") {
+    return { admission: value };
+  }
+  return value;
+}
+
+async function runPreparedInboundReplyTurn(params = {}) {
+  const admission = resolvePreparedChannelTurnAdmission(params.admission);
+  const ctxPayload = params.ctxPayload || {};
+  if (typeof params.recordInboundSession !== "function") {
+    throw new Error("inbound reply dispatch requires recordInboundSession");
+  }
+  await params.recordInboundSession({
+    storePath: params.storePath,
+    sessionKey: ctxPayload.SessionKey || params.routeSessionKey,
+    ctx: ctxPayload,
+    groupResolution: params.record && params.record.groupResolution,
+    createIfMissing: params.record && params.record.createIfMissing,
+    updateLastRoute: params.record && params.record.updateLastRoute,
+    onRecordError: params.record && params.record.onRecordError,
+    trackSessionMetaTask: params.record && params.record.trackSessionMetaTask,
+  });
+  let dispatchResult;
+  if (admission.kind === "observeOnly") {
+    dispatchResult =
+      params.observeOnlyDispatchResult ||
+      { queuedFinal: false, counts: { tool: 0, block: 0, final: 0 } };
+  } else {
+    if (typeof params.runDispatch !== "function") {
+      throw new Error("inbound reply dispatch requires prepared runDispatch");
+    }
+    dispatchResult = await params.runDispatch();
+  }
+  return {
+    admission,
+    dispatched: true,
+    ctxPayload,
+    routeSessionKey: params.routeSessionKey,
+    dispatchResult,
+  };
+}
+
+async function runInboundReplyTurn(params = {}) {
+  const adapter = params.adapter || {};
+  const input = typeof adapter.ingest === "function"
+    ? await adapter.ingest(params.raw)
+    : params.raw;
+  if (!input) {
+    return { admission: { kind: "drop", reason: "ingest-null" }, dispatched: false };
+  }
+  const eventClass = typeof adapter.classify === "function"
+    ? await adapter.classify(input)
+    : { kind: "message", canStartAgentTurn: true };
+  if (eventClass && eventClass.canStartAgentTurn === false) {
+    return {
+      admission: { kind: "handled", reason: `event:${eventClass.kind || "message"}` },
+      dispatched: false,
+    };
+  }
+  const preflight = normalizeInboundReplyPreflight(
+    typeof adapter.preflight === "function"
+      ? await adapter.preflight(input, eventClass)
+      : undefined,
+  );
+  const preflightAdmission = preflight.admission;
+  if (
+    preflightAdmission &&
+    preflightAdmission.kind !== "dispatch" &&
+    preflightAdmission.kind !== "observeOnly"
+  ) {
+    return { admission: preflightAdmission, dispatched: false };
+  }
+  if (typeof adapter.resolveTurn !== "function") {
+    throw new Error("inbound reply dispatch requires resolveTurn");
+  }
+  const resolved = await adapter.resolveTurn(input, eventClass, preflight);
+  const admission = resolvePreparedChannelTurnAdmission(
+    (resolved && resolved.admission) || preflightAdmission,
+  );
+  const result = await runPreparedInboundReplyTurn({
+    ...(resolved || {}),
+    admission,
+  });
+  if (typeof adapter.onFinalize === "function") {
+    await adapter.onFinalize(result);
+  }
+  return result;
+}
+
+const resolveInboundReplyDispatchCounts = resolveChannelTurnDispatchCountsForContract;
+const hasVisibleInboundReplyDispatch = hasVisibleChannelTurnDispatchForContract;
+const hasFinalInboundReplyDispatch = hasFinalChannelTurnDispatchForContract;
+
+async function withReplyDispatcher(params = {}) {
+  try {
+    return await params.run();
+  } finally {
+    if (typeof params.onSettled === "function") {
+      await params.onSettled();
+    }
+  }
+}
+
+async function dispatchReplyFromConfigWithSettledDispatcher(params = {}) {
+  return await withReplyDispatcher({
+    dispatcher: params.dispatcher,
+    onSettled: params.onSettled,
+    run: () =>
+      resolveReplyRuntimeMethod("dispatchReplyFromConfig")({
+        ctx: params.ctxPayload,
+        cfg: params.cfg,
+        dispatcher: params.dispatcher,
+        replyOptions: params.replyOptions,
+        configOverride: params.configOverride,
+      }),
+  });
+}
+
+function buildInboundReplyDispatchBase(params = {}) {
+  return {
+    cfg: params.cfg,
+    channel: params.channel,
+    accountId: params.accountId,
+    agentId: params.route && params.route.agentId,
+    routeSessionKey: params.route && params.route.sessionKey,
+    storePath: params.storePath,
+    ctxPayload: params.ctxPayload,
+    recordInboundSession:
+      params.core &&
+      params.core.channel &&
+      params.core.channel.session &&
+      params.core.channel.session.recordInboundSession,
+    dispatchReplyWithBufferedBlockDispatcher:
+      params.core &&
+      params.core.channel &&
+      params.core.channel.reply &&
+      params.core.channel.reply.dispatchReplyWithBufferedBlockDispatcher,
+  };
+}
+
+async function recordInboundSessionAndDispatchReply(params = {}) {
+  const { onModelSelected, ...replyPipeline } = createChannelReplyPipeline({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    channel: params.channel,
+    accountId: params.accountId,
+  });
+  const deliver = createNormalizedOutboundDeliverer(params.deliver);
+  await runPreparedInboundReplyTurn({
+    channel: params.channel,
+    accountId: params.accountId,
+    routeSessionKey: params.routeSessionKey,
+    storePath: params.storePath,
+    ctxPayload: params.ctxPayload,
+    recordInboundSession: params.recordInboundSession,
+    record: {
+      onRecordError: params.onRecordError,
+    },
+    runDispatch: async () =>
+      await params.dispatchReplyWithBufferedBlockDispatcher({
+        ctx: params.ctxPayload,
+        cfg: params.cfg,
+        dispatcherOptions: {
+          ...replyPipeline,
+          deliver,
+          onError: params.onDispatchError,
+        },
+        replyOptions: {
+          ...(params.replyOptions || {}),
+          onModelSelected,
+        },
+      }),
+  });
+}
+
+async function dispatchInboundReplyWithBase(params = {}) {
+  const dispatchBase = buildInboundReplyDispatchBase(params);
+  await recordInboundSessionAndDispatchReply({
+    ...dispatchBase,
+    deliver: params.deliver,
+    onRecordError: params.onRecordError,
+    onDispatchError: params.onDispatchError,
+    replyOptions: params.replyOptions,
+  });
+}
+
 function resolveOutboundMediaUrls(payload) {
   if (payload && Array.isArray(payload.mediaUrls) && payload.mediaUrls.length > 0) {
     return payload.mediaUrls;
@@ -70563,6 +70764,18 @@ const replyDispatchRuntime = {
   resolveChunkMode,
 };
 
+const inboundReplyDispatchRuntime = {
+  buildInboundReplyDispatchBase,
+  dispatchInboundReplyWithBase,
+  dispatchReplyFromConfigWithSettledDispatcher,
+  hasFinalInboundReplyDispatch,
+  hasVisibleInboundReplyDispatch,
+  recordInboundSessionAndDispatchReply,
+  resolveInboundReplyDispatchCounts,
+  runInboundReplyTurn,
+  runPreparedInboundReplyTurn,
+};
+
 const agentMediaPayloadRuntime = {
   buildAgentMediaPayload,
   getAgentScopedMediaLocalRoots,
@@ -72455,6 +72668,7 @@ const genericSdk = new Proxy(
     ...sessionStoreRuntime,
     ...replyRuntime,
     ...replyDispatchRuntime,
+    ...inboundReplyDispatchRuntime,
     ...outboundRuntime,
     ...outboundSendDepsRuntime,
     ...deliveryQueueRuntime,
@@ -74517,6 +74731,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/reply-dispatch-runtime"
   ) {
     return replyDispatchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/inbound-reply-dispatch" ||
+    request === "@openclaw/plugin-sdk/inbound-reply-dispatch"
+  ) {
+    return inboundReplyDispatchRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||
