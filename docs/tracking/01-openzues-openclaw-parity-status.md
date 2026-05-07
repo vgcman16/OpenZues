@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~94.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~94.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2782,6 +2782,20 @@ may lag behind this tracker.
   - Last verified: 2026-05-07, focused agent-runtime web-tool proof (`1
     passed`), adjacent SDK helper proof (`11 passed, 1034 deselected`),
     adjacent imported-plugin proof (`233 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime provider-auth alias helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/provider-auth-aliases.ts`,
+    `openclaw-main/src/plugins/plugin-config-trust.ts`,
+    `openclaw-main/src/plugins/plugin-control-plane-context.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `61731b33`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime provider-auth alias proof
+    (`1 passed`), adjacent SDK helper proof (`12 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`234 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin runtime tool factory context.

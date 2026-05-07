@@ -82,6 +82,11 @@ The imported `agent-runtime` web-tool helper coverage from
 `src/agents/tools/web-fetch-utils.ts`, and
 `src/agents/tools/web-guarded-fetch.ts` is verified in `9bc67f5e` and counted
 with the plugin/extension system row above.
+The imported `agent-runtime` provider-auth alias helper coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/provider-auth-aliases.ts`,
+`src/plugins/plugin-config-trust.ts`, and
+`src/plugins/plugin-control-plane-context.ts` is verified in `61731b33` and
+counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
