@@ -31155,6 +31155,155 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_target_testing_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-target-testing.cjs"
+    runtime_entry.write_text(
+        """
+const targetTesting = require("openclaw/plugin-sdk/channel-target-testing");
+const scopedTargetTesting = require("@openclaw/plugin-sdk/channel-target-testing");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_target_testing",
+      description: "Use OpenClaw channel target testing SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const registered = [];
+        const previousIt = globalThis.it;
+        globalThis.it = (name, callback) => {
+          const entry = { name, calls: [] };
+          registered.push(entry);
+          callback();
+        };
+        try {
+          targetTesting.installCommonResolveTargetErrorCases({
+            implicitAllowFrom: ["channel:C123"],
+            resolveTarget: (params) => {
+              const ok =
+                params.to &&
+                params.to.trim() &&
+                params.to !== "invalid-target";
+              registered[registered.length - 1]?.calls.push(params);
+              return ok
+                ? { ok: true, to: params.to.trim() }
+                : { ok: false, error: new Error(`bad:${params.mode}`) };
+            }
+          });
+        } finally {
+          if (previousIt === undefined) {
+            delete globalThis.it;
+          } else {
+            globalThis.it = previousIt;
+          }
+        }
+        const directCalls = [];
+        targetTesting.installCommonResolveTargetErrorCases({
+          implicitAllowFrom: ["chat:ops"],
+          resolveTarget: (params) => {
+            directCalls.push(params);
+            return { ok: false, error: { code: `bad-${params.mode}` } };
+          }
+        });
+        return {
+          keys: Object.keys(targetTesting).sort(),
+          scopedSame:
+            scopedTargetTesting.installCommonResolveTargetErrorCases ===
+            targetTesting.installCommonResolveTargetErrorCases,
+          registeredNames: registered.map((entry) => entry.name),
+          registeredCalls: registered.flatMap((entry) => entry.calls),
+          directCalls
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-target-testing-plugin",
+                    "name": "Runtime Channel Target Testing Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-target-testing.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_target_testing"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.channel_target_testing"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["installCommonResolveTargetErrorCases"],
+        "scopedSame": True,
+        "registeredNames": [
+            "should error on normalization failure with allowlist (implicit mode)",
+            "should error when no target provided with allowlist",
+            "should error when no target and no allowlist",
+            "should handle whitespace-only target",
+        ],
+        "registeredCalls": [
+            {
+                "to": "invalid-target",
+                "mode": "implicit",
+                "allowFrom": ["channel:C123"],
+            },
+            {
+                "mode": "implicit",
+                "allowFrom": ["channel:C123"],
+            },
+            {"mode": "explicit", "allowFrom": []},
+            {"to": "   ", "mode": "explicit", "allowFrom": []},
+        ],
+        "directCalls": [
+            {"to": "invalid-target", "mode": "implicit", "allowFrom": ["chat:ops"]},
+            {"mode": "implicit", "allowFrom": ["chat:ops"]},
+            {"mode": "explicit", "allowFrom": []},
+            {"to": "   ", "mode": "explicit", "allowFrom": []},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:

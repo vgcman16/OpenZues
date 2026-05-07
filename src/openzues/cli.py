@@ -57035,6 +57035,80 @@ const channelContractTestingRuntime = {
   primeChannelOutboundSendMock,
 };
 
+function assertCommonResolveTargetErrorCase(result, label) {
+  assertChannelContract(
+    result && result.ok === false,
+    `expected ${label} resolveTarget result to fail`,
+  );
+  assertChannelContract(
+    result && result.error !== undefined && result.error !== null,
+    `expected ${label} resolveTarget result to include an error`,
+  );
+}
+
+function installCommonResolveTargetErrorCases(params = {}) {
+  assertChannelContract(
+    typeof params.resolveTarget === "function",
+    "resolveTarget is required",
+  );
+  const implicitAllowFrom = Array.isArray(params.implicitAllowFrom)
+    ? params.implicitAllowFrom
+    : [];
+  const cases = [
+    {
+      name: "should error on normalization failure with allowlist (implicit mode)",
+      input: {
+        to: "invalid-target",
+        mode: "implicit",
+        allowFrom: implicitAllowFrom,
+      },
+    },
+    {
+      name: "should error when no target provided with allowlist",
+      input: {
+        to: undefined,
+        mode: "implicit",
+        allowFrom: implicitAllowFrom,
+      },
+    },
+    {
+      name: "should error when no target and no allowlist",
+      input: {
+        to: undefined,
+        mode: "explicit",
+        allowFrom: [],
+      },
+    },
+    {
+      name: "should handle whitespace-only target",
+      input: {
+        to: "   ",
+        mode: "explicit",
+        allowFrom: [],
+      },
+    },
+  ];
+  const registerTest =
+    typeof globalThis !== "undefined" && typeof globalThis.it === "function"
+      ? globalThis.it
+      : null;
+  for (const testCase of cases) {
+    const runCase = () => {
+      const result = params.resolveTarget({ ...testCase.input });
+      assertCommonResolveTargetErrorCase(result, testCase.name);
+    };
+    if (registerTest) {
+      registerTest.call(globalThis, testCase.name, runCase);
+    } else {
+      runCase();
+    }
+  }
+}
+
+const channelTargetTestingRuntime = {
+  installCommonResolveTargetErrorCases,
+};
+
 function applyChannelMatchMeta(result, match = {}) {
   if (match.matchKey && match.matchSource) {
     result.matchKey = match.matchKey;
@@ -75799,6 +75873,7 @@ const genericSdk = new Proxy(
     ...channelLifecycleRuntime,
     ...channelCoreRuntime,
     ...channelContractTestingRuntime,
+    ...channelTargetTestingRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
@@ -77837,6 +77912,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-contract-testing"
   ) {
     return channelContractTestingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-target-testing" ||
+    request === "@openclaw/plugin-sdk/channel-target-testing"
+  ) {
+    return channelTargetTestingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||
