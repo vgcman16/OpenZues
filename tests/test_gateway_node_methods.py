@@ -10761,6 +10761,164 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_optional_channel_setup_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-optional-channel-setup.cjs"
+    runtime_entry.write_text(
+        """
+const setup = require("openclaw/plugin-sdk/optional-channel-setup");
+const scopedSetup = require("@openclaw/plugin-sdk/optional-channel-setup");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.optional_channel_setup",
+      description: "Use OpenClaw optional-channel-setup SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const adapter = setup.createOptionalChannelSetupAdapter({
+          channel: "sample",
+          label: "Sample",
+          npmSpec: "@openclaw/sample",
+          docsPath: "/channels/sample"
+        });
+        const wizard = scopedSetup.createOptionalChannelSetupWizard({
+          channel: "wizard",
+          label: "Wizard",
+          docsPath: "/channels/wizard"
+        });
+        let adapterError = "";
+        try {
+          adapter.applyAccountConfig({ cfg: {}, input: {} });
+        } catch (error) {
+          adapterError = error.message;
+        }
+        let wizardError = "";
+        try {
+          await wizard.finalize({ runtime: { log: () => {} } });
+        } catch (error) {
+          wizardError = error.message;
+        }
+        return {
+          keys: Object.keys(setup).sort(),
+          scopedSame:
+            scopedSetup.createOptionalChannelSetupAdapter ===
+            setup.createOptionalChannelSetupAdapter,
+          adapter: {
+            defaultAccount: adapter.resolveAccountId({ cfg: {} }),
+            explicitAccount: adapter.resolveAccountId({ accountId: "work" }),
+            validation: adapter.validateInput({ cfg: {}, input: {} }),
+            error: adapterError
+          },
+          wizard: {
+            channel: wizard.channel,
+            labels: {
+              configured: wizard.status.configuredLabel,
+              unconfigured: wizard.status.unconfiguredLabel
+            },
+            configured: wizard.status.resolveConfigured({ cfg: {} }),
+            lines: wizard.status.resolveStatusLines({ cfg: {} }),
+            selectionHint: wizard.status.resolveSelectionHint({ cfg: {} }),
+            credentials: wizard.credentials,
+            error: wizardError
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-optional-channel-setup-plugin",
+                    "name": "Runtime Optional Channel Setup Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-optional-channel-setup.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.optional_channel_setup"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.optional_channel_setup"},
+    )
+
+    message = (
+        "Sample setup requires @openclaw/sample to be installed. "
+        "Docs: channels/sample (https://docs.openclaw.ai/channels/sample)"
+    )
+    wizard_message = (
+        "Wizard setup requires the Wizard plugin to be installed. "
+        "Docs: channels/wizard (https://docs.openclaw.ai/channels/wizard)"
+    )
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createOptionalChannelSetupAdapter",
+            "createOptionalChannelSetupWizard",
+        ],
+        "scopedSame": True,
+        "adapter": {
+            "defaultAccount": "default",
+            "explicitAccount": "work",
+            "validation": message,
+            "error": message,
+        },
+        "wizard": {
+            "channel": "wizard",
+            "labels": {
+                "configured": "Wizard plugin installed",
+                "unconfigured": "install Wizard plugin",
+            },
+            "configured": False,
+            "lines": [wizard_message],
+            "selectionHint": wizard_message,
+            "credentials": [],
+            "error": wizard_message,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_talk_config_runtime_helper(
     tmp_path,
 ) -> None:

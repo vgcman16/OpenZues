@@ -58312,6 +58312,11 @@ const channelSetupRuntime = {
   splitSetupEntries,
 };
 
+const optionalChannelSetupRuntime = {
+  createOptionalChannelSetupAdapter,
+  createOptionalChannelSetupWizard,
+};
+
 const setupRuntime = {
   DEFAULT_ACCOUNT_ID,
   createAccountScopedAllowFromSection,
@@ -73022,6 +73027,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-setup"
   ) {
     return channelSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/optional-channel-setup" ||
+    request === "@openclaw/plugin-sdk/optional-channel-setup"
+  ) {
+    return optionalChannelSetupRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/setup-runtime" ||
