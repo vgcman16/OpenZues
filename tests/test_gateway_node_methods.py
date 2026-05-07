@@ -39152,6 +39152,202 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_web_tool_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-web-tools.cjs"
+    runtime_entry.write_text(
+        """
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_web_tools",
+      description: "Use OpenClaw agent-runtime web tool helpers",
+      parameters: { type: "object" },
+      async execute() {
+        const cache = new Map();
+        agent.writeCache(cache, " Result ", { value: 1 }, 1000);
+        const response = new Response("<meta charset='utf-8'>abcdef");
+        const bounded = await agent.readResponseText(response, { maxBytes: 9 });
+        const html = agent.htmlToMarkdown(
+          "<title>Hi &amp; There</title><h2>Head</h2><p>Go <a href='https://ex'>there</a></p><script>x</script>"
+        );
+        const extracted = await agent.extractBasicHtmlContent({
+          html: "<title>T</title><p>A&nbsp;B</p>",
+          extractMode: "text"
+        });
+        const endpoint = await agent.withTrustedWebToolsEndpoint(
+          {
+            url: "https://example.test/path",
+            fetchImpl: async (url, init) => new Response(`ok:${url}:${init.method}`)
+          },
+          async ({ response, finalUrl }) => ({
+            finalUrl,
+            body: await response.text()
+          })
+        );
+        const guarded = await agent.fetchWithWebToolsNetworkGuard({
+          url: "https://example.test/guarded",
+          init: { method: "POST" },
+          fetchImpl: async (url, init) => new Response(`guarded:${url}:${init.method}`)
+        });
+        const guardedBody = await guarded.response.text();
+        await guarded.release();
+
+        return {
+          keys: Object.keys(agent).filter((key) => [
+            "DEFAULT_CACHE_TTL_MINUTES",
+            "DEFAULT_TIMEOUT_SECONDS",
+            "extractBasicHtmlContent",
+            "fetchWithWebToolsNetworkGuard",
+            "htmlToMarkdown",
+            "markdownToText",
+            "normalizeCacheKey",
+            "normalizeWhitespace",
+            "readCache",
+            "readResponseText",
+            "resolveCacheTtlMs",
+            "resolveTimeoutSeconds",
+            "truncateText",
+            "withSelfHostedWebToolsEndpoint",
+            "withStrictWebToolsEndpoint",
+            "withTrustedWebToolsEndpoint",
+            "writeCache"
+          ].includes(key)).sort(),
+          defaults: {
+            timeout: agent.DEFAULT_TIMEOUT_SECONDS,
+            ttl: agent.DEFAULT_CACHE_TTL_MINUTES
+          },
+          timing: {
+            timeout: agent.resolveTimeoutSeconds(3.8, 30),
+            fallbackTimeout: agent.resolveTimeoutSeconds("bad", 30),
+            ttl: agent.resolveCacheTtlMs(0.5, 15)
+          },
+          cache: {
+            key: agent.normalizeCacheKey(" HTTPS://Example.COM/Path "),
+            read: agent.readCache(cache, " Result ")
+          },
+          text: {
+            whitespace: agent.normalizeWhitespace(" A  B \\n\\n\\n C "),
+            markdown: html,
+            plain: agent.markdownToText("# Head\\n- [Link](https://ex)\\n`code`"),
+            truncated: agent.truncateText("abcdef", 4),
+            extracted,
+            bounded
+          },
+          endpoint,
+          guarded: {
+            finalUrl: guarded.finalUrl,
+            body: guardedBody
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-web-tools-plugin",
+                    "name": "Runtime Agent Web Tools Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-web-tools.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_web_tools"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_web_tools"})
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "DEFAULT_CACHE_TTL_MINUTES",
+        "DEFAULT_TIMEOUT_SECONDS",
+        "extractBasicHtmlContent",
+        "fetchWithWebToolsNetworkGuard",
+        "htmlToMarkdown",
+        "markdownToText",
+        "normalizeCacheKey",
+        "normalizeWhitespace",
+        "readCache",
+        "readResponseText",
+        "resolveCacheTtlMs",
+        "resolveTimeoutSeconds",
+        "truncateText",
+        "withSelfHostedWebToolsEndpoint",
+        "withStrictWebToolsEndpoint",
+        "withTrustedWebToolsEndpoint",
+        "writeCache",
+    ]
+    assert result["defaults"] == {"timeout": 30, "ttl": 15}
+    assert result["timing"] == {"timeout": 3, "fallbackTimeout": 30, "ttl": 30_000}
+    assert result["cache"] == {
+        "key": "https://example.com/path",
+        "read": {"value": {"value": 1}, "cached": True},
+    }
+    assert result["text"]["whitespace"] == "A B\n\n C"
+    assert result["text"]["markdown"] == {
+        "title": "Hi & There",
+        "text": "Hi & There\n## Head\nGo [there](https://ex)",
+    }
+    assert result["text"]["plain"] == "Head\nLink\ncode"
+    assert result["text"]["truncated"] == {"text": "abcd", "truncated": True}
+    assert result["text"]["extracted"] == {"text": "TA B", "title": "T"}
+    assert result["text"]["bounded"] == {
+        "text": "<meta cha",
+        "truncated": True,
+        "bytesRead": 9,
+    }
+    assert result["endpoint"] == {
+        "finalUrl": "https://example.test/path",
+        "body": "ok:https://example.test/path:undefined",
+    }
+    assert result["guarded"] == {
+        "finalUrl": "https://example.test/guarded",
+        "body": "guarded:https://example.test/guarded:POST",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

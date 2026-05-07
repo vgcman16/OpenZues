@@ -22162,6 +22162,57 @@ function normalizeWhitespace(value) {
     .trim();
 }
 
+function webToolDecodeEntities(value) {
+  return String(value || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/gi, (_, dec) => String.fromCharCode(Number.parseInt(dec, 10)));
+}
+
+function webToolStripTags(value) {
+  return webToolDecodeEntities(String(value || "").replace(/<[^>]+>/g, ""));
+}
+
+function stripInvisibleUnicode(value) {
+  return String(value || "").replace(/[\u200B-\u200D\uFEFF]/g, "");
+}
+
+function htmlToMarkdown(html) {
+  const rawHtml = String(html || "");
+  const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch ? normalizeWhitespace(webToolStripTags(titleMatch[1])) : undefined;
+  let text = rawHtml
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, "");
+  text = text.replace(
+    /<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
+    (_, href, body) => {
+      const label = normalizeWhitespace(webToolStripTags(body));
+      return label ? `[${label}](${href})` : href;
+    },
+  );
+  text = text.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, level, body) => {
+    const prefix = "#".repeat(Math.max(1, Math.min(6, Number.parseInt(level, 10))));
+    const label = normalizeWhitespace(webToolStripTags(body));
+    return `\n${prefix} ${label}\n`;
+  });
+  text = text.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, body) => {
+    const label = normalizeWhitespace(webToolStripTags(body));
+    return label ? `\n- ${label}` : "";
+  });
+  text = text
+    .replace(/<(br|hr)\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|section|article|header|footer|table|tr|ul|ol)>/gi, "\n");
+  text = normalizeWhitespace(webToolStripTags(text));
+  return title ? { text, title } : { text };
+}
+
 function markdownToText(markdown) {
   let text = String(markdown || "");
   text = text.replace(/!\[[^\]]*]\([^)]+\)/g, "");
@@ -22182,6 +22233,19 @@ function truncateText(value, maxChars) {
     return { text, truncated: false };
   }
   return { text: text.slice(0, maxChars), truncated: true };
+}
+
+async function extractBasicHtmlContent(params = {}) {
+  const cleanHtml = String(params.html || "");
+  const rendered = htmlToMarkdown(cleanHtml);
+  if (params.extractMode === "text") {
+    const text =
+      stripInvisibleUnicode(markdownToText(rendered.text)) ||
+      stripInvisibleUnicode(normalizeWhitespace(webToolStripTags(cleanHtml)));
+    return text ? { text, ...(rendered.title ? { title: rendered.title } : {}) } : null;
+  }
+  const text = stripInvisibleUnicode(rendered.text);
+  return text ? { text, ...(rendered.title ? { title: rendered.title } : {}) } : null;
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -22285,6 +22349,16 @@ async function withTrustedWebToolsEndpoint(params, run) {
   const fetchImpl = params.fetchImpl || globalThis.fetch;
   const response = await fetchImpl(params.url, params.init || {});
   return await run({ response, finalUrl: params.url });
+}
+
+async function fetchWithWebToolsNetworkGuard(params = {}) {
+  const fetchImpl = params.fetchImpl || globalThis.fetch;
+  const response = await fetchImpl(params.url, params.init || {});
+  return {
+    response,
+    finalUrl: params.url,
+    release: async () => undefined,
+  };
 }
 
 async function withSelfHostedWebToolsEndpoint(params, run) {
@@ -56734,9 +56808,11 @@ function resolveOpenClawAgentDir(env = process.env) {
 }
 
 const agentRuntime = {
+  DEFAULT_CACHE_TTL_MINUTES,
   DEFAULT_CONTEXT_TOKENS: AGENT_RUNTIME_DEFAULT_CONTEXT_TOKENS,
   DEFAULT_MODEL: AGENT_RUNTIME_DEFAULT_MODEL,
   DEFAULT_PROVIDER: AGENT_RUNTIME_DEFAULT_PROVIDER,
+  DEFAULT_TIMEOUT_SECONDS,
   CUSTOM_LOCAL_AUTH_MARKER,
   EmbeddedBlockChunker,
   GCP_VERTEX_CREDENTIALS_MARKER,
@@ -56765,6 +56841,7 @@ const agentRuntime = {
   defineToolDescriptor,
   defineToolDescriptors,
   evaluateToolAvailability,
+  extractBasicHtmlContent,
   extractAssistantText,
   extractAssistantThinking,
   extractAssistantVisibleText,
@@ -56775,6 +56852,7 @@ const agentRuntime = {
   findModelInCatalog: agentRuntimeFindModelInCatalog,
   findNormalizedProviderKey: agentRuntimeFindNormalizedProviderKey,
   findNormalizedProviderValue: agentRuntimeFindNormalizedProviderValue,
+  fetchWithWebToolsNetworkGuard,
   formatReasoningMessage,
   formatToolExecutorRef,
   formatUserTime,
@@ -56785,6 +56863,7 @@ const agentRuntime = {
   hasRuntimeAvailableProviderAuth: agentRuntimeHasRuntimeAvailableProviderAuth,
   hasSyntheticLocalProviderAuthConfig: agentRuntimeHasSyntheticLocalProviderAuthConfig,
   hasUsableCustomProviderApiKey: agentRuntimeHasUsableCustomProviderApiKey,
+  htmlToMarkdown,
   isAssistantMessage,
   isAwsSdkAuthMarker: agentRuntimeIsAwsSdkAuthMarker,
   isKnownEnvApiKeyMarker: agentRuntimeIsKnownEnvApiKeyMarker,
@@ -56796,6 +56875,7 @@ const agentRuntime = {
   listKnownNonSecretApiKeyMarkers: agentRuntimeListKnownNonSecretApiKeyMarkers,
   listAgentEntries: agentRuntimeListAgentEntries,
   listAgentIds: agentRuntimeListAgentIds,
+  markdownToText,
   modelKey: agentRuntimeModelKey,
   modelSupportsDocument: agentRuntimeModelSupportsDocument,
   modelSupportsInput: agentRuntimeModelSupportsInput,
@@ -56806,6 +56886,8 @@ const agentRuntime = {
   normalizeProviderIdForAuth: agentRuntimeNormalizeProviderId,
   normalizeStoredOverrideModel: agentRuntimeNormalizeStoredOverrideModel,
   normalizeTimestamp,
+  normalizeCacheKey,
+  normalizeWhitespace,
   parseAvailableTags,
   parseModelRef: agentRuntimeParseModelRef,
   payloadTextResult,
@@ -56838,6 +56920,8 @@ const agentRuntime = {
   resolveModelAuthMode: agentRuntimeResolveModelAuthMode,
   resolveModelRefFromString: agentRuntimeResolveModelRefFromString,
   resolveEnvSecretRefHeaderValueMarker: agentRuntimeResolveEnvSecretRefHeaderValueMarker,
+  readCache,
+  readResponseText,
   resolveNonEnvSecretRefApiKeyMarker: agentRuntimeResolveNonEnvSecretRefApiKeyMarker,
   resolveNonEnvSecretRefHeaderValueMarker: agentRuntimeResolveNonEnvSecretRefHeaderValueMarker,
   resolveOAuthApiKeyMarker: agentRuntimeResolveOAuthApiKeyMarker,
@@ -56856,6 +56940,8 @@ const agentRuntime = {
   resolveSimpleCompletionSelectionForAgent: agentRuntimeResolveSimpleCompletionSelectionForAgent,
   resolveSubagentConfiguredModelSelection: agentRuntimeResolveSubagentConfiguredModelSelection,
   resolveSubagentSpawnModelSelection: agentRuntimeResolveSubagentSpawnModelSelection,
+  resolveCacheTtlMs,
+  resolveTimeoutSeconds,
   resolveUsableCustomProviderApiKey: agentRuntimeResolveUsableCustomProviderApiKey,
   resolveUserTimeFormat,
   resolveUserTimezone,
@@ -56868,8 +56954,13 @@ const agentRuntime = {
   stripThinkingTagsFromText,
   stringEnum,
   textResult,
+  truncateText,
   toToolProtocolDescriptor,
   toToolProtocolDescriptors,
+  withSelfHostedWebToolsEndpoint,
+  withStrictWebToolsEndpoint,
+  withTrustedWebToolsEndpoint,
+  writeCache,
   withNormalizedTimestamp,
   wrapOwnerOnlyToolExecution,
 };
