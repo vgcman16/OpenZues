@@ -37005,6 +37005,7 @@ module.exports = {
         "findNormalizedProviderKey",
         "findNormalizedProviderValue",
         "formatUserTime",
+        "getModelRefStatus",
         "listAgentIds",
         "normalizeProviderId",
         "normalizeTimestamp",
@@ -37116,6 +37117,348 @@ module.exports = {
         "override": str(agent_dir),
         "piFallback": str(default_workspace),
     }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_model_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-models.cjs"
+    runtime_entry.write_text(
+        """
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+const scopedAgent = require("@openclaw/plugin-sdk/agent-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_models",
+      description: "Use OpenClaw agent-runtime model SDK helpers",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          agents: {
+            defaults: {
+              model: {
+                primary: "fast",
+                fallbacks: ["anthropic/claude-fallback"]
+              },
+              models: {
+                "openai/gpt-5.5": { alias: "fast", name: "GPT 5.5" },
+                "anthropic/claude-sonnet-4-6": { alias: "writer-alias" },
+                "openrouter/openai/gpt-oss-20b:free": { alias: "free" }
+              },
+              subagents: { model: "fast" }
+            },
+            list: [
+              {
+                id: "writer",
+                model: { primary: "writer-alias", fallbacks: [] },
+                subagents: { model: "free" }
+              },
+              {
+                id: "ops",
+                model: "anthropic/claude-sonnet-4-6"
+              }
+            ]
+          },
+          models: {
+            providers: {
+              openai: { models: [{ id: "gpt-5.5", reasoning: true }] },
+              anthropic: { models: [{ id: "claude-sonnet-4-6", reasoning: false }] },
+              openrouter: { models: [{ id: "openai/gpt-oss-20b:free" }] }
+            }
+          }
+        };
+        const aliasIndex = agent.buildModelAliasIndex({
+          cfg,
+          defaultProvider: "openai"
+        });
+        return {
+          keys: Object.keys(agent).filter((key) => [
+            "buildAllowedModelSet",
+            "buildConfiguredAllowlistKeys",
+            "buildConfiguredModelCatalog",
+            "buildModelAliasIndex",
+            "getModelRefStatus",
+            "legacyModelKey",
+            "modelKey",
+            "normalizeModelRef",
+            "normalizeModelSelection",
+            "normalizeStoredOverrideModel",
+            "parseModelRef",
+            "resolveAllowedModelRef",
+            "resolveAllowlistModelKey",
+            "resolveDefaultModelForAgent",
+            "resolveModelRefFromString",
+            "resolvePersistedModelRef",
+            "resolvePersistedOverrideModelRef",
+            "resolvePersistedSelectedModelRef",
+            "resolveReasoningDefault",
+            "resolveSubagentConfiguredModelSelection",
+            "resolveSubagentSpawnModelSelection"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedAgent.resolvePersistedModelRef,
+          refs: {
+            key: agent.modelKey("openai", "gpt-5.5"),
+            legacy: agent.legacyModelKey("openai", "openai/gpt-5.5"),
+            normalized: agent.normalizeModelRef("Z.AI", "GLM-4.6"),
+            parsedBare: agent.parseModelRef("gpt-5.5", "openai"),
+            parsedQualified: agent.parseModelRef("Anthropic/claude-sonnet-4-6", "openai"),
+            parsedOpenRouterAuto: agent.parseModelRef("openrouter:auto", "openai"),
+            parsedInvalid: agent.parseModelRef(" /broken", "openai")
+          },
+          persisted: {
+            overrideWithProvider: agent.resolvePersistedOverrideModelRef({
+              defaultProvider: "openai",
+              overrideProvider: "anthropic",
+              overrideModel: "claude-sonnet-4-6"
+            }),
+            overrideBare: agent.resolvePersistedOverrideModelRef({
+              defaultProvider: "openai",
+              overrideModel: "gpt-5.5"
+            }),
+            runtimeQualified: agent.resolvePersistedModelRef({
+              defaultProvider: "openai",
+              runtimeModel: "anthropic/claude-sonnet-4-6"
+            }),
+            runtimeWithProvider: agent.resolvePersistedModelRef({
+              defaultProvider: "openai",
+              runtimeProvider: "x-ai",
+              runtimeModel: "grok-code-fast"
+            }),
+            selectedOverrideWins: agent.resolvePersistedSelectedModelRef({
+              defaultProvider: "openai",
+              runtimeProvider: "anthropic",
+              runtimeModel: "claude-sonnet-4-6",
+              overrideProvider: "openai",
+              overrideModel: "openai/gpt-5.5"
+            }),
+            stored: agent.normalizeStoredOverrideModel({
+              providerOverride: "openai",
+              modelOverride: "openai/gpt-5.5"
+            })
+          },
+          aliases: {
+            aliasKeys: Array.from(aliasIndex.byAlias.keys()).sort(),
+            keyAliases: Array.from(aliasIndex.byKey.entries()).sort(),
+            fast: agent.resolveModelRefFromString({
+              cfg,
+              raw: "fast",
+              defaultProvider: "openai",
+              aliasIndex
+            }),
+            allowlistKey: agent.resolveAllowlistModelKey("fast", "openai", cfg),
+            configuredCatalog: agent.buildConfiguredModelCatalog({ cfg }),
+            configuredKeys: Array.from(agent.buildConfiguredAllowlistKeys({
+              cfg,
+              defaultProvider: "openai"
+            })).sort()
+          },
+          selection: {
+            defaultWriter: agent.resolveDefaultModelForAgent({ cfg, agentId: "writer" }),
+            defaultOps: agent.resolveDefaultModelForAgent({ cfg, agentId: "ops" }),
+            subagentConfigured: agent.resolveSubagentConfiguredModelSelection({
+              cfg,
+              agentId: "writer"
+            }),
+            subagentDefault: agent.resolveSubagentConfiguredModelSelection({
+              cfg,
+              agentId: "unknown"
+            }),
+            subagentSpawnAlias: agent.resolveSubagentSpawnModelSelection({
+              cfg,
+              agentId: "writer"
+            }),
+            subagentSpawnOverride: agent.resolveSubagentSpawnModelSelection({
+              cfg,
+              agentId: "writer",
+              modelOverride: "writer-alias"
+            }),
+            normalizedSelection: agent.normalizeModelSelection({ primary: "  fast  " })
+          },
+          allowed: {
+            allowedRef: agent.resolveAllowedModelRef({
+              cfg,
+              catalog: [{ provider: "openai", id: "gpt-5.5", reasoning: true }],
+              raw: "fast",
+              defaultProvider: "openai",
+              defaultModel: "gpt-5.5"
+            }),
+            deniedRef: agent.resolveAllowedModelRef({
+              cfg,
+              catalog: [],
+              raw: "unknown-model",
+              defaultProvider: "openai"
+            }),
+            status: agent.getModelRefStatus({
+              cfg,
+              catalog: [{ provider: "openai", id: "gpt-5.5", reasoning: true }],
+              ref: { provider: "openai", model: "gpt-5.5" },
+              defaultProvider: "openai",
+              defaultModel: "gpt-5.5"
+            }),
+            reasoningOn: agent.resolveReasoningDefault({
+              provider: "openai",
+              model: "gpt-5.5",
+              catalog: [{ provider: "openai", id: "gpt-5.5", reasoning: true }]
+            }),
+            reasoningOff: agent.resolveReasoningDefault({
+              provider: "anthropic",
+              model: "claude-sonnet-4-6",
+              catalog: [{ provider: "anthropic", id: "claude-sonnet-4-6" }]
+            })
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-models-plugin",
+                    "name": "Runtime Agent Models Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-runtime-models.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_models"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_models"})
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "buildAllowedModelSet",
+        "buildConfiguredAllowlistKeys",
+        "buildConfiguredModelCatalog",
+        "buildModelAliasIndex",
+        "getModelRefStatus",
+        "legacyModelKey",
+        "modelKey",
+        "normalizeModelRef",
+        "normalizeModelSelection",
+        "normalizeStoredOverrideModel",
+        "parseModelRef",
+        "resolveAllowedModelRef",
+        "resolveAllowlistModelKey",
+        "resolveDefaultModelForAgent",
+        "resolveModelRefFromString",
+        "resolvePersistedModelRef",
+        "resolvePersistedOverrideModelRef",
+        "resolvePersistedSelectedModelRef",
+        "resolveReasoningDefault",
+        "resolveSubagentConfiguredModelSelection",
+        "resolveSubagentSpawnModelSelection",
+    ]
+    assert result["scopedType"] == "function"
+    assert result["refs"] == {
+        "key": "openai/gpt-5.5",
+        "legacy": "openai/openai/gpt-5.5",
+        "normalized": {"provider": "zai", "model": "GLM-4.6"},
+        "parsedBare": {"provider": "openai", "model": "gpt-5.5"},
+        "parsedQualified": {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+        "parsedOpenRouterAuto": {"provider": "openrouter", "model": "auto"},
+        "parsedInvalid": None,
+    }
+    assert result["persisted"] == {
+        "overrideWithProvider": {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+        "overrideBare": {"provider": "openai", "model": "gpt-5.5"},
+        "runtimeQualified": {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+        "runtimeWithProvider": {"provider": "x-ai", "model": "grok-code-fast"},
+        "selectedOverrideWins": {"provider": "openai", "model": "openai/gpt-5.5"},
+        "stored": {"providerOverride": "openai", "modelOverride": "gpt-5.5"},
+    }
+    assert result["aliases"]["aliasKeys"] == ["fast", "free", "writer-alias"]
+    assert result["aliases"]["keyAliases"] == [
+        ["anthropic/claude-sonnet-4-6", ["writer-alias"]],
+        ["openai/gpt-5.5", ["fast"]],
+        ["openrouter/openai/gpt-oss-20b:free", ["free"]],
+    ]
+    assert result["aliases"]["fast"] == {
+        "ref": {"provider": "openai", "model": "gpt-5.5"},
+        "alias": "fast",
+    }
+    assert result["aliases"]["allowlistKey"] == "openai/fast"
+    assert result["aliases"]["configuredCatalog"] == [
+        {"provider": "openai", "id": "gpt-5.5", "name": "gpt-5.5", "reasoning": True},
+        {
+            "provider": "anthropic",
+            "id": "claude-sonnet-4-6",
+            "name": "claude-sonnet-4-6",
+            "reasoning": False,
+        },
+        {
+            "provider": "openrouter",
+            "id": "openai/gpt-oss-20b:free",
+            "name": "openai/gpt-oss-20b:free",
+        },
+    ]
+    assert result["aliases"]["configuredKeys"] == [
+        "anthropic/claude-sonnet-4-6",
+        "openai/gpt-5.5",
+        "openrouter/openai/gpt-oss-20b:free",
+    ]
+    assert result["selection"] == {
+        "defaultWriter": {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+        "defaultOps": {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+        "subagentConfigured": "free",
+        "subagentDefault": "fast",
+        "subagentSpawnAlias": "openrouter/openai/gpt-oss-20b:free",
+        "subagentSpawnOverride": "anthropic/claude-sonnet-4-6",
+        "normalizedSelection": "fast",
+    }
+    assert result["allowed"]["allowedRef"] == {
+        "ref": {"provider": "openai", "model": "gpt-5.5"},
+        "key": "openai/gpt-5.5",
+    }
+    assert result["allowed"]["deniedRef"] == {"error": "model not allowed: openai/unknown-model"}
+    assert result["allowed"]["status"] == {
+        "key": "openai/gpt-5.5",
+        "inCatalog": True,
+        "allowAny": False,
+        "allowed": True,
+    }
+    assert result["allowed"]["reasoningOn"] == "on"
+    assert result["allowed"]["reasoningOff"] == "off"
 
 
 @pytest.mark.asyncio

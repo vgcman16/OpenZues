@@ -53923,6 +53923,732 @@ function agentRuntimeResolveAgentModelFallbacksOverride(cfg, agentId) {
   return Array.isArray(raw.fallbacks) ? raw.fallbacks : undefined;
 }
 
+function agentRuntimeTrimStringValue(value) {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return String(value).trim();
+}
+
+function agentRuntimeModelKey(provider, model) {
+  const providerId = agentRuntimeTrimStringValue(provider);
+  const modelId = agentRuntimeTrimStringValue(model);
+  if (!providerId) {
+    return modelId;
+  }
+  if (!modelId) {
+    return providerId;
+  }
+  const normalizedProvider = normalizeLowercaseStringOrEmpty(providerId);
+  const normalizedModel = normalizeLowercaseStringOrEmpty(modelId);
+  return normalizedModel.startsWith(`${normalizedProvider}/`)
+    ? modelId
+    : `${providerId}/${modelId}`;
+}
+
+function agentRuntimeLegacyModelKey(provider, model) {
+  const providerId = agentRuntimeTrimStringValue(provider);
+  const modelId = agentRuntimeTrimStringValue(model);
+  if (!providerId || !modelId) {
+    return null;
+  }
+  const rawKey = `${providerId}/${modelId}`;
+  const canonicalKey = agentRuntimeModelKey(providerId, modelId);
+  return rawKey === canonicalKey ? null : rawKey;
+}
+
+function agentRuntimeNormalizeModelRef(provider, model) {
+  return {
+    provider: agentRuntimeNormalizeProviderId(provider),
+    model: agentRuntimeTrimStringValue(model),
+  };
+}
+
+function agentRuntimeParseModelRef(raw, defaultProvider) {
+  const trimmed = agentRuntimeTrimStringValue(raw);
+  if (!trimmed) {
+    return null;
+  }
+  if (normalizeLowercaseStringOrEmpty(trimmed) === "openrouter:auto") {
+    return agentRuntimeNormalizeModelRef("openrouter", "auto");
+  }
+  const slash = trimmed.indexOf("/");
+  if (slash === -1) {
+    return agentRuntimeNormalizeModelRef(defaultProvider, trimmed);
+  }
+  const providerRaw = trimmed.slice(0, slash).trim();
+  const model = trimmed.slice(slash + 1).trim();
+  if (!providerRaw || !model) {
+    return null;
+  }
+  return agentRuntimeNormalizeModelRef(providerRaw, model);
+}
+
+function agentRuntimeResolvePersistedOverrideModelRef(params = {}) {
+  const defaultProvider = agentRuntimeTrimStringValue(params.defaultProvider);
+  const overrideProvider = agentRuntimeTrimStringValue(params.overrideProvider);
+  const overrideModel = agentRuntimeTrimStringValue(params.overrideModel);
+  if (!overrideModel) {
+    return null;
+  }
+  const encodedOverride = overrideProvider
+    ? `${overrideProvider}/${overrideModel}`
+    : overrideModel;
+  return (
+    agentRuntimeParseModelRef(encodedOverride, defaultProvider) || {
+      provider: overrideProvider || defaultProvider,
+      model: overrideModel,
+    }
+  );
+}
+
+function agentRuntimeResolvePersistedModelRef(params = {}) {
+  const defaultProvider = agentRuntimeTrimStringValue(params.defaultProvider);
+  const runtimeProvider = agentRuntimeTrimStringValue(params.runtimeProvider);
+  const runtimeModel = agentRuntimeTrimStringValue(params.runtimeModel);
+  if (runtimeModel) {
+    if (runtimeProvider) {
+      return { provider: runtimeProvider, model: runtimeModel };
+    }
+    return (
+      agentRuntimeParseModelRef(runtimeModel, defaultProvider) || {
+        provider: defaultProvider,
+        model: runtimeModel,
+      }
+    );
+  }
+  return agentRuntimeResolvePersistedOverrideModelRef({
+    defaultProvider,
+    overrideProvider: params.overrideProvider,
+    overrideModel: params.overrideModel,
+  });
+}
+
+function agentRuntimeResolvePersistedSelectedModelRef(params = {}) {
+  const override = agentRuntimeResolvePersistedOverrideModelRef({
+    defaultProvider: params.defaultProvider,
+    overrideProvider: params.overrideProvider,
+    overrideModel: params.overrideModel,
+  });
+  if (override) {
+    return override;
+  }
+  return agentRuntimeResolvePersistedModelRef({
+    defaultProvider: params.defaultProvider,
+    runtimeProvider: params.runtimeProvider,
+    runtimeModel: params.runtimeModel,
+  });
+}
+
+function agentRuntimeNormalizeStoredOverrideModel(params = {}) {
+  const providerOverride = normalizeOptionalString(params.providerOverride);
+  const modelOverride = normalizeOptionalString(params.modelOverride);
+  if (!providerOverride || !modelOverride) {
+    return { providerOverride, modelOverride };
+  }
+  const providerPrefix = `${providerOverride.toLowerCase()}/`;
+  return {
+    providerOverride,
+    modelOverride: modelOverride.toLowerCase().startsWith(providerPrefix)
+      ? modelOverride.slice(providerOverride.length + 1).trim() || modelOverride
+      : modelOverride,
+  };
+}
+
+function agentRuntimeConfiguredModels(cfg = {}) {
+  const models = cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.models;
+  return models && typeof models === "object" && !Array.isArray(models) ? models : {};
+}
+
+function agentRuntimeResolveConfiguredOpenRouterCompatAlias(params = {}) {
+  const normalized = normalizeLowercaseStringOrEmpty(params.raw);
+  if (normalized === "openrouter:auto") {
+    return agentRuntimeNormalizeModelRef("openrouter", "auto");
+  }
+  if (normalized !== "openrouter:free" || !params.cfg) {
+    return null;
+  }
+  const rawModels = agentRuntimeConfiguredModels(params.cfg);
+  for (const raw of Object.keys(rawModels)) {
+    if (!raw.includes("/")) {
+      continue;
+    }
+    const parsed = agentRuntimeParseModelRef(raw, params.defaultProvider);
+    if (
+      parsed &&
+      parsed.provider === "openrouter" &&
+      parsed.model.includes("/") &&
+      parsed.model.endsWith(":free")
+    ) {
+      return parsed;
+    }
+  }
+  const providerConfig = agentRuntimeFindNormalizedProviderValue(
+    params.cfg.models && params.cfg.models.providers,
+    "openrouter",
+  );
+  const providerModels = providerConfig && Array.isArray(providerConfig.models)
+    ? providerConfig.models
+    : [];
+  for (const entry of providerModels) {
+    const modelId = normalizeOptionalString(entry && entry.id);
+    if (modelId && modelId.includes("/") && modelId.endsWith(":free")) {
+      return agentRuntimeNormalizeModelRef("openrouter", modelId);
+    }
+  }
+  return null;
+}
+
+function agentRuntimeParseModelRefWithCompatAlias(params = {}) {
+  return (
+    agentRuntimeResolveConfiguredOpenRouterCompatAlias(params) ||
+    agentRuntimeParseModelRef(params.raw, params.defaultProvider)
+  );
+}
+
+function agentRuntimeResolveAllowlistModelKey(raw, defaultProvider, cfg) {
+  const parsed = agentRuntimeParseModelRefWithCompatAlias({
+    cfg,
+    raw,
+    defaultProvider,
+  });
+  return parsed ? agentRuntimeModelKey(parsed.provider, parsed.model) : null;
+}
+
+function agentRuntimeBuildConfiguredAllowlistKeys(params = {}) {
+  const rawAllowlist = Object.keys(agentRuntimeConfiguredModels(params.cfg));
+  if (rawAllowlist.length === 0) {
+    return null;
+  }
+  const keys = new Set();
+  for (const raw of rawAllowlist) {
+    const key = agentRuntimeResolveAllowlistModelKey(
+      raw,
+      params.defaultProvider,
+      params.cfg,
+    );
+    if (key) {
+      keys.add(key);
+    }
+  }
+  return keys.size > 0 ? keys : null;
+}
+
+function agentRuntimeBuildModelAliasIndex(params = {}) {
+  const byAlias = new Map();
+  const byKey = new Map();
+  const rawModels = agentRuntimeConfiguredModels(params.cfg);
+  for (const [keyRaw, entryRaw] of Object.entries(rawModels)) {
+    const parsed = agentRuntimeParseModelRefWithCompatAlias({
+      cfg: params.cfg,
+      raw: keyRaw,
+      defaultProvider: params.defaultProvider,
+    });
+    if (!parsed) {
+      continue;
+    }
+    const alias = normalizeOptionalString(entryRaw && entryRaw.alias) || "";
+    if (!alias) {
+      continue;
+    }
+    const aliasKey = normalizeLowercaseStringOrEmpty(alias);
+    byAlias.set(aliasKey, { alias, ref: parsed });
+    const key = agentRuntimeModelKey(parsed.provider, parsed.model);
+    const existing = byKey.get(key) || [];
+    existing.push(alias);
+    byKey.set(key, existing);
+  }
+  return { byAlias, byKey };
+}
+
+function agentRuntimeBuildConfiguredModelCatalog(params = {}) {
+  const providers = params.cfg && params.cfg.models && params.cfg.models.providers;
+  if (!providers || typeof providers !== "object") {
+    return [];
+  }
+  const catalog = [];
+  for (const [providerRaw, providerConfig] of Object.entries(providers)) {
+    const providerId = agentRuntimeNormalizeProviderId(providerRaw);
+    const models = providerConfig && Array.isArray(providerConfig.models)
+      ? providerConfig.models
+      : [];
+    if (!providerId || models.length === 0) {
+      continue;
+    }
+    for (const model of models) {
+      const id = normalizeOptionalString(model && model.id) || "";
+      if (!id) {
+        continue;
+      }
+      const entry = {
+        provider: providerId,
+        id,
+        name: normalizeOptionalString(model && model.name) || id,
+      };
+      if (typeof (model && model.contextWindow) === "number" && model.contextWindow > 0) {
+        entry.contextWindow = model.contextWindow;
+      }
+      if (typeof (model && model.reasoning) === "boolean") {
+        entry.reasoning = model.reasoning;
+      }
+      if (Array.isArray(model && model.input)) {
+        entry.input = model.input;
+      }
+      if (model && model.compat && typeof model.compat === "object") {
+        entry.compat = model.compat;
+      }
+      catalog.push(entry);
+    }
+  }
+  return catalog;
+}
+
+function agentRuntimeInferUniqueProviderFromConfiguredModels(params = {}) {
+  const model = agentRuntimeTrimStringValue(params.model);
+  if (!model) {
+    return undefined;
+  }
+  const normalizedModel = normalizeLowercaseStringOrEmpty(model);
+  const providers = new Set();
+  const addProvider = (provider) => {
+    const normalizedProvider = agentRuntimeNormalizeProviderId(provider);
+    if (normalizedProvider) {
+      providers.add(normalizedProvider);
+    }
+  };
+  const configuredModels = agentRuntimeConfiguredModels(params.cfg);
+  for (const key of Object.keys(configuredModels)) {
+    const ref = key.trim();
+    if (!ref || !ref.includes("/")) {
+      continue;
+    }
+    const parsed = agentRuntimeParseModelRef(ref, AGENT_RUNTIME_DEFAULT_PROVIDER);
+    if (
+      parsed &&
+      (parsed.model === model ||
+        normalizeLowercaseStringOrEmpty(parsed.model) === normalizedModel)
+    ) {
+      addProvider(parsed.provider);
+      if (providers.size > 1) {
+        return undefined;
+      }
+    }
+  }
+  const configuredProviders =
+    params.cfg && params.cfg.models && params.cfg.models.providers
+      ? params.cfg.models.providers
+      : {};
+  for (const [providerId, providerConfig] of Object.entries(configuredProviders)) {
+    const models = providerConfig && Array.isArray(providerConfig.models)
+      ? providerConfig.models
+      : [];
+    for (const entry of models) {
+      const modelId = normalizeOptionalString(entry && entry.id);
+      if (
+        modelId &&
+        (modelId === model || normalizeLowercaseStringOrEmpty(modelId) === normalizedModel)
+      ) {
+        addProvider(providerId);
+      }
+    }
+    if (providers.size > 1) {
+      return undefined;
+    }
+  }
+  return providers.size === 1 ? providers.values().next().value : undefined;
+}
+
+function agentRuntimeInferUniqueProviderFromCatalog(params = {}) {
+  const model = agentRuntimeTrimStringValue(params.model);
+  const catalog = Array.isArray(params.catalog) ? params.catalog : [];
+  if (!model) {
+    return undefined;
+  }
+  const normalizedModel = normalizeLowercaseStringOrEmpty(model);
+  const providers = new Set();
+  for (const entry of catalog) {
+    const id = normalizeOptionalString(entry && entry.id);
+    if (!id || (id !== model && normalizeLowercaseStringOrEmpty(id) !== normalizedModel)) {
+      continue;
+    }
+    const provider = agentRuntimeNormalizeProviderId(entry && entry.provider);
+    if (provider) {
+      providers.add(provider);
+    }
+    if (providers.size > 1) {
+      return undefined;
+    }
+  }
+  return providers.size === 1 ? providers.values().next().value : undefined;
+}
+
+function agentRuntimeResolveModelRefFromString(params = {}) {
+  const model = agentRuntimeTrimStringValue(params.raw);
+  if (!model) {
+    return null;
+  }
+  const aliasKey = normalizeLowercaseStringOrEmpty(model);
+  const aliasMatch = params.aliasIndex && params.aliasIndex.byAlias
+    ? params.aliasIndex.byAlias.get(aliasKey)
+    : undefined;
+  if (aliasMatch) {
+    return { ref: aliasMatch.ref, alias: aliasMatch.alias };
+  }
+  const parsed = agentRuntimeParseModelRefWithCompatAlias({
+    cfg: params.cfg,
+    raw: model,
+    defaultProvider: params.defaultProvider,
+  });
+  return parsed ? { ref: parsed } : null;
+}
+
+function agentRuntimeResolveConfiguredModelRef(params = {}) {
+  const cfg = params.cfg || {};
+  const defaultProvider = params.defaultProvider || AGENT_RUNTIME_DEFAULT_PROVIDER;
+  const defaultModel = params.defaultModel || AGENT_RUNTIME_DEFAULT_MODEL;
+  const rawModel = agentRuntimeReadModelPrimaryValue(
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.model,
+  ) || "";
+  if (rawModel) {
+    const trimmed = rawModel.trim();
+    const aliasIndex = agentRuntimeBuildModelAliasIndex({
+      cfg,
+      defaultProvider,
+    });
+    const aliasMatch = aliasIndex.byAlias.get(normalizeLowercaseStringOrEmpty(trimmed));
+    if (aliasMatch) {
+      return aliasMatch.ref;
+    }
+    if (!trimmed.includes("/")) {
+      const openrouterCompatRef = agentRuntimeResolveConfiguredOpenRouterCompatAlias({
+        cfg,
+        raw: trimmed,
+        defaultProvider,
+      });
+      if (openrouterCompatRef) {
+        return openrouterCompatRef;
+      }
+      const inferredProvider = agentRuntimeInferUniqueProviderFromConfiguredModels({
+        cfg,
+        model: trimmed,
+      });
+      return { provider: inferredProvider || defaultProvider, model: trimmed };
+    }
+    const resolved = agentRuntimeResolveModelRefFromString({
+      cfg,
+      raw: trimmed,
+      defaultProvider,
+      aliasIndex,
+    });
+    if (resolved) {
+      return resolved.ref;
+    }
+  }
+  return { provider: defaultProvider, model: defaultModel };
+}
+
+function agentRuntimeResolveDefaultModelForAgent(params = {}) {
+  const cfg = params.cfg || {};
+  const agentModelOverride = params.agentId
+    ? agentRuntimeResolveAgentEffectiveModelPrimary(cfg, params.agentId)
+    : undefined;
+  if (!agentModelOverride) {
+    return agentRuntimeResolveConfiguredModelRef({
+      cfg,
+      defaultProvider: AGENT_RUNTIME_DEFAULT_PROVIDER,
+      defaultModel: AGENT_RUNTIME_DEFAULT_MODEL,
+    });
+  }
+  const agents = cfg.agents && typeof cfg.agents === "object" ? cfg.agents : {};
+  const defaults = agents.defaults && typeof agents.defaults === "object"
+    ? agents.defaults
+    : {};
+  const defaultModelRaw = defaults.model;
+  const defaultModelConfig =
+    defaultModelRaw && typeof defaultModelRaw === "object" && !Array.isArray(defaultModelRaw)
+      ? { ...defaultModelRaw }
+      : {};
+  defaultModelConfig.primary = agentModelOverride;
+  const nextCfg = {
+    ...cfg,
+    agents: {
+      ...agents,
+      defaults: {
+        ...defaults,
+        model: defaultModelConfig,
+      },
+    },
+  };
+  return agentRuntimeResolveConfiguredModelRef({
+    cfg: nextCfg,
+    defaultProvider: AGENT_RUNTIME_DEFAULT_PROVIDER,
+    defaultModel: AGENT_RUNTIME_DEFAULT_MODEL,
+  });
+}
+
+function agentRuntimeNormalizeModelSelection(value) {
+  if (typeof value === "string") {
+    return normalizeOptionalString(value);
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return normalizeOptionalString(value.primary);
+}
+
+function agentRuntimeResolveSubagentConfiguredModelSelection(params = {}) {
+  const agentConfig = agentRuntimeResolveAgentConfig(params.cfg || {}, params.agentId);
+  const defaults = params.cfg &&
+    params.cfg.agents &&
+    params.cfg.agents.defaults &&
+    params.cfg.agents.defaults.subagents;
+  const agentSubagentModel =
+    agentConfig && agentConfig.subagents && agentConfig.subagents.model;
+  return (
+    agentRuntimeNormalizeModelSelection(agentSubagentModel) ||
+    agentRuntimeNormalizeModelSelection(agentConfig && agentConfig.model) ||
+    agentRuntimeNormalizeModelSelection(defaults && defaults.model)
+  );
+}
+
+function agentRuntimeResolveModelThroughAliases(value, aliasIndex) {
+  if (value.includes("/")) {
+    return value;
+  }
+  const aliasMatch = aliasIndex.byAlias.get(normalizeLowercaseStringOrEmpty(value));
+  return aliasMatch ? `${aliasMatch.ref.provider}/${aliasMatch.ref.model}` : value;
+}
+
+function agentRuntimeResolveSubagentSpawnModelSelection(params = {}) {
+  const runtimeDefault = agentRuntimeResolveDefaultModelForAgent({
+    cfg: params.cfg || {},
+    agentId: params.agentId,
+  });
+  const raw =
+    agentRuntimeNormalizeModelSelection(params.modelOverride) ||
+    agentRuntimeResolveSubagentConfiguredModelSelection({
+      cfg: params.cfg || {},
+      agentId: params.agentId,
+    }) ||
+    agentRuntimeNormalizeModelSelection(
+      params.cfg &&
+        params.cfg.agents &&
+        params.cfg.agents.defaults &&
+        params.cfg.agents.defaults.model,
+    ) ||
+    `${runtimeDefault.provider}/${runtimeDefault.model}`;
+  const aliasIndex = agentRuntimeBuildModelAliasIndex({
+    cfg: params.cfg || {},
+    defaultProvider: runtimeDefault.provider,
+  });
+  return agentRuntimeResolveModelThroughAliases(raw, aliasIndex);
+}
+
+function agentRuntimeResolveAgentModelFallbackValues(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return [];
+  }
+  return Array.isArray(raw.fallbacks) ? raw.fallbacks : [];
+}
+
+function agentRuntimeResolveAllowedFallbacks(params = {}) {
+  if (params.agentId) {
+    const override = agentRuntimeResolveAgentModelFallbacksOverride(
+      params.cfg || {},
+      params.agentId,
+    );
+    if (override !== undefined) {
+      return override;
+    }
+  }
+  return agentRuntimeResolveAgentModelFallbackValues(
+    params.cfg &&
+      params.cfg.agents &&
+      params.cfg.agents.defaults &&
+      params.cfg.agents.defaults.model,
+  );
+}
+
+function agentRuntimeFindModelCatalogEntry(catalog, ref) {
+  const key = agentRuntimeModelKey(ref.provider, ref.model);
+  return (Array.isArray(catalog) ? catalog : []).find((entry) => {
+    if (!entry) {
+      return false;
+    }
+    return agentRuntimeModelKey(entry.provider, entry.id) === key;
+  });
+}
+
+function agentRuntimeBuildAllowedModelSetWithFallbacks(params = {}) {
+  const configuredCatalog = agentRuntimeBuildConfiguredModelCatalog({ cfg: params.cfg });
+  const catalog = [...(Array.isArray(params.catalog) ? params.catalog : [])];
+  const seen = new Set(catalog.map((entry) => agentRuntimeModelKey(entry.provider, entry.id)));
+  for (const entry of configuredCatalog) {
+    const key = agentRuntimeModelKey(entry.provider, entry.id);
+    if (!seen.has(key)) {
+      catalog.push(entry);
+      seen.add(key);
+    }
+  }
+  const rawAllowlist = Object.keys(agentRuntimeConfiguredModels(params.cfg));
+  const allowAny = rawAllowlist.length === 0;
+  const allowedKeys = new Set();
+  const addAllowedModelRef = (raw) => {
+    const trimmed = agentRuntimeTrimStringValue(raw);
+    if (!trimmed) {
+      return;
+    }
+    const defaultProvider = !trimmed.includes("/")
+      ? (
+          agentRuntimeInferUniqueProviderFromConfiguredModels({
+            cfg: params.cfg,
+            model: trimmed,
+          }) ||
+          agentRuntimeInferUniqueProviderFromCatalog({
+            catalog,
+            model: trimmed,
+          }) ||
+          params.defaultProvider
+        )
+      : params.defaultProvider;
+    const parsed = agentRuntimeParseModelRefWithCompatAlias({
+      cfg: params.cfg,
+      raw: trimmed,
+      defaultProvider,
+    });
+    if (parsed) {
+      allowedKeys.add(agentRuntimeModelKey(parsed.provider, parsed.model));
+    }
+  };
+  for (const raw of rawAllowlist) {
+    addAllowedModelRef(raw);
+  }
+  for (const fallback of params.fallbackModels || []) {
+    addAllowedModelRef(fallback);
+  }
+  if (params.defaultModel) {
+    addAllowedModelRef(params.defaultModel);
+  }
+  if (allowAny) {
+    for (const entry of catalog) {
+      allowedKeys.add(agentRuntimeModelKey(entry.provider, entry.id));
+    }
+  }
+  return { allowAny, allowedCatalog: catalog, allowedKeys };
+}
+
+function agentRuntimeBuildAllowedModelSet(params = {}) {
+  return agentRuntimeBuildAllowedModelSetWithFallbacks({
+    cfg: params.cfg,
+    catalog: params.catalog,
+    defaultProvider: params.defaultProvider,
+    defaultModel: params.defaultModel,
+    fallbackModels: agentRuntimeResolveAllowedFallbacks({
+      cfg: params.cfg,
+      agentId: params.agentId,
+    }),
+  });
+}
+
+function agentRuntimeGetModelRefStatus(params = {}) {
+  const ref = params.ref || {};
+  const allowed = agentRuntimeBuildAllowedModelSet(params);
+  const key = agentRuntimeModelKey(ref.provider, ref.model);
+  return {
+    key,
+    inCatalog: Boolean(agentRuntimeFindModelCatalogEntry(params.catalog, ref)),
+    allowAny: allowed.allowAny,
+    allowed: allowed.allowAny || allowed.allowedKeys.has(key),
+  };
+}
+
+function agentRuntimeResolveAllowedModelRefFromAliasIndex(params = {}) {
+  const trimmed = agentRuntimeTrimStringValue(params.raw);
+  if (!trimmed) {
+    return { error: "invalid model: empty" };
+  }
+  const effectiveDefaultProvider = !trimmed.includes("/")
+    ? (
+        agentRuntimeInferUniqueProviderFromConfiguredModels({
+          cfg: params.cfg,
+          model: trimmed,
+        }) || params.defaultProvider
+      )
+    : params.defaultProvider;
+  const resolved = agentRuntimeResolveModelRefFromString({
+    cfg: params.cfg,
+    raw: trimmed,
+    defaultProvider: effectiveDefaultProvider,
+    aliasIndex: params.aliasIndex,
+  });
+  if (!resolved) {
+    return { error: `invalid model: ${trimmed}` };
+  }
+  const status = params.getStatus(resolved.ref);
+  if (!status.allowed) {
+    return { error: `model not allowed: ${status.key}` };
+  }
+  return { ref: resolved.ref, key: status.key };
+}
+
+function agentRuntimeResolveAllowedModelRef(params = {}) {
+  const trimmed = agentRuntimeTrimStringValue(params.raw);
+  if (!trimmed) {
+    return { error: "invalid model: empty" };
+  }
+  const aliasIndex = agentRuntimeBuildModelAliasIndex({
+    cfg: params.cfg,
+    defaultProvider: params.defaultProvider,
+  });
+  const openrouterCompatRef = agentRuntimeResolveConfiguredOpenRouterCompatAlias({
+    cfg: params.cfg,
+    raw: trimmed,
+    defaultProvider: params.defaultProvider,
+  });
+  if (openrouterCompatRef) {
+    const status = agentRuntimeGetModelRefStatus({
+      cfg: params.cfg,
+      catalog: params.catalog,
+      ref: openrouterCompatRef,
+      defaultProvider: params.defaultProvider,
+      defaultModel: params.defaultModel,
+    });
+    if (!status.allowed) {
+      return { error: `model not allowed: ${status.key}` };
+    }
+    return { ref: openrouterCompatRef, key: status.key };
+  }
+  return agentRuntimeResolveAllowedModelRefFromAliasIndex({
+    cfg: params.cfg,
+    raw: trimmed,
+    defaultProvider: params.defaultProvider,
+    aliasIndex,
+    getStatus: (ref) =>
+      agentRuntimeGetModelRefStatus({
+        cfg: params.cfg,
+        catalog: params.catalog,
+        ref,
+        defaultProvider: params.defaultProvider,
+        defaultModel: params.defaultModel,
+      }),
+  });
+}
+
+function agentRuntimeResolveReasoningDefault(params = {}) {
+  const key = agentRuntimeModelKey(params.provider, params.model);
+  const catalog = Array.isArray(params.catalog) ? params.catalog : [];
+  const candidate = catalog.find((entry) => {
+    if (!entry) {
+      return false;
+    }
+    return (
+      (entry.provider === params.provider && entry.id === params.model) ||
+      (entry.provider === key && entry.id === params.model)
+    );
+  });
+  return candidate && candidate.reasoning === true ? "on" : "off";
+}
+
 function agentRuntimeResolveSessionAgentIds(params = {}) {
   const defaultAgentId = agentRuntimeResolveDefaultAgentId(params.config || {});
   const explicitAgentIdRaw = normalizeLowercaseStringOrEmpty(params.agentId);
@@ -54065,14 +54791,25 @@ const agentRuntime = {
   DEFAULT_MODEL: AGENT_RUNTIME_DEFAULT_MODEL,
   DEFAULT_PROVIDER: AGENT_RUNTIME_DEFAULT_PROVIDER,
   appendCronStyleCurrentTimeLine,
+  buildAllowedModelSet: agentRuntimeBuildAllowedModelSet,
+  buildConfiguredAllowlistKeys: agentRuntimeBuildConfiguredAllowlistKeys,
+  buildConfiguredModelCatalog: agentRuntimeBuildConfiguredModelCatalog,
+  buildModelAliasIndex: agentRuntimeBuildModelAliasIndex,
   findNormalizedProviderKey: agentRuntimeFindNormalizedProviderKey,
   findNormalizedProviderValue: agentRuntimeFindNormalizedProviderValue,
   formatUserTime,
+  getModelRefStatus: agentRuntimeGetModelRefStatus,
+  legacyModelKey: agentRuntimeLegacyModelKey,
   listAgentEntries: agentRuntimeListAgentEntries,
   listAgentIds: agentRuntimeListAgentIds,
+  modelKey: agentRuntimeModelKey,
+  normalizeModelRef: agentRuntimeNormalizeModelRef,
+  normalizeModelSelection: agentRuntimeNormalizeModelSelection,
   normalizeProviderId: agentRuntimeNormalizeProviderId,
   normalizeProviderIdForAuth: agentRuntimeNormalizeProviderId,
+  normalizeStoredOverrideModel: agentRuntimeNormalizeStoredOverrideModel,
   normalizeTimestamp,
+  parseModelRef: agentRuntimeParseModelRef,
   resolveAckReaction: agentRuntimeResolveAckReaction,
   resolveAgentConfig: agentRuntimeResolveAgentConfig,
   resolveAgentContextLimits: agentRuntimeResolveAgentContextLimits,
@@ -54082,16 +54819,27 @@ const agentRuntime = {
   resolveAgentIdFromSessionKey,
   resolveAgentModelFallbacksOverride: agentRuntimeResolveAgentModelFallbacksOverride,
   resolveAgentWorkspaceDir: agentRuntimeResolveAgentWorkspaceDir,
+  resolveAllowedModelRef: agentRuntimeResolveAllowedModelRef,
+  resolveAllowlistModelKey: agentRuntimeResolveAllowlistModelKey,
+  resolveConfiguredModelRef: agentRuntimeResolveConfiguredModelRef,
   resolveCronStyleNow,
   resolveDefaultAgentId: agentRuntimeResolveDefaultAgentId,
+  resolveDefaultModelForAgent: agentRuntimeResolveDefaultModelForAgent,
   resolveEffectiveMessagesConfig: agentRuntimeResolveEffectiveMessagesConfig,
   resolveIdentityNamePrefix: agentRuntimeResolveIdentityNamePrefix,
   resolveMessagePrefix: agentRuntimeResolveMessagePrefix,
+  resolveModelRefFromString: agentRuntimeResolveModelRefFromString,
   resolveOpenClawAgentDir,
+  resolvePersistedModelRef: agentRuntimeResolvePersistedModelRef,
+  resolvePersistedOverrideModelRef: agentRuntimeResolvePersistedOverrideModelRef,
+  resolvePersistedSelectedModelRef: agentRuntimeResolvePersistedSelectedModelRef,
   resolveProviderIdForAuth: agentRuntimeNormalizeProviderId,
+  resolveReasoningDefault: agentRuntimeResolveReasoningDefault,
   resolveResponsePrefix: agentRuntimeResolveResponsePrefix,
   resolveSessionAgentId: agentRuntimeResolveSessionAgentId,
   resolveSessionAgentIds: agentRuntimeResolveSessionAgentIds,
+  resolveSubagentConfiguredModelSelection: agentRuntimeResolveSubagentConfiguredModelSelection,
+  resolveSubagentSpawnModelSelection: agentRuntimeResolveSubagentSpawnModelSelection,
   resolveUserTimeFormat,
   resolveUserTimezone,
   withNormalizedTimestamp,
