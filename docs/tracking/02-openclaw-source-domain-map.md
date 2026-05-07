@@ -162,7 +162,9 @@ imported `plugin-test-runtime` aggregate coverage from
 `provider-test-contracts` aggregate coverage from
 `src/plugin-sdk/provider-test-contracts.ts` and adjacent
 `src/plugin-sdk/test-helpers/*provider*` helper suites is verified in
-`7494160a`, and imported `browser-setup-tools` aggregate coverage from
+`7494160a`, imported `test-env` aggregate coverage from
+`src/plugin-sdk/test-env.ts` and adjacent env/network/time fixture helpers is
+verified in `e2368bf5`, and imported `browser-setup-tools` aggregate coverage from
 `src/plugin-sdk/browser-setup-tools.ts` and
 `extensions/browser/src/sdk-setup-tools.ts` is verified in `50876922`, and
 imported `browser-support` aggregate coverage from
