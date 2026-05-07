@@ -36068,6 +36068,390 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_discord_facade_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-discord.cjs"
+    runtime_entry.write_text(
+        """
+const discord = require("openclaw/plugin-sdk/discord");
+const scopedDiscord = require("@openclaw/plugin-sdk/discord");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.discord",
+      description: "Use OpenClaw Discord SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const requiredKeys = [
+          "DEFAULT_ACCOUNT_ID",
+          "DiscordConfigSchema",
+          "PAIRING_APPROVED_MESSAGE",
+          "applyAccountNameToChannelSection",
+          "autoBindSpawnedDiscordSubagent",
+          "buildDiscordComponentMessage",
+          "buildChannelConfigSchema",
+          "buildComputedAccountStatusSnapshot",
+          "buildTokenChannelStatusSummary",
+          "collectDiscordAuditChannelIds",
+          "collectDiscordStatusIssues",
+          "discordOnboardingAdapter",
+          "emptyPluginConfigSchema",
+          "getChatChannelMeta",
+          "inspectDiscordAccount",
+          "listDiscordAccountIds",
+          "listDiscordDirectoryGroupsFromConfig",
+          "listDiscordDirectoryPeersFromConfig",
+          "listThreadBindingsBySessionKey",
+          "looksLikeDiscordTargetId",
+          "migrateBaseNameToDefaultAccount",
+          "normalizeAccountId",
+          "normalizeDiscordMessagingTarget",
+          "normalizeDiscordOutboundTarget",
+          "projectCredentialSnapshotFields",
+          "editDiscordComponentMessage",
+          "registerBuiltDiscordComponentMessage",
+          "resolveConfiguredFromCredentialStatuses",
+          "resolveDefaultDiscordAccountId",
+          "resolveDiscordAccount",
+          "resolveDiscordGroupRequireMention",
+          "resolveDiscordGroupToolPolicy",
+          "unbindThreadBindingsBySessionKey"
+        ];
+        const keys = Object.keys(discord).sort();
+        const missing = requiredKeys.filter(
+          (key) => !Object.prototype.hasOwnProperty.call(discord, key)
+        );
+        const genericOnlyPresent = keys.includes("formatCliCommand");
+        if (missing.length > 0) {
+          return {
+            keys,
+            missing,
+            genericOnlyPresent,
+            scopedType: typeof scopedDiscord.resolveDiscordAccount
+          };
+        }
+
+        const cfg = {
+          channels: {
+            discord: {
+              enabled: true,
+              name: "Top Discord",
+              token: "top-token",
+              defaultAccount: "work",
+              auditChannels: ["123", "", "456"],
+              directory: {
+                groups: [{ id: "guild-1", name: "Guild One" }],
+                peers: [{ id: "user-1", name: "User One" }]
+              },
+              groups: {
+                "*": { requireMention: false, tools: { allow: ["read"] } }
+              },
+              accounts: {
+                work: {
+                  name: "Work Discord",
+                  token: "account-token",
+                  enabled: true,
+                  groups: {
+                    "guild-1": {
+                      requireMention: true,
+                      tools: { allow: ["chat"] }
+                    }
+                  }
+                },
+                disabled: {
+                  name: "Disabled Discord",
+                  token: "disabled-token",
+                  enabled: false
+                }
+              }
+            }
+          }
+        };
+
+        const resolved = discord.resolveDiscordAccount({ cfg, accountId: "work" });
+        const inspected = discord.inspectDiscordAccount({ cfg, accountId: "work" });
+        const built = discord.buildDiscordComponentMessage({
+          spec: {
+            text: "Hello component",
+            blocks: [{ type: "button", id: "go" }],
+            modal: { title: "Open" },
+            container: { accentColor: 12345, spoiler: true }
+          },
+          fallbackText: "fallback",
+          sessionKey: "session-1",
+          agentId: "assistant",
+          accountId: "work"
+        });
+        const edited = await discord.editDiscordComponentMessage(
+          "channel:123",
+          "message-1",
+          { text: "Edited component" },
+          { cfg, accountId: "work" }
+        );
+        discord.registerBuiltDiscordComponentMessage({
+          buildResult: built,
+          messageId: "message-1"
+        });
+        const binding = await discord.autoBindSpawnedDiscordSubagent({
+          cfg,
+          accountId: "work",
+          channel: "discord",
+          to: "channel:123",
+          threadId: "thread-1",
+          childSessionKey: "agent:child:session",
+          agentId: "assistant",
+          label: "Assistant",
+          boundBy: "test"
+        });
+        const bindings = discord.listThreadBindingsBySessionKey({
+          targetSessionKey: "agent:child:session",
+          accountId: "work"
+        });
+        const unbound = discord.unbindThreadBindingsBySessionKey({
+          targetSessionKey: "agent:child:session",
+          accountId: "work",
+          reason: "done"
+        });
+
+        return {
+          keysPresent: requiredKeys.every((key) => keys.includes(key)),
+          genericOnlyPresent,
+          scopedSame: scopedDiscord.resolveDiscordAccount === discord.resolveDiscordAccount,
+          constants: {
+            defaultAccount: discord.DEFAULT_ACCOUNT_ID,
+            pairing: discord.PAIRING_APPROVED_MESSAGE.includes("OpenClaw access approved")
+          },
+          schemaType: typeof discord.DiscordConfigSchema.safeParse,
+          accountIds: discord.listDiscordAccountIds(cfg),
+          defaultAccount: discord.resolveDefaultDiscordAccountId(cfg),
+          resolved: {
+            accountId: resolved.accountId,
+            enabled: resolved.enabled,
+            name: resolved.name,
+            token: resolved.token,
+            tokenSource: resolved.tokenSource,
+            configName: resolved.config.name
+          },
+          inspected,
+          targets: {
+            snowflake: discord.looksLikeDiscordTargetId("123456789012345678"),
+            normalized: discord.normalizeDiscordMessagingTarget(" discord:channel:123 "),
+            outboundOk: discord.normalizeDiscordOutboundTarget(" user:456 "),
+            outboundBad: {
+              ok: discord.normalizeDiscordOutboundTarget(" ").ok,
+              error: String(discord.normalizeDiscordOutboundTarget(" ").error.message)
+            }
+          },
+          directories: {
+            groups: await discord.listDiscordDirectoryGroupsFromConfig({ cfg, accountId: "work" }),
+            peers: await discord.listDiscordDirectoryPeersFromConfig({ cfg, accountId: "work" })
+          },
+          groupPolicy: {
+            mention: discord.resolveDiscordGroupRequireMention({
+              cfg,
+              accountId: "work",
+              groupId: "guild-1"
+            }),
+            tools: discord.resolveDiscordGroupToolPolicy({
+              cfg,
+              accountId: "work",
+              groupId: "guild-1"
+            })
+          },
+          status: {
+            issues: discord.collectDiscordStatusIssues([
+              { accountId: "work", lastError: "Gateway closed" }
+            ]),
+            summary: discord.buildTokenChannelStatusSummary({
+              running: true,
+              tokenSource: "config"
+            }, { includeMode: false }),
+            fields: discord.projectCredentialSnapshotFields({
+              tokenSource: "config",
+              tokenStatus: "available"
+            }),
+            configured:
+              discord.resolveConfiguredFromCredentialStatuses({ tokenStatus: "available" })
+          },
+          component: built,
+          edited,
+          binding,
+          bindings,
+          unbound,
+          afterUnbind: discord.listThreadBindingsBySessionKey({
+            targetSessionKey: "agent:child:session",
+            accountId: "work"
+          }),
+          audit: discord.collectDiscordAuditChannelIds({ cfg, accountId: "work" })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-discord-plugin",
+                    "name": "Runtime Discord Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-discord.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.discord"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.discord"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keysPresent": True,
+        "genericOnlyPresent": False,
+        "scopedSame": True,
+        "constants": {"defaultAccount": "default", "pairing": True},
+        "schemaType": "function",
+        "accountIds": ["disabled", "work"],
+        "defaultAccount": "work",
+        "resolved": {
+            "accountId": "work",
+            "enabled": True,
+            "name": "Work Discord",
+            "token": "account-token",
+            "tokenSource": "config",
+            "configName": "Work Discord",
+        },
+        "inspected": {
+            "accountId": "work",
+            "enabled": True,
+            "name": "Work Discord",
+            "configured": True,
+            "tokenSource": "config",
+        },
+        "targets": {
+            "snowflake": True,
+            "normalized": "channel:123",
+            "outboundOk": {"ok": True, "to": "user:456"},
+            "outboundBad": {"ok": False, "error": "Discord target is required"},
+        },
+        "directories": {
+            "groups": [{"id": "guild-1", "name": "Guild One"}],
+            "peers": [{"id": "user-1", "name": "User One"}],
+        },
+        "groupPolicy": {
+            "mention": True,
+            "tools": {"allow": ["chat"]},
+        },
+        "status": {
+            "issues": [
+                {
+                    "channel": "discord",
+                    "accountId": "work",
+                    "kind": "runtime",
+                    "message": "Channel error: Gateway closed",
+                }
+            ],
+            "summary": {
+                "configured": False,
+                "running": True,
+                "lastStartAt": None,
+                "lastStopAt": None,
+                "lastError": None,
+                "tokenSource": "config",
+                "lastProbeAt": None,
+            },
+            "fields": {"tokenSource": "config", "tokenStatus": "available"},
+            "configured": True,
+        },
+        "component": {
+            "components": [{"type": "button", "id": "go"}],
+            "entries": [{"text": "Hello component", "fallbackText": "fallback"}],
+            "modals": [{"title": "Open"}],
+            "text": "Hello component",
+            "container": {"accentColor": 12345, "spoiler": True},
+        },
+        "edited": {
+            "id": "message-1",
+            "channel_id": "channel:123",
+            "edited": True,
+            "text": "Edited component",
+        },
+        "binding": {
+            "accountId": "work",
+            "threadId": "thread-1",
+            "channelId": "channel:123",
+            "targetKind": "subagent",
+            "targetSessionKey": "agent:child:session",
+            "agentId": "assistant",
+            "label": "Assistant",
+            "boundBy": "test",
+        },
+        "bindings": [
+            {
+                "accountId": "work",
+                "threadId": "thread-1",
+                "channelId": "channel:123",
+                "targetKind": "subagent",
+                "targetSessionKey": "agent:child:session",
+                "agentId": "assistant",
+                "label": "Assistant",
+                "boundBy": "test",
+            }
+        ],
+        "unbound": [
+            {
+                "accountId": "work",
+                "threadId": "thread-1",
+                "channelId": "channel:123",
+                "targetKind": "subagent",
+                "targetSessionKey": "agent:child:session",
+                "agentId": "assistant",
+                "label": "Assistant",
+                "boundBy": "test",
+                "reason": "done",
+            }
+        ],
+        "afterUnbind": [],
+        "audit": {"channelIds": ["123", "456"], "unresolvedChannels": []},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_inbound_envelope_helpers(
     tmp_path,
 ) -> None:
