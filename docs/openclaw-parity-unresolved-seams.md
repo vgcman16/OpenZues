@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9997%.
+  band of ~80-99.9998%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1918,9 +1918,17 @@ Imported plugin SDK `test-node-mocks` is now also no longer an unresolved
 queue head: the exact scoped and unscoped subpath resolves to native OpenZues
 Node builtin mock helpers for actual-module override merging, factory
 overrides, default-export mirroring, and child_process `spawnSync`/`execFile`
-mock helpers. Remaining plugin SDK queue heads should continue with exact
-`provider-http-test-mocks` and adjacent public test barrels that still require
-source-backed native shims.
+mock helpers.
+Imported plugin SDK `provider-http-test-mocks` is now also no longer an
+unresolved queue head: the exact scoped and unscoped subpath resolves to native
+OpenZues provider HTTP/auth mock helpers, including `getProviderHttpMocks`,
+`installProviderHttpMockCleanup`, provider-http/provider-auth module
+replacement after helper import, poll-loop mocks, fetch/post mocks,
+HTTP/provider assertion mocks, request config mocks, sanitizing mocks, and
+after-each cleanup semantics. Remaining plugin SDK queue heads should continue
+with the exact deprecated `testing` compatibility barrel and any newly exposed
+upstream public SDK test subpaths that still require source-backed native
+shims.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
