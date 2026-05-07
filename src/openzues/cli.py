@@ -39607,6 +39607,7 @@ const pluginSdkEntrypoints = [
   "agent-config-primitives",
   "allow-from",
   "allowlist-config-edit",
+  "browser-control-auth",
   "browser-config",
   "boolean-param",
   "channel-contract-testing",
@@ -39783,6 +39784,7 @@ const supportedBundledFacadeSdkEntrypoints = [
   "zalouser",
 ];
 const publicPluginOwnedSdkEntrypoints = [
+  "browser-control-auth",
   "browser-config",
   "image-generation-core",
   "memory-core-host-engine-embeddings",
@@ -54421,32 +54423,72 @@ function resolveProfile(resolved, profileName) {
 }
 
 function resolveBrowserControlAuth(cfg = {}, env = process.env) {
-  const browserConfig =
-    cfg && cfg.browser && typeof cfg.browser === "object" ? cfg.browser : cfg || {};
-  const auth =
-    browserConfig.controlAuth && typeof browserConfig.controlAuth === "object"
-      ? browserConfig.controlAuth
-      : browserConfig.auth && typeof browserConfig.auth === "object"
-        ? browserConfig.auth
-        : {};
+  const gatewayConfig = cfg && cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : {};
+  const authConfig =
+    gatewayConfig.auth && typeof gatewayConfig.auth === "object" ? gatewayConfig.auth : {};
   const token =
-    normalizeOptionalString(auth.token) ||
-    normalizeOptionalString(env && env.OPENCLAW_BROWSER_CONTROL_TOKEN);
+    normalizeOptionalString(authConfig.token) ||
+    normalizeOptionalString(env && env.OPENCLAW_GATEWAY_TOKEN);
   const password =
-    normalizeOptionalString(auth.password) ||
-    normalizeOptionalString(env && env.OPENCLAW_BROWSER_CONTROL_PASSWORD);
-  return {
-    ...(token ? { token } : {}),
-    ...(password ? { password } : {}),
-  };
+    normalizeOptionalString(authConfig.password) ||
+    normalizeOptionalString(env && env.OPENCLAW_GATEWAY_PASSWORD);
+  const mode =
+    normalizeOptionalString(authConfig.mode) ||
+    (password ? "password" : token ? "token" : "token");
+  switch (mode) {
+    case "password":
+    case "trusted-proxy":
+      return {
+        ...(password ? { password } : {}),
+      };
+    case "token":
+    case "none":
+      return {
+        ...(token ? { token } : {}),
+      };
+    default:
+      return {};
+  }
+}
+
+function shouldAutoGenerateBrowserAuth(env = process.env) {
+  const nodeEnv = normalizeLowercaseStringOrEmpty(env && env.NODE_ENV);
+  if (nodeEnv === "test") {
+    return false;
+  }
+  const vitest = normalizeLowercaseStringOrEmpty(env && env.VITEST);
+  if (vitest && vitest !== "0" && vitest !== "false" && vitest !== "off") {
+    return false;
+  }
+  return true;
 }
 
 async function ensureBrowserControlAuth(params = {}) {
-  const auth = resolveBrowserControlAuth(params.cfg || {}, params.env || process.env);
+  const env = params.env || process.env;
+  const auth = resolveBrowserControlAuth(params.cfg || {}, env);
   if (auth.token || auth.password) {
     return { auth };
   }
-  const generatedToken = generateSecureToken(24);
+  if (!shouldAutoGenerateBrowserAuth(env)) {
+    return { auth };
+  }
+  const latestConfig = getRuntimeConfig() || params.cfg || {};
+  const latestAuth = resolveBrowserControlAuth(latestConfig, env);
+  if (latestAuth.token || latestAuth.password) {
+    return { auth: latestAuth };
+  }
+  const latestMode =
+    latestConfig &&
+    latestConfig.gateway &&
+    latestConfig.gateway.auth &&
+    normalizeOptionalString(latestConfig.gateway.auth.mode);
+  if (latestMode === "password") {
+    return { auth: latestAuth };
+  }
+  const generatedToken = crypto.randomBytes(24).toString("hex");
+  if (latestMode === "trusted-proxy") {
+    return { auth: { password: generatedToken }, generatedToken };
+  }
   return { auth: { token: generatedToken }, generatedToken };
 }
 
@@ -54501,6 +54543,12 @@ const browserConfigRuntime = {
   resolveBrowserConfig,
   resolveBrowserControlAuth,
   resolveProfile,
+};
+
+const browserControlAuthRuntime = {
+  ensureBrowserControlAuth,
+  resolveBrowserControlAuth,
+  shouldAutoGenerateBrowserAuth,
 };
 
 const browserSecurityRuntime = {
@@ -63557,6 +63605,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-config"
   ) {
     return browserConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-control-auth" ||
+    request === "@openclaw/plugin-sdk/browser-control-auth"
+  ) {
+    return browserControlAuthRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||

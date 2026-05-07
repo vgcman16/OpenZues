@@ -41243,6 +41243,146 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_control_auth_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-control-auth.cjs"
+    runtime_entry.write_text(
+        """
+const auth = require("openclaw/plugin-sdk/browser-control-auth");
+const scopedAuth = require("@openclaw/plugin-sdk/browser-control-auth");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_control_auth",
+      description: "Use OpenClaw browser control auth helpers",
+      parameters: { type: "object" },
+      async execute() {
+        const ensuredExisting = await auth.ensureBrowserControlAuth({
+          cfg: { gateway: { auth: { mode: "token", token: "cfg-token" } } },
+          env: { NODE_ENV: "test" }
+        });
+        const ensuredSuppressed = await auth.ensureBrowserControlAuth({
+          cfg: { gateway: { auth: { mode: "token" } } },
+          env: { NODE_ENV: "test" }
+        });
+        return {
+          keys: Object.keys(auth).sort(),
+          scopedSame:
+            scopedAuth.resolveBrowserControlAuth === auth.resolveBrowserControlAuth,
+          resolved: {
+            configToken: auth.resolveBrowserControlAuth(
+              { gateway: { auth: { mode: "token", token: "cfg-token" } } },
+              { OPENCLAW_GATEWAY_TOKEN: "env-token" }
+            ),
+            envToken: auth.resolveBrowserControlAuth(
+              { gateway: { auth: { mode: "token" } } },
+              { OPENCLAW_GATEWAY_TOKEN: "env-token" }
+            ),
+            password: auth.resolveBrowserControlAuth(
+              { gateway: { auth: { mode: "password", password: "cfg-password" } } },
+              {}
+            ),
+            trustedProxyPassword: auth.resolveBrowserControlAuth(
+              { gateway: { auth: { mode: "trusted-proxy", password: "proxy-password" } } },
+              {}
+            ),
+            noneToken: auth.resolveBrowserControlAuth(
+              { gateway: { auth: { mode: "none", token: "none-token" } } },
+              {}
+            )
+          },
+          autoGenerate: {
+            defaultEnv: auth.shouldAutoGenerateBrowserAuth({}),
+            nodeTest: auth.shouldAutoGenerateBrowserAuth({ NODE_ENV: "test" }),
+            vitestTrue: auth.shouldAutoGenerateBrowserAuth({ VITEST: "1" }),
+            vitestOff: auth.shouldAutoGenerateBrowserAuth({ VITEST: "off" })
+          },
+          ensuredExisting,
+          ensuredSuppressed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-control-auth-plugin",
+                    "name": "Runtime Browser Control Auth Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-control-auth.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_control_auth"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.browser_control_auth"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "ensureBrowserControlAuth",
+            "resolveBrowserControlAuth",
+            "shouldAutoGenerateBrowserAuth",
+        ],
+        "scopedSame": True,
+        "resolved": {
+            "configToken": {"token": "cfg-token"},
+            "envToken": {"token": "env-token"},
+            "password": {"password": "cfg-password"},
+            "trustedProxyPassword": {"password": "proxy-password"},
+            "noneToken": {"token": "none-token"},
+        },
+        "autoGenerate": {
+            "defaultEnv": True,
+            "nodeTest": False,
+            "vitestTrue": False,
+            "vitestOff": True,
+        },
+        "ensuredExisting": {"auth": {"token": "cfg-token"}},
+        "ensuredSuppressed": {"auth": {}},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -43446,11 +43586,11 @@ module.exports = {
         ],
         "scopedType": "function",
         "counts": {
-            "entrypoints": 294,
-            "subpaths": 293,
-            "specifiers": 294,
-            "exports": 294,
-            "artifacts": 588,
+            "entrypoints": 295,
+            "subpaths": 294,
+            "specifiers": 295,
+            "exports": 295,
+            "artifacts": 590,
         },
         "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
         "last": [
