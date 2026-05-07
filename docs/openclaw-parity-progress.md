@@ -17644,6 +17644,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `eb39f899`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `security-runtime` facade from `src/plugin-sdk/security-runtime.ts`: scoped
+  and unscoped native runtime entries aggregate channel secret collection,
+  secret shared file/path helpers, channel metadata wrappers, supplemental
+  context visibility, DM/access-group policy helpers, safe regex guards,
+  safe file/port/SSRF/proxy helpers, secure tokens, redaction, and
+  constant-time secret comparison without importing the TypeScript runtime.
+  This closes `OZ-PLUGIN-00283`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.99%.
+- Verified the security-runtime slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_security_runtime_helpers -q`
+  (`1 passed`), adjacent security/import proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "security_runtime or browser_security_runtime or fetch_ssrf_helpers or channel_secret_runtime or access_group"`
+  (`5 passed, 1101 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`294 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `16f5ab50`.
 
 ## References
 

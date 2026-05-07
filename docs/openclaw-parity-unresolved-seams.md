@@ -9502,8 +9502,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   conversation-binding unavailable results, and request-scoped plugin identity.
   Source/test checkpointed in `eb39f899`; repo-wide parity remains estimated at
   ~99.9%, with the evidence band tightened to ~80-99.98%.
+- Current queue-head adjustment: imported plugin SDK `security-runtime` now
+  exposes the source-backed security/policy aggregate for scoped and unscoped
+  imports, including channel-secret collection helpers, secret shared file
+  helpers, untrusted channel metadata, supplemental context visibility,
+  DM/access-group policy helpers, safe regex guards, safe file/port/SSRF/proxy
+  helpers, redaction, secure token generation, and constant-time secret
+  comparison. Source/test checkpointed in `16f5ab50`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.99%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially the exact `security-runtime` facade, broader runtime/client
+  especially the exact `gateway-runtime` facade, broader runtime/client
   integration, and session runtime methods (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency

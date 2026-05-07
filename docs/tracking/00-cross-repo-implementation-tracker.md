@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK plugin-runtime facade slice is checkpointed in
-`eb39f899`.
+The imported plugin SDK security-runtime facade slice is checkpointed in
+`16f5ab50`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,7 +62,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin runtime SDK shim checkpointed in `eb39f899` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `security-runtime` alias |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Security runtime SDK shim checkpointed in `16f5ab50` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `gateway-runtime` alias |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
@@ -5942,6 +5942,35 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
   - Last verified: 2026-05-07, focused plugin-runtime proof (`1 passed`),
     adjacent plugin-runtime proof (`9 passed, 1096 deselected`), adjacent
     imported-plugin proof (`293 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00283` Imported security-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/security-runtime.ts`,
+    `openclaw-main/src/secrets/channel-secret-collector-runtime.ts`,
+    `openclaw-main/src/secrets/runtime-shared.ts`,
+    `openclaw-main/src/secrets/shared.ts`,
+    `openclaw-main/src/security/channel-metadata.ts`,
+    `openclaw-main/src/security/context-visibility.ts`,
+    `openclaw-main/src/security/dm-policy-shared.ts`,
+    `openclaw-main/src/security/safe-regex.ts`,
+    `openclaw-main/src/security/secret-equal.ts`, and
+    `openclaw-main/src/plugin-sdk/access-groups.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `security-runtime` and receive the public security/policy barrel
+    for channel-secret collection, secret shared file helpers, channel
+    metadata wrapping, supplemental context visibility, DM/access-group policy
+    helpers, safe regex guards, safe file/port/SSRF/proxy helpers, redaction,
+    secure tokens, and constant-time secret comparison without importing the
+    TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `16f5ab50`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused security-runtime proof (`1 passed`),
+    adjacent security/import proof (`5 passed, 1101 deselected`), adjacent
+    imported-plugin proof (`294 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001SE` Imported account-core/account-resolution shim
