@@ -18099,6 +18099,11 @@ Object.assign(MIME_BY_EXT, {
   ".htm": "text/html",
   ".xml": "text/xml",
 });
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 16 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
+const MAX_DOCUMENT_BYTES = 100 * 1024 * 1024;
+const MB = 1024 * 1024;
 const CHAT_COMMANDS = [
   { key: "help", aliases: ["/help"], acceptsArgs: false },
   { key: "commands", aliases: ["/commands"], acceptsArgs: false },
@@ -19687,6 +19692,11 @@ function getFileExtension(filePath) {
   return path.extname(raw).toLowerCase() || undefined;
 }
 
+function mimeTypeFromFilePath(filePath) {
+  const ext = getFileExtension(filePath);
+  return ext ? MIME_BY_EXT[ext] : undefined;
+}
+
 function extensionForMime(mime) {
   const normalized = normalizeMimeType(mime);
   return normalized ? EXT_BY_MIME[normalized] : undefined;
@@ -19716,6 +19726,54 @@ function mediaKindFromMime(mime) {
     return "document";
   }
   return undefined;
+}
+
+function maxBytesForKind(kind) {
+  switch (kind) {
+    case "image":
+      return MAX_IMAGE_BYTES;
+    case "audio":
+      return MAX_AUDIO_BYTES;
+    case "video":
+      return MAX_VIDEO_BYTES;
+    case "document":
+    default:
+      return MAX_DOCUMENT_BYTES;
+  }
+}
+
+function isGifMedia(opts = {}) {
+  if (normalizeMimeType(opts.contentType) === "image/gif") {
+    return true;
+  }
+  return getFileExtension(opts.fileName) === ".gif";
+}
+
+function imageMimeFromFormat(format) {
+  const normalized = normalizeLowercaseStringOrEmpty(format);
+  if (normalized === "jpg" || normalized === "jpeg") {
+    return "image/jpeg";
+  }
+  if (normalized === "heic") {
+    return "image/heic";
+  }
+  if (normalized === "heif") {
+    return "image/heif";
+  }
+  if (normalized === "png") {
+    return "image/png";
+  }
+  if (normalized === "webp") {
+    return "image/webp";
+  }
+  if (normalized === "gif") {
+    return "image/gif";
+  }
+  return undefined;
+}
+
+function kindFromMime(mime) {
+  return mediaKindFromMime(normalizeMimeType(mime));
 }
 
 function isGenericMime(mime) {
@@ -27953,6 +28011,13 @@ async function withTempDownloadPath(params, fn) {
   } finally {
     await target.cleanup();
   }
+}
+
+async function unlinkIfExists(filePath) {
+  if (!filePath) {
+    return;
+  }
+  await fs.promises.unlink(filePath).catch(() => undefined);
 }
 
 const DEFAULT_SECRET_PROVIDER_ALIAS = "default";
@@ -41574,7 +41639,12 @@ const mediaMimeRuntime = {
   detectMime,
   extensionForMime,
   getFileExtension,
+  imageMimeFromFormat,
+  isGifMedia,
+  kindFromMime,
+  maxBytesForKind,
   mediaKindFromMime,
+  mimeTypeFromFilePath,
   normalizeMimeType,
 };
 
@@ -42135,6 +42205,133 @@ async function loadOutboundMediaFromUrl(mediaUrl, options = {}) {
 const outboundMediaRuntime = {
   loadOutboundMediaFromUrl,
 };
+
+function resolveChannelMediaMaxBytes(params = {}) {
+  const accountId = normalizeAccountId(params.accountId);
+  const channelLimit =
+    typeof params.resolveChannelLimitMb === "function"
+      ? params.resolveChannelLimitMb({
+          cfg: params.cfg || {},
+          accountId,
+        })
+      : undefined;
+  if (typeof channelLimit === "number" && Number.isFinite(channelLimit) && channelLimit > 0) {
+    return channelLimit * MB;
+  }
+  const defaultLimit =
+    params.cfg &&
+    params.cfg.agents &&
+    params.cfg.agents.defaults &&
+    params.cfg.agents.defaults.mediaMaxMb;
+  if (typeof defaultLimit === "number" && Number.isFinite(defaultLimit) && defaultLimit > 0) {
+    return defaultLimit * MB;
+  }
+  return undefined;
+}
+
+function resolveScopedChannelMediaMaxBytes(params = {}) {
+  return resolveChannelMediaMaxBytes(params);
+}
+
+function createScopedChannelMediaMaxBytesResolver(channel) {
+  return (params = {}) =>
+    resolveScopedChannelMediaMaxBytes({
+      cfg: params.cfg || {},
+      accountId: params.accountId,
+      resolveChannelLimitMb: ({ cfg, accountId }) => {
+        const channelCfg = cfg.channels && cfg.channels[channel];
+        const accountCfg = channelCfg && channelCfg.accounts && channelCfg.accounts[accountId];
+        return (
+          (accountCfg && accountCfg.mediaMaxMb) ||
+          (channelCfg && channelCfg.mediaMaxMb)
+        );
+      },
+    });
+}
+
+async function sendDirectTextMedia(params = {}) {
+  const send = params.resolveSender(params.deps);
+  const maxBytes = params.resolveMaxBytes({
+    cfg: params.cfg || {},
+    accountId: params.accountId,
+  });
+  const result = await send(
+    params.to,
+    params.text,
+    params.buildOptions({
+      cfg: params.cfg || {},
+      mediaUrl: params.mediaUrl,
+      mediaAccess: params.mediaAccess,
+      mediaLocalRoots: params.mediaLocalRoots,
+      mediaReadFile: params.mediaReadFile,
+      accountId: params.accountId,
+      replyToId: params.replyToId,
+      maxBytes,
+    }),
+  );
+  return { channel: params.channel, ...result };
+}
+
+function createDirectTextMediaOutbound(params = {}) {
+  const outbound = {
+    deliveryMode: "direct",
+    chunker: chunkText,
+    chunkerMode: "text",
+    textChunkLimit: 4000,
+    sanitizeText: ({ text }) => sanitizeForPlainText(text),
+    sendPayload: async (ctx) =>
+      await sendTextMediaPayload({ channel: params.channel, ctx, adapter: outbound }),
+    sendText: async ({ cfg, to, text, accountId, deps, replyToId }) =>
+      await sendDirectTextMedia({
+        cfg,
+        to,
+        text,
+        accountId,
+        deps,
+        replyToId,
+        channel: params.channel,
+        resolveSender: params.resolveSender,
+        resolveMaxBytes: params.resolveMaxBytes,
+        buildOptions: params.buildTextOptions,
+      }),
+    sendMedia: async ({
+      cfg,
+      to,
+      text,
+      mediaUrl,
+      mediaAccess,
+      mediaLocalRoots,
+      mediaReadFile,
+      accountId,
+      deps,
+      replyToId,
+    }) =>
+      await sendDirectTextMedia({
+        cfg,
+        to,
+        text,
+        mediaUrl,
+        mediaAccess:
+          mediaAccess ||
+          (mediaLocalRoots || mediaReadFile
+            ? {
+                ...(mediaLocalRoots ? { localRoots: mediaLocalRoots } : {}),
+                ...(mediaReadFile ? { readFile: mediaReadFile } : {}),
+              }
+            : undefined),
+        mediaLocalRoots,
+        mediaReadFile,
+        accountId,
+        deps,
+        replyToId,
+        channel: params.channel,
+        resolveSender: params.resolveSender,
+        resolveMaxBytes: params.resolveMaxBytes,
+        buildOptions: params.buildMediaOptions,
+      }),
+  };
+  return outbound;
+}
 
 const stringNormalizationRuntime = {
   normalizeAtHashSlug,
@@ -71303,6 +71500,29 @@ const agentMediaPayloadRuntime = {
   getAgentScopedMediaLocalRoots,
 };
 
+const mediaRuntime = {
+  MAX_AUDIO_BYTES,
+  MAX_DOCUMENT_BYTES,
+  MAX_IMAGE_BYTES,
+  MAX_VIDEO_BYTES,
+  ...agentMediaPayloadRuntime,
+  ...mediaGenerationRuntime,
+  ...mediaGenerationRuntimeSharedRuntime,
+  ...mediaMimeRuntime,
+  ...mediaStoreRuntime,
+  ...mediaUnderstandingProviderRuntime,
+  ...mediaUnderstandingRuntime,
+  ...outboundMediaRuntime,
+  ...pollRuntime,
+  ...replyPayloadRuntime,
+  ...webMediaRuntime,
+  createDirectTextMediaOutbound,
+  createScopedChannelMediaMaxBytesResolver,
+  resolveChannelMediaMaxBytes,
+  resolveScopedChannelMediaMaxBytes,
+  unlinkIfExists,
+};
+
 const agentConfigPrimitivesRuntime = {
   ReplyRuntimeConfigSchemaShape,
   ToolPolicySchema,
@@ -73161,6 +73381,7 @@ const genericSdk = new Proxy(
     ...providerUsageRuntime,
     ...toolSendRuntime,
     ...webMediaRuntime,
+    ...mediaRuntime,
     ...providerEntryRuntime,
     ...providerEnableConfigRuntime,
     ...providerWebFetchContractRuntime,
@@ -73705,6 +73926,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/outbound-media"
   ) {
     return outboundMediaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-runtime" ||
+    request === "@openclaw/plugin-sdk/media-runtime"
+  ) {
+    return mediaRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/error-runtime" ||
