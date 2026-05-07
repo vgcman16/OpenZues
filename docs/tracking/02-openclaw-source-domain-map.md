@@ -158,8 +158,11 @@ imported `plugin-test-api` facade coverage from
 `src/plugin-sdk/plugin-test-contracts.ts` and adjacent
 `src/plugin-sdk/test-helpers/*` contract modules is verified in `086382f8`,
 imported `plugin-test-runtime` aggregate coverage from
-`src/plugin-sdk/plugin-test-runtime.ts` is verified in `084da020`, and
-imported `browser-setup-tools` aggregate coverage from
+`src/plugin-sdk/plugin-test-runtime.ts` is verified in `084da020`, imported
+`provider-test-contracts` aggregate coverage from
+`src/plugin-sdk/provider-test-contracts.ts` and adjacent
+`src/plugin-sdk/test-helpers/*provider*` helper suites is verified in
+`7494160a`, and imported `browser-setup-tools` aggregate coverage from
 `src/plugin-sdk/browser-setup-tools.ts` and
 `extensions/browser/src/sdk-setup-tools.ts` is verified in `50876922`, and
 imported `browser-support` aggregate coverage from
