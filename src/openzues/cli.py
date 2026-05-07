@@ -41740,7 +41740,12 @@ function normalizeCapabilityProviderId(providerId) {
 function resolvePluginCapabilityProviders(params = {}) {
   const cfg = params.cfg || {};
   const key = params.key;
-  if (cfg.plugins && cfg.plugins.enabled === false && key !== "speechProviders") {
+  if (
+    cfg.plugins &&
+    cfg.plugins.enabled === false &&
+    key !== "speechProviders" &&
+    key !== "mediaUnderstandingProviders"
+  ) {
     return [];
   }
   const candidates = [
@@ -42594,6 +42599,1002 @@ const realtimeVoiceRuntime = {
   resolveRealtimeVoiceAgentConsultToolPolicy,
   resolveRealtimeVoiceAgentConsultTools,
   resolveRealtimeVoiceAgentConsultToolsAllow,
+};
+
+const MEDIA_UNDERSTANDING_DEFAULT_MAX_CHARS_BY_CAPABILITY = {
+  image: 500,
+  audio: undefined,
+  video: 500,
+};
+const MEDIA_UNDERSTANDING_DEFAULT_MAX_BYTES = {
+  image: 10 * 1024 * 1024,
+  audio: 20 * 1024 * 1024,
+  video: 50 * 1024 * 1024,
+};
+const MEDIA_UNDERSTANDING_DEFAULT_TIMEOUT_SECONDS = {
+  image: 60,
+  audio: 60,
+  video: 120,
+};
+const MEDIA_UNDERSTANDING_DEFAULT_PROMPT = {
+  image: "Describe the image.",
+  audio: "Transcribe the audio.",
+  video: "Describe the video.",
+};
+const MEDIA_UNDERSTANDING_KIND_BY_CAPABILITY = {
+  audio: "audio.transcription",
+  image: "image.description",
+  video: "video.description",
+};
+const MEDIA_UNDERSTANDING_MIN_AUDIO_FILE_BYTES = 1024;
+
+class MediaUnderstandingSkipError extends Error {
+  constructor(reason, message) {
+    super(message);
+    this.name = "MediaUnderstandingSkipError";
+    this.reason = reason;
+  }
+}
+
+function normalizeMediaProviderId(id) {
+  const normalized = normalizeOptionalLowercaseString(id);
+  if (normalized === "gemini") {
+    return "google";
+  }
+  return normalized || "";
+}
+
+function mergeMediaUnderstandingProviderIntoRegistry(registry, provider, registryKey) {
+  if (!provider || typeof provider !== "object") {
+    return;
+  }
+  const normalizedKey = normalizeMediaProviderId(registryKey || provider.id);
+  if (!normalizedKey) {
+    return;
+  }
+  const existing = registry.get(normalizedKey);
+  if (existing) {
+    registry.set(normalizedKey, {
+      ...existing,
+      ...provider,
+      capabilities: provider.capabilities || existing.capabilities,
+      defaultModels: provider.defaultModels || existing.defaultModels,
+      autoPriority: provider.autoPriority || existing.autoPriority,
+      nativeDocumentInputs: provider.nativeDocumentInputs || existing.nativeDocumentInputs,
+    });
+    return;
+  }
+  registry.set(normalizedKey, provider);
+}
+
+function buildMediaUnderstandingRegistry(overrides, cfg) {
+  const registry = new Map();
+  for (const provider of resolvePluginCapabilityProviders({
+    key: "mediaUnderstandingProviders",
+    cfg,
+  })) {
+    mergeMediaUnderstandingProviderIntoRegistry(registry, provider);
+  }
+  if (overrides && typeof overrides === "object") {
+    for (const [key, provider] of Object.entries(overrides)) {
+      mergeMediaUnderstandingProviderIntoRegistry(registry, provider, key);
+    }
+  }
+  return registry;
+}
+
+function getMediaUnderstandingProvider(id, registry) {
+  return registry.get(normalizeMediaProviderId(id));
+}
+
+function normalizeMediaAttachmentPath(raw) {
+  const value = normalizeOptionalString(raw);
+  if (!value) {
+    return undefined;
+  }
+  if (value.startsWith("file://")) {
+    try {
+      return fileURLToPath(value);
+    } catch (_error) {
+      return undefined;
+    }
+  }
+  return value;
+}
+
+function normalizeMediaUnderstandingAttachments(ctx) {
+  const pathsFromArray = Array.isArray(ctx.MediaPaths) ? ctx.MediaPaths : undefined;
+  const urlsFromArray = Array.isArray(ctx.MediaUrls) ? ctx.MediaUrls : undefined;
+  const typesFromArray = Array.isArray(ctx.MediaTypes) ? ctx.MediaTypes : undefined;
+  const transcribedIndexes = new Set(
+    Array.isArray(ctx.MediaTranscribedIndexes)
+      ? ctx.MediaTranscribedIndexes.filter((index) => Number.isInteger(index) && index >= 0)
+      : [],
+  );
+  const resolveMime = (count, index) => {
+    const typeHint = normalizeOptionalString(typesFromArray && typesFromArray[index]);
+    if (typeHint) {
+      return typeHint;
+    }
+    return count === 1 ? ctx.MediaType : undefined;
+  };
+  if (pathsFromArray && pathsFromArray.length > 0) {
+    const count = pathsFromArray.length;
+    const urls = urlsFromArray && urlsFromArray.length > 0 ? urlsFromArray : undefined;
+    return pathsFromArray
+      .map((value, index) => ({
+        path: normalizeMediaAttachmentPath(value),
+        url: (urls && urls[index]) || ctx.MediaUrl,
+        mime: resolveMime(count, index),
+        index,
+        alreadyTranscribed: transcribedIndexes.has(index),
+      }))
+      .filter((entry) => Boolean(entry.path || normalizeOptionalString(entry.url)));
+  }
+  if (urlsFromArray && urlsFromArray.length > 0) {
+    const count = urlsFromArray.length;
+    return urlsFromArray
+      .map((value, index) => ({
+        path: undefined,
+        url: normalizeOptionalString(value),
+        mime: resolveMime(count, index),
+        index,
+        alreadyTranscribed: transcribedIndexes.has(index),
+      }))
+      .filter((entry) => Boolean(entry.url));
+  }
+  const pathValue = normalizeMediaAttachmentPath(ctx.MediaPath);
+  const url = normalizeOptionalString(ctx.MediaUrl);
+  if (!pathValue && !url) {
+    return [];
+  }
+  return [
+    {
+      path: pathValue,
+      url: url || undefined,
+      mime: ctx.MediaType,
+      index: 0,
+      alreadyTranscribed: transcribedIndexes.has(0),
+    },
+  ];
+}
+
+function resolveMediaAttachmentKind(attachment) {
+  const mime = normalizeOptionalLowercaseString(attachment && attachment.mime);
+  if (mime) {
+    if (mime.startsWith("image/")) {
+      return "image";
+    }
+    if (mime.startsWith("audio/")) {
+      return "audio";
+    }
+    if (mime.startsWith("video/")) {
+      return "video";
+    }
+  }
+  const value = normalizeOptionalLowercaseString(
+    (attachment && (attachment.path || attachment.url)) || "",
+  );
+  const ext = path.extname(value);
+  if ([".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"].includes(ext)) {
+    return "video";
+  }
+  if ([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".webm"].includes(ext)) {
+    return "audio";
+  }
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".tif"].includes(ext)) {
+    return "image";
+  }
+  return "unknown";
+}
+
+function isMediaUnderstandingAttachmentRecord(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  if (typeof value.index !== "number") {
+    return false;
+  }
+  if (value.path !== undefined && typeof value.path !== "string") {
+    return false;
+  }
+  if (value.url !== undefined && typeof value.url !== "string") {
+    return false;
+  }
+  if (value.mime !== undefined && typeof value.mime !== "string") {
+    return false;
+  }
+  return value.alreadyTranscribed === undefined || typeof value.alreadyTranscribed === "boolean";
+}
+
+function orderMediaUnderstandingAttachments(attachments, prefer) {
+  const list = Array.isArray(attachments)
+    ? attachments.filter(isMediaUnderstandingAttachmentRecord)
+    : [];
+  if (!prefer || prefer === "first") {
+    return list;
+  }
+  if (prefer === "last") {
+    return [...list].reverse();
+  }
+  if (prefer === "path") {
+    return [...list.filter((item) => item.path), ...list.filter((item) => !item.path)];
+  }
+  if (prefer === "url") {
+    return [...list.filter((item) => item.url), ...list.filter((item) => !item.url)];
+  }
+  return list;
+}
+
+function selectMediaUnderstandingAttachments(params) {
+  const input = Array.isArray(params.attachments)
+    ? params.attachments.filter(isMediaUnderstandingAttachmentRecord)
+    : [];
+  const matches = input.filter((item) => {
+    if (params.capability === "audio" && item.alreadyTranscribed) {
+      return false;
+    }
+    return resolveMediaAttachmentKind(item) === params.capability;
+  });
+  if (matches.length === 0) {
+    return [];
+  }
+  const ordered = orderMediaUnderstandingAttachments(
+    matches,
+    params.policy && params.policy.prefer,
+  );
+  const mode = params.policy && params.policy.mode ? params.policy.mode : "first";
+  const maxAttachments =
+    params.policy && typeof params.policy.maxAttachments === "number"
+      ? params.policy.maxAttachments
+      : 1;
+  if (mode === "all") {
+    return ordered.slice(0, Math.max(1, maxAttachments));
+  }
+  return ordered.slice(0, 1);
+}
+
+function isMediaUnderstandingPathAllowed(filePath, roots) {
+  if (!roots || roots.length === 0) {
+    return true;
+  }
+  const resolved = path.resolve(filePath);
+  const normalized = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  return roots.some((root) => {
+    const resolvedRoot = path.resolve(root);
+    const normalizedRoot =
+      process.platform === "win32" ? resolvedRoot.toLowerCase() : resolvedRoot;
+    return normalized === normalizedRoot || normalized.startsWith(`${normalizedRoot}${path.sep}`);
+  });
+}
+
+class NativeMediaAttachmentCache {
+  constructor(attachments, options = {}) {
+    this.attachments = Array.isArray(attachments) ? attachments : [];
+    this.entries = new Map();
+    this.localPathRoots = Array.isArray(options.localPathRoots) ? options.localPathRoots : [];
+    this.workspaceDir = options.workspaceDir ? path.resolve(options.workspaceDir) : undefined;
+    for (const attachment of this.attachments) {
+      this.entries.set(attachment.index, { attachment });
+    }
+  }
+
+  async getBuffer(params) {
+    const entry = this.ensureEntry(params.attachmentIndex);
+    if (entry.buffer) {
+      if (entry.buffer.length > params.maxBytes) {
+        throw new MediaUnderstandingSkipError(
+          "maxBytes",
+          `Attachment ${params.attachmentIndex + 1} exceeds maxBytes ${params.maxBytes}`,
+        );
+      }
+      return {
+        buffer: entry.buffer,
+        mime: entry.bufferMime,
+        fileName: entry.bufferFileName || `media-${params.attachmentIndex + 1}`,
+        size: entry.buffer.length,
+      };
+    }
+    const resolvedPath = this.resolveLocalPath(entry.attachment);
+    if (!resolvedPath) {
+      throw new MediaUnderstandingSkipError(
+        "empty",
+        `Attachment ${params.attachmentIndex + 1} has no path or URL.`,
+      );
+    }
+    if (!isMediaUnderstandingPathAllowed(resolvedPath, this.localPathRoots)) {
+      throw new MediaUnderstandingSkipError(
+        "blocked",
+        `Attachment ${params.attachmentIndex + 1} path is outside allowed roots.`,
+      );
+    }
+    const stat = fs.statSync(resolvedPath);
+    if (!stat.isFile()) {
+      throw new MediaUnderstandingSkipError(
+        "empty",
+        `Attachment ${params.attachmentIndex + 1} path is not a regular file.`,
+      );
+    }
+    if (stat.size > params.maxBytes) {
+      throw new MediaUnderstandingSkipError(
+        "maxBytes",
+        `Attachment ${params.attachmentIndex + 1} exceeds maxBytes ${params.maxBytes}`,
+      );
+    }
+    const buffer = fs.readFileSync(resolvedPath);
+    entry.buffer = buffer;
+    entry.bufferMime = entry.attachment.mime;
+    entry.bufferFileName = path.basename(resolvedPath) || `media-${params.attachmentIndex + 1}`;
+    return {
+      buffer,
+      mime: entry.bufferMime,
+      fileName: entry.bufferFileName,
+      size: buffer.length,
+    };
+  }
+
+  async getPath(params) {
+    const entry = this.ensureEntry(params.attachmentIndex);
+    const resolvedPath = this.resolveLocalPath(entry.attachment);
+    if (resolvedPath) {
+      if (!isMediaUnderstandingPathAllowed(resolvedPath, this.localPathRoots)) {
+        throw new MediaUnderstandingSkipError(
+          "blocked",
+          `Attachment ${params.attachmentIndex + 1} path is outside allowed roots.`,
+        );
+      }
+      const stat = fs.statSync(resolvedPath);
+      if (params.maxBytes && stat.size > params.maxBytes) {
+        throw new MediaUnderstandingSkipError(
+          "maxBytes",
+          `Attachment ${params.attachmentIndex + 1} exceeds maxBytes ${params.maxBytes}`,
+        );
+      }
+      return { path: resolvedPath };
+    }
+    const media = await this.getBuffer(params);
+    const tmpPath = path.join(
+      os.tmpdir(),
+      `openclaw-media-${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`,
+    );
+    fs.writeFileSync(tmpPath, media.buffer);
+    return {
+      path: tmpPath,
+      cleanup: async () => {
+        fs.rmSync(tmpPath, { force: true });
+      },
+    };
+  }
+
+  async cleanup() {}
+
+  ensureEntry(attachmentIndex) {
+    const existing = this.entries.get(attachmentIndex);
+    if (existing) {
+      return existing;
+    }
+    const attachment =
+      this.attachments.find((item) => item.index === attachmentIndex) || { index: attachmentIndex };
+    const entry = { attachment };
+    this.entries.set(attachmentIndex, entry);
+    return entry;
+  }
+
+  resolveLocalPath(attachment) {
+    const rawPath = normalizeMediaAttachmentPath(attachment && attachment.path);
+    if (!rawPath) {
+      return undefined;
+    }
+    return this.workspaceDir ? path.resolve(this.workspaceDir, rawPath) : path.resolve(rawPath);
+  }
+}
+
+function createMediaAttachmentCache(attachments, options) {
+  return new NativeMediaAttachmentCache(attachments, options);
+}
+
+function resolveMediaUnderstandingTimeoutMs(seconds, fallbackSeconds) {
+  const value =
+    typeof seconds === "number" && Number.isFinite(seconds) ? seconds : fallbackSeconds;
+  return Math.max(1000, Math.floor(value * 1000));
+}
+
+function resolveMediaUnderstandingPrompt(capability, prompt, maxChars) {
+  const base = normalizeOptionalString(prompt) || MEDIA_UNDERSTANDING_DEFAULT_PROMPT[capability];
+  if (!maxChars || capability === "audio") {
+    return base;
+  }
+  return `${base} Respond in at most ${maxChars} characters.`;
+}
+
+function resolveMediaUnderstandingMaxChars(params) {
+  const configured =
+    params.entry.maxChars ??
+    (params.config && params.config.maxChars) ??
+    (((params.cfg.tools || {}).media || {})[params.capability] || {}).maxChars;
+  if (typeof configured === "number") {
+    return configured;
+  }
+  return MEDIA_UNDERSTANDING_DEFAULT_MAX_CHARS_BY_CAPABILITY[params.capability];
+}
+
+function resolveMediaUnderstandingMaxBytes(params) {
+  const configured =
+    params.entry.maxBytes ??
+    (params.config && params.config.maxBytes) ??
+    (((params.cfg.tools || {}).media || {})[params.capability] || {}).maxBytes;
+  if (typeof configured === "number") {
+    return configured;
+  }
+  return MEDIA_UNDERSTANDING_DEFAULT_MAX_BYTES[params.capability];
+}
+
+function resolveMediaUnderstandingModelEntries(params) {
+  const sharedModels = (((params.cfg.tools || {}).media || {}).models) || [];
+  const capabilityModels = (params.config && params.config.models) || [];
+  return [...capabilityModels, ...sharedModels].filter((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    const caps = Array.isArray(entry.capabilities) ? entry.capabilities : undefined;
+    if (caps && caps.length > 0) {
+      return caps.includes(params.capability);
+    }
+    const providerId = normalizeMediaProviderId(entry.provider);
+    if (providerId && params.providerRegistry) {
+      const provider = params.providerRegistry.get(providerId);
+      if (Array.isArray(provider && provider.capabilities) && provider.capabilities.length > 0) {
+        return provider.capabilities.includes(params.capability);
+      }
+    }
+    return true;
+  });
+}
+
+function resolveMediaEntryRunOptions(params) {
+  const maxBytes = resolveMediaUnderstandingMaxBytes(params);
+  const maxChars = resolveMediaUnderstandingMaxChars(params);
+  const timeoutMs = resolveMediaUnderstandingTimeoutMs(
+    params.entry.timeoutSeconds ??
+      (params.config && params.config.timeoutSeconds) ??
+      (((params.cfg.tools || {}).media || {})[params.capability] || {}).timeoutSeconds,
+    MEDIA_UNDERSTANDING_DEFAULT_TIMEOUT_SECONDS[params.capability],
+  );
+  const prompt = resolveMediaUnderstandingPrompt(
+    params.capability,
+    params.entry.prompt ??
+      (params.config && params.config.prompt) ??
+      (((params.cfg.tools || {}).media || {})[params.capability] || {}).prompt,
+    maxChars,
+  );
+  return { maxBytes, maxChars, timeoutMs, prompt };
+}
+
+function resolveMediaRequestOverrides(config) {
+  return {
+    prompt: config && config._requestPromptOverride,
+    language: config && config._requestLanguageOverride,
+  };
+}
+
+function trimMediaUnderstandingOutput(text, maxChars) {
+  const trimmed = String(text || "").trim();
+  if (!maxChars || trimmed.length <= maxChars) {
+    return trimmed;
+  }
+  return trimmed.slice(0, maxChars).trim();
+}
+
+function buildMediaUnderstandingModelDecision(params) {
+  if (params.entryType === "cli") {
+    const command = normalizeOptionalString(params.entry.command);
+    return {
+      type: "cli",
+      provider: command || "cli",
+      model: params.entry.model || command,
+      outcome: params.outcome,
+      reason: params.reason,
+    };
+  }
+  const providerIdRaw = normalizeOptionalString(params.entry.provider);
+  const providerId = providerIdRaw ? normalizeMediaProviderId(providerIdRaw) : undefined;
+  return {
+    type: "provider",
+    provider: providerId || providerIdRaw,
+    model: params.entry.model,
+    outcome: params.outcome,
+    reason: params.reason,
+  };
+}
+
+function findMediaUnderstandingDecisionReason(decision, outcome) {
+  const attachments = Array.isArray(decision && decision.attachments)
+    ? decision.attachments
+    : [];
+  for (const attachment of attachments) {
+    const attempts = Array.isArray(attachment && attachment.attempts) ? attachment.attempts : [];
+    for (const attempt of attempts) {
+      if (outcome && attempt.outcome !== outcome) {
+        continue;
+      }
+      const reason = normalizeOptionalString(attempt.reason);
+      if (reason) {
+        return reason;
+      }
+    }
+  }
+  return undefined;
+}
+
+function normalizeMediaUnderstandingDecisionReason(reason) {
+  const trimmed = normalizeOptionalString(reason);
+  if (!trimmed) {
+    return undefined;
+  }
+  const normalized = trimmed.replace(/^Error:\s*/i, "").trim();
+  return normalized || undefined;
+}
+
+function resolveLiteralMediaProviderApiKey(cfg, providerId) {
+  const providers = (cfg.models && cfg.models.providers) || {};
+  const exact = providers[providerId];
+  if (exact && typeof exact.apiKey === "string" && exact.apiKey.trim()) {
+    return exact.apiKey.trim();
+  }
+  for (const [key, value] of Object.entries(providers)) {
+    if (normalizeMediaProviderId(key) === providerId && value && typeof value.apiKey === "string") {
+      return value.apiKey.trim() || undefined;
+    }
+  }
+  return undefined;
+}
+
+function resolveMediaProviderConfig(cfg, providerId) {
+  const providers = (cfg.models && cfg.models.providers) || {};
+  if (providers[providerId] && typeof providers[providerId] === "object") {
+    return providers[providerId];
+  }
+  for (const [key, value] of Object.entries(providers)) {
+    if (normalizeMediaProviderId(key) === providerId && value && typeof value === "object") {
+      return value;
+    }
+  }
+  return {};
+}
+
+async function runMediaUnderstandingProviderEntry(params) {
+  const entry = params.entry;
+  const capability = params.capability;
+  const providerIdRaw = normalizeOptionalString(entry.provider);
+  if (!providerIdRaw) {
+    throw new Error(`Provider entry missing provider for ${capability}`);
+  }
+  const providerId = normalizeMediaProviderId(providerIdRaw);
+  const runOptions = resolveMediaEntryRunOptions(params);
+  const requestOverrides = resolveMediaRequestOverrides(params.config);
+
+  if (capability === "image") {
+    if (!params.agentDir) {
+      throw new Error("Image understanding requires agentDir");
+    }
+    const modelId = normalizeOptionalString(entry.model);
+    if (!modelId) {
+      throw new Error("Image understanding requires model id");
+    }
+    const media = await params.cache.getBuffer({
+      attachmentIndex: params.attachmentIndex,
+      maxBytes: runOptions.maxBytes,
+      timeoutMs: runOptions.timeoutMs,
+    });
+    const provider = getMediaUnderstandingProvider(providerId, params.providerRegistry);
+    if (!provider || typeof provider.describeImage !== "function") {
+      throw new Error(`Provider does not support image analysis: ${providerIdRaw}`);
+    }
+    const result = await provider.describeImage({
+      buffer: media.buffer,
+      fileName: media.fileName,
+      mime: media.mime,
+      model: modelId,
+      provider: providerId,
+      prompt: requestOverrides.prompt || runOptions.prompt,
+      timeoutMs: runOptions.timeoutMs,
+      profile: entry.profile,
+      preferredProfile: entry.preferredProfile,
+      agentDir: params.agentDir,
+      cfg: params.cfg,
+    });
+    return {
+      kind: "image.description",
+      attachmentIndex: params.attachmentIndex,
+      text: trimMediaUnderstandingOutput(result.text, runOptions.maxChars),
+      provider: providerId,
+      model: result.model || modelId,
+    };
+  }
+
+  const provider = getMediaUnderstandingProvider(providerId, params.providerRegistry);
+  if (!provider) {
+    throw new Error(`Media provider not available: ${providerId}`);
+  }
+  const media = await params.cache.getBuffer({
+    attachmentIndex: params.attachmentIndex,
+    maxBytes: runOptions.maxBytes,
+    timeoutMs: runOptions.timeoutMs,
+  });
+  const providerConfig = resolveMediaProviderConfig(params.cfg, providerId);
+  const apiKey = resolveLiteralMediaProviderApiKey(params.cfg, providerId) || "";
+
+  if (capability === "audio") {
+    if (media.size < MEDIA_UNDERSTANDING_MIN_AUDIO_FILE_BYTES) {
+      throw new MediaUnderstandingSkipError(
+        "tooSmall",
+        `Audio attachment ${params.attachmentIndex + 1} is too small ` +
+          `(${media.size} bytes, minimum ${MEDIA_UNDERSTANDING_MIN_AUDIO_FILE_BYTES})`,
+      );
+    }
+    if (typeof provider.transcribeAudio !== "function") {
+      throw new Error(`Audio transcription provider "${providerId}" not available.`);
+    }
+    const model =
+      normalizeOptionalString(entry.model) ||
+      normalizeOptionalString(provider.defaultModels && provider.defaultModels.audio);
+    const result = await provider.transcribeAudio({
+      buffer: media.buffer,
+      fileName: media.fileName,
+      mime: media.mime,
+      apiKey,
+      baseUrl: entry.baseUrl || (params.config && params.config.baseUrl) || providerConfig.baseUrl,
+      headers: {
+        ...(providerConfig.headers || {}),
+        ...((params.config && params.config.headers) || {}),
+        ...(entry.headers || {}),
+      },
+      request: entry.request || (params.config && params.config.request) || providerConfig.request,
+      model,
+      language:
+        requestOverrides.language ||
+        entry.language ||
+        (params.config && params.config.language) ||
+        (((params.cfg.tools || {}).media || {}).audio || {}).language,
+      prompt: requestOverrides.prompt || runOptions.prompt,
+      timeoutMs: runOptions.timeoutMs,
+      fetchFn: globalThis.fetch,
+    });
+    return {
+      kind: "audio.transcription",
+      attachmentIndex: params.attachmentIndex,
+      text: trimMediaUnderstandingOutput(result.text, runOptions.maxChars),
+      provider: providerId,
+      model: result.model || model,
+    };
+  }
+
+  if (typeof provider.describeVideo !== "function") {
+    throw new Error(`Video understanding provider "${providerId}" not available.`);
+  }
+  const result = await provider.describeVideo({
+    buffer: media.buffer,
+    fileName: media.fileName,
+    mime: media.mime,
+    apiKey,
+    baseUrl: entry.baseUrl || (params.config && params.config.baseUrl) || providerConfig.baseUrl,
+    headers: {
+      ...(providerConfig.headers || {}),
+      ...((params.config && params.config.headers) || {}),
+      ...(entry.headers || {}),
+    },
+    request: entry.request || (params.config && params.config.request) || providerConfig.request,
+    model: entry.model,
+    prompt: runOptions.prompt,
+    timeoutMs: runOptions.timeoutMs,
+    fetchFn: globalThis.fetch,
+  });
+  return {
+    kind: "video.description",
+    attachmentIndex: params.attachmentIndex,
+    text: trimMediaUnderstandingOutput(result.text, runOptions.maxChars),
+    provider: providerId,
+    model: result.model || entry.model,
+  };
+}
+
+async function runMediaUnderstandingAttachmentEntries(params) {
+  const attempts = [];
+  for (const entry of params.entries) {
+    const entryType = entry.type || (entry.command ? "cli" : "provider");
+    try {
+      if (entryType === "cli") {
+        throw new MediaUnderstandingSkipError("unsupported", "CLI media entry unavailable");
+      }
+      const result = await runMediaUnderstandingProviderEntry({
+        ...params,
+        entry,
+      });
+      if (result && result.text) {
+        const decision = buildMediaUnderstandingModelDecision({
+          entry,
+          entryType,
+          outcome: "success",
+        });
+        if (result.provider) {
+          decision.provider = result.provider;
+        }
+        if (result.model) {
+          decision.model = result.model;
+        }
+        attempts.push(decision);
+        return { output: result, attempts };
+      }
+      attempts.push(
+        buildMediaUnderstandingModelDecision({
+          entry,
+          entryType,
+          outcome: "skipped",
+          reason: "empty output",
+        }),
+      );
+    } catch (error) {
+      attempts.push(
+        buildMediaUnderstandingModelDecision({
+          entry,
+          entryType,
+          outcome: error instanceof MediaUnderstandingSkipError ? "skipped" : "failed",
+          reason:
+            error instanceof MediaUnderstandingSkipError
+              ? `${error.reason}: ${error.message}`
+              : String(error),
+        }),
+      );
+    }
+  }
+  return { output: null, attempts };
+}
+
+function hasFailedMediaUnderstandingAttempt(attachments) {
+  return attachments.some((attachment) =>
+    attachment.attempts.some((attempt) => attempt.outcome === "failed"),
+  );
+}
+
+async function runMediaUnderstandingCapability(params) {
+  const config = params.config || (((params.cfg.tools || {}).media || {})[params.capability]);
+  if (config && config.enabled === false) {
+    return {
+      outputs: [],
+      decision: { capability: params.capability, outcome: "disabled", attachments: [] },
+    };
+  }
+  const selected = selectMediaUnderstandingAttachments({
+    capability: params.capability,
+    attachments: params.media,
+    policy: config && config.attachments,
+  });
+  if (selected.length === 0) {
+    return {
+      outputs: [],
+      decision: { capability: params.capability, outcome: "no-attachment", attachments: [] },
+    };
+  }
+  const entries = resolveMediaUnderstandingModelEntries({
+    cfg: params.cfg,
+    capability: params.capability,
+    config,
+    providerRegistry: params.providerRegistry,
+  });
+  if (entries.length === 0) {
+    return {
+      outputs: [],
+      decision: {
+        capability: params.capability,
+        outcome: "skipped",
+        attachments: selected.map((item) => ({ attachmentIndex: item.index, attempts: [] })),
+      },
+    };
+  }
+  const outputs = [];
+  const attachmentDecisions = [];
+  for (const attachment of selected) {
+    const { output, attempts } = await runMediaUnderstandingAttachmentEntries({
+      capability: params.capability,
+      cfg: params.cfg,
+      attachmentIndex: attachment.index,
+      agentDir: params.agentDir,
+      providerRegistry: params.providerRegistry,
+      cache: params.attachments,
+      entries,
+      config,
+    });
+    if (output) {
+      outputs.push(output);
+    }
+    attachmentDecisions.push({
+      attachmentIndex: attachment.index,
+      attempts,
+      chosen: attempts.find((attempt) => attempt.outcome === "success"),
+    });
+  }
+  return {
+    outputs,
+    decision: {
+      capability: params.capability,
+      outcome:
+        outputs.length > 0
+          ? "success"
+          : hasFailedMediaUnderstandingAttempt(attachmentDecisions)
+            ? "failed"
+            : "skipped",
+      attachments: attachmentDecisions,
+    },
+  };
+}
+
+function buildMediaUnderstandingFileContext(params) {
+  return {
+    MediaPath: params.filePath,
+    MediaType: params.mime,
+  };
+}
+
+async function runMediaUnderstandingFile(params) {
+  const requestPrompt = normalizeOptionalString(params.prompt);
+  const requestTimeoutSeconds =
+    typeof params.timeoutMs === "number" &&
+    Number.isFinite(params.timeoutMs) &&
+    params.timeoutMs > 0
+      ? Math.ceil(params.timeoutMs / 1000)
+      : undefined;
+  const sourceCfg = params.cfg || {};
+  const sourceTools = sourceCfg.tools || {};
+  const sourceMedia = sourceTools.media || {};
+  const capabilityConfig = sourceMedia[params.capability] || {};
+  const cfg =
+    requestPrompt || requestTimeoutSeconds !== undefined
+      ? {
+          ...sourceCfg,
+          tools: {
+            ...sourceTools,
+            media: {
+              ...sourceMedia,
+              [params.capability]: {
+                ...capabilityConfig,
+                ...(requestPrompt
+                  ? {
+                      prompt: requestPrompt,
+                      _requestPromptOverride: requestPrompt,
+                    }
+                  : {}),
+                ...(requestTimeoutSeconds !== undefined
+                  ? { timeoutSeconds: requestTimeoutSeconds }
+                  : {}),
+              },
+            },
+          },
+        }
+      : sourceCfg;
+  const ctx = buildMediaUnderstandingFileContext(params);
+  const attachments = normalizeMediaUnderstandingAttachments(ctx);
+  if (attachments.length === 0) {
+    return {
+      text: undefined,
+      decision: { capability: params.capability, outcome: "no-attachment", attachments: [] },
+    };
+  }
+  const config = ((cfg.tools || {}).media || {})[params.capability];
+  if (config && config.enabled === false) {
+    return {
+      text: undefined,
+      provider: undefined,
+      model: undefined,
+      output: undefined,
+      decision: { capability: params.capability, outcome: "disabled", attachments: [] },
+    };
+  }
+  const providerRegistry = buildMediaUnderstandingRegistry(undefined, cfg);
+  const cache = createMediaAttachmentCache(attachments, {
+    localPathRoots: [path.dirname(params.filePath)],
+    ssrfPolicy: (((cfg.tools || {}).web || {}).fetch || {}).ssrfPolicy,
+  });
+  try {
+    const result = await runMediaUnderstandingCapability({
+      capability: params.capability,
+      cfg,
+      ctx,
+      attachments: cache,
+      media: attachments,
+      agentDir: params.agentDir,
+      providerRegistry,
+      config,
+      activeModel: params.activeModel,
+    });
+    if (result.outputs.length === 0 && result.decision.outcome === "failed") {
+      throw new Error(
+        normalizeMediaUnderstandingDecisionReason(
+          findMediaUnderstandingDecisionReason(result.decision, "failed"),
+        ) || `${params.capability} understanding failed`,
+      );
+    }
+    const output = result.outputs.find(
+      (entry) => entry.kind === MEDIA_UNDERSTANDING_KIND_BY_CAPABILITY[params.capability],
+    );
+    const text = normalizeOptionalString(output && output.text);
+    const fileResult = {
+      text: text || undefined,
+      provider: output && output.provider,
+      model: output && output.model,
+      output,
+    };
+    if (result.decision) {
+      fileResult.decision = result.decision;
+    }
+    return fileResult;
+  } finally {
+    await cache.cleanup();
+  }
+}
+
+async function describeImageFile(params) {
+  return await runMediaUnderstandingFile({ ...params, capability: "image" });
+}
+
+async function describeImageFileWithModel(params) {
+  const timeoutMs = params.timeoutMs ?? 30000;
+  const providerRegistry = buildMediaUnderstandingRegistry(undefined, params.cfg);
+  const provider = providerRegistry.get(normalizeMediaProviderId(params.provider));
+  if (!provider || typeof provider.describeImage !== "function") {
+    throw new Error(`Provider does not support image analysis: ${params.provider}`);
+  }
+  const buffer = fs.readFileSync(params.filePath);
+  return await provider.describeImage({
+    buffer,
+    fileName: path.basename(params.filePath),
+    mime: params.mime,
+    provider: params.provider,
+    model: params.model,
+    prompt: params.prompt,
+    maxTokens: params.maxTokens,
+    timeoutMs,
+    cfg: params.cfg,
+    agentDir: params.agentDir || "",
+  });
+}
+
+async function describeVideoFile(params) {
+  return await runMediaUnderstandingFile({ ...params, capability: "video" });
+}
+
+async function transcribeAudioFile(params) {
+  const sourceCfg = params.cfg || {};
+  const sourceTools = sourceCfg.tools || {};
+  const sourceMedia = sourceTools.media || {};
+  const audioConfig = sourceMedia.audio || {};
+  const cfg =
+    params.language || params.prompt
+      ? {
+          ...sourceCfg,
+          tools: {
+            ...sourceTools,
+            media: {
+              ...sourceMedia,
+              audio: {
+                ...audioConfig,
+                ...(params.language ? { _requestLanguageOverride: params.language } : {}),
+                ...(params.prompt ? { _requestPromptOverride: params.prompt } : {}),
+                ...(params.language ? { language: params.language } : {}),
+                ...(params.prompt ? { prompt: params.prompt } : {}),
+              },
+            },
+          },
+        }
+      : sourceCfg;
+  return await runMediaUnderstandingFile({ ...params, cfg, capability: "audio" });
+}
+
+const mediaUnderstandingRuntime = {
+  describeImageFile,
+  describeImageFileWithModel,
+  describeVideoFile,
+  runMediaUnderstandingFile,
+  transcribeAudioFile,
 };
 
 const videoGenerationCoreRuntime = {
@@ -55348,6 +56349,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/media-generation-runtime-shared"
   ) {
     return mediaGenerationRuntimeSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-understanding-runtime" ||
+    request === "@openclaw/plugin-sdk/media-understanding-runtime"
+  ) {
+    return mediaUnderstandingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/speech-core" ||

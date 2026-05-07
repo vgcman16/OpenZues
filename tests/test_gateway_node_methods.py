@@ -15345,6 +15345,322 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_media_understanding_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    image_path = tmp_path / "frame.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\nimage")
+    audio_path = tmp_path / "sample.mp3"
+    audio_path.write_bytes(b"a" * 2048)
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"video-bytes")
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    runtime_entry = tmp_path / "runtime-plugin-media-understanding.cjs"
+    runtime_entry.write_text(
+        """
+const media = require("openclaw/plugin-sdk/media-understanding-runtime");
+const scopedMedia = require("@openclaw/plugin-sdk/media-understanding-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.media_understanding",
+      description: "Use OpenClaw media-understanding runtime SDK shim",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        const calls = [];
+        const provider = {
+          id: "vision",
+          capabilities: ["image", "audio", "video"],
+          defaultModels: {
+            image: "default-image",
+            audio: "default-audio",
+            video: "default-video"
+          },
+          async describeImage(request) {
+            calls.push({
+              kind: "image",
+              fileName: request.fileName,
+              mime: request.mime,
+              model: request.model,
+              provider: request.provider,
+              prompt: request.prompt,
+              maxTokens: request.maxTokens ?? null,
+              timeoutMs: request.timeoutMs,
+              agentDir: request.agentDir
+            });
+            return {
+              text: ` image:${request.fileName}:${request.model}:${request.prompt} `,
+              model: request.model || "image-returned"
+            };
+          },
+          async transcribeAudio(request) {
+            calls.push({
+              kind: "audio",
+              fileName: request.fileName,
+              mime: request.mime,
+              model: request.model,
+              prompt: request.prompt,
+              language: request.language,
+              apiKey: request.apiKey,
+              timeoutMs: request.timeoutMs
+            });
+            return {
+              text: ` audio:${request.language}:${request.prompt}:${request.model} `,
+              model: request.model || "audio-returned"
+            };
+          },
+          async describeVideo(request) {
+            calls.push({
+              kind: "video",
+              fileName: request.fileName,
+              mime: request.mime,
+              model: request.model,
+              prompt: request.prompt,
+              apiKey: request.apiKey,
+              timeoutMs: request.timeoutMs
+            });
+            return {
+              text: ` video:${request.fileName}:${request.model}:${request.prompt} `,
+              model: request.model || "video-returned"
+            };
+          }
+        };
+        const cfg = {
+          mediaUnderstandingProviders: [provider],
+          models: {
+            providers: {
+              vision: {
+                apiKey: "secret-key",
+                baseUrl: "https://example.invalid"
+              }
+            }
+          },
+          tools: {
+            web: { fetch: { ssrfPolicy: "private-deny" } },
+            media: {
+              image: {
+                models: [{ type: "provider", provider: "vision", model: "img-model" }],
+                maxChars: 32,
+                timeoutSeconds: 4
+              },
+              audio: {
+                models: [{ type: "provider", provider: "vision", model: "aud-model" }],
+                prompt: "configured audio prompt",
+                language: "de",
+                timeoutSeconds: 5
+              },
+              video: {
+                models: [{ type: "provider", provider: "vision", model: "vid-model" }],
+                prompt: "configured video prompt",
+                maxChars: 40,
+                timeoutSeconds: 6
+              }
+            }
+          }
+        };
+        const image = await media.describeImageFile({
+          filePath: args.imagePath,
+          cfg,
+          agentDir: args.agentDir,
+          mime: "image/png",
+          prompt: "override image prompt",
+          timeoutMs: 2400
+        });
+        const audio = await media.transcribeAudioFile({
+          filePath: args.audioPath,
+          cfg,
+          mime: "audio/mpeg",
+          language: "fr",
+          prompt: "override audio prompt"
+        });
+        const video = await media.describeVideoFile({
+          filePath: args.videoPath,
+          cfg,
+          mime: "video/mp4"
+        });
+        const direct = await media.describeImageFileWithModel({
+          filePath: args.imagePath,
+          cfg,
+          agentDir: args.agentDir,
+          mime: "image/png",
+          provider: "Vision",
+          model: "direct-model",
+          prompt: "direct prompt",
+          maxTokens: 42,
+          timeoutMs: 777
+        });
+        const disabled = await media.runMediaUnderstandingFile({
+          capability: "image",
+          filePath: args.imagePath,
+          cfg: { tools: { media: { image: { enabled: false } } } },
+          mime: "image/png"
+        });
+        const noAttachment = await media.runMediaUnderstandingFile({
+          capability: "image",
+          filePath: "",
+          cfg: {}
+        });
+        return {
+          keys: Object.keys(media).sort(),
+          scopedDescribeVideo: typeof scopedMedia.describeVideoFile,
+          image,
+          audio,
+          video,
+          direct,
+          disabled,
+          noAttachment,
+          calls
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "media-understanding-runtime-plugin",
+                    "name": "Media Understanding Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-media-understanding.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.media_understanding"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.media_understanding",
+            "args": {
+                "imagePath": str(image_path),
+                "audioPath": str(audio_path),
+                "videoPath": str(video_path),
+                "agentDir": str(agent_dir),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    expected_keys = {
+        "describeImageFile",
+        "describeImageFileWithModel",
+        "describeVideoFile",
+        "runMediaUnderstandingFile",
+        "transcribeAudioFile",
+    }
+    assert expected_keys.issubset(set(result["keys"]))
+    assert result["scopedDescribeVideo"] == "function"
+    assert result["image"]["text"] == "image:frame.png:img-model:overri"
+    assert result["image"]["provider"] == "vision"
+    assert result["image"]["model"] == "img-model"
+    assert result["image"]["output"] == {
+        "kind": "image.description",
+        "attachmentIndex": 0,
+        "text": "image:frame.png:img-model:overri",
+        "provider": "vision",
+        "model": "img-model",
+    }
+    assert result["image"]["decision"]["outcome"] == "success"
+    assert result["audio"]["text"] == "audio:fr:override audio prompt:aud-model"
+    assert result["audio"]["provider"] == "vision"
+    assert result["audio"]["model"] == "aud-model"
+    assert result["video"]["text"] == "video:clip.mp4:vid-model:configured vide"
+    assert result["video"]["provider"] == "vision"
+    assert result["video"]["model"] == "vid-model"
+    assert result["direct"] == {
+        "text": " image:frame.png:direct-model:direct prompt ",
+        "model": "direct-model",
+    }
+    assert result["disabled"] == {
+        "decision": {"capability": "image", "outcome": "disabled", "attachments": []}
+    }
+    assert result["noAttachment"] == {
+        "decision": {"capability": "image", "outcome": "no-attachment", "attachments": []}
+    }
+    assert result["calls"] == [
+        {
+            "kind": "image",
+            "fileName": "frame.png",
+            "mime": "image/png",
+            "model": "img-model",
+            "provider": "vision",
+            "prompt": "override image prompt",
+            "maxTokens": None,
+            "timeoutMs": 3000,
+            "agentDir": str(agent_dir),
+        },
+        {
+            "kind": "audio",
+            "fileName": "sample.mp3",
+            "mime": "audio/mpeg",
+            "model": "aud-model",
+            "prompt": "override audio prompt",
+            "language": "fr",
+            "apiKey": "secret-key",
+            "timeoutMs": 5000,
+        },
+        {
+            "kind": "video",
+            "fileName": "clip.mp4",
+            "mime": "video/mp4",
+            "model": "vid-model",
+            "prompt": "configured video prompt Respond in at most 40 characters.",
+            "apiKey": "secret-key",
+            "timeoutMs": 6000,
+        },
+        {
+            "kind": "image",
+            "fileName": "frame.png",
+            "mime": "image/png",
+            "model": "direct-model",
+            "provider": "Vision",
+            "prompt": "direct prompt",
+            "maxTokens": 42,
+            "timeoutMs": 777,
+            "agentDir": str(agent_dir),
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
     tmp_path,
 ) -> None:
