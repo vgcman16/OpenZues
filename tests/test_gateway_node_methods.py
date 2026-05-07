@@ -37805,6 +37805,355 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_usage_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-usage.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const providerUsage = require("openclaw/plugin-sdk/provider-usage");
+const scopedProviderUsage = require("@openclaw/plugin-sdk/provider-usage");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.providerUsage",
+      description: "Use OpenClaw provider-usage SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "provider-usage-"));
+        fs.mkdirSync(path.join(tmp, ".pi", "agent"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmp, ".pi", "agent", "auth.json"),
+          JSON.stringify({
+            zai: { access: "zai-token" },
+            "openai-codex": { access: "codex-token" }
+          })
+        );
+        const legacyToken = providerUsage.resolveLegacyPiAgentAccessToken(
+          { HOME: tmp },
+          ["missing", "zai", "openai-codex"]
+        );
+
+        const fetchJsonCalls = [];
+        const fetchJsonResponse = await providerUsage.fetchJson(
+          "https://usage.example.test/json",
+          { method: "POST", headers: { "x-test": "1" } },
+          500,
+          async (url, init) => {
+            fetchJsonCalls.push({
+              url,
+              method: init.method,
+              hasSignal: Boolean(init.signal),
+              header: init.headers["x-test"]
+            });
+            return new Response(JSON.stringify({ ok: true }), { status: 200 });
+          }
+        );
+
+        const claude = await providerUsage.fetchClaudeUsage("claude-token", 500, async () =>
+          new Response(JSON.stringify({
+            five_hour: {
+              utilization: 34,
+              resets_at: "2026-05-07T00:00:00.000Z"
+            },
+            seven_day: { utilization: 150 },
+            seven_day_sonnet: { utilization: -5 }
+          }), { status: 200 })
+        );
+
+        const codexCalls = [];
+        const codex = await providerUsage.fetchCodexUsage(
+          "codex-token",
+          "acct-1",
+          500,
+          async (url, init) => {
+            codexCalls.push({
+              url,
+              account: init.headers["ChatGPT-Account-Id"],
+              auth: init.headers.Authorization
+            });
+            return new Response(JSON.stringify({
+              rate_limit: {
+                primary_window: {
+                  limit_window_seconds: 10800,
+                  used_percent: 12.5,
+                  reset_at: 1000
+                },
+                secondary_window: {
+                  limit_window_seconds: 86400,
+                  used_percent: 88,
+                  reset_at: 400000
+                }
+              },
+              plan_type: "pro",
+              credits: { balance: "3.5" }
+            }), { status: 200 });
+          }
+        );
+
+        const gemini = await providerUsage.fetchGeminiUsage(
+          "gemini-token",
+          500,
+          async () => new Response(JSON.stringify({
+            buckets: [
+              { modelId: "gemini-2.5-pro", remainingFraction: 0.2 },
+              { modelId: "gemini-2.5-flash", remainingFraction: 0.75 }
+            ]
+          }), { status: 200 }),
+          "google-gemini-cli"
+        );
+
+        const minimaxCalls = [];
+        const minimax = await providerUsage.fetchMinimaxUsage(
+          "minimax-key",
+          500,
+          async (url, init) => {
+            minimaxCalls.push({
+              url,
+              auth: init.headers.Authorization,
+              source: init.headers["MM-API-Source"]
+            });
+            return new Response(JSON.stringify({
+              data: {
+                used: 25,
+                total: 100,
+                reset_at: "2026-05-08T00:00:00.000Z",
+                plan: "Mini"
+              }
+            }), { status: 200 });
+          },
+          { baseUrl: "https://minimax.example.test/v1/chat" }
+        );
+
+        const zai = await providerUsage.fetchZaiUsage("zai-key", 500, async () =>
+          new Response(JSON.stringify({
+            success: true,
+            code: 200,
+            data: {
+              planName: "Z Plan",
+              limits: [
+                {
+                  type: "TOKENS_LIMIT",
+                  percentage: 12,
+                  unit: 3,
+                  number: 5,
+                  nextResetTime: "2026-05-09T00:00:00.000Z"
+                },
+                { type: "TIME_LIMIT", percentage: 7, unit: 1, number: 30 }
+              ]
+            }
+          }), { status: 200 })
+        );
+
+        return {
+          keys: Object.keys(providerUsage).sort(),
+          scopedType: typeof scopedProviderUsage.fetchCodexUsage,
+          labels: providerUsage.PROVIDER_LABELS,
+          clamp: [
+            providerUsage.clampPercent(-5),
+            providerUsage.clampPercent(50),
+            providerUsage.clampPercent(120),
+            providerUsage.clampPercent(Number.NaN)
+          ],
+          legacyToken,
+          errors: [
+            providerUsage.buildUsageErrorSnapshot("zai", "bad"),
+            providerUsage.buildUsageHttpErrorSnapshot({
+              provider: "openai-codex",
+              status: 401,
+              tokenExpiredStatuses: [401, 403]
+            }),
+            providerUsage.buildUsageHttpErrorSnapshot({
+              provider: "minimax",
+              status: 502,
+              message: " gateway "
+            })
+          ],
+          fetchJson: {
+            status: fetchJsonResponse.status,
+            body: await fetchJsonResponse.json(),
+            calls: fetchJsonCalls
+          },
+          claude,
+          codex,
+          codexCalls,
+          gemini,
+          minimax,
+          minimaxCalls,
+          zai
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-usage-plugin",
+                    "name": "Runtime Provider Usage Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-usage.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.providerUsage"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.providerUsage"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "PROVIDER_LABELS",
+            "buildUsageErrorSnapshot",
+            "buildUsageHttpErrorSnapshot",
+            "clampPercent",
+            "fetchClaudeUsage",
+            "fetchCodexUsage",
+            "fetchGeminiUsage",
+            "fetchJson",
+            "fetchMinimaxUsage",
+            "fetchZaiUsage",
+            "resolveLegacyPiAgentAccessToken",
+        ],
+        "scopedType": "function",
+        "labels": {
+            "anthropic": "Claude",
+            "github-copilot": "Copilot",
+            "google-gemini-cli": "Gemini",
+            "minimax": "MiniMax",
+            "openai-codex": "Codex",
+            "xiaomi": "Xiaomi",
+            "zai": "z.ai",
+        },
+        "clamp": [0, 50, 100, 0],
+        "legacyToken": "zai-token",
+        "errors": [
+            {"provider": "zai", "displayName": "z.ai", "windows": [], "error": "bad"},
+            {
+                "provider": "openai-codex",
+                "displayName": "Codex",
+                "windows": [],
+                "error": "Token expired",
+            },
+            {
+                "provider": "minimax",
+                "displayName": "MiniMax",
+                "windows": [],
+                "error": "HTTP 502: gateway",
+            },
+        ],
+        "fetchJson": {
+            "status": 200,
+            "body": {"ok": True},
+            "calls": [
+                {
+                    "url": "https://usage.example.test/json",
+                    "method": "POST",
+                    "hasSignal": True,
+                    "header": "1",
+                }
+            ],
+        },
+        "claude": {
+            "provider": "anthropic",
+            "displayName": "Claude",
+            "windows": [
+                {"label": "5h", "usedPercent": 34, "resetAt": 1778112000000},
+                {"label": "Week", "usedPercent": 100},
+                {"label": "Sonnet", "usedPercent": 0},
+            ],
+        },
+        "codex": {
+            "provider": "openai-codex",
+            "displayName": "Codex",
+            "windows": [
+                {"label": "3h", "usedPercent": 12.5, "resetAt": 1000000},
+                {"label": "Week", "usedPercent": 88, "resetAt": 400000000},
+            ],
+            "plan": "pro ($3.50)",
+        },
+        "codexCalls": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "account": "acct-1",
+                "auth": "Bearer codex-token",
+            }
+        ],
+        "gemini": {
+            "provider": "google-gemini-cli",
+            "displayName": "Gemini",
+            "windows": [
+                {"label": "Pro", "usedPercent": 80},
+                {"label": "Flash", "usedPercent": 25},
+            ],
+        },
+        "minimax": {
+            "provider": "minimax",
+            "displayName": "MiniMax",
+            "windows": [
+                {"label": "5h", "usedPercent": 25, "resetAt": 1778198400000}
+            ],
+            "plan": "Mini",
+        },
+        "minimaxCalls": [
+            {
+                "url": "https://minimax.example.test/v1/token_plan/remains",
+                "auth": "Bearer minimax-key",
+                "source": "OpenClaw",
+            }
+        ],
+        "zai": {
+            "provider": "zai",
+            "displayName": "z.ai",
+            "windows": [
+                {"label": "Tokens (5h)", "usedPercent": 12, "resetAt": 1778284800000},
+                {"label": "Monthly", "usedPercent": 7},
+            ],
+            "plan": "Z Plan",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:

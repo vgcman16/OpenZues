@@ -41110,6 +41110,880 @@ const providerOnboardRuntime = {
   withAgentModelAliases,
 };
 
+const PROVIDER_USAGE_DEFAULT_TIMEOUT_MS = 5000;
+const PROVIDER_USAGE_LABELS = {
+  anthropic: "Claude",
+  "github-copilot": "Copilot",
+  "google-gemini-cli": "Gemini",
+  minimax: "MiniMax",
+  "openai-codex": "Codex",
+  xiaomi: "Xiaomi",
+  zai: "z.ai",
+};
+const PROVIDER_USAGE_PROVIDERS = [
+  "anthropic",
+  "github-copilot",
+  "google-gemini-cli",
+  "minimax",
+  "openai-codex",
+  "xiaomi",
+  "zai",
+];
+const MINIMAX_USAGE_ORIGIN = "https://api.minimaxi.com";
+const MINIMAX_USAGE_PATH = "/v1/token_plan/remains";
+const MINIMAX_RESET_KEYS = [
+  "reset_at",
+  "resetAt",
+  "reset_time",
+  "resetTime",
+  "next_reset_at",
+  "nextResetAt",
+  "next_reset_time",
+  "nextResetTime",
+  "expires_at",
+  "expiresAt",
+  "expire_at",
+  "expireAt",
+  "end_time",
+  "endTime",
+  "window_end",
+  "windowEnd",
+];
+const MINIMAX_PERCENT_KEYS = [
+  "used_percent",
+  "usedPercent",
+  "used_rate",
+  "usage_rate",
+  "used_ratio",
+  "usage_ratio",
+  "usedRatio",
+  "usageRatio",
+];
+const MINIMAX_REMAINING_PERCENT_KEYS = ["usage_percent", "usagePercent"];
+const MINIMAX_USED_KEYS = [
+  "used",
+  "usage",
+  "used_amount",
+  "usedAmount",
+  "used_tokens",
+  "usedTokens",
+  "used_quota",
+  "usedQuota",
+  "used_times",
+  "usedTimes",
+  "prompt_used",
+  "promptUsed",
+  "used_prompt",
+  "usedPrompt",
+  "prompts_used",
+  "promptsUsed",
+  "consumed",
+];
+const MINIMAX_TOTAL_KEYS = [
+  "total",
+  "total_amount",
+  "totalAmount",
+  "total_tokens",
+  "totalTokens",
+  "total_quota",
+  "totalQuota",
+  "total_times",
+  "totalTimes",
+  "prompt_total",
+  "promptTotal",
+  "total_prompt",
+  "totalPrompt",
+  "prompt_limit",
+  "promptLimit",
+  "limit_prompt",
+  "limitPrompt",
+  "prompts_total",
+  "promptsTotal",
+  "total_prompts",
+  "totalPrompts",
+  "current_interval_total_count",
+  "currentIntervalTotalCount",
+  "current_weekly_total_count",
+  "currentWeeklyTotalCount",
+  "limit",
+  "quota",
+  "quota_limit",
+  "quotaLimit",
+  "max",
+];
+const MINIMAX_REMAINING_KEYS = [
+  "remain",
+  "remaining",
+  "remain_amount",
+  "remainingAmount",
+  "remaining_amount",
+  "remain_tokens",
+  "remainingTokens",
+  "remaining_tokens",
+  "remain_quota",
+  "remainingQuota",
+  "remaining_quota",
+  "remain_times",
+  "remainingTimes",
+  "remaining_times",
+  "prompt_remain",
+  "promptRemain",
+  "remain_prompt",
+  "remainPrompt",
+  "prompt_remaining",
+  "promptRemaining",
+  "remaining_prompt",
+  "remainingPrompt",
+  "prompts_remaining",
+  "promptsRemaining",
+  "prompt_left",
+  "promptLeft",
+  "prompts_left",
+  "promptsLeft",
+  "left",
+  "current_interval_usage_count",
+  "currentIntervalUsageCount",
+  "current_weekly_usage_count",
+  "currentWeeklyUsageCount",
+];
+const MINIMAX_PLAN_KEYS = ["plan", "plan_name", "planName", "product", "tier"];
+const MINIMAX_WINDOW_HOUR_KEYS = [
+  "window_hours",
+  "windowHours",
+  "duration_hours",
+  "durationHours",
+  "hours",
+];
+const MINIMAX_WINDOW_MINUTE_KEYS = [
+  "window_minutes",
+  "windowMinutes",
+  "duration_minutes",
+  "durationMinutes",
+  "minutes",
+];
+
+function resolveUsageProviderId(provider) {
+  if (!provider) {
+    return undefined;
+  }
+  const normalized = normalizeProviderId(provider);
+  if (
+    normalized === "minimax-portal" ||
+    normalized === "minimax-cn" ||
+    normalized === "minimax-portal-cn"
+  ) {
+    return "minimax";
+  }
+  return PROVIDER_USAGE_PROVIDERS.includes(normalized) ? normalized : undefined;
+}
+
+function clampPercent(value) {
+  return Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+}
+
+function resolveProviderUsageHomeDir(env = process.env) {
+  const explicitHome = normalizeOptionalString(env.OPENCLAW_HOME);
+  if (explicitHome) {
+    if (explicitHome === "~" || explicitHome.startsWith("~/") || explicitHome.startsWith("~\\")) {
+      const fallbackHome =
+        normalizeOptionalString(env.HOME) ||
+        normalizeOptionalString(env.USERPROFILE) ||
+        normalizeOptionalString(os.homedir());
+      return fallbackHome
+        ? path.resolve(explicitHome.replace(/^~(?=$|[\\/])/, fallbackHome))
+        : undefined;
+    }
+    return path.resolve(explicitHome);
+  }
+  const rawHome =
+    normalizeOptionalString(env.HOME) ||
+    normalizeOptionalString(env.USERPROFILE) ||
+    normalizeOptionalString(os.homedir()) ||
+    process.cwd();
+  return path.resolve(rawHome);
+}
+
+function resolveLegacyPiAgentAccessToken(env = process.env, providerIds = []) {
+  try {
+    const homeDir = resolveProviderUsageHomeDir(env);
+    const authPath = path.join(homeDir, ".pi", "agent", "auth.json");
+    if (!fs.existsSync(authPath)) {
+      return undefined;
+    }
+    const parsed = JSON.parse(fs.readFileSync(authPath, "utf8"));
+    for (const providerId of providerIds) {
+      const token = parsed && parsed[providerId] && parsed[providerId].access;
+      if (typeof token === "string" && token.trim()) {
+        return token;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+async function fetchProviderUsageJson(url, init = {}, timeoutMs, fetchFn = fetch) {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    typeof timeoutMs === "number" && timeoutMs > 0
+      ? timeoutMs
+      : PROVIDER_USAGE_DEFAULT_TIMEOUT_MS,
+  );
+  try {
+    return await fetchFn(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function buildUsageErrorSnapshot(provider, error) {
+  return {
+    provider,
+    displayName: PROVIDER_USAGE_LABELS[provider],
+    windows: [],
+    error,
+  };
+}
+
+function buildUsageHttpErrorSnapshot(options = {}) {
+  const tokenExpiredStatuses = options.tokenExpiredStatuses || [];
+  if (tokenExpiredStatuses.includes(options.status)) {
+    return buildUsageErrorSnapshot(options.provider, "Token expired");
+  }
+  const suffix =
+    typeof options.message === "string" && options.message.trim()
+      ? `: ${options.message.trim()}`
+      : "";
+  return buildUsageErrorSnapshot(options.provider, `HTTP ${options.status}${suffix}`);
+}
+
+function buildClaudeUsageWindows(data = {}) {
+  const windows = [];
+  if (data.five_hour && data.five_hour.utilization !== undefined) {
+    windows.push({
+      label: "5h",
+      usedPercent: clampPercent(data.five_hour.utilization),
+      ...(data.five_hour.resets_at
+        ? { resetAt: new Date(data.five_hour.resets_at).getTime() }
+        : {}),
+    });
+  }
+  if (data.seven_day && data.seven_day.utilization !== undefined) {
+    windows.push({
+      label: "Week",
+      usedPercent: clampPercent(data.seven_day.utilization),
+      ...(data.seven_day.resets_at
+        ? { resetAt: new Date(data.seven_day.resets_at).getTime() }
+        : {}),
+    });
+  }
+  const modelWindow = data.seven_day_sonnet || data.seven_day_opus;
+  if (modelWindow && modelWindow.utilization !== undefined) {
+    windows.push({
+      label: data.seven_day_sonnet ? "Sonnet" : "Opus",
+      usedPercent: clampPercent(modelWindow.utilization),
+    });
+  }
+  return windows;
+}
+
+function resolveClaudeWebSessionKey() {
+  const direct =
+    normalizeOptionalString(process.env.CLAUDE_AI_SESSION_KEY) ||
+    normalizeOptionalString(process.env.CLAUDE_WEB_SESSION_KEY);
+  if (direct && direct.startsWith("sk-ant-")) {
+    return direct;
+  }
+  const cookieHeader = normalizeOptionalString(process.env.CLAUDE_WEB_COOKIE);
+  if (!cookieHeader) {
+    return undefined;
+  }
+  const stripped = cookieHeader.replace(/^cookie:\s*/i, "");
+  const match = stripped.match(/(?:^|;\s*)sessionKey=([^;\s]+)/i);
+  const value = match && normalizeOptionalString(match[1]);
+  return value && value.startsWith("sk-ant-") ? value : undefined;
+}
+
+async function fetchClaudeWebUsage(sessionKey, timeoutMs, fetchFn) {
+  const headers = {
+    Cookie: `sessionKey=${sessionKey}`,
+    Accept: "application/json",
+  };
+  const orgRes = await fetchProviderUsageJson(
+    "https://claude.ai/api/organizations",
+    { headers },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!orgRes.ok) {
+    return null;
+  }
+  const orgs = await orgRes.json();
+  const orgId = orgs && orgs[0] && normalizeOptionalString(orgs[0].uuid);
+  if (!orgId) {
+    return null;
+  }
+  const usageRes = await fetchProviderUsageJson(
+    `https://claude.ai/api/organizations/${orgId}/usage`,
+    { headers },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!usageRes.ok) {
+    return null;
+  }
+  const windows = buildClaudeUsageWindows(await usageRes.json());
+  return windows.length > 0
+    ? { provider: "anthropic", displayName: PROVIDER_USAGE_LABELS.anthropic, windows }
+    : null;
+}
+
+async function fetchClaudeUsage(token, timeoutMs, fetchFn = fetch) {
+  const res = await fetchProviderUsageJson(
+    "https://api.anthropic.com/api/oauth/usage",
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "openclaw",
+        Accept: "application/json",
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "oauth-2025-04-20",
+      },
+    },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!res.ok) {
+    let message;
+    try {
+      const data = await res.json();
+      const raw = data && data.error && data.error.message;
+      if (typeof raw === "string" && raw.trim()) {
+        message = raw.trim();
+      }
+    } catch {
+      // Ignore parse errors.
+    }
+    if (res.status === 403 && message && message.includes("scope requirement user:profile")) {
+      const sessionKey = resolveClaudeWebSessionKey();
+      if (sessionKey) {
+        const web = await fetchClaudeWebUsage(sessionKey, timeoutMs, fetchFn);
+        if (web) {
+          return web;
+        }
+      }
+    }
+    return buildUsageHttpErrorSnapshot({
+      provider: "anthropic",
+      status: res.status,
+      message,
+    });
+  }
+  return {
+    provider: "anthropic",
+    displayName: PROVIDER_USAGE_LABELS.anthropic,
+    windows: buildClaudeUsageWindows(await res.json()),
+  };
+}
+
+function resolveCodexSecondaryWindowLabel(params) {
+  if (params.windowHours >= 168) {
+    return "Week";
+  }
+  if (params.windowHours < 24) {
+    return `${params.windowHours}h`;
+  }
+  if (
+    typeof params.secondaryResetAt === "number" &&
+    typeof params.primaryResetAt === "number" &&
+    params.secondaryResetAt - params.primaryResetAt >= 3 * 24 * 60 * 60
+  ) {
+    return "Week";
+  }
+  return "Day";
+}
+
+async function fetchCodexUsage(token, accountId, timeoutMs, fetchFn = fetch) {
+  const defaultHeaders = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+  };
+  if (accountId) {
+    defaultHeaders["ChatGPT-Account-Id"] = accountId;
+  }
+  const headers =
+    resolveProviderRequestHeaders({
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api/wham/usage",
+      capability: "other",
+      transport: "http",
+      defaultHeaders,
+    }) || defaultHeaders;
+  const res = await fetchProviderUsageJson(
+    "https://chatgpt.com/backend-api/wham/usage",
+    { method: "GET", headers },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!res.ok) {
+    return buildUsageHttpErrorSnapshot({
+      provider: "openai-codex",
+      status: res.status,
+      tokenExpiredStatuses: [401, 403],
+    });
+  }
+  const data = await res.json();
+  const windows = [];
+  if (data.rate_limit && data.rate_limit.primary_window) {
+    const primary = data.rate_limit.primary_window;
+    const windowHours = Math.round((primary.limit_window_seconds || 10800) / 3600);
+    windows.push({
+      label: `${windowHours}h`,
+      usedPercent: clampPercent(primary.used_percent || 0),
+      ...(primary.reset_at ? { resetAt: primary.reset_at * 1000 } : {}),
+    });
+  }
+  if (data.rate_limit && data.rate_limit.secondary_window) {
+    const secondary = data.rate_limit.secondary_window;
+    const windowHours = Math.round((secondary.limit_window_seconds || 86400) / 3600);
+    const label = resolveCodexSecondaryWindowLabel({
+      windowHours,
+      primaryResetAt:
+        data.rate_limit.primary_window && data.rate_limit.primary_window.reset_at,
+      secondaryResetAt: secondary.reset_at,
+    });
+    windows.push({
+      label,
+      usedPercent: clampPercent(secondary.used_percent || 0),
+      ...(secondary.reset_at ? { resetAt: secondary.reset_at * 1000 } : {}),
+    });
+  }
+  let plan = data.plan_type;
+  if (data.credits && data.credits.balance !== undefined && data.credits.balance !== null) {
+    const balance =
+      typeof data.credits.balance === "number"
+        ? data.credits.balance
+        : Number.parseFloat(data.credits.balance) || 0;
+    plan = plan ? `${plan} ($${balance.toFixed(2)})` : `$${balance.toFixed(2)}`;
+  }
+  return {
+    provider: "openai-codex",
+    displayName: PROVIDER_USAGE_LABELS["openai-codex"],
+    windows,
+    plan,
+  };
+}
+
+async function fetchGeminiUsage(token, timeoutMs, fetchFn = fetch, provider) {
+  const res = await fetchProviderUsageJson(
+    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!res.ok) {
+    return buildUsageHttpErrorSnapshot({ provider, status: res.status });
+  }
+  const data = await res.json();
+  const quotas = {};
+  for (const bucket of data.buckets || []) {
+    const model = bucket.modelId || "unknown";
+    const fraction = bucket.remainingFraction !== undefined ? bucket.remainingFraction : 1;
+    if (!quotas[model] || fraction < quotas[model]) {
+      quotas[model] = fraction;
+    }
+  }
+  const windows = [];
+  let proMin = 1;
+  let flashMin = 1;
+  let hasPro = false;
+  let hasFlash = false;
+  for (const [model, fraction] of Object.entries(quotas)) {
+    const lower = normalizeLowercaseStringOrEmpty(model);
+    if (lower.includes("pro")) {
+      hasPro = true;
+      if (fraction < proMin) {
+        proMin = fraction;
+      }
+    }
+    if (lower.includes("flash")) {
+      hasFlash = true;
+      if (fraction < flashMin) {
+        flashMin = fraction;
+      }
+    }
+  }
+  if (hasPro) {
+    windows.push({ label: "Pro", usedPercent: clampPercent((1 - proMin) * 100) });
+  }
+  if (hasFlash) {
+    windows.push({ label: "Flash", usedPercent: clampPercent((1 - flashMin) * 100) });
+  }
+  return { provider, displayName: PROVIDER_USAGE_LABELS[provider], windows };
+}
+
+function pickProviderUsageNumber(record, keys) {
+  for (const key of keys) {
+    const parsed = parseFiniteNumber(record[key]);
+    if (parsed !== undefined) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function pickProviderUsageString(record, keys) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function parseProviderUsageEpoch(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.floor(value < 1e12 ? value * 1000 : value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function providerUsageHasAny(record, keys) {
+  return keys.some((key) => key in record);
+}
+
+function scoreMinimaxUsageRecord(record) {
+  let score = 0;
+  if (providerUsageHasAny(record, MINIMAX_PERCENT_KEYS)) {
+    score += 4;
+  }
+  if (providerUsageHasAny(record, MINIMAX_TOTAL_KEYS)) {
+    score += 3;
+  }
+  if (
+    providerUsageHasAny(record, MINIMAX_USED_KEYS) ||
+    providerUsageHasAny(record, MINIMAX_REMAINING_KEYS)
+  ) {
+    score += 2;
+  }
+  if (providerUsageHasAny(record, MINIMAX_RESET_KEYS)) {
+    score += 1;
+  }
+  if (providerUsageHasAny(record, MINIMAX_PLAN_KEYS)) {
+    score += 1;
+  }
+  return score;
+}
+
+function collectMinimaxUsageCandidates(root) {
+  const queue = [{ value: root, depth: 0 }];
+  const seen = new Set();
+  const candidates = [];
+  let scanned = 0;
+  while (queue.length && scanned < 60) {
+    const { value, depth } = queue.shift();
+    scanned += 1;
+    if (isRecord(value)) {
+      if (seen.has(value)) {
+        continue;
+      }
+      seen.add(value);
+      const score = scoreMinimaxUsageRecord(value);
+      if (score > 0) {
+        candidates.push({ record: value, score, depth });
+      }
+      if (depth < 4) {
+        for (const nested of Object.values(value)) {
+          if (isRecord(nested) || Array.isArray(nested)) {
+            queue.push({ value: nested, depth: depth + 1 });
+          }
+        }
+      }
+    } else if (Array.isArray(value) && depth < 4) {
+      for (const nested of value) {
+        if (isRecord(nested) || Array.isArray(nested)) {
+          queue.push({ value: nested, depth: depth + 1 });
+        }
+      }
+    }
+  }
+  candidates.sort((a, b) => b.score - a.score || a.depth - b.depth);
+  return candidates.map((candidate) => candidate.record);
+}
+
+function deriveMinimaxWindowLabelFromTimestamps(record) {
+  const startTime = parseProviderUsageEpoch(record.start_time || record.startTime);
+  const endTime = parseProviderUsageEpoch(record.end_time || record.endTime);
+  if (startTime !== undefined && endTime !== undefined && endTime > startTime) {
+    const durationHours = (endTime - startTime) / 3600000;
+    if (durationHours >= 1 && Number.isFinite(durationHours)) {
+      return `${Math.round(durationHours)}h`;
+    }
+    const durationMinutes = Math.round((endTime - startTime) / 60000);
+    if (durationMinutes > 0) {
+      return `${durationMinutes}m`;
+    }
+  }
+  return undefined;
+}
+
+function deriveMinimaxWindowLabel(payload) {
+  const hours = pickProviderUsageNumber(payload, MINIMAX_WINDOW_HOUR_KEYS);
+  if (hours && Number.isFinite(hours)) {
+    return `${hours}h`;
+  }
+  const minutes = pickProviderUsageNumber(payload, MINIMAX_WINDOW_MINUTE_KEYS);
+  if (minutes && Number.isFinite(minutes)) {
+    return `${minutes}m`;
+  }
+  return deriveMinimaxWindowLabelFromTimestamps(payload) || "5h";
+}
+
+function deriveMinimaxUsedPercent(payload) {
+  const total = pickProviderUsageNumber(payload, MINIMAX_TOTAL_KEYS);
+  let used = pickProviderUsageNumber(payload, MINIMAX_USED_KEYS);
+  const remaining = pickProviderUsageNumber(payload, MINIMAX_REMAINING_KEYS);
+  if (used === undefined && remaining !== undefined && total !== undefined) {
+    used = total - remaining;
+  }
+  if (total && total > 0 && used !== undefined && Number.isFinite(used)) {
+    return clampPercent((used / total) * 100);
+  }
+  const percentRaw = pickProviderUsageNumber(payload, MINIMAX_PERCENT_KEYS);
+  if (percentRaw !== undefined) {
+    return clampPercent(percentRaw <= 1 ? percentRaw * 100 : percentRaw);
+  }
+  const remainingPercentRaw = pickProviderUsageNumber(payload, MINIMAX_REMAINING_PERCENT_KEYS);
+  if (remainingPercentRaw !== undefined) {
+    const remainingNormalized = clampPercent(
+      remainingPercentRaw <= 1 ? remainingPercentRaw * 100 : remainingPercentRaw,
+    );
+    return clampPercent(100 - remainingNormalized);
+  }
+  return null;
+}
+
+function pickMinimaxChatModelRemains(modelRemains) {
+  const records = modelRemains.filter(isRecord);
+  if (records.length === 0) {
+    return undefined;
+  }
+  const chatRecord = records.find((record) => {
+    const name = typeof record.model_name === "string" ? record.model_name : "";
+    const total = parseFiniteNumber(record.current_interval_total_count);
+    return (
+      normalizeLowercaseStringOrEmpty(name).startsWith("minimax-m") &&
+      total !== undefined &&
+      total > 0
+    );
+  });
+  return (
+    chatRecord ||
+    records.find((record) => {
+      const total = parseFiniteNumber(record.current_interval_total_count);
+      return total !== undefined && total > 0;
+    })
+  );
+}
+
+function resolveMinimaxUsageUrl(baseUrl) {
+  const trimmed = normalizeOptionalString(baseUrl);
+  if (!trimmed) {
+    return `${MINIMAX_USAGE_ORIGIN}${MINIMAX_USAGE_PATH}`;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return `${parsed.origin}${MINIMAX_USAGE_PATH}`;
+    }
+  } catch {
+    // Fall through to the stable default.
+  }
+  return `${MINIMAX_USAGE_ORIGIN}${MINIMAX_USAGE_PATH}`;
+}
+
+async function fetchMinimaxUsage(apiKey, timeoutMs, fetchFn = fetch, options = {}) {
+  const res = await fetchProviderUsageJson(
+    resolveMinimaxUsageUrl(options.baseUrl),
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "MM-API-Source": "OpenClaw",
+      },
+    },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!res.ok) {
+    return buildUsageHttpErrorSnapshot({ provider: "minimax", status: res.status });
+  }
+  const data = await res.json().catch(() => null);
+  if (!isRecord(data)) {
+    return {
+      provider: "minimax",
+      displayName: PROVIDER_USAGE_LABELS.minimax,
+      windows: [],
+      error: "Invalid JSON",
+    };
+  }
+  const baseResp = isRecord(data.base_resp) ? data.base_resp : undefined;
+  if (baseResp && typeof baseResp.status_code === "number" && baseResp.status_code !== 0) {
+    return {
+      provider: "minimax",
+      displayName: PROVIDER_USAGE_LABELS.minimax,
+      windows: [],
+      error: normalizeOptionalString(baseResp.status_msg) || "API error",
+    };
+  }
+  const payload = isRecord(data.data) ? data.data : data;
+  const modelRemains = Array.isArray(payload.model_remains) ? payload.model_remains : null;
+  const chatRemains = modelRemains ? pickMinimaxChatModelRemains(modelRemains) : undefined;
+  const usageSource = chatRemains || payload;
+  const candidates = collectMinimaxUsageCandidates(usageSource);
+  let usageRecord = usageSource;
+  let usedPercent = null;
+  for (const candidate of candidates) {
+    const candidatePercent = deriveMinimaxUsedPercent(candidate);
+    if (candidatePercent !== null) {
+      usageRecord = candidate;
+      usedPercent = candidatePercent;
+      break;
+    }
+  }
+  if (usedPercent === null) {
+    usedPercent = deriveMinimaxUsedPercent(usageSource);
+  }
+  if (usedPercent === null) {
+    return {
+      provider: "minimax",
+      displayName: PROVIDER_USAGE_LABELS.minimax,
+      windows: [],
+      error: "Unsupported response shape",
+    };
+  }
+  const resetAt =
+    parseProviderUsageEpoch(pickProviderUsageString(usageRecord, MINIMAX_RESET_KEYS)) ||
+    parseProviderUsageEpoch(pickProviderUsageNumber(usageRecord, MINIMAX_RESET_KEYS)) ||
+    parseProviderUsageEpoch(pickProviderUsageString(payload, MINIMAX_RESET_KEYS)) ||
+    parseProviderUsageEpoch(pickProviderUsageNumber(payload, MINIMAX_RESET_KEYS));
+  const windowLabel = chatRemains
+    ? deriveMinimaxWindowLabel(chatRemains)
+    : deriveMinimaxWindowLabel(usageRecord);
+  const modelName =
+    chatRemains && typeof chatRemains.model_name === "string"
+      ? chatRemains.model_name
+      : undefined;
+  const plan =
+    pickProviderUsageString(usageRecord, MINIMAX_PLAN_KEYS) ||
+    pickProviderUsageString(payload, MINIMAX_PLAN_KEYS) ||
+    (modelName ? `Coding Plan \u00b7 ${modelName}` : undefined);
+  return {
+    provider: "minimax",
+    displayName: PROVIDER_USAGE_LABELS.minimax,
+    windows: [
+      {
+        label: windowLabel,
+        usedPercent,
+        ...(resetAt ? { resetAt } : {}),
+      },
+    ],
+    ...(plan ? { plan } : {}),
+  };
+}
+
+async function fetchZaiUsage(apiKey, timeoutMs, fetchFn = fetch) {
+  const res = await fetchProviderUsageJson(
+    "https://api.z.ai/api/monitor/usage/quota/limit",
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+    },
+    timeoutMs,
+    fetchFn,
+  );
+  if (!res.ok) {
+    return buildUsageHttpErrorSnapshot({ provider: "zai", status: res.status });
+  }
+  const data = await res.json();
+  if (!data.success || data.code !== 200) {
+    const errorMessage = typeof data.msg === "string" ? data.msg.trim() : "";
+    return {
+      provider: "zai",
+      displayName: PROVIDER_USAGE_LABELS.zai,
+      windows: [],
+      error: errorMessage || "API error",
+    };
+  }
+  const windows = [];
+  for (const limit of (data.data && data.data.limits) || []) {
+    const percent = clampPercent(limit.percentage || 0);
+    const nextReset = limit.nextResetTime
+      ? new Date(limit.nextResetTime).getTime()
+      : undefined;
+    let windowLabel = "Limit";
+    if (limit.unit === 1) {
+      windowLabel = `${limit.number}d`;
+    } else if (limit.unit === 3) {
+      windowLabel = `${limit.number}h`;
+    } else if (limit.unit === 5) {
+      windowLabel = `${limit.number}m`;
+    }
+    if (limit.type === "TOKENS_LIMIT") {
+      windows.push({
+        label: `Tokens (${windowLabel})`,
+        usedPercent: percent,
+        ...(nextReset ? { resetAt: nextReset } : {}),
+      });
+    } else if (limit.type === "TIME_LIMIT") {
+      windows.push({
+        label: "Monthly",
+        usedPercent: percent,
+        ...(nextReset ? { resetAt: nextReset } : {}),
+      });
+    }
+  }
+  const planName = (data.data && (data.data.planName || data.data.plan)) || undefined;
+  return {
+    provider: "zai",
+    displayName: PROVIDER_USAGE_LABELS.zai,
+    windows,
+    ...(planName ? { plan: planName } : {}),
+  };
+}
+
+const providerUsageRuntime = {
+  PROVIDER_LABELS: PROVIDER_USAGE_LABELS,
+  buildUsageErrorSnapshot,
+  buildUsageHttpErrorSnapshot,
+  clampPercent,
+  fetchClaudeUsage,
+  fetchCodexUsage,
+  fetchGeminiUsage,
+  fetchJson: fetchProviderUsageJson,
+  fetchMinimaxUsage,
+  fetchZaiUsage,
+  resolveLegacyPiAgentAccessToken,
+};
+
 const providerEntryRuntime = {
   buildSingleProviderApiKeyCatalog,
   createProviderApiKeyAuthMethod,
@@ -69009,6 +69883,7 @@ const genericSdk = new Proxy(
     ...providerCatalogSharedRuntime,
     ...providerCatalogRuntime,
     ...providerOnboardRuntime,
+    ...providerUsageRuntime,
     ...providerEntryRuntime,
     ...providerEnableConfigRuntime,
     ...providerWebFetchContractRuntime,
@@ -69676,6 +70551,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-onboard"
   ) {
     return providerOnboardRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-usage" ||
+    request === "@openclaw/plugin-sdk/provider-usage"
+  ) {
+    return providerUsageRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-entry" ||
