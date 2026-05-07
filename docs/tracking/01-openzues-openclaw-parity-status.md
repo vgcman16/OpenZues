@@ -2514,6 +2514,19 @@ may lag behind this tracker.
     adjacent imported-plugin proof (`290 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
 
+- [x] Imported plugin SDK infra-runtime compatibility facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/infra-runtime.ts` and adjacent
+    `openclaw-main/src/infra/*` plus `openclaw-main/src/utils/*` helper
+    modules
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `0ba78971`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused infra-runtime proof (`1 passed`),
+    adjacent infra/runtime proof (`6 passed, 1097 deselected`), adjacent
+    imported-plugin proof (`291 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
 - [x] Imported plugin SDK account-core/account-resolution shim.
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
     `openclaw-main/src/plugin-sdk/account-resolution.ts`,
