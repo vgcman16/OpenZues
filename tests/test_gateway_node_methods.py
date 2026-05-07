@@ -35177,6 +35177,155 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_plugin_config_runtime_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-plugin-config-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const pluginConfig = require("openclaw/plugin-sdk/plugin-config-runtime");
+const scopedPluginConfig = require("@openclaw/plugin-sdk/plugin-config-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.pluginConfigRuntime",
+      description: "Use OpenClaw plugin-config-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const sampleConfig = {
+          plugins: {
+            enabled: true,
+            allow: ["demo-plugin"],
+            entries: {
+              "demo-plugin": {
+                enabled: true,
+                config: { mode: "strict" }
+              },
+              "bad-plugin": {
+                enabled: true,
+                config: ["bad"]
+              }
+            }
+          }
+        };
+        const normalized = pluginConfig.normalizePluginsConfig(sampleConfig.plugins);
+        let requireError = null;
+        try {
+          pluginConfig.requireRuntimeConfig(undefined, "plugin-config");
+        } catch (error) {
+          requireError = error.message;
+        }
+        return {
+          keys: Object.keys(pluginConfig).filter((key) => [
+            "normalizePluginsConfig",
+            "requireRuntimeConfig",
+            "resolveEffectiveEnableState",
+            "resolveLivePluginConfigObject",
+            "resolvePluginConfigObject"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedPluginConfig.resolveEffectiveEnableState,
+          pluginConfig: pluginConfig.resolvePluginConfigObject(sampleConfig, "demo-plugin"),
+          badPluginConfig:
+            pluginConfig.resolvePluginConfigObject(sampleConfig, "bad-plugin") ?? null,
+          liveFallback: pluginConfig.resolveLivePluginConfigObject(
+            undefined,
+            "demo-plugin",
+            { startup: true }
+          ),
+          liveMissing: pluginConfig.resolveLivePluginConfigObject(
+            () => ({ plugins: { entries: {} } }),
+            "demo-plugin",
+            { startup: true }
+          ) ?? null,
+          enabled: pluginConfig.resolveEffectiveEnableState({
+            id: "demo-plugin",
+            origin: "workspace",
+            config: normalized
+          }),
+          blocked: pluginConfig.resolveEffectiveEnableState({
+            id: "other-plugin",
+            origin: "workspace",
+            config: normalized
+          }),
+          requireError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-plugin-config-runtime-plugin",
+                    "name": "Runtime Plugin Config Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-config-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.pluginConfigRuntime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.pluginConfigRuntime"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "normalizePluginsConfig",
+        "requireRuntimeConfig",
+        "resolveEffectiveEnableState",
+        "resolveLivePluginConfigObject",
+        "resolvePluginConfigObject",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["pluginConfig"] == {"mode": "strict"}
+    assert payload["result"]["badPluginConfig"] is None
+    assert payload["result"]["liveFallback"] == {"startup": True}
+    assert payload["result"]["liveMissing"] is None
+    assert payload["result"]["enabled"] == {"enabled": True}
+    assert payload["result"]["blocked"] == {
+        "enabled": False,
+        "reason": "workspace plugin (disabled by default)",
+    }
+    assert payload["result"]["requireError"] == (
+        "plugin-config requires a resolved runtime config. Load and resolve config at the "
+        "command or gateway boundary, then pass cfg through the runtime path."
+    )
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:

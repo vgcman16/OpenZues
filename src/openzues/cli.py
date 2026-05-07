@@ -65443,6 +65443,14 @@ const configRuntime = {
   writeConfigFile,
 };
 
+const pluginConfigRuntime = {
+  normalizePluginsConfig,
+  requireRuntimeConfig,
+  resolveEffectiveEnableState,
+  resolveLivePluginConfigObject,
+  resolvePluginConfigObject,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -66978,6 +66986,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/config-runtime"
   ) {
     return configRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/plugin-config-runtime" ||
+    request === "@openclaw/plugin-sdk/plugin-config-runtime"
+  ) {
+    return pluginConfigRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||
