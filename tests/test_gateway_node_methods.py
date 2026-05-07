@@ -36170,6 +36170,290 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_stream_family_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-stream.cjs"
+    runtime_entry.write_text(
+        """
+const shared = require("openclaw/plugin-sdk/provider-stream-shared");
+const providerStream = require("openclaw/plugin-sdk/provider-stream");
+const scopedProviderStream = require("@openclaw/plugin-sdk/provider-stream");
+const streamFamily = require("openclaw/plugin-sdk/provider-stream-family");
+
+function makeStream() {
+  return {
+    async result() {
+      return { ok: true };
+    },
+    [Symbol.asyncIterator]() {
+      return {
+        async next() {
+          return { done: true, value: undefined };
+        }
+      };
+    }
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.providerStream",
+      description: "Use OpenClaw provider-stream SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const payloads = [];
+        const headers = [];
+        const modelIds = [];
+        const baseStreamFn = (model, _context, options) => {
+          modelIds.push(model.id);
+          const payload = {
+            model: model.id,
+            config: { thinkingConfig: { thinkingBudget: -1 } }
+          };
+          if (typeof options?.onPayload === "function") {
+            options.onPayload(payload, model);
+          }
+          payloads.push(payload);
+          headers.push(options?.headers ?? {});
+          return makeStream();
+        };
+        const runHook = (family, ctx, model = { id: "model" }, options = {}) => {
+          const hook = providerStream.buildProviderStreamFamilyHooks(family).wrapStreamFn;
+          const streamFn = hook({ streamFn: baseStreamFn, ...ctx });
+          streamFn(model, {}, options);
+          return payloads[payloads.length - 1];
+        };
+
+        const google = runHook(
+          "google-thinking",
+          { thinkingLevel: "high" },
+          { api: "google-generative-ai", id: "gemini-3.1-pro-preview" }
+        );
+        const minimax = runHook(
+          "minimax-fast-mode",
+          { extraParams: { fastMode: true } },
+          { api: "anthropic-messages", provider: "minimax", id: "MiniMax-M2.7" }
+        );
+        const kilocode = runHook(
+          "kilocode-thinking",
+          { thinkingLevel: "high", modelId: "openai/gpt-5.4" },
+          { provider: "kilocode", id: "openai/gpt-5.4" }
+        );
+        const kilocodeAuto = runHook(
+          "kilocode-thinking",
+          { thinkingLevel: "high", modelId: "kilo/auto" },
+          { provider: "kilocode", id: "kilo/auto" }
+        );
+        const moonshot = runHook(
+          "moonshot-thinking",
+          { thinkingLevel: "off" },
+          { api: "openai-completions", id: "kimi-k2.5" }
+        );
+        const moonshotKeep = runHook(
+          "moonshot-thinking",
+          { thinkingLevel: "low", extraParams: { thinking: { type: "enabled", keep: "all" } } },
+          { api: "openai-completions", id: "kimi-k2.6" }
+        );
+        const openai = runHook(
+          "openai-responses-defaults",
+          {
+            thinkingLevel: "medium",
+            extraParams: { serviceTier: "flex", textVerbosity: "low", fastMode: true },
+            config: {},
+            agentDir: "/tmp/provider-stream"
+          },
+          {
+            api: "openai-responses",
+            provider: "openai",
+            baseUrl: "https://api.openai.com/v1",
+            id: "gpt-5.4"
+          }
+        );
+        const openRouter = runHook(
+          "openrouter-thinking",
+          { thinkingLevel: "high", modelId: "openai/gpt-5.4" },
+          { provider: "openrouter", id: "openai/gpt-5.4" }
+        );
+        const openRouterUnsupported = runHook(
+          "openrouter-thinking",
+          { thinkingLevel: "high", modelId: "x-ai/grok-3" },
+          { provider: "openrouter", id: "x-ai/grok-3" }
+        );
+        const toolStream = runHook(
+          "tool-stream-default-on",
+          { extraParams: {} },
+          { id: "glm-4.7" }
+        );
+        const toolStreamDisabled = runHook(
+          "tool-stream-default-on",
+          { extraParams: { tool_stream: false } },
+          { id: "glm-4.7" }
+        );
+
+        let unsupportedError = null;
+        try {
+          providerStream.buildProviderStreamFamilyHooks("bad-family");
+        } catch (error) {
+          unsupportedError = error.message;
+        }
+
+        return {
+          keys: Object.keys(providerStream).filter((key) => [
+            "GOOGLE_THINKING_STREAM_HOOKS",
+            "KILOCODE_THINKING_STREAM_HOOKS",
+            "MINIMAX_FAST_MODE_STREAM_HOOKS",
+            "MOONSHOT_THINKING_STREAM_HOOKS",
+            "OPENAI_RESPONSES_STREAM_HOOKS",
+            "OPENROUTER_THINKING_STREAM_HOOKS",
+            "TOOL_STREAM_DEFAULT_ON_HOOKS",
+            "buildProviderStreamFamilyHooks",
+            "composeProviderStreamWrappers",
+            "createMinimaxFastModeWrapper",
+            "createOpenAIServiceTierWrapper",
+            "createOpenRouterWrapper",
+            "createToolStreamWrapper",
+            "defaultToolStreamExtraParams",
+            "isProxyReasoningUnsupported",
+            "resolveOpenAIServiceTier"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedProviderStream.buildProviderStreamFamilyHooks,
+          familyType: typeof streamFamily.buildProviderStreamFamilyHooks,
+          sharedIdentity:
+            providerStream.composeProviderStreamWrappers === shared.composeProviderStreamWrappers,
+          hookTypes: {
+            google: typeof providerStream.GOOGLE_THINKING_STREAM_HOOKS.wrapStreamFn,
+            tool: typeof providerStream.TOOL_STREAM_DEFAULT_ON_HOOKS.wrapStreamFn
+          },
+          google,
+          minimax,
+          minimaxModelId: modelIds[1],
+          kilocode,
+          kilocodeAuto,
+          moonshot,
+          moonshotKeep,
+          openai,
+          openaiHeaders: headers[6],
+          openRouter,
+          openRouterUnsupported,
+          toolStream,
+          toolStreamDisabled,
+          unsupportedError,
+          resolved: {
+            fast: providerStream.resolveOpenAIFastMode({ fastMode: true }),
+            serviceTier: providerStream.resolveOpenAIServiceTier({ service_tier: "priority" }),
+            verbosity: providerStream.resolveOpenAITextVerbosity({ verbosity: "medium" }),
+            unsupportedProxy: providerStream.isProxyReasoningUnsupported("x-ai/grok-3")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-stream-plugin",
+                    "name": "Runtime Provider Stream Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-stream.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.providerStream"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.providerStream"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "GOOGLE_THINKING_STREAM_HOOKS",
+        "KILOCODE_THINKING_STREAM_HOOKS",
+        "MINIMAX_FAST_MODE_STREAM_HOOKS",
+        "MOONSHOT_THINKING_STREAM_HOOKS",
+        "OPENAI_RESPONSES_STREAM_HOOKS",
+        "OPENROUTER_THINKING_STREAM_HOOKS",
+        "TOOL_STREAM_DEFAULT_ON_HOOKS",
+        "buildProviderStreamFamilyHooks",
+        "composeProviderStreamWrappers",
+        "createMinimaxFastModeWrapper",
+        "createOpenAIServiceTierWrapper",
+        "createOpenRouterWrapper",
+        "createToolStreamWrapper",
+        "defaultToolStreamExtraParams",
+        "isProxyReasoningUnsupported",
+        "resolveOpenAIServiceTier",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["familyType"] == "function"
+    assert payload["result"]["sharedIdentity"] is True
+    assert payload["result"]["hookTypes"] == {"google": "function", "tool": "function"}
+    assert payload["result"]["google"] == {
+        "model": "gemini-3.1-pro-preview",
+        "config": {"thinkingConfig": {"thinkingLevel": "HIGH"}},
+    }
+    assert payload["result"]["minimax"]["model"] == "MiniMax-M2.7-highspeed"
+    assert payload["result"]["minimaxModelId"] == "MiniMax-M2.7-highspeed"
+    assert payload["result"]["kilocode"]["reasoning"] == {"effort": "high"}
+    assert "reasoning" not in payload["result"]["kilocodeAuto"]
+    assert payload["result"]["moonshot"]["thinking"] == {"type": "disabled"}
+    assert payload["result"]["moonshotKeep"]["thinking"] == {
+        "type": "enabled",
+        "keep": "all",
+    }
+    assert payload["result"]["openai"]["service_tier"] == "flex"
+    assert payload["result"]["openai"]["text"] == {"verbosity": "low"}
+    assert payload["result"]["openai"]["reasoning"] == {"effort": "low"}
+    assert payload["result"]["openaiHeaders"]["OpenAI-Beta"] == "responses=v1"
+    assert payload["result"]["openRouter"]["reasoning"] == {"effort": "high"}
+    assert "reasoning" not in payload["result"]["openRouterUnsupported"]
+    assert payload["result"]["toolStream"]["tool_stream"] is True
+    assert "tool_stream" not in payload["result"]["toolStreamDisabled"]
+    assert payload["result"]["unsupportedError"] == "Unsupported provider stream family"
+    assert payload["result"]["resolved"] == {
+        "fast": True,
+        "serviceTier": "priority",
+        "verbosity": "medium",
+        "unsupportedProxy": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:

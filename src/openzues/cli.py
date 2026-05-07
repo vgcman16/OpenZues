@@ -66575,6 +66575,273 @@ const providerStreamSharedRuntime = {
   wrapStreamMessageObjects,
 };
 
+function resolveOpenAIFastMode(extraParams) {
+  return Boolean(
+    extraParams &&
+      (extraParams.fastMode === true ||
+        extraParams.fast_mode === true ||
+        extraParams.fast === true),
+  );
+}
+
+function resolveOpenAIServiceTier(extraParams) {
+  const value = extraParams && (extraParams.serviceTier ?? extraParams.service_tier);
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function resolveOpenAITextVerbosity(extraParams) {
+  const value =
+    extraParams &&
+    (extraParams.textVerbosity ?? extraParams.text_verbosity ?? extraParams.verbosity);
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return ["low", "medium", "high"].includes(normalized) ? normalized : undefined;
+}
+
+function createOpenAIAttributionHeadersWrapper(baseStreamFn) {
+  const underlying = baseStreamFn || (() => createProviderDefaultStream());
+  return (model, context, options) => {
+    const optionsObject = options && typeof options === "object" ? options : {};
+    return underlying(model, context, {
+      ...optionsObject,
+      headers: {
+        ...(optionsObject.headers || {}),
+        "OpenAI-Beta": "responses=v1",
+      },
+    });
+  };
+}
+
+function createOpenAIServiceTierWrapper(baseStreamFn, serviceTier) {
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload }) => {
+    payload.service_tier = serviceTier;
+  });
+}
+
+function createOpenAITextVerbosityWrapper(baseStreamFn, verbosity) {
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload }) => {
+    payload.text = {
+      ...(payload.text && typeof payload.text === "object" ? payload.text : {}),
+      verbosity,
+    };
+  });
+}
+
+function createOpenAIFastModeWrapper(baseStreamFn) {
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload }) => {
+    payload.reasoning = { effort: "low" };
+  });
+}
+
+function createOpenAIThinkingLevelWrapper(baseStreamFn, thinkingLevel) {
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload, options }) => {
+    if (payload.reasoning) {
+      return;
+    }
+    const enabled = isOpenAICompatibleThinkingEnabled({ thinkingLevel, options });
+    if (enabled) {
+      payload.reasoning = { effort: thinkingLevel || "high" };
+    }
+  });
+}
+
+function createOpenAIReasoningCompatibilityWrapper(baseStreamFn) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function createOpenAIResponsesContextManagementWrapper(baseStreamFn, _extraParams) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function createCodexNativeWebSearchWrapper(baseStreamFn, _params) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function createOpenAIStringContentWrapper(baseStreamFn) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function createOpenAIDefaultTransportWrapper(baseStreamFn) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function createMinimaxFastModeWrapper(baseStreamFn, enabled) {
+  const underlying = baseStreamFn || (() => createProviderDefaultStream());
+  return (model, context, options) => {
+    if (!enabled || !model || model.provider !== "minimax" || typeof model.id !== "string") {
+      return underlying(model, context, options);
+    }
+    const nextModel = {
+      ...model,
+      id: model.id.endsWith("-highspeed") ? model.id : `${model.id}-highspeed`,
+    };
+    return underlying(nextModel, context, options);
+  };
+}
+
+function isProxyReasoningUnsupported(modelId) {
+  const normalized = normalizeLowercaseStringOrEmpty(modelId);
+  return (
+    normalized === "auto" ||
+    normalized === "kilo/auto" ||
+    normalized.includes("grok") ||
+    normalized.startsWith("x-ai/")
+  );
+}
+
+function createProxyThinkingWrapper(baseStreamFn, thinkingLevel) {
+  if (!thinkingLevel) {
+    return baseStreamFn || (() => createProviderDefaultStream());
+  }
+  return createPayloadPatchStreamWrapper(baseStreamFn, ({ payload }) => {
+    payload.reasoning = { effort: thinkingLevel === "xhigh" ? "high" : thinkingLevel };
+  });
+}
+
+function createKilocodeWrapper(baseStreamFn, thinkingLevel) {
+  return createProxyThinkingWrapper(baseStreamFn, thinkingLevel);
+}
+
+function createOpenRouterWrapper(baseStreamFn, thinkingLevel) {
+  return createProxyThinkingWrapper(baseStreamFn, thinkingLevel);
+}
+
+function createOpenRouterSystemCacheWrapper(baseStreamFn) {
+  return baseStreamFn || (() => createProviderDefaultStream());
+}
+
+function getOpenRouterModelCapabilities(_modelId) {
+  return {};
+}
+
+async function loadOpenRouterModelCapabilities(_params) {
+  return {};
+}
+
+function buildProviderStreamFamilyHooks(family) {
+  switch (family) {
+    case "google-thinking":
+      return {
+        wrapStreamFn: (ctx) =>
+          createGoogleThinkingPayloadWrapper(ctx.streamFn, ctx.thinkingLevel),
+      };
+    case "moonshot-thinking":
+      return {
+        wrapStreamFn: (ctx) => {
+          const thinkingType = resolveMoonshotThinkingType({
+            configuredThinking: ctx.extraParams && ctx.extraParams.thinking,
+            thinkingLevel: ctx.thinkingLevel,
+          });
+          const thinkingKeep = resolveMoonshotThinkingKeep({
+            configuredThinking: ctx.extraParams && ctx.extraParams.thinking,
+          });
+          return createMoonshotThinkingWrapper(ctx.streamFn, thinkingType, thinkingKeep);
+        },
+      };
+    case "kilocode-thinking":
+      return {
+        wrapStreamFn: (ctx) => {
+          const thinkingLevel =
+            ctx.modelId === "kilo/auto" || isProxyReasoningUnsupported(ctx.modelId)
+              ? undefined
+              : ctx.thinkingLevel;
+          return createKilocodeWrapper(ctx.streamFn, thinkingLevel);
+        },
+      };
+    case "minimax-fast-mode":
+      return {
+        wrapStreamFn: (ctx) =>
+          createMinimaxFastModeWrapper(ctx.streamFn, ctx.extraParams?.fastMode === true),
+      };
+    case "openai-responses-defaults":
+      return {
+        wrapStreamFn: (ctx) => {
+          let nextStreamFn = createOpenAIAttributionHeadersWrapper(ctx.streamFn);
+          if (resolveOpenAIFastMode(ctx.extraParams)) {
+            nextStreamFn = createOpenAIFastModeWrapper(nextStreamFn);
+          }
+          const serviceTier = resolveOpenAIServiceTier(ctx.extraParams);
+          if (serviceTier) {
+            nextStreamFn = createOpenAIServiceTierWrapper(nextStreamFn, serviceTier);
+          }
+          const textVerbosity = resolveOpenAITextVerbosity(ctx.extraParams);
+          if (textVerbosity) {
+            nextStreamFn = createOpenAITextVerbosityWrapper(nextStreamFn, textVerbosity);
+          }
+          nextStreamFn = createCodexNativeWebSearchWrapper(nextStreamFn, {
+            config: ctx.config,
+            agentDir: ctx.agentDir,
+          });
+          nextStreamFn = createOpenAIStringContentWrapper(nextStreamFn);
+          return createOpenAIResponsesContextManagementWrapper(
+            createOpenAIReasoningCompatibilityWrapper(
+              createOpenAIThinkingLevelWrapper(nextStreamFn, ctx.thinkingLevel),
+            ),
+            ctx.extraParams,
+          );
+        },
+      };
+    case "openrouter-thinking":
+      return {
+        wrapStreamFn: (ctx) => {
+          const thinkingLevel =
+            ctx.modelId === "auto" || isProxyReasoningUnsupported(ctx.modelId)
+              ? undefined
+              : ctx.thinkingLevel;
+          return createOpenRouterWrapper(ctx.streamFn, thinkingLevel);
+        },
+      };
+    case "tool-stream-default-on":
+      return {
+        wrapStreamFn: (ctx) =>
+          createToolStreamWrapper(ctx.streamFn, ctx.extraParams?.tool_stream !== false),
+      };
+    default:
+      throw new Error("Unsupported provider stream family");
+  }
+}
+
+const GOOGLE_THINKING_STREAM_HOOKS = buildProviderStreamFamilyHooks("google-thinking");
+const KILOCODE_THINKING_STREAM_HOOKS = buildProviderStreamFamilyHooks("kilocode-thinking");
+const MOONSHOT_THINKING_STREAM_HOOKS = buildProviderStreamFamilyHooks("moonshot-thinking");
+const MINIMAX_FAST_MODE_STREAM_HOOKS = buildProviderStreamFamilyHooks("minimax-fast-mode");
+const OPENAI_RESPONSES_STREAM_HOOKS = buildProviderStreamFamilyHooks(
+  "openai-responses-defaults",
+);
+const OPENROUTER_THINKING_STREAM_HOOKS = buildProviderStreamFamilyHooks("openrouter-thinking");
+const TOOL_STREAM_DEFAULT_ON_HOOKS = buildProviderStreamFamilyHooks("tool-stream-default-on");
+
+const providerStreamRuntime = {
+  ...providerStreamSharedRuntime,
+  GOOGLE_THINKING_STREAM_HOOKS,
+  KILOCODE_THINKING_STREAM_HOOKS,
+  MINIMAX_FAST_MODE_STREAM_HOOKS,
+  MOONSHOT_THINKING_STREAM_HOOKS,
+  OPENAI_RESPONSES_STREAM_HOOKS,
+  OPENROUTER_THINKING_STREAM_HOOKS,
+  TOOL_STREAM_DEFAULT_ON_HOOKS,
+  buildProviderStreamFamilyHooks,
+  createCodexNativeWebSearchWrapper,
+  createKilocodeWrapper,
+  createMinimaxFastModeWrapper,
+  createOpenAIAttributionHeadersWrapper,
+  createOpenAIDefaultTransportWrapper,
+  createOpenAIFastModeWrapper,
+  createOpenAIReasoningCompatibilityWrapper,
+  createOpenAIResponsesContextManagementWrapper,
+  createOpenAIServiceTierWrapper,
+  createOpenAIStringContentWrapper,
+  createOpenAITextVerbosityWrapper,
+  createOpenAIThinkingLevelWrapper,
+  createOpenRouterSystemCacheWrapper,
+  createOpenRouterWrapper,
+  getOpenRouterModelCapabilities,
+  isProxyReasoningUnsupported,
+  loadOpenRouterModelCapabilities,
+  resolveOpenAIFastMode,
+  resolveOpenAIServiceTier,
+  resolveOpenAITextVerbosity,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -68134,6 +68401,14 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-stream-shared"
   ) {
     return providerStreamSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-stream" ||
+    request === "@openclaw/plugin-sdk/provider-stream" ||
+    request === "openclaw/plugin-sdk/provider-stream-family" ||
+    request === "@openclaw/plugin-sdk/provider-stream-family"
+  ) {
+    return providerStreamRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||
