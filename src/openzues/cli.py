@@ -23246,6 +23246,99 @@ function createPluginRuntimeStore(options) {
   };
 }
 
+const CONTEXT_ENGINE_REGISTRY_KEY = Symbol.for("openclaw.contextEngine.registry");
+const PUBLIC_CONTEXT_ENGINE_OWNER = "public-sdk";
+
+function getContextEngineRegistryState() {
+  return resolveGlobalSingleton(CONTEXT_ENGINE_REGISTRY_KEY, () => ({
+    engines: new Map(),
+  }));
+}
+
+function registerContextEngineForOwner(id, factory, owner, opts = {}) {
+  const normalizedId = String(id || "").trim();
+  const normalizedOwner = String(owner || "").trim();
+  if (!normalizedId) {
+    throw new Error("registerContextEngine: id must be a non-empty string");
+  }
+  if (typeof factory !== "function") {
+    throw new Error("registerContextEngine: factory must be a function");
+  }
+  if (!normalizedOwner) {
+    throw new Error("registerContextEngineForOwner: owner must be a non-empty string");
+  }
+  const registry = getContextEngineRegistryState().engines;
+  const existing = registry.get(normalizedId);
+  if (existing && existing.owner !== normalizedOwner) {
+    return { ok: false, existingOwner: existing.owner };
+  }
+  if (existing && opts.allowSameOwnerRefresh !== true) {
+    return { ok: false, existingOwner: existing.owner };
+  }
+  registry.set(normalizedId, { factory, owner: normalizedOwner });
+  return { ok: true };
+}
+
+function registerContextEngine(id, factory) {
+  return registerContextEngineForOwner(id, factory, PUBLIC_CONTEXT_ENGINE_OWNER);
+}
+
+async function delegateCompactionToRuntime(params = {}) {
+  const runtimeContext = (params && params.runtimeContext) || {};
+  const delegate =
+    (typeof params.compactEmbeddedPiSessionDirect === "function"
+      ? params.compactEmbeddedPiSessionDirect
+      : undefined) ||
+    (typeof runtimeContext.compactEmbeddedPiSessionDirect === "function"
+      ? runtimeContext.compactEmbeddedPiSessionDirect
+      : undefined) ||
+    (typeof runtimeContext.delegateCompactionToRuntime === "function"
+      ? runtimeContext.delegateCompactionToRuntime
+      : undefined);
+  if (delegate) {
+    const result = await delegate({
+      ...runtimeContext,
+      sessionId: params.sessionId,
+      sessionFile: params.sessionFile,
+      tokenBudget: params.tokenBudget,
+      currentTokenCount: params.currentTokenCount ?? runtimeContext.currentTokenCount,
+      force: params.force,
+      customInstructions: params.customInstructions,
+      workspaceDir: runtimeContext.workspaceDir || process.cwd(),
+    });
+    return {
+      ok: Boolean(result && result.ok),
+      compacted: Boolean(result && result.compacted),
+      reason: result && result.reason,
+      result: result && result.result,
+    };
+  }
+  return {
+    ok: false,
+    compacted: false,
+    reason: "runtime-unavailable",
+  };
+}
+
+function buildMemorySystemPromptAddition(params = {}) {
+  const lines = Array.isArray(params.lines)
+    ? params.lines
+    : typeof params.buildMemoryPromptSection === "function"
+      ? params.buildMemoryPromptSection({
+          availableTools: params.availableTools || new Set(),
+          citationsMode: params.citationsMode,
+        })
+      : [];
+  const normalizedLines = (Array.isArray(lines) ? lines : [])
+    .filter((line) => typeof line === "string")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (normalizedLines.length === 0) {
+    return undefined;
+  }
+  return normalizedLines.join("\n");
+}
+
 function buildAuthProfileId(params) {
   const profilePrefix = normalizeOptionalString(params.profilePrefix) || params.providerId;
   const profileName = normalizeOptionalString(params.profileName) || "default";
@@ -34781,6 +34874,38 @@ function resolveChannelGroupToolsPolicy(params) {
     return defaultSenderPolicy;
   }
   return defaultConfig && defaultConfig.tools ? defaultConfig.tools : undefined;
+}
+
+function collectOpenGroupPolicyConfiguredRouteWarnings(params = {}) {
+  const groupPolicy = params.groupPolicy || params.policy;
+  const hasRouteAllowlist =
+    Array.isArray(params.routeAllowFrom) && params.routeAllowFrom.filter(Boolean).length > 0;
+  if (groupPolicy !== "open" || !hasRouteAllowlist) {
+    return [];
+  }
+  const surface = params.surface || params.channel || "channel";
+  return [
+    `- ${surface}: groupPolicy="open" allows configured routes to trigger ` +
+      "without an explicit group allowlist.",
+  ].filter(Boolean);
+}
+
+function resolveBlueBubblesGroupRequireMention(params = {}) {
+  return resolveChannelGroupRequireMention({
+    ...params,
+    channel: "bluebubbles",
+  });
+}
+
+function resolveBlueBubblesGroupToolPolicy(params = {}) {
+  return resolveChannelGroupToolsPolicy({
+    ...params,
+    channel: "bluebubbles",
+  });
+}
+
+function collectBlueBubblesStatusIssues(accounts) {
+  return Array.isArray(accounts) ? [] : [];
 }
 
 function firstDefined(...values) {
@@ -81525,6 +81650,51 @@ const providerTransportRuntime = {
   transformTransportMessages,
 };
 
+const compatRuntime = {
+  ...channelConfigSchemaRuntime,
+  ...channelPolicyRuntime,
+  ...replyHistoryRuntime,
+  ...directoryRuntime,
+  KeyedAsyncQueue,
+  applyAuthProfileConfig,
+  buildApiKeyCredential,
+  buildMemorySystemPromptAddition,
+  collectBlueBubblesStatusIssues,
+  collectOpenGroupPolicyConfiguredRouteWarnings,
+  createAccountStatusSink,
+  createChannelReplyPipeline,
+  createHybridChannelConfigAdapter,
+  createHybridChannelConfigBase,
+  createPluginRuntimeStore,
+  createReplyPrefixContext,
+  createReplyPrefixOptions,
+  createScopedAccountConfigAccessors,
+  createScopedChannelConfigAdapter,
+  createScopedChannelConfigBase,
+  createScopedDmSecurityResolver,
+  createTopLevelChannelConfigAdapter,
+  createTopLevelChannelConfigBase,
+  createTypingCallbacks,
+  delegateCompactionToRuntime,
+  emptyPluginConfigSchema,
+  formatAllowFromLowercase,
+  formatNormalizedAllowFromEntries,
+  mapAllowFromEntries,
+  mapAllowlistResolutionInputs,
+  normalizeAccountId,
+  onDiagnosticEvent,
+  optionalStringEnum,
+  registerContextEngine,
+  resolveBlueBubblesGroupRequireMention,
+  resolveBlueBubblesGroupToolPolicy,
+  resolveChannelSourceReplyDeliveryMode,
+  resolveControlCommandGate,
+  resolvePreferredOpenClawTmpDir,
+  stringEnum,
+  upsertApiKeyProfile,
+  writeOAuthCredentials: providerAuthFacadeRuntime.writeOAuthCredentials,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -83536,6 +83706,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/talk-config-runtime"
   ) {
     return talkConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/compat" ||
+    request === "@openclaw/plugin-sdk/compat"
+  ) {
+    return compatRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-plugin-common" ||

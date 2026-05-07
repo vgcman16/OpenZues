@@ -35758,6 +35758,316 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_compat_facade_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-compat.cjs"
+    runtime_entry.write_text(
+        """
+process.env.OPENCLAW_SUPPRESS_PLUGIN_SDK_COMPAT_WARNING = "1";
+const compat = require("openclaw/plugin-sdk/compat");
+const scopedCompat = require("@openclaw/plugin-sdk/compat");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.compat",
+      description: "Use OpenClaw compat SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const requiredKeys = [
+          "KeyedAsyncQueue",
+          "applyAuthProfileConfig",
+          "buildApiKeyCredential",
+          "buildMemorySystemPromptAddition",
+          "buildChannelConfigSchema",
+          "collectBlueBubblesStatusIssues",
+          "collectOpenGroupPolicyConfiguredRouteWarnings",
+          "createAccountStatusSink",
+          "createChannelReplyPipeline",
+          "createHybridChannelConfigAdapter",
+          "createPluginRuntimeStore",
+          "createReplyPrefixOptions",
+          "delegateCompactionToRuntime",
+          "emptyChannelDirectoryList",
+          "emptyPluginConfigSchema",
+          "formatAllowFromLowercase",
+          "formatNormalizedAllowFromEntries",
+          "normalizeAccountId",
+          "onDiagnosticEvent",
+          "registerContextEngine",
+          "resolveBlueBubblesGroupRequireMention",
+          "resolveBlueBubblesGroupToolPolicy",
+          "resolveControlCommandGate",
+          "resolvePreferredOpenClawTmpDir",
+          "stringEnum",
+          "upsertApiKeyProfile",
+          "writeOAuthCredentials"
+        ];
+        const missing = requiredKeys.filter(
+          (key) => !Object.prototype.hasOwnProperty.call(compat, key)
+        );
+        const keys = Object.keys(compat).sort();
+        const genericOnlyPresent = keys.includes("formatCliCommand");
+        if (missing.length > 0) {
+          return {
+            keys,
+            missing,
+            genericOnlyPresent,
+            scopedType: typeof scopedCompat.createPluginRuntimeStore
+          };
+        }
+
+        const store = compat.createPluginRuntimeStore({
+          pluginId: "compat-demo",
+          errorMessage: "missing compat runtime"
+        });
+        let missingRuntime = "";
+        try {
+          store.getRuntime();
+        } catch (error) {
+          missingRuntime = String(error && error.message ? error.message : error);
+        }
+        store.setRuntime({ ok: true });
+        const runtime = store.getRuntime();
+        store.clearRuntime();
+
+        const queue = new compat.KeyedAsyncQueue();
+        const queueOrder = [];
+        await Promise.all([
+          queue.enqueue("same", async () => {
+            queueOrder.push("first");
+          }),
+          queue.enqueue("same", async () => {
+            queueOrder.push("second");
+          })
+        ]);
+
+        const cfg = {
+          agents: {
+            list: [{ id: "helper", identity: { name: "Helper" } }]
+          },
+          messages: { responsePrefix: "auto" }
+        };
+        const prefix = compat.createReplyPrefixOptions({ cfg, agentId: "helper" });
+        prefix.onModelSelected({ provider: "openai", model: "gpt-5-latest" });
+        const contextRegistration = compat.registerContextEngine(
+          "compat-context-demo",
+          () => ({ id: "compat-context-demo" })
+        );
+        const duplicateContextRegistration = compat.registerContextEngine(
+          "compat-context-demo",
+          () => ({ id: "compat-context-demo-2" })
+        );
+        const sinkPatches = [];
+        compat.createAccountStatusSink({
+          accountId: "account-a",
+          setStatus: (patch) => sinkPatches.push(patch)
+        })({ busy: false });
+
+        return {
+          keysPresent: requiredKeys.every((key) => keys.includes(key)),
+          genericOnlyPresent,
+          scopedSame:
+            scopedCompat.createPluginRuntimeStore === compat.createPluginRuntimeStore,
+          store: {
+            missingRuntime,
+            runtime,
+            afterClear: store.tryGetRuntime()
+          },
+          queueOrder,
+          accountId: compat.normalizeAccountId(" Primary "),
+          auth: {
+            credential: compat.buildApiKeyCredential("openai", "secret-key", {
+              label: "demo"
+            }),
+            profileId: compat.upsertApiKeyProfile({
+              provider: "openai",
+              input: "secret-key",
+              profileId: "profile-openai"
+            }),
+            config: compat.applyAuthProfileConfig(
+              { auth: { profiles: {}, order: {} } },
+              {
+                profileId: "profile-openai",
+                provider: "openai",
+                mode: "api_key",
+                displayName: "OpenAI"
+              }
+            ).auth
+          },
+          commandGate: compat.resolveControlCommandGate({
+            useAccessGroups: true,
+            authorizers: [{ configured: true, allowed: false }],
+            allowTextCommands: true,
+            hasControlCommand: true
+          }),
+          allowFrom: {
+            lower: compat.formatAllowFromLowercase({
+              allowFrom: [" Slack:ABC ", ""],
+              stripPrefixRe: /^slack:/i
+            }),
+            normalized: compat.formatNormalizedAllowFromEntries({
+              allowFrom: [" User ", "", "Second"],
+              normalizeEntry: (entry) => entry.toLowerCase()
+            })
+          },
+          replyPrefix: {
+            responsePrefix: prefix.responsePrefix,
+            context: prefix.responsePrefixContextProvider()
+          },
+          contextRegistration,
+          duplicateContextRegistration,
+          memoryAddition: compat.buildMemorySystemPromptAddition({
+            availableTools: new Set()
+          }) || null,
+          directoryList: await compat.emptyChannelDirectoryList(),
+          bluebubbles: {
+            statusIssues: compat.collectBlueBubblesStatusIssues([]),
+            mention: compat.resolveBlueBubblesGroupRequireMention({
+              cfg: {},
+              groupId: "chat-1"
+            }),
+            tools: compat.resolveBlueBubblesGroupToolPolicy({
+              cfg: {},
+              groupId: "chat-1"
+            }) || null
+          },
+          types: {
+            configSchema: typeof compat.buildChannelConfigSchema,
+            delegate: typeof compat.delegateCompactionToRuntime,
+            diagnostics: typeof compat.onDiagnosticEvent,
+            tmpDir: typeof compat.resolvePreferredOpenClawTmpDir(),
+            writeOAuthCredentials: compat.writeOAuthCredentials({
+              provider: "demo",
+              credentials: {}
+            }) || null
+          },
+          sinkPatches
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-compat-plugin",
+                    "name": "Runtime Compat Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-compat.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.compat"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.compat"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keysPresent": True,
+        "genericOnlyPresent": False,
+        "scopedSame": True,
+        "store": {
+            "missingRuntime": "missing compat runtime",
+            "runtime": {"ok": True},
+            "afterClear": None,
+        },
+        "queueOrder": ["first", "second"],
+        "accountId": "primary",
+        "auth": {
+            "credential": {
+                "type": "api_key",
+                "provider": "openai",
+                "key": "secret-key",
+                "metadata": {"label": "demo"},
+            },
+            "profileId": "profile-openai",
+            "config": {
+                "profiles": {
+                    "profile-openai": {
+                        "provider": "openai",
+                        "mode": "api_key",
+                        "displayName": "OpenAI",
+                    }
+                },
+                "order": {},
+            },
+        },
+        "commandGate": {"commandAuthorized": False, "shouldBlock": True},
+        "allowFrom": {
+            "lower": ["abc"],
+            "normalized": ["user", "second"],
+        },
+        "replyPrefix": {
+            "responsePrefix": "[Helper]",
+            "context": {
+                "identityName": "Helper",
+                "provider": "openai",
+                "model": "gpt-5",
+                "modelFull": "openai/gpt-5-latest",
+                "thinkingLevel": "off",
+            },
+        },
+        "contextRegistration": {"ok": True},
+        "duplicateContextRegistration": {
+            "ok": False,
+            "existingOwner": "public-sdk",
+        },
+        "memoryAddition": None,
+        "directoryList": [],
+        "bluebubbles": {
+            "statusIssues": [],
+            "mention": True,
+            "tools": None,
+        },
+        "types": {
+            "configSchema": "function",
+            "delegate": "function",
+            "diagnostics": "function",
+            "tmpDir": "string",
+            "writeOAuthCredentials": None,
+        },
+        "sinkPatches": [{"accountId": "account-a", "busy": False}],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_inbound_envelope_helpers(
     tmp_path,
 ) -> None:
