@@ -41,6 +41,11 @@ The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
 with the plugin/extension system row above.
+The imported `video-generation-core` SDK helper coverage from
+`src/plugin-sdk/video-generation-core.ts`, adjacent video/media generation
+helpers, failover helpers, model input helpers, logging, and provider env-var
+helpers is verified in `f85c7465` and is counted with the
+plugin/extension system row above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -147,6 +152,9 @@ in `ebd215d5`; `@openclaw/memory-host-sdk/query`, `multimodal`, `secret`, and
 `speech-core` from `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*`
 helpers, and `src/agents/provider-http-errors.ts` is checkpointed in
 `ff03eba7`.
+`video-generation-core` from `src/plugin-sdk/video-generation-core.ts`,
+adjacent video/media generation helpers, failover helpers, model input
+helpers, logging, and provider env-var helpers is checkpointed in `f85c7465`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map

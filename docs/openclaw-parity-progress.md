@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-06.
-- Estimated repo-wide parity: ~91.5% overall, with a reasonable band of ~79-92%.
+- Estimated repo-wide parity: ~91.6% overall, with a reasonable band of ~79-92%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -3403,9 +3403,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 ## Current Queue Head
 
-- Imported OpenClaw plugin runtime entries now have the `speech-core` SDK
-  subpath for TTS helper behavior; the broader plugin SDK helper queue
-  continues with `video-generation-core`.
+- Imported OpenClaw plugin runtime entries now have the `video-generation-core`
+  SDK subpath for native video helper behavior; the broader plugin SDK helper queue
+  continues with `image-generation-core`.
 - Browser command productization is now effectively closed for the current installed-command queue, with persistent proxy/profile mutation left intentionally guarded.
 - Cron expression schedules now create, update, list, compute due state, and launch through `cron.run mode=due`; richer upstream cron runtime semantics such as full Croner expression breadth and persisted scheduler error telemetry remain future hardening.
 - `agents.files.*` now covers OpenClaw bootstrap and memory filenames (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, `memory.md`) while retaining the existing OpenZues `.codex/AGENTS.md` path.
@@ -15729,6 +15729,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `ff03eba7`.
+- Imported OpenClaw plugin runtime entries now have the `video-generation-core`
+  SDK subpath from `src/plugin-sdk/video-generation-core.ts` and adjacent
+  media-generation, model-input, failover, provider-env-var, logging, and
+  video provider registry helpers. The native shim covers model reference
+  parsing, model candidate/fallback selection, no-model and failover error
+  formatting, provider env-var hints, empty native provider lookup, and
+  subsystem logger availability. This closes `OZ-PLUGIN-001ZW`; repo-wide
+  parity is now estimated at ~91.6%. Remaining plugin SDK breadth continues
+  with `image-generation-core`.
+- Verified the video-generation-core slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_video_generation_core_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "video_generation_core or speech_core or image_generation_core_auth"`
+  (`3 passed, 1017 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`208 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `f85c7465`.
 
 ## References
 
