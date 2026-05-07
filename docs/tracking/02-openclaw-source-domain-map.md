@@ -153,7 +153,11 @@ and imported `channel-test-helpers` facade coverage from
 `src/plugin-sdk/test-helpers/*` channel helper modules and
 `src/test-utils/channel-plugins.ts` is verified in `67872a14`, and
 imported `plugin-test-api` facade coverage from
-`src/plugin-sdk/plugin-test-api.ts` is verified in `db9e84ac`, and
+`src/plugin-sdk/plugin-test-api.ts` is verified in `db9e84ac`, imported
+`plugin-test-contracts` facade coverage from
+`src/plugin-sdk/plugin-test-contracts.ts` and adjacent
+`src/plugin-sdk/test-helpers/*` contract modules is verified in `086382f8`,
+and
 imported `browser-setup-tools` aggregate coverage from
 `src/plugin-sdk/browser-setup-tools.ts` and
 `extensions/browser/src/sdk-setup-tools.ts` is verified in `50876922`, and
