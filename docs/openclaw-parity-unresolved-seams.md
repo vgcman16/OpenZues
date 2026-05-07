@@ -4,8 +4,8 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~98.5% overall, with a reasonable
-  band of ~80-98%.
+- Repo-wide OpenClaw parity is estimated at ~98.6% overall, with a reasonable
+  band of ~80-99%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -117,7 +117,8 @@ Current percentage rollup:
   approval-native-helpers, approval-native-runtime delivery-helper,
   approval-handler-adapter-runtime helper, approval-handler-runtime
   adapter-factory, realtime-voice helper, media-understanding-runtime helper,
-  media-understanding provider-helper, and messaging-targets slices.
+  media-understanding provider-helper, messaging-targets, web-media, speech,
+  zalouser, and zod slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -9388,6 +9389,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   command-auth functions for published Lark/Zalo package compatibility.
   Source/test checkpointed in `6f0c70b5`; repo-wide parity is now estimated at
   ~98.5%.
+- Current queue-head adjustment: imported plugin SDK `zod` now exposes the
+  source-backed facade needed by bundled extension config schemas for scoped
+  and unscoped imports: `z`, `ZodError`, `ZodIssueCode`, object and
+  strict-object parsing, string/number/boolean checks, enum/literal/union,
+  arrays, records, unknown, optional/default/describe, transforms, safe parse,
+  and `superRefine` custom issue projection. Source/test checkpointed in
+  `c49cbd4a`; repo-wide parity is now estimated at ~98.6%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
