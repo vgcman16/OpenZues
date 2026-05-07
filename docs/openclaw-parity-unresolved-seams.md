@@ -1,10 +1,10 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-06
+Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~92.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~92.3% overall, with a reasonable
   band of ~80-93%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -106,8 +106,8 @@ Current percentage rollup:
   approval-renderers helper, approval-client-helpers,
   approval-client-runtime alias, approval-delivery-helpers,
   approval-native-helpers, approval-native-runtime delivery-helper,
-  approval-handler-adapter-runtime helper, and approval-handler-runtime
-  adapter-factory slices.
+  approval-handler-adapter-runtime helper, approval-handler-runtime
+  adapter-factory, and realtime-voice helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -8872,6 +8872,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   realtime-transcription pytest, adjacent SDK helper proof, adjacent
   imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
   source/test checkpointed in `18a7e15b`.
+- Closed the imported OpenClaw plugin SDK realtime voice seam from
+  `src/plugin-sdk/realtime-voice.ts`, `src/realtime-voice/provider-types.ts`,
+  `src/realtime-voice/provider-registry.ts`,
+  `src/realtime-voice/provider-resolver.ts`,
+  `src/realtime-voice/agent-consult-tool.ts`,
+  `src/realtime-voice/agent-consult-runtime.ts`,
+  `src/realtime-voice/session-runtime.ts`, and
+  `src/realtime-voice/audio-codec.ts`: scoped and unscoped native runtime
+  entries expose audio-format constants, provider id normalization,
+  config-backed provider listing, alias-aware lookup, canonical provider id
+  projection, configured provider auto-selection/default-model behavior,
+  realtime voice agent-consult helper surfaces, bridge-session callback routing,
+  and PCM/mu-law/resampling helpers. Repo-wide parity is now estimated at
+  ~92.3%. Verified with focused realtime-voice pytest, adjacent SDK helper
+  proof, adjacent imported-plugin proof, `ruff check`, `mypy`, and
+  `git diff --check`; source/test checkpointed in `0f6e62d7`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/lazy-runtime/config-paths/context-visibility-runtime/heartbeat-runtime/json-store/diagnostic-runtime/system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/runtime-doctor/runtime-secret-resolution/memory-core-host-query/memory-core-host-multimodal/memory-core-host-secret/memory-core-host-events/memory-core-host-status/provider-setup/self-hosted-provider-setup/lmstudio/lmstudio-runtime/group-activation/media-store/browser-security-runtime/fetch-runtime/cli-backend/type-only-sdk-barrels/config-schema/entrypoints/diffs/acpx/acp-runtime-backend/acp-runtime/acp-binding-runtime/cli-runtime/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -8913,7 +8929,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
   channel-config-helpers/channel-config-writes/channel-lifecycle path,
-  starting with `realtime-voice`.
+  continuing with `media-understanding-runtime`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

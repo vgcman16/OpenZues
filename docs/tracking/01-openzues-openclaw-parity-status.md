@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-06
+Last updated: 2026-05-07
 
 Primary ledgers:
 
@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~92.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~92.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2495,6 +2495,24 @@ may lag behind this tracker.
   - Last verified: 2026-05-06, focused realtime-transcription helper proof
     (`1 passed`), adjacent SDK helper proof (`2 passed, 1024 deselected`),
     adjacent imported-plugin proof (`214 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK realtime-voice helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/realtime-voice.ts`,
+    `openclaw-main/src/realtime-voice/provider-types.ts`,
+    `openclaw-main/src/realtime-voice/provider-registry.ts`,
+    `openclaw-main/src/realtime-voice/provider-resolver.ts`,
+    `openclaw-main/src/realtime-voice/agent-consult-tool.ts`,
+    `openclaw-main/src/realtime-voice/agent-consult-runtime.ts`,
+    `openclaw-main/src/realtime-voice/session-runtime.ts`, and
+    `openclaw-main/src/realtime-voice/audio-codec.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `0f6e62d7`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused realtime-voice helper proof
+    (`1 passed`), adjacent SDK helper proof (`3 passed, 1024 deselected`),
+    adjacent imported-plugin proof (`215 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin runtime tool factory context.

@@ -2,8 +2,8 @@
 
 ## Snapshot
 
-- Updated: 2026-05-06.
-- Estimated repo-wide parity: ~92.2% overall, with a reasonable band of ~80-93%.
+- Updated: 2026-05-07.
+- Estimated repo-wide parity: ~92.3% overall, with a reasonable band of ~80-93%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -3403,9 +3403,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 ## Current Queue Head
 
-- Imported OpenClaw plugin runtime entries now have the `realtime-transcription`
-  SDK subpath for provider registry and live transcription session behavior;
-  the broader plugin SDK helper queue continues with `realtime-voice`.
+- Imported OpenClaw plugin runtime entries now have the `realtime-voice`
+  SDK subpath for provider registry, bridge-session, agent-consult, and codec
+  behavior; the broader plugin SDK helper queue continues with
+  `media-understanding-runtime`.
 - Browser command productization is now effectively closed for the current installed-command queue, with persistent proxy/profile mutation left intentionally guarded.
 - Cron expression schedules now create, update, list, compute due state, and launch through `cron.run mode=due`; richer upstream cron runtime semantics such as full Croner expression breadth and persisted scheduler error telemetry remain future hardening.
 - `agents.files.*` now covers OpenClaw bootstrap and memory filenames (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, `memory.md`) while retaining the existing OpenZues `.codex/AGENTS.md` path.
@@ -15875,6 +15876,31 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `18a7e15b`.
+- Imported OpenClaw plugin runtime entries now have the `realtime-voice` SDK
+  subpath from `src/plugin-sdk/realtime-voice.ts`,
+  `src/realtime-voice/provider-types.ts`,
+  `src/realtime-voice/provider-registry.ts`,
+  `src/realtime-voice/provider-resolver.ts`,
+  `src/realtime-voice/agent-consult-tool.ts`,
+  `src/realtime-voice/agent-consult-runtime.ts`,
+  `src/realtime-voice/session-runtime.ts`, and
+  `src/realtime-voice/audio-codec.ts`. The native shim covers scoped and
+  unscoped imports, audio-format constants, provider id
+  normalization/list/get/canonicalize behavior, configured provider resolution
+  with auto-select/default-model handling, realtime voice agent-consult tool
+  helpers, bridge-session callback routing, and PCM/mu-law/resampling helpers.
+  This closes `OZ-PLUGIN-00203`; repo-wide parity is now estimated at ~92.3%.
+  Remaining plugin SDK breadth continues with `media-understanding-runtime`.
+- Verified the realtime-voice slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_realtime_voice_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "realtime_voice or realtime_transcription or video_generation_runtime"`
+  (`3 passed, 1024 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`215 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `0f6e62d7`.
 
 ## References
 
