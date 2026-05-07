@@ -26641,6 +26641,160 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_command_status_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-command-status-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const statusRuntime = require("openclaw/plugin-sdk/command-status-runtime");
+const scopedStatusRuntime = require("@openclaw/plugin-sdk/command-status-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.command_status_runtime",
+      description: "Use OpenClaw command status runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        const empty = await statusRuntime.resolveDirectStatusReplyForSession({
+          cfg: {},
+          sessionKey: "   ",
+          channel: "slack",
+          senderIsOwner: false,
+          isAuthorizedSender: false,
+          isGroup: false,
+          defaultGroupActivation: () => "always"
+        });
+        globalThis.__openzuesCommandStatusRuntime = {
+          async resolveDirectStatusReplyForSession(params) {
+            calls.push({
+              sessionKey: params.sessionKey,
+              channel: params.channel,
+              senderIsOwner: params.senderIsOwner,
+              isAuthorizedSender: params.isAuthorizedSender,
+              defaultGroupActivation: params.defaultGroupActivation()
+            });
+            return {
+              text: `status:${params.sessionKey.trim()}`,
+              resolvedReasoningLevel: params.isAuthorizedSender ? "stream" : "off"
+            };
+          }
+        };
+        const delegated = await scopedStatusRuntime.resolveDirectStatusReplyForSession({
+          cfg: { agents: { defaults: { reasoningDefault: "stream" } } },
+          sessionKey: " main ",
+          channel: "telegram",
+          senderIsOwner: false,
+          isAuthorizedSender: true,
+          isGroup: false,
+          defaultGroupActivation: () => "mention"
+        });
+        delete globalThis.__openzuesCommandStatusRuntime;
+        let noRuntimeError = "";
+        try {
+          await statusRuntime.resolveDirectStatusReplyForSession({
+            cfg: {},
+            sessionKey: "main",
+            channel: "slack",
+            senderIsOwner: false,
+            isAuthorizedSender: false,
+            isGroup: false,
+            defaultGroupActivation: () => "always"
+          });
+        } catch (error) {
+          noRuntimeError = error.message;
+        }
+        return {
+          keys: Object.keys(statusRuntime).sort(),
+          scopedSame:
+            scopedStatusRuntime.resolveDirectStatusReplyForSession ===
+            statusRuntime.resolveDirectStatusReplyForSession,
+          emptyType: typeof empty,
+          calls,
+          delegated,
+          noRuntimeError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-command-status-runtime-plugin",
+                    "name": "Runtime Command Status Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-command-status-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.command_status_runtime"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.command_status_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolveDirectStatusReplyForSession"],
+        "scopedSame": True,
+        "emptyType": "undefined",
+        "calls": [
+            {
+                "sessionKey": " main ",
+                "channel": "telegram",
+                "senderIsOwner": False,
+                "isAuthorizedSender": True,
+                "defaultGroupActivation": "mention",
+            }
+        ],
+        "delegated": {"text": "status:main", "resolvedReasoningLevel": "stream"},
+        "noRuntimeError": (
+            "command status runtime is unavailable in OpenZues plugin runtime."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_status_helpers(
     tmp_path,
 ) -> None:

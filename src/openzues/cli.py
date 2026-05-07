@@ -56856,6 +56856,22 @@ const commandStatusRuntime = {
   buildHelpMessage,
 };
 
+async function resolveDirectStatusReplyForSession(params = {}) {
+  const requestedSessionKey = normalizeOptionalString(params.sessionKey);
+  if (!requestedSessionKey) {
+    return undefined;
+  }
+  const runtime = globalThis.__openzuesCommandStatusRuntime;
+  if (runtime && typeof runtime.resolveDirectStatusReplyForSession === "function") {
+    return await runtime.resolveDirectStatusReplyForSession(params);
+  }
+  throw new Error("command status runtime is unavailable in OpenZues plugin runtime.");
+}
+
+const commandStatusSessionRuntime = {
+  resolveDirectStatusReplyForSession,
+};
+
 const commandNativeRuntime = {
   buildCommandText,
   buildCommandTextFromArgs,
@@ -72138,6 +72154,7 @@ const genericSdk = new Proxy(
     ...channelSendResultRuntime,
     ...channelPairingRuntime,
     ...commandStatusRuntime,
+    ...commandStatusSessionRuntime,
     ...commandNativeRuntime,
     ...commandGatingRuntime,
     ...commandSurfaceRuntime,
@@ -73695,6 +73712,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/command-status"
   ) {
     return commandStatusRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-status-runtime" ||
+    request === "@openclaw/plugin-sdk/command-status-runtime"
+  ) {
+    return commandStatusSessionRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-setup" ||
