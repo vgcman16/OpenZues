@@ -34433,6 +34433,367 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_setup_runtime_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-setup-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const setup = require("openclaw/plugin-sdk/setup-runtime");
+const scopedSetup = require("@openclaw/plugin-sdk/setup-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.setupRuntime",
+      description: "Use OpenClaw setup-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const parsed = setup.parseSetupEntriesAllowingWildcard(
+          "*, <@12345>, user:abc",
+          (entry) => {
+            const value = setup.parseMentionOrPrefixedId({
+              value: entry,
+              mentionPattern: /^<@(\\d+)>$/,
+              prefixPattern: /^user:/,
+              idPattern: /^[a-z0-9]+$/i,
+              normalizeId: (id) => `id-${id.toLowerCase()}`
+            });
+            return value ? { value } : { error: `bad:${entry}` };
+          }
+        );
+        const validator = setup.createSetupInputPresenceValidator({
+          defaultAccountOnlyEnvError: "env default only",
+          whenNotUseEnv: [{ someOf: ["token", "tokenFile"], message: "missing token" }]
+        });
+        const adapter = setup.createPatchedAccountSetupAdapter({
+          channelKey: "discord",
+          alwaysUseAccounts: true,
+          buildPatch: (input) => ({ token: input.token })
+        });
+        const envAdapter = setup.createEnvPatchedAccountSetupAdapter({
+          channelKey: "telegram",
+          defaultAccountOnlyEnvError: "env default only",
+          missingCredentialError: "missing credential",
+          hasCredentials: (input) => Boolean(input.botToken),
+          buildPatch: (input) => ({ botToken: input.botToken })
+        });
+        const cfg = {
+          channels: {
+            discord: { name: "Legacy", token: "old" },
+            telegram: {}
+          }
+        };
+        const patched = adapter.applyAccountConfig({
+          cfg,
+          accountId: "Team One",
+          input: { name: "Team One", token: "abc" }
+        });
+        const envPatched = envAdapter.applyAccountConfig({
+          cfg,
+          accountId: "default",
+          input: { name: "Main", botToken: "bot" }
+        });
+        const status = setup.createStandardChannelSetupStatus({
+          channelLabel: "Discord",
+          configuredLabel: "ready",
+          unconfiguredLabel: "missing",
+          includeStatusLine: true,
+          resolveConfigured: () => true,
+          resolveExtraStatusLines: () => ["extra line"]
+        });
+        const loadWizard = async () => ({
+          channel: "zalo",
+          status: {
+            configuredLabel: "real",
+            unconfiguredLabel: "none",
+            resolveConfigured: () => true,
+            resolveStatusLines: () => ["loaded"],
+            resolveSelectionHint: () => "hint",
+            resolveQuickstartScore: () => 7
+          },
+          prepare: async () => "prepared",
+          finalize: async () => "done",
+          textInputs: [{
+            inputKey: "cliPath",
+            shouldPrompt: () => true
+          }],
+          allowFrom: {
+            resolveEntries: async ({ entries }) =>
+              entries.map((input) => ({ input, resolved: true, id: input }))
+          },
+          groupAccess: {
+            resolveAllowlist: async ({ entries }) => ({ entries })
+          }
+        });
+        const delegated = setup.createDelegatedSetupWizardProxy({
+          channel: "zalo",
+          loadWizard,
+          status: {
+            configuredLabel: "proxy",
+            unconfiguredLabel: "proxy missing"
+          },
+          delegatePrepare: true,
+          delegateFinalize: true
+        });
+        const allowlistProxy = setup.createAllowlistSetupWizardProxy({
+          loadWizard,
+          fallbackResolvedGroupAllowlist: (entries) => ({ fallback: entries }),
+          createBase: (handlers) => ({
+            channel: "zalo",
+            status: {
+              configuredLabel: "base",
+              unconfiguredLabel: "base missing",
+              resolveConfigured: () => true
+            },
+            handlers
+          })
+        });
+        const textInput = setup.createCliPathTextInput({
+          inputKey: "cliPath",
+          message: "CLI path",
+          resolvePath: () => "/usr/bin/tool",
+          shouldPrompt: () => true,
+          helpTitle: "Help",
+          helpLines: ["line"]
+        });
+        const delegatedShouldPrompt = setup.createDelegatedTextInputShouldPrompt({
+          loadWizard,
+          inputKey: "cliPath"
+        });
+        const allowFromSection = setup.createAccountScopedAllowFromSection({
+          channel: "discord",
+          message: "Allow",
+          placeholder: "ids",
+          invalidWithoutCredentialNote: "Need token",
+          parseId: (value) => value,
+          resolveEntries: async ({ entries }) =>
+            entries.map((entry) => ({ input: entry, resolved: true, id: entry }))
+        });
+        const groupSection = setup.createAccountScopedGroupAccessSection({
+          channel: "discord",
+          label: "Groups",
+          placeholder: "ids",
+          currentPolicy: () => "allowlist",
+          currentEntries: () => ["g1"],
+          updatePrompt: "Update?",
+          fallbackResolved: (entries) => ({ entries, fallback: true }),
+          applyAllowlist: ({ cfg, accountId, resolved }) =>
+            setup.patchChannelConfigForAccount({
+              cfg,
+              channel: "discord",
+              accountId,
+              patch: { groupAllowFrom: resolved.entries }
+            })
+        });
+        const topPolicy = setup.createTopLevelChannelDmPolicy({
+          label: "DMs",
+          channel: "discord",
+          policyKey: "channels.discord.dmPolicy",
+          allowFromKey: "channels.discord.allowFrom",
+          getCurrent: (cfg) => cfg.channels.discord.dmPolicy || "disabled",
+          getAllowFrom: () => ["u1"]
+        });
+        return {
+          keys: Object.keys(setup).filter((key) => [
+            "DEFAULT_ACCOUNT_ID",
+            "createAccountScopedAllowFromSection",
+            "createAccountScopedGroupAccessSection",
+            "createCliPathTextInput",
+            "createDelegatedSetupWizardProxy",
+            "createDelegatedTextInputShouldPrompt",
+            "createEnvPatchedAccountSetupAdapter",
+            "createPatchedAccountSetupAdapter",
+            "createSetupInputPresenceValidator",
+            "createStandardChannelSetupStatus",
+            "createTopLevelChannelDmPolicy",
+            "mergeAllowFromEntries",
+            "parseMentionOrPrefixedId",
+            "parseSetupEntriesAllowingWildcard",
+            "patchChannelConfigForAccount",
+            "resolveSetupAccountId",
+            "setAccountAllowFromForChannel",
+            "setSetupChannelEnabled",
+            "splitSetupEntries"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedSetup.createPatchedAccountSetupAdapter,
+          split: setup.splitSetupEntries("a,b; c\\nd"),
+          merged: setup.mergeAllowFromEntries(["1", "a"], ["a", "b"]),
+          parsed,
+          validator: {
+            envAccount: validator({ cfg, accountId: "team", input: { useEnv: true } }),
+            missing: validator({ cfg, accountId: "default", input: {} }),
+            ok: validator({ cfg, accountId: "default", input: { token: "x" } })
+          },
+          accountId: setup.resolveSetupAccountId({
+            accountId: "Team One",
+            defaultAccountId: "default"
+          }),
+          patched,
+          envPatched,
+          status: {
+            configured: await status.resolveConfigured({ cfg }),
+            lines: await status.resolveStatusLines({
+              cfg,
+              configured: true
+            })
+          },
+          delegated: {
+            configured: await delegated.status.resolveConfigured({ cfg }),
+            lines: await delegated.status.resolveStatusLines({ cfg, configured: true }),
+            hint: await delegated.status.resolveSelectionHint({ cfg, configured: true }),
+            score: await delegated.status.resolveQuickstartScore({ cfg, configured: true }),
+            prepare: await delegated.prepare({ cfg }),
+            finalize: await delegated.finalize({ cfg }),
+            shouldPrompt: await delegatedShouldPrompt({ cfg })
+          },
+          allowlistProxy: {
+            entries: await allowlistProxy.handlers.resolveAllowFromEntries({
+              cfg,
+              entries: ["u1"],
+              credentialValues: {}
+            }),
+            groups: await allowlistProxy.handlers.resolveGroupAllowlist({
+              cfg,
+              entries: ["g1"],
+              credentialValues: {},
+              prompter: { note: async () => {} }
+            })
+          },
+          textInput,
+          allowFromApplied: allowFromSection.apply({
+            cfg,
+            accountId: "team",
+            allowFrom: ["u1"]
+          }),
+          groupApplied: groupSection.applyAllowlist({
+            cfg,
+            accountId: "team",
+            resolved: { entries: ["g1"] }
+          }),
+          topPolicy: topPolicy.setPolicy(cfg, "open"),
+          enabled: setup.setSetupChannelEnabled(cfg, "discord", false)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-setup-runtime-plugin",
+                    "name": "Runtime Setup Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-setup-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.setupRuntime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.setupRuntime"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "DEFAULT_ACCOUNT_ID",
+        "createAccountScopedAllowFromSection",
+        "createAccountScopedGroupAccessSection",
+        "createCliPathTextInput",
+        "createDelegatedSetupWizardProxy",
+        "createDelegatedTextInputShouldPrompt",
+        "createEnvPatchedAccountSetupAdapter",
+        "createPatchedAccountSetupAdapter",
+        "createSetupInputPresenceValidator",
+        "createStandardChannelSetupStatus",
+        "createTopLevelChannelDmPolicy",
+        "mergeAllowFromEntries",
+        "parseMentionOrPrefixedId",
+        "parseSetupEntriesAllowingWildcard",
+        "patchChannelConfigForAccount",
+        "resolveSetupAccountId",
+        "setAccountAllowFromForChannel",
+        "setSetupChannelEnabled",
+        "splitSetupEntries",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["split"] == ["a", "b", "c", "d"]
+    assert payload["result"]["merged"] == ["1", "a", "b"]
+    assert payload["result"]["parsed"] == {
+        "entries": ["*", "id-12345", "id-abc"]
+    }
+    assert payload["result"]["validator"] == {
+        "envAccount": "env default only",
+        "missing": "missing token",
+        "ok": None,
+    }
+    assert payload["result"]["accountId"] == "team-one"
+    assert payload["result"]["patched"]["channels"]["discord"]["accounts"]["team-one"][
+        "token"
+    ] == "abc"
+    assert payload["result"]["envPatched"]["channels"]["telegram"]["botToken"] == "bot"
+    assert payload["result"]["status"] == {
+        "configured": True,
+        "lines": ["Discord: ready", "extra line"],
+    }
+    assert payload["result"]["delegated"] == {
+        "configured": True,
+        "lines": ["loaded"],
+        "hint": "hint",
+        "score": 7,
+        "prepare": "prepared",
+        "finalize": "done",
+        "shouldPrompt": True,
+    }
+    assert payload["result"]["allowlistProxy"]["entries"] == [
+        {"input": "u1", "resolved": True, "id": "u1"}
+    ]
+    assert payload["result"]["allowlistProxy"]["groups"] == {"entries": ["g1"]}
+    assert payload["result"]["textInput"]["confirmCurrentValue"] is False
+    assert payload["result"]["textInput"]["applyCurrentValue"] is True
+    assert payload["result"]["allowFromApplied"]["channels"]["discord"]["accounts"][
+        "team"
+    ]["allowFrom"] == ["u1"]
+    assert payload["result"]["groupApplied"]["channels"]["discord"]["accounts"][
+        "team"
+    ]["groupAllowFrom"] == ["g1"]
+    assert payload["result"]["topPolicy"]["channels"]["discord"]["dmPolicy"] == "open"
+    assert payload["result"]["topPolicy"]["channels"]["discord"]["allowFrom"] == ["u1"]
+    assert payload["result"]["enabled"]["channels"]["discord"]["enabled"] is False
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:
