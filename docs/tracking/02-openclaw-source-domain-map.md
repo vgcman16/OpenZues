@@ -493,6 +493,11 @@ and `src/image-generation/runtime.ts` is checkpointed in `719fcee8`.
 `discord` from `src/plugin-sdk/discord.ts`, adjacent channel common/status/
 config schema contracts, and bundled Discord public-surface delegation for
 `api.js` and `runtime-api.js` is checkpointed in `307777d8`.
+`extension-shared` from `src/plugin-sdk/extension-shared.ts`, adjacent
+`src/utils/zod-parse.ts`, `src/utils/fetch-timeout.ts`,
+`src/infra/net/proxy-env.ts`, `src/secrets/ref-contract.ts`,
+`src/plugin-sdk/channel-lifecycle.core.ts`, and
+`src/plugin-sdk/runtime-logger.ts` is checkpointed in `b56d15d7`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map

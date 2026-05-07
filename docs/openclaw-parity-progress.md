@@ -18031,6 +18031,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`312 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check`. Source/test checkpointed in `307777d8`.
+- Imported OpenClaw plugin runtime entries now have the source-backed exact
+  `extension-shared` utility barrel from `src/plugin-sdk/extension-shared.ts`:
+  scoped and unscoped native runtime entries expose schema parsing helpers,
+  timeout abort-signal construction, passive/probed/traffic status summaries,
+  stoppable passive monitor lifecycle, logger-backed runtime fallback,
+  open-DM allowlist issue projection, status issue field readers, deferred
+  promise creation, plugin config issue mapping, read-only env secret
+  provider gates, package-version candidate resolution, and no-proxy ambient
+  proxy-agent resolution without falling through to the broad SDK proxy. This
+  closes `OZ-PLUGIN-00302`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99995%. The generation/provider/
+  document type-only helper facades remain covered by the existing
+  `type_only_sdk_barrels` proof; the next queue head rotates back to broader
+  repo-wide packaging/provider/companion breadth.
+- Verified the extension-shared slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_extension_shared_helpers -q`
+  (`1 passed`), adjacent extension/discord/runtime/fetch/secret proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "extension_shared or discord_facade or runtime_logger or channel_lifecycle or fetch_runtime or secret_ref_runtime"`
+  (`5 passed, 1120 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`313 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `b56d15d7`.
 
 ## References
 
