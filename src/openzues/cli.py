@@ -54990,14 +54990,54 @@ function agentRuntimeResolveAllowedFallbacks(params = {}) {
   );
 }
 
-function agentRuntimeFindModelCatalogEntry(catalog, ref) {
-  const key = agentRuntimeModelKey(ref.provider, ref.model);
+function agentRuntimeModelSupportsInput(entry, input) {
+  return Boolean(entry && Array.isArray(entry.input) && entry.input.includes(input));
+}
+
+function agentRuntimeFindModelInCatalog(catalog, provider, modelId) {
+  const normalizedProvider = agentRuntimeNormalizeProviderId(provider);
+  const normalizedModelId = agentRuntimeTrimStringValue(modelId).toLowerCase();
+  if (!normalizedProvider || !normalizedModelId) {
+    return undefined;
+  }
   return (Array.isArray(catalog) ? catalog : []).find((entry) => {
     if (!entry) {
       return false;
     }
-    return agentRuntimeModelKey(entry.provider, entry.id) === key;
+    return (
+      agentRuntimeNormalizeProviderId(entry.provider) === normalizedProvider &&
+      agentRuntimeTrimStringValue(entry.id).toLowerCase() === normalizedModelId
+    );
   });
+}
+
+function agentRuntimeFindModelCatalogEntry(catalog, params = {}) {
+  const modelId = agentRuntimeTrimStringValue(
+    Object.prototype.hasOwnProperty.call(params, "modelId") ? params.modelId : params.model,
+  );
+  if (!modelId) {
+    return undefined;
+  }
+  const provider = agentRuntimeTrimStringValue(params.provider);
+  if (provider) {
+    return agentRuntimeFindModelInCatalog(catalog, provider, modelId);
+  }
+  const normalizedModelId = modelId.toLowerCase();
+  const matches = (Array.isArray(catalog) ? catalog : []).filter((entry) => {
+    if (!entry) {
+      return false;
+    }
+    return agentRuntimeTrimStringValue(entry.id).toLowerCase() === normalizedModelId;
+  });
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function agentRuntimeModelSupportsVision(entry) {
+  return agentRuntimeModelSupportsInput(entry, "image");
+}
+
+function agentRuntimeModelSupportsDocument(entry) {
+  return agentRuntimeModelSupportsInput(entry, "document");
 }
 
 function agentRuntimeBuildAllowedModelSetWithFallbacks(params = {}) {
@@ -55335,6 +55375,8 @@ const agentRuntime = {
   defineToolDescriptors,
   evaluateToolAvailability,
   failedTextResult,
+  findModelCatalogEntry: agentRuntimeFindModelCatalogEntry,
+  findModelInCatalog: agentRuntimeFindModelInCatalog,
   findNormalizedProviderKey: agentRuntimeFindNormalizedProviderKey,
   findNormalizedProviderValue: agentRuntimeFindNormalizedProviderValue,
   formatToolExecutorRef,
@@ -55351,6 +55393,9 @@ const agentRuntime = {
   listAgentEntries: agentRuntimeListAgentEntries,
   listAgentIds: agentRuntimeListAgentIds,
   modelKey: agentRuntimeModelKey,
+  modelSupportsDocument: agentRuntimeModelSupportsDocument,
+  modelSupportsInput: agentRuntimeModelSupportsInput,
+  modelSupportsVision: agentRuntimeModelSupportsVision,
   normalizeModelRef: agentRuntimeNormalizeModelRef,
   normalizeModelSelection: agentRuntimeNormalizeModelSelection,
   normalizeProviderId: agentRuntimeNormalizeProviderId,

@@ -38223,6 +38223,153 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_model_catalog_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-model-catalog.cjs"
+    runtime_entry.write_text(
+        """
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_model_catalog",
+      description: "Use OpenClaw agent-runtime model catalog lookup helpers",
+      parameters: { type: "object" },
+      execute() {
+        const catalog = [
+          { provider: "z.ai", id: "glm-5", name: "GLM-5", input: ["text", "image"] },
+          { provider: "first", id: "shared", name: "First", input: ["text"] },
+          { provider: "second", id: "shared", name: "Second", input: ["text", "document"] },
+          {
+            provider: "modelscope",
+            id: "Qwen/Qwen3.5-35B-A3B",
+            name: "Qwen",
+            input: ["text", "audio"]
+          }
+        ];
+        return {
+          keys: Object.keys(agent).filter((key) => [
+            "findModelCatalogEntry",
+            "findModelInCatalog",
+            "modelSupportsDocument",
+            "modelSupportsInput",
+            "modelSupportsVision"
+          ].includes(key)).sort(),
+          alias: agent.findModelInCatalog(catalog, "z-ai", "GLM-5"),
+          explicit: agent.findModelCatalogEntry(catalog, {
+            provider: "second",
+            modelId: "SHARED"
+          }),
+          providerlessUnique: agent.findModelCatalogEntry(catalog, {
+            modelId: "Qwen/Qwen3.5-35B-A3B"
+          }),
+          providerlessAmbiguous: agent.findModelCatalogEntry(catalog, {
+            modelId: "shared"
+          }) || null,
+          empty: agent.findModelCatalogEntry(catalog, { modelId: " " }) || null,
+          supports: {
+            vision: agent.modelSupportsVision(catalog[0]),
+            document: agent.modelSupportsDocument(catalog[2]),
+            audio: agent.modelSupportsInput(catalog[3], "audio"),
+            missingVision: agent.modelSupportsVision(catalog[1]),
+            undefinedDocument: agent.modelSupportsDocument(undefined)
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-model-catalog-plugin",
+                    "name": "Runtime Agent Model Catalog Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-model-catalog.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_model_catalog"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_model_catalog"})
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "findModelCatalogEntry",
+        "findModelInCatalog",
+        "modelSupportsDocument",
+        "modelSupportsInput",
+        "modelSupportsVision",
+    ]
+    assert result["alias"] == {
+        "provider": "z.ai",
+        "id": "glm-5",
+        "name": "GLM-5",
+        "input": ["text", "image"],
+    }
+    assert result["explicit"] == {
+        "provider": "second",
+        "id": "shared",
+        "name": "Second",
+        "input": ["text", "document"],
+    }
+    assert result["providerlessUnique"] == {
+        "provider": "modelscope",
+        "id": "Qwen/Qwen3.5-35B-A3B",
+        "name": "Qwen",
+        "input": ["text", "audio"],
+    }
+    assert result["providerlessAmbiguous"] is None
+    assert result["empty"] is None
+    assert result["supports"] == {
+        "vision": True,
+        "document": True,
+        "audio": True,
+        "missingVision": False,
+        "undefinedDocument": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
