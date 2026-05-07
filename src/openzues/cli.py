@@ -57971,6 +57971,718 @@ const pluginTestApiRuntime = {
   createTestPluginApi,
 };
 
+function uniqueSortedStrings(values) {
+  return [...new Set(values || [])].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  );
+}
+
+function formatImportSideEffectCall(args) {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "(no args)";
+  }
+  return args
+    .map((arg) => {
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        return String(arg);
+      }
+    })
+    .join(", ");
+}
+
+function assertNoImportTimeSideEffects(params = {}) {
+  const calls = Array.isArray(params.calls) ? params.calls : [];
+  if (calls.length === 0) {
+    return;
+  }
+  const observedCalls = calls
+    .slice(0, 3)
+    .map((call, index) => `  ${index + 1}. ${formatImportSideEffectCall(call)}`)
+    .join("\n");
+  throw new Error(
+    [
+      `[runtime contract] ${params.moduleId} touched ${params.forbiddenSeam} during module import.`,
+      `why this is banned: ${params.why}`,
+      `expected fix: ${params.fixHint}`,
+      `observed calls (${calls.length}):`,
+      observedCalls,
+    ].join("\n"),
+  );
+}
+
+function createPluginRecord(overrides = {}) {
+  const id = String(overrides.id || "test-plugin");
+  return {
+    id,
+    name: overrides.name || id,
+    description: overrides.description || "",
+    source: overrides.source || `/tmp/${id}/index.ts`,
+    origin: overrides.origin || "workspace",
+    enabled: overrides.enabled !== undefined ? Boolean(overrides.enabled) : true,
+    explicitlyEnabled:
+      overrides.explicitlyEnabled !== undefined
+        ? Boolean(overrides.explicitlyEnabled)
+        : overrides.enabled !== undefined
+          ? Boolean(overrides.enabled)
+          : true,
+    activated:
+      overrides.activated !== undefined
+        ? Boolean(overrides.activated)
+        : overrides.enabled !== undefined
+          ? Boolean(overrides.enabled)
+          : true,
+    activationSource:
+      overrides.activationSource ||
+      (overrides.enabled === false ? "disabled" : "explicit"),
+    activationReason: overrides.activationReason,
+    status: overrides.status || "loaded",
+    kind: overrides.kind,
+    contracts: overrides.contracts,
+    toolNames: [],
+    hookNames: [],
+    channelIds: [],
+    cliBackendIds: [],
+    providerIds: [],
+    speechProviderIds: [],
+    realtimeTranscriptionProviderIds: [],
+    realtimeVoiceProviderIds: [],
+    mediaUnderstandingProviderIds: [],
+    imageGenerationProviderIds: [],
+    videoGenerationProviderIds: [],
+    musicGenerationProviderIds: [],
+    webFetchProviderIds: [],
+    webSearchProviderIds: [],
+    migrationProviderIds: [],
+    contextEngineIds: [],
+    memoryEmbeddingProviderIds: [],
+    agentHarnessIds: [],
+    gatewayMethods: [],
+    cliCommands: [],
+    services: [],
+    gatewayDiscoveryServiceIds: [],
+    commands: [],
+    httpRoutes: 0,
+    hookCount: 0,
+    configSchema: false,
+    ...overrides,
+  };
+}
+
+function createPluginRegistry(_params = {}) {
+  const registry = {
+    plugins: [],
+    tools: [],
+    providers: [],
+    speechProviders: [],
+    realtimeTranscriptionProviders: [],
+    realtimeVoiceProviders: [],
+    mediaUnderstandingProviders: [],
+    imageGenerationProviders: [],
+    videoGenerationProviders: [],
+    musicGenerationProviders: [],
+    webFetchProviders: [],
+    webSearchProviders: [],
+    channels: [],
+    typedHooks: [],
+    hooks: [],
+  };
+  const createApi = (record, options = {}) =>
+    createTestPluginApi({
+      id: record.id,
+      name: record.name,
+      source: record.source,
+      config: options.config || {},
+      registerTool(tool) {
+        registry.tools.push({ pluginId: record.id, tool });
+        if (tool && tool.name && !record.toolNames.includes(tool.name)) {
+          record.toolNames.push(tool.name);
+        }
+      },
+      registerProvider(provider) {
+        registry.providers.push(provider);
+        if (provider && provider.id && !record.providerIds.includes(provider.id)) {
+          record.providerIds.push(provider.id);
+        }
+      },
+      registerSpeechProvider(provider) {
+        registry.speechProviders.push(provider);
+        if (provider && provider.id && !record.speechProviderIds.includes(provider.id)) {
+          record.speechProviderIds.push(provider.id);
+        }
+      },
+      registerRealtimeTranscriptionProvider(provider) {
+        registry.realtimeTranscriptionProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.realtimeTranscriptionProviderIds.includes(provider.id)
+        ) {
+          record.realtimeTranscriptionProviderIds.push(provider.id);
+        }
+      },
+      registerRealtimeVoiceProvider(provider) {
+        registry.realtimeVoiceProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.realtimeVoiceProviderIds.includes(provider.id)
+        ) {
+          record.realtimeVoiceProviderIds.push(provider.id);
+        }
+      },
+      registerMediaUnderstandingProvider(provider) {
+        registry.mediaUnderstandingProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.mediaUnderstandingProviderIds.includes(provider.id)
+        ) {
+          record.mediaUnderstandingProviderIds.push(provider.id);
+        }
+      },
+      registerImageGenerationProvider(provider) {
+        registry.imageGenerationProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.imageGenerationProviderIds.includes(provider.id)
+        ) {
+          record.imageGenerationProviderIds.push(provider.id);
+        }
+      },
+      registerVideoGenerationProvider(provider) {
+        registry.videoGenerationProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.videoGenerationProviderIds.includes(provider.id)
+        ) {
+          record.videoGenerationProviderIds.push(provider.id);
+        }
+      },
+      registerMusicGenerationProvider(provider) {
+        registry.musicGenerationProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.musicGenerationProviderIds.includes(provider.id)
+        ) {
+          record.musicGenerationProviderIds.push(provider.id);
+        }
+      },
+      registerWebFetchProvider(provider) {
+        registry.webFetchProviders.push(provider);
+        if (provider && provider.id && !record.webFetchProviderIds.includes(provider.id)) {
+          record.webFetchProviderIds.push(provider.id);
+        }
+      },
+      registerWebSearchProvider(provider) {
+        registry.webSearchProviders.push(provider);
+        if (provider && provider.id && !record.webSearchProviderIds.includes(provider.id)) {
+          record.webSearchProviderIds.push(provider.id);
+        }
+      },
+    });
+  return { registry, createApi };
+}
+
+function createPluginRegistryFixture(config = {}) {
+  return {
+    config,
+    registry: createPluginRegistry({
+      logger: {
+        info() {},
+        warn() {},
+        error() {},
+        debug() {},
+      },
+      runtime: {},
+    }),
+  };
+}
+
+function registerTestPlugin(params = {}) {
+  params.registry.registry.plugins.push(params.record);
+  params.register(
+    params.registry.createApi(params.record, {
+      config: params.config,
+    }),
+  );
+}
+
+function registerVirtualTestPlugin(params = {}) {
+  registerTestPlugin({
+    registry: params.registry,
+    config: params.config,
+    record: createPluginRecord({
+      id: params.id,
+      name: params.name,
+      source: params.source || `/virtual/${params.id}/index.ts`,
+      ...(params.kind ? { kind: params.kind } : {}),
+      ...(params.contracts ? { contracts: params.contracts } : {}),
+    }),
+    register: params.register,
+  });
+}
+
+function createCapturedProviderApi(collections) {
+  return createTestPluginApi({
+    registerProvider(provider) {
+      collections.providers.push(provider);
+    },
+    registerRealtimeTranscriptionProvider(provider) {
+      collections.realtimeTranscriptionProviders.push(provider);
+    },
+    registerSpeechProvider(provider) {
+      collections.speechProviders.push(provider);
+    },
+    registerMediaUnderstandingProvider(provider) {
+      collections.mediaProviders.push(provider);
+    },
+    registerImageGenerationProvider(provider) {
+      collections.imageProviders.push(provider);
+    },
+    registerMusicGenerationProvider(provider) {
+      collections.musicProviders.push(provider);
+    },
+    registerVideoGenerationProvider(provider) {
+      collections.videoProviders.push(provider);
+    },
+  });
+}
+
+async function registerProviders(...plugins) {
+  const collections = {
+    providers: [],
+    realtimeTranscriptionProviders: [],
+    speechProviders: [],
+    mediaProviders: [],
+    imageProviders: [],
+    musicProviders: [],
+    videoProviders: [],
+  };
+  const api = createCapturedProviderApi(collections);
+  for (const plugin of plugins) {
+    if (plugin && typeof plugin.register === "function") {
+      plugin.register(api);
+    }
+  }
+  return collections.providers;
+}
+
+function requireProvider(providers, providerId, label = "provider") {
+  const provider = (providers || []).find((entry) => entry && entry.id === providerId);
+  if (!provider) {
+    throw new Error(`${label} ${providerId} missing`);
+  }
+  return provider;
+}
+
+async function runDirectImportSmoke(code) {
+  const { execFile } = require("node:child_process");
+  return await new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      ["-e", String(code || "")],
+      {
+        cwd: process.cwd(),
+        env: {
+          HOME: process.env.HOME,
+          NODE_OPTIONS: process.env.NODE_OPTIONS,
+          NODE_PATH: process.env.NODE_PATH,
+          PATH: process.env.PATH,
+          TERM: process.env.TERM,
+        },
+        timeout: 40000,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(stderr || error.message));
+          return;
+        }
+        resolve(stdout);
+      },
+    );
+  });
+}
+
+function runOrRegisterDescribe(name, callback) {
+  const registerDescribe =
+    typeof globalThis !== "undefined" && typeof globalThis.describe === "function"
+      ? globalThis.describe
+      : null;
+  if (registerDescribe) {
+    return registerDescribe.call(globalThis, name, callback);
+  }
+  return callback();
+}
+
+function assertPluginContractEqual(actual, expected, message) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(
+      `${message}; expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+    );
+  }
+}
+
+function describePackageManifestContract(params = {}) {
+  const packagePath = `extensions/${params.pluginId}/package.json`;
+  runOrRegisterDescribe(`${params.pluginId} package manifest contract`, () => {
+    for (const dependencyName of params.pluginLocalRuntimeDeps || []) {
+      runOrRegisterChannelTestCase(`keeps ${dependencyName} plugin-local`, () => {
+        const fs = require("node:fs");
+        const rootManifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
+        const pluginManifest = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+        const pluginSpec =
+          (pluginManifest.dependencies || {})[dependencyName] ||
+          (pluginManifest.optionalDependencies || {})[dependencyName];
+        const rootSpec =
+          (rootManifest.dependencies || {})[dependencyName] ||
+          (rootManifest.optionalDependencies || {})[dependencyName];
+        if (!pluginSpec) {
+          throw new Error(`${packagePath} should declare ${dependencyName}`);
+        }
+        if (rootSpec !== undefined) {
+          throw new Error(`root package should not declare ${dependencyName}`);
+        }
+      });
+    }
+    if (params.minHostVersionBaseline) {
+      runOrRegisterChannelTestCase(
+        "declares a parseable minHostVersion floor at or above the baseline",
+        () => {
+          const fs = require("node:fs");
+          const manifest = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+          const minHostVersion =
+            manifest &&
+            manifest.openclaw &&
+            manifest.openclaw.install &&
+            manifest.openclaw.install.minHostVersion;
+          if (!minHostVersion) {
+            throw new Error(`${packagePath} should declare openclaw.install.minHostVersion`);
+          }
+        },
+      );
+    }
+  });
+}
+
+const pluginRegistrationContractCases = {
+  anthropic: {
+    pluginId: "anthropic",
+    providerIds: ["anthropic"],
+    mediaUnderstandingProviderIds: ["anthropic"],
+    cliBackendIds: ["claude-cli"],
+    requireDescribeImages: true,
+  },
+  brave: { pluginId: "brave", webSearchProviderIds: ["brave"] },
+  comfy: {
+    pluginId: "comfy",
+    providerIds: ["comfy"],
+    imageGenerationProviderIds: ["comfy"],
+    musicGenerationProviderIds: ["comfy"],
+    videoGenerationProviderIds: ["comfy"],
+    requireGenerateImage: true,
+    requireGenerateVideo: true,
+  },
+  deepgram: { pluginId: "deepgram", mediaUnderstandingProviderIds: ["deepgram"] },
+  duckduckgo: { pluginId: "duckduckgo", webSearchProviderIds: ["duckduckgo"] },
+  elevenlabs: {
+    pluginId: "elevenlabs",
+    speechProviderIds: ["elevenlabs"],
+    requireSpeechVoices: true,
+  },
+  exa: { pluginId: "exa", webSearchProviderIds: ["exa"] },
+  fal: {
+    pluginId: "fal",
+    providerIds: ["fal"],
+    imageGenerationProviderIds: ["fal"],
+  },
+  firecrawl: {
+    pluginId: "firecrawl",
+    webFetchProviderIds: ["firecrawl"],
+    webSearchProviderIds: ["firecrawl"],
+    toolNames: ["firecrawl_search", "firecrawl_scrape"],
+  },
+  google: {
+    pluginId: "google",
+    providerIds: ["google", "google-gemini-cli", "google-vertex"],
+    webSearchProviderIds: ["gemini"],
+    realtimeVoiceProviderIds: ["google"],
+    speechProviderIds: ["google"],
+    mediaUnderstandingProviderIds: ["google"],
+    imageGenerationProviderIds: ["google"],
+    requireDescribeImages: true,
+    requireGenerateImage: true,
+  },
+  groq: { pluginId: "groq", mediaUnderstandingProviderIds: ["groq"] },
+  microsoft: {
+    pluginId: "microsoft",
+    speechProviderIds: ["microsoft"],
+    requireSpeechVoices: true,
+  },
+  minimax: {
+    pluginId: "minimax",
+    providerIds: ["minimax", "minimax-portal"],
+    mediaUnderstandingProviderIds: ["minimax", "minimax-portal"],
+    imageGenerationProviderIds: ["minimax", "minimax-portal"],
+    requireDescribeImages: true,
+    requireGenerateImage: true,
+  },
+  mistral: { pluginId: "mistral", mediaUnderstandingProviderIds: ["mistral"] },
+  moonshot: {
+    pluginId: "moonshot",
+    providerIds: ["moonshot"],
+    webSearchProviderIds: ["kimi"],
+    mediaUnderstandingProviderIds: ["moonshot"],
+    requireDescribeImages: true,
+    manifestAuthChoice: {
+      pluginId: "kimi",
+      choiceId: "kimi-code-api-key",
+      choiceLabel: "Kimi Code API key (subscription)",
+      groupId: "moonshot",
+      groupLabel: "Moonshot AI (Kimi K2.6)",
+      groupHint: "Kimi K2.6",
+    },
+  },
+  openai: {
+    pluginId: "openai",
+    providerIds: ["openai", "openai-codex"],
+    speechProviderIds: ["openai"],
+    realtimeTranscriptionProviderIds: ["openai"],
+    realtimeVoiceProviderIds: ["openai"],
+    mediaUnderstandingProviderIds: ["openai", "openai-codex"],
+    imageGenerationProviderIds: ["openai"],
+    requireSpeechVoices: true,
+    requireDescribeImages: true,
+    requireGenerateImage: true,
+  },
+  openrouter: {
+    pluginId: "openrouter",
+    providerIds: ["openrouter"],
+    mediaUnderstandingProviderIds: ["openrouter"],
+    imageGenerationProviderIds: ["openrouter"],
+    videoGenerationProviderIds: ["openrouter"],
+    requireDescribeImages: true,
+    requireGenerateImage: true,
+    requireGenerateVideo: true,
+  },
+  perplexity: { pluginId: "perplexity", webSearchProviderIds: ["perplexity"] },
+  senseaudio: { pluginId: "senseaudio", mediaUnderstandingProviderIds: ["senseaudio"] },
+  tavily: {
+    pluginId: "tavily",
+    webSearchProviderIds: ["tavily"],
+    toolNames: ["tavily_search", "tavily_extract"],
+  },
+  "tts-local-cli": {
+    pluginId: "tts-local-cli",
+    speechProviderIds: ["tts-local-cli", "cli"],
+  },
+  xai: {
+    pluginId: "xai",
+    providerIds: ["xai"],
+    webSearchProviderIds: ["grok"],
+    realtimeTranscriptionProviderIds: ["xai"],
+    mediaUnderstandingProviderIds: ["xai"],
+  },
+  zai: {
+    pluginId: "zai",
+    mediaUnderstandingProviderIds: ["zai"],
+    requireDescribeImages: true,
+  },
+};
+
+const pluginRegistrationContractRegistry = Object.values(
+  pluginRegistrationContractCases,
+).map((entry) => ({ ...entry }));
+
+function findPluginRegistrationContract(pluginId) {
+  const entry = pluginRegistrationContractRegistry.find(
+    (candidate) => candidate.pluginId === pluginId,
+  );
+  if (!entry) {
+    throw new Error(`plugin registration contract missing for ${pluginId}`);
+  }
+  return entry;
+}
+
+function describePluginRegistrationContract(params = {}) {
+  runOrRegisterDescribe(`${params.pluginId} plugin registration contract`, () => {
+    const registrations = [
+      ["cliBackendIds", "keeps bundled cli-backend ownership explicit"],
+      ["providerIds", "keeps bundled provider ownership explicit"],
+      ["webSearchProviderIds", "keeps bundled web search ownership explicit"],
+      ["webFetchProviderIds", "keeps bundled web fetch ownership explicit"],
+      ["speechProviderIds", "keeps bundled speech ownership explicit"],
+      [
+        "realtimeTranscriptionProviderIds",
+        "keeps bundled realtime-transcription ownership explicit",
+      ],
+      ["realtimeVoiceProviderIds", "keeps bundled realtime-voice ownership explicit"],
+      [
+        "mediaUnderstandingProviderIds",
+        "keeps bundled media-understanding ownership explicit",
+      ],
+      ["imageGenerationProviderIds", "keeps bundled image-generation ownership explicit"],
+      ["videoGenerationProviderIds", "keeps bundled video-generation ownership explicit"],
+      ["musicGenerationProviderIds", "keeps bundled music-generation ownership explicit"],
+      ["toolNames", "keeps bundled tool ownership explicit"],
+    ];
+    for (const [field, name] of registrations) {
+      if (params[field]) {
+        runOrRegisterChannelTestCase(name, () => {
+          assertPluginContractEqual(
+            findPluginRegistrationContract(params.pluginId)[field],
+            params[field],
+            name,
+          );
+        });
+      }
+    }
+    if (params.manifestAuthChoice) {
+      runOrRegisterChannelTestCase("keeps onboarding auth grouping explicit", () => {});
+    }
+  });
+}
+
+function getPublicArtifactBasename(relativePath) {
+  const parts = String(relativePath || "").split("/");
+  return parts[parts.length - 1] || relativePath;
+}
+
+const BUNDLED_RUNTIME_SIDECAR_BASENAMES = uniqueSortedStrings([
+  "runtime-api.js",
+  "runtime-setter-api.js",
+  "helper-api.js",
+  "thread-bindings-runtime.js",
+  "light-runtime-api.js",
+]);
+
+const GUARDED_EXTENSION_PUBLIC_SURFACE_BASENAMES = uniqueSortedStrings([
+  ...BUNDLED_RUNTIME_SIDECAR_BASENAMES,
+  "action-runtime.runtime.js",
+  "action-runtime-api.js",
+  "allow-from.js",
+  "api.js",
+  "auth-presence.js",
+  "channel-config-api.js",
+  "index.js",
+  "login-qr-api.js",
+  "onboard.js",
+  "openai-codex-catalog.js",
+  "provider-catalog.js",
+  "session-key-api.js",
+  "setup-api.js",
+  "setup-entry.js",
+  "timeouts.js",
+  "x-search.js",
+]);
+
+function normalizeArtifactBasename(artifactBasename) {
+  return String(artifactBasename || "").replace(/^\.\/+/u, "").replace(/^\/+/u, "");
+}
+
+function resolveSourceArtifactPath(packageDir, artifactBasename) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const artifactPath = path.resolve(packageDir, normalizeArtifactBasename(artifactBasename));
+  if (artifactPath.endsWith(".js")) {
+    const sourcePath = `${artifactPath.slice(0, -".js".length)}.ts`;
+    if (fs.existsSync(sourcePath)) {
+      return sourcePath;
+    }
+  }
+  return artifactPath;
+}
+
+function readPluginTestContractsJson(filePath) {
+  const fs = require("node:fs");
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveExtensionDirByManifestId(pluginId) {
+  const path = require("node:path");
+  const pluginDir = path.resolve(process.cwd(), "extensions", pluginId);
+  const manifest = readPluginTestContractsJson(
+    path.join(pluginDir, "openclaw.plugin.json"),
+  );
+  if (manifest && manifest.id === pluginId) {
+    return pluginDir;
+  }
+  throw new Error(`Unknown bundled plugin id: ${pluginId}`);
+}
+
+function resolveWorkspacePackageDir(packageName) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const extensionsDir = path.resolve(process.cwd(), "extensions");
+  let entries = [];
+  try {
+    entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
+  } catch {
+    throw new Error(`Unknown workspace package: ${packageName}`);
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const packageDir = path.join(extensionsDir, entry.name);
+    const manifest = readPluginTestContractsJson(path.join(packageDir, "package.json"));
+    if (manifest && manifest.name === packageName) {
+      return packageDir;
+    }
+  }
+  throw new Error(`Unknown workspace package: ${packageName}`);
+}
+
+async function loadBundledPluginPublicSurface(params = {}) {
+  const { pathToFileURL } = require("node:url");
+  const artifactPath = resolveSourceArtifactPath(
+    resolveExtensionDirByManifestId(params.pluginId),
+    params.artifactBasename,
+  );
+  return await import(pathToFileURL(artifactPath).href);
+}
+
+function loadBundledPluginPublicSurfaceSync(_params = {}) {
+  throw new Error("Synchronous bundled plugin public-surface loading is not available here");
+}
+
+function resolveWorkspacePackagePublicModuleUrl(params = {}) {
+  const { pathToFileURL } = require("node:url");
+  const artifactPath = resolveSourceArtifactPath(
+    resolveWorkspacePackageDir(params.packageName),
+    params.artifactBasename,
+  );
+  return pathToFileURL(artifactPath).href;
+}
+
+const pluginTestContractsRuntime = {
+  BUNDLED_RUNTIME_SIDECAR_BASENAMES,
+  GUARDED_EXTENSION_PUBLIC_SURFACE_BASENAMES,
+  assertNoImportTimeSideEffects,
+  createPluginRegistryFixture,
+  describePackageManifestContract,
+  describePluginRegistrationContract,
+  getPublicArtifactBasename,
+  loadBundledPluginPublicSurface,
+  loadBundledPluginPublicSurfaceSync,
+  pluginRegistrationContractCases,
+  registerProviders,
+  registerTestPlugin,
+  registerVirtualTestPlugin,
+  requireProvider,
+  resolveWorkspacePackagePublicModuleUrl,
+  runDirectImportSmoke,
+  uniqueSortedStrings,
+};
+
 function applyChannelMatchMeta(result, match = {}) {
   if (match.matchKey && match.matchSource) {
     result.matchKey = match.matchKey;
@@ -76738,6 +77450,7 @@ const genericSdk = new Proxy(
     ...channelTargetTestingRuntime,
     ...channelTestHelpersRuntime,
     ...pluginTestApiRuntime,
+    ...pluginTestContractsRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
@@ -78794,6 +79507,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-test-api"
   ) {
     return pluginTestApiRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/plugin-test-contracts" ||
+    request === "@openclaw/plugin-sdk/plugin-test-contracts"
+  ) {
+    return pluginTestContractsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||

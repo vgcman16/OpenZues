@@ -31841,6 +31841,234 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_plugin_test_contracts_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-contracts.cjs"
+    runtime_entry.write_text(
+        """
+const contracts = require("openclaw/plugin-sdk/plugin-test-contracts");
+const scopedContracts = require("@openclaw/plugin-sdk/plugin-test-contracts");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.plugin_test_contracts",
+      description: "Use OpenClaw plugin-test-contracts SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const fixture = contracts.createPluginRegistryFixture({ feature: true });
+        contracts.registerVirtualTestPlugin({
+          registry: fixture.registry,
+          config: fixture.config,
+          id: "demo",
+          name: "Demo Plugin",
+          contracts: { tools: ["demo.tool"] },
+          register(pluginApi) {
+            pluginApi.registerTool({ name: "demo.tool" });
+            pluginApi.registerProvider({ id: "demo-provider" });
+          }
+        });
+        const providers = await contracts.registerProviders({
+          register(providerApi) {
+            providerApi.registerProvider({ id: "p1" });
+          }
+        });
+        const provider = contracts.requireProvider(providers, "p1");
+        let sideEffectError = "";
+        try {
+          contracts.assertNoImportTimeSideEffects({
+            moduleId: "demo-module",
+            forbiddenSeam: "network",
+            calls: [["fetch", "https://example.test"]],
+            why: "imports must stay pure",
+            fixHint: "move work into register()"
+          });
+        } catch (error) {
+          sideEffectError = error.message;
+        }
+        const registered = [];
+        const previousDescribe = globalThis.describe;
+        const previousIt = globalThis.it;
+        globalThis.describe = (name, callback) => {
+          registered.push(`describe:${name}`);
+          callback();
+        };
+        globalThis.it = (name, callback) => {
+          registered.push(`it:${name}`);
+          callback();
+        };
+        try {
+          contracts.describePackageManifestContract({ pluginId: "demo" });
+          contracts.describePluginRegistrationContract(
+            contracts.pluginRegistrationContractCases.openai
+          );
+        } finally {
+          if (previousDescribe === undefined) {
+            delete globalThis.describe;
+          } else {
+            globalThis.describe = previousDescribe;
+          }
+          if (previousIt === undefined) {
+            delete globalThis.it;
+          } else {
+            globalThis.it = previousIt;
+          }
+        }
+        let syncLoadError = "";
+        try {
+          contracts.loadBundledPluginPublicSurfaceSync({
+            pluginId: "demo",
+            artifactBasename: "api.js"
+          });
+        } catch (error) {
+          syncLoadError = error.message;
+        }
+        const smoke = await contracts.runDirectImportSmoke(
+          "console.log('contract-smoke')"
+        );
+        return {
+          keys: Object.keys(contracts).sort(),
+          scopedSame:
+            scopedContracts.createPluginRegistryFixture ===
+            contracts.createPluginRegistryFixture,
+          fixture: {
+            config: fixture.config,
+            plugins: fixture.registry.registry.plugins.map((entry) => ({
+              id: entry.id,
+              name: entry.name,
+              source: entry.source,
+              contracts: entry.contracts
+            })),
+            tools: fixture.registry.registry.tools.map((entry) => ({
+              pluginId: entry.pluginId,
+              name: entry.tool.name
+            })),
+            providers: fixture.registry.registry.providers.map((entry) => entry.id)
+          },
+          providers: providers.map((entry) => entry.id),
+          provider,
+          unique: contracts.uniqueSortedStrings(["b", "a", "b"]),
+          basename: contracts.getPublicArtifactBasename("dist/extensions/slack/api.js"),
+          guardedHasApi:
+            contracts.GUARDED_EXTENSION_PUBLIC_SURFACE_BASENAMES.includes("api.js"),
+          sidecarHasRuntime:
+            contracts.BUNDLED_RUNTIME_SIDECAR_BASENAMES.includes("runtime-api.js"),
+          sideEffectError,
+          registered,
+          syncLoadError,
+          smoke: smoke.trim()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-plugin-test-contracts-plugin",
+                    "name": "Runtime Plugin Test Contracts Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-test-contracts.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.plugin_test_contracts"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.plugin_test_contracts"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "BUNDLED_RUNTIME_SIDECAR_BASENAMES",
+        "GUARDED_EXTENSION_PUBLIC_SURFACE_BASENAMES",
+        "assertNoImportTimeSideEffects",
+        "createPluginRegistryFixture",
+        "describePackageManifestContract",
+        "describePluginRegistrationContract",
+        "getPublicArtifactBasename",
+        "loadBundledPluginPublicSurface",
+        "loadBundledPluginPublicSurfaceSync",
+        "pluginRegistrationContractCases",
+        "registerProviders",
+        "registerTestPlugin",
+        "registerVirtualTestPlugin",
+        "requireProvider",
+        "resolveWorkspacePackagePublicModuleUrl",
+        "runDirectImportSmoke",
+        "uniqueSortedStrings",
+    ]
+    assert result["scopedSame"] is True
+    assert result["fixture"] == {
+        "config": {"feature": True},
+        "plugins": [
+            {
+                "id": "demo",
+                "name": "Demo Plugin",
+                "source": "/virtual/demo/index.ts",
+                "contracts": {"tools": ["demo.tool"]},
+            }
+        ],
+        "tools": [{"pluginId": "demo", "name": "demo.tool"}],
+        "providers": ["demo-provider"],
+    }
+    assert result["providers"] == ["p1"]
+    assert result["provider"] == {"id": "p1"}
+    assert result["unique"] == ["a", "b"]
+    assert result["basename"] == "api.js"
+    assert result["guardedHasApi"] is True
+    assert result["sidecarHasRuntime"] is True
+    assert result["sideEffectError"].startswith(
+        "[runtime contract] demo-module touched network during module import."
+    )
+    assert "why this is banned: imports must stay pure" in result["sideEffectError"]
+    assert result["registered"][0] == "describe:demo package manifest contract"
+    assert "describe:openai plugin registration contract" in result["registered"]
+    assert "it:keeps bundled provider ownership explicit" in result["registered"]
+    assert result["syncLoadError"] == (
+        "Synchronous bundled plugin public-surface loading is not available here"
+    )
+    assert result["smoke"] == "contract-smoke"
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:
