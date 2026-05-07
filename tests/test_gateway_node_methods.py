@@ -37369,6 +37369,442 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_onboard_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-onboard.cjs"
+    runtime_entry.write_text(
+        """
+const providerOnboard = require("openclaw/plugin-sdk/provider-onboard");
+const scopedProviderOnboard = require("@openclaw/plugin-sdk/provider-onboard");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.providerOnboard",
+      description: "Use OpenClaw provider-onboard SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const aliases = providerOnboard.withAgentModelAliases(
+          { "old/model": { alias: "Old Alias" } },
+          [
+            "demo/model-a",
+            { modelRef: "demo/model-b", alias: "Model B" },
+            { modelRef: "old/model", alias: "Ignored" }
+          ]
+        );
+        const applied = providerOnboard.applyOnboardAuthAgentModelsAndProviders(
+          {
+            agents: { defaults: { models: { "base/model": { alias: "Base" } } } },
+            models: { mode: "replace", providers: { legacy: { models: [] } } }
+          },
+          {
+            agentModels: { "demo/model-a": { alias: "A" } },
+            providers: {
+              demo: {
+                api: "openai-completions",
+                baseUrl: "https://demo.test/v1",
+                models: [{ id: "model-a", name: "Model A" }]
+              }
+            }
+          }
+        );
+        const primary = providerOnboard.applyAgentDefaultModelPrimary(
+          { agents: { defaults: { model: { primary: "old", fallbacks: ["fb1"] } } } },
+          "demo/model-a"
+        );
+        const zenOld = providerOnboard.applyOpencodeZenModelDefault({
+          agents: {
+            defaults: {
+              model: {
+                primary: "opencode-zen/claude-opus-4-5",
+                fallbacks: ["fb"]
+              }
+            }
+          }
+        });
+        const zenSame = providerOnboard.applyOpencodeZenModelDefault({
+          agents: { defaults: { model: "opencode/claude-opus-4-6" } }
+        });
+        const zenOther = providerOnboard.applyOpencodeZenModelDefault({
+          agents: { defaults: { model: "demo/old" } }
+        });
+        const defaultModels = providerOnboard.applyProviderConfigWithDefaultModels(
+          {
+            models: {
+              providers: {
+                "Demo-Alias": {
+                  apiKey: " keep-key ",
+                  models: [{ id: "existing", name: "Existing" }]
+                }
+              }
+            }
+          },
+          {
+            agentModels: { "demo/new": {} },
+            providerId: "demo-alias",
+            api: "openai-completions",
+            baseUrl: "https://demo.test/v1",
+            defaultModels: [{ id: "default", name: "Default" }],
+            defaultModelId: "default"
+          }
+        );
+        const defaultModelDuplicate = providerOnboard.applyProviderConfigWithDefaultModel(
+          {
+            models: {
+              providers: {
+                demo: { models: [{ id: "default", name: "Existing Default" }] }
+              }
+            }
+          },
+          {
+            agentModels: {},
+            providerId: "demo",
+            api: "openai-completions",
+            baseUrl: "https://demo.test/v1",
+            defaultModel: { id: "default", name: "Default" }
+          }
+        );
+        const preset = providerOnboard.applyProviderConfigWithDefaultModelPreset(
+          {},
+          {
+            providerId: "preset",
+            api: "openai-completions",
+            baseUrl: "https://preset.test/v1",
+            defaultModel: { id: "p1", name: "P1" },
+            aliases: [{ modelRef: "preset/p1", alias: "Preset" }],
+            primaryModelRef: "preset/p1"
+          }
+        );
+        const defaultApplier = providerOnboard.createDefaultModelPresetAppliers({
+          primaryModelRef: "preset/p1",
+          resolveParams(_cfg, enabled) {
+            return enabled
+              ? {
+                  providerId: "preset",
+                  api: "openai-completions",
+                  baseUrl: "https://preset.test/v1",
+                  defaultModel: { id: "p1", name: "P1" }
+                }
+              : null;
+          }
+        });
+        const applierProviderOnly = defaultApplier.applyProviderConfig({}, true);
+        const applierFull = defaultApplier.applyConfig({}, true);
+        const catalog = providerOnboard.applyProviderConfigWithModelCatalogPreset(
+          { models: { providers: { catalog: { models: [{ id: "old" }] } } } },
+          {
+            providerId: "catalog",
+            api: "openai-completions",
+            baseUrl: "https://catalog.test/v1",
+            catalogModels: [{ id: "old" }, { id: "new" }],
+            aliases: ["catalog/new"],
+            primaryModelRef: "catalog/new"
+          }
+        );
+        const catalogApplier = providerOnboard.createModelCatalogPresetAppliers({
+          primaryModelRef: "catalog/new",
+          resolveParams(_cfg, enabled) {
+            return enabled
+              ? {
+                  providerId: "catalog",
+                  api: "openai-completions",
+                  baseUrl: "https://catalog.test/v1",
+                  catalogModels: [{ id: "new" }]
+                }
+              : undefined;
+          }
+        });
+        const catalogSkipped = catalogApplier.applyConfig({ marker: true }, false);
+        const allowlist = providerOnboard.ensureModelAllowlistEntry({
+          cfg: { agents: { defaults: { models: { "demo/existing": { alias: "E" } } } } },
+          modelRef: " standalone ",
+          defaultProvider: "demo"
+        });
+        const blankAllowlist = providerOnboard.ensureModelAllowlistEntry({
+          cfg: { marker: true },
+          modelRef: "   "
+        });
+
+        return {
+          keys: Object.keys(providerOnboard).sort(),
+          scopedType: typeof scopedProviderOnboard.applyProviderConfigWithDefaultModel,
+          defaultModel: providerOnboard.OPENCODE_ZEN_DEFAULT_MODEL,
+          aliases,
+          applied,
+          primary,
+          zenOld,
+          zenSame,
+          zenOther,
+          defaultModels,
+          defaultModelDuplicate,
+          preset,
+          applierProviderOnly,
+          applierFull,
+          catalog,
+          catalogSkipped,
+          allowlist,
+          blankAllowlist,
+          resolved: {
+            primary: providerOnboard.resolveAgentModelPrimaryValue({
+              primary: " demo/main "
+            }),
+            fallbacks: providerOnboard.resolveAgentModelFallbackValues({
+              fallbacks: ["fb1", "fb2"]
+            })
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-onboard-plugin",
+                    "name": "Runtime Provider Onboard Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-onboard.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.providerOnboard"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.providerOnboard"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "OPENCODE_ZEN_DEFAULT_MODEL",
+            "applyAgentDefaultModelPrimary",
+            "applyOnboardAuthAgentModelsAndProviders",
+            "applyOpencodeZenModelDefault",
+            "applyProviderConfigWithDefaultModel",
+            "applyProviderConfigWithDefaultModelPreset",
+            "applyProviderConfigWithDefaultModels",
+            "applyProviderConfigWithDefaultModelsPreset",
+            "applyProviderConfigWithModelCatalog",
+            "applyProviderConfigWithModelCatalogPreset",
+            "createDefaultModelPresetAppliers",
+            "createDefaultModelsPresetAppliers",
+            "createModelCatalogPresetAppliers",
+            "ensureModelAllowlistEntry",
+            "resolveAgentModelFallbackValues",
+            "resolveAgentModelPrimaryValue",
+            "withAgentModelAliases",
+        ],
+        "scopedType": "function",
+        "defaultModel": "opencode/claude-opus-4-6",
+        "aliases": {
+            "old/model": {"alias": "Old Alias"},
+            "demo/model-a": {},
+            "demo/model-b": {"alias": "Model B"},
+        },
+        "applied": {
+            "agents": {
+                "defaults": {
+                    "models": {
+                        "base/model": {"alias": "Base"},
+                        "demo/model-a": {"alias": "A"},
+                    }
+                }
+            },
+            "models": {
+                "mode": "replace",
+                "providers": {
+                    "demo": {
+                        "api": "openai-completions",
+                        "baseUrl": "https://demo.test/v1",
+                        "models": [{"id": "model-a", "name": "Model A"}],
+                    }
+                },
+            },
+        },
+        "primary": {
+            "agents": {
+                "defaults": {
+                    "model": {"fallbacks": ["fb1"], "primary": "demo/model-a"}
+                }
+            }
+        },
+        "zenOld": {
+            "next": {
+                "agents": {
+                    "defaults": {
+                        "model": {
+                            "fallbacks": ["fb"],
+                            "primary": "opencode-zen/claude-opus-4-5",
+                        }
+                    }
+                }
+            },
+            "changed": False,
+        },
+        "zenSame": {
+            "next": {
+                "agents": {"defaults": {"model": "opencode/claude-opus-4-6"}}
+            },
+            "changed": False,
+        },
+        "zenOther": {
+            "next": {
+                "agents": {
+                    "defaults": {
+                        "model": {"primary": "opencode/claude-opus-4-6"}
+                    }
+                }
+            },
+            "changed": True,
+        },
+        "defaultModels": {
+            "models": {
+                "mode": "merge",
+                "providers": {
+                    "demo-alias": {
+                        "apiKey": "keep-key",
+                        "models": [
+                            {"id": "existing", "name": "Existing"},
+                            {"id": "default", "name": "Default"},
+                        ],
+                        "baseUrl": "https://demo.test/v1",
+                        "api": "openai-completions",
+                    }
+                },
+            },
+            "agents": {"defaults": {"models": {"demo/new": {}}}},
+        },
+        "defaultModelDuplicate": {
+            "models": {
+                "mode": "merge",
+                "providers": {
+                    "demo": {
+                        "models": [{"id": "default", "name": "Existing Default"}],
+                        "baseUrl": "https://demo.test/v1",
+                        "api": "openai-completions",
+                    }
+                },
+            },
+            "agents": {"defaults": {"models": {}}},
+        },
+        "preset": {
+            "models": {
+                "mode": "merge",
+                "providers": {
+                    "preset": {
+                        "baseUrl": "https://preset.test/v1",
+                        "api": "openai-completions",
+                        "models": [{"id": "p1", "name": "P1"}],
+                    }
+                },
+            },
+            "agents": {
+                "defaults": {
+                    "models": {"preset/p1": {"alias": "Preset"}},
+                    "model": {"primary": "preset/p1"},
+                }
+            },
+        },
+        "applierProviderOnly": {
+            "models": {
+                "mode": "merge",
+                "providers": {
+                    "preset": {
+                        "baseUrl": "https://preset.test/v1",
+                        "api": "openai-completions",
+                        "models": [{"id": "p1", "name": "P1"}],
+                    }
+                },
+            },
+            "agents": {"defaults": {"models": {}}},
+        },
+        "applierFull": {
+            "models": {
+                "mode": "merge",
+                "providers": {
+                    "preset": {
+                        "baseUrl": "https://preset.test/v1",
+                        "api": "openai-completions",
+                        "models": [{"id": "p1", "name": "P1"}],
+                    }
+                },
+            },
+            "agents": {
+                "defaults": {"models": {}, "model": {"primary": "preset/p1"}}
+            },
+        },
+        "catalog": {
+            "models": {
+                "mode": "merge",
+                "providers": {
+                    "catalog": {
+                        "models": [{"id": "old"}, {"id": "new"}],
+                        "baseUrl": "https://catalog.test/v1",
+                        "api": "openai-completions",
+                    }
+                },
+            },
+            "agents": {
+                "defaults": {
+                    "models": {"catalog/new": {}},
+                    "model": {"primary": "catalog/new"},
+                }
+            },
+        },
+        "catalogSkipped": {"marker": True},
+        "allowlist": {
+            "agents": {
+                "defaults": {
+                    "models": {
+                        "demo/existing": {"alias": "E"},
+                        "standalone": {},
+                        "demo/standalone": {},
+                    }
+                }
+            }
+        },
+        "blankAllowlist": {"marker": True},
+        "resolved": {"primary": "demo/main", "fallbacks": ["fb1", "fb2"]},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:

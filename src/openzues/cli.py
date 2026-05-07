@@ -40719,6 +40719,397 @@ const providerCatalogRuntime = {
   resolvePluginProviders,
 };
 
+const OPENCODE_ZEN_DEFAULT_MODEL = "opencode/claude-opus-4-6";
+const LEGACY_OPENCODE_ZEN_DEFAULT_MODELS = new Set([
+  "opencode/claude-opus-4-5",
+  "opencode-zen/claude-opus-4-5",
+]);
+
+function extractAgentDefaultModelFallbacks(model) {
+  if (!model || typeof model !== "object" || !("fallbacks" in model)) {
+    return undefined;
+  }
+  return Array.isArray(model.fallbacks) ? model.fallbacks.map((value) => String(value)) : undefined;
+}
+
+function normalizeAgentModelAliasEntry(entry) {
+  return typeof entry === "string" ? { modelRef: entry } : entry;
+}
+
+function withAgentModelAliases(existing, aliases) {
+  const next = { ...(existing || {}) };
+  for (const entry of aliases || []) {
+    const normalized = normalizeAgentModelAliasEntry(entry);
+    const modelRef = normalized && normalized.modelRef;
+    if (!modelRef) {
+      continue;
+    }
+    next[modelRef] = {
+      ...next[modelRef],
+      ...(normalized.alias
+        ? { alias: (next[modelRef] && next[modelRef].alias) || normalized.alias }
+        : {}),
+    };
+  }
+  return next;
+}
+
+function applyOnboardAuthAgentModelsAndProviders(cfg = {}, params = {}) {
+  const agents = cfg.agents || {};
+  const defaults = agents.defaults || {};
+  const mergedAgentModels = {
+    ...(defaults.models || {}),
+    ...(params.agentModels || {}),
+  };
+  return {
+    ...cfg,
+    agents: {
+      ...agents,
+      defaults: {
+        ...defaults,
+        models: mergedAgentModels,
+      },
+    },
+    models: {
+      mode: (cfg.models && cfg.models.mode) || "merge",
+      providers: params.providers || {},
+    },
+  };
+}
+
+function applyAgentDefaultModelPrimary(cfg = {}, primary) {
+  const agents = cfg.agents || {};
+  const defaults = agents.defaults || {};
+  const existingFallbacks = extractAgentDefaultModelFallbacks(defaults.model);
+  return {
+    ...cfg,
+    agents: {
+      ...agents,
+      defaults: {
+        ...defaults,
+        model: {
+          ...(existingFallbacks ? { fallbacks: existingFallbacks } : {}),
+          primary,
+        },
+      },
+    },
+  };
+}
+
+function resolveProviderOnboardPrimaryStringValue(model) {
+  if (typeof model === "string") {
+    return normalizeOptionalString(model);
+  }
+  if (!model || typeof model !== "object") {
+    return undefined;
+  }
+  return normalizeOptionalString(model.primary);
+}
+
+function applyOpencodeZenModelDefault(cfg = {}) {
+  const current = resolveProviderOnboardPrimaryStringValue(
+    cfg.agents && cfg.agents.defaults && cfg.agents.defaults.model,
+  );
+  const normalizedCurrent =
+    current && LEGACY_OPENCODE_ZEN_DEFAULT_MODELS.has(current)
+      ? OPENCODE_ZEN_DEFAULT_MODEL
+      : current;
+  if (normalizedCurrent === OPENCODE_ZEN_DEFAULT_MODEL) {
+    return { next: cfg, changed: false };
+  }
+  return {
+    next: applyAgentDefaultModelPrimary(cfg, OPENCODE_ZEN_DEFAULT_MODEL),
+    changed: true,
+  };
+}
+
+function findNormalizedProviderKeyForOnboard(providers, providerId) {
+  const normalized = normalizeProviderId(providerId);
+  return Object.keys(providers || {}).find((key) => normalizeProviderId(key) === normalized);
+}
+
+function resolveProviderModelMergeStateForOnboard(cfg = {}, providerId) {
+  const providers = { ...((cfg.models && cfg.models.providers) || {}) };
+  const existingProviderKey = findNormalizedProviderKeyForOnboard(providers, providerId);
+  const existingProvider =
+    existingProviderKey !== undefined ? providers[existingProviderKey] : undefined;
+  const existingModels = Array.isArray(existingProvider && existingProvider.models)
+    ? existingProvider.models
+    : [];
+  if (existingProviderKey && existingProviderKey !== providerId) {
+    delete providers[existingProviderKey];
+  }
+  return { providers, existingProvider, existingModels };
+}
+
+function buildProviderConfigForOnboard(params) {
+  const existingProvider = params.existingProvider || {};
+  const { apiKey: existingApiKey, ...existingProviderRest } = existingProvider;
+  const normalizedApiKey =
+    typeof existingApiKey === "string" ? normalizeOptionalString(existingApiKey) : undefined;
+  return {
+    ...existingProviderRest,
+    baseUrl: params.baseUrl,
+    api: params.api,
+    ...(normalizedApiKey ? { apiKey: normalizedApiKey } : {}),
+    models: params.mergedModels.length > 0 ? params.mergedModels : params.fallbackModels,
+  };
+}
+
+function applyProviderConfigWithMergedModelsForOnboard(cfg, params) {
+  params.providerState.providers[params.providerId] = buildProviderConfigForOnboard({
+    existingProvider: params.providerState.existingProvider,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    mergedModels: params.mergedModels,
+    fallbackModels: params.fallbackModels,
+  });
+  return applyOnboardAuthAgentModelsAndProviders(cfg, {
+    agentModels: params.agentModels,
+    providers: params.providerState.providers,
+  });
+}
+
+function applyProviderConfigWithDefaultModels(cfg = {}, params = {}) {
+  const providerState = resolveProviderModelMergeStateForOnboard(cfg, params.providerId);
+  const defaultModels = params.defaultModels || [];
+  const defaultModelId = params.defaultModelId || (defaultModels[0] && defaultModels[0].id);
+  const hasDefaultModel = defaultModelId
+    ? providerState.existingModels.some((model) => model && model.id === defaultModelId)
+    : true;
+  const mergedModels =
+    providerState.existingModels.length > 0
+      ? hasDefaultModel || defaultModels.length === 0
+        ? providerState.existingModels
+        : [...providerState.existingModels, ...defaultModels]
+      : defaultModels;
+  return applyProviderConfigWithMergedModelsForOnboard(cfg, {
+    agentModels: params.agentModels || {},
+    providerId: params.providerId,
+    providerState,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    mergedModels,
+    fallbackModels: defaultModels,
+  });
+}
+
+function applyProviderConfigWithDefaultModel(cfg = {}, params = {}) {
+  return applyProviderConfigWithDefaultModels(cfg, {
+    agentModels: params.agentModels || {},
+    providerId: params.providerId,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    defaultModels: params.defaultModel ? [params.defaultModel] : [],
+    defaultModelId:
+      params.defaultModelId || (params.defaultModel && params.defaultModel.id),
+  });
+}
+
+function applyProviderConfigWithDefaultModelPreset(cfg = {}, params = {}) {
+  const next = applyProviderConfigWithDefaultModel(cfg, {
+    agentModels: withAgentModelAliases(
+      cfg.agents && cfg.agents.defaults && cfg.agents.defaults.models,
+      params.aliases || [],
+    ),
+    providerId: params.providerId,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    defaultModel: params.defaultModel,
+    defaultModelId: params.defaultModelId,
+  });
+  return params.primaryModelRef
+    ? applyAgentDefaultModelPrimary(next, params.primaryModelRef)
+    : next;
+}
+
+function applyProviderConfigWithDefaultModelsPreset(cfg = {}, params = {}) {
+  const next = applyProviderConfigWithDefaultModels(cfg, {
+    agentModels: withAgentModelAliases(
+      cfg.agents && cfg.agents.defaults && cfg.agents.defaults.models,
+      params.aliases || [],
+    ),
+    providerId: params.providerId,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    defaultModels: params.defaultModels || [],
+    defaultModelId: params.defaultModelId,
+  });
+  return params.primaryModelRef
+    ? applyAgentDefaultModelPrimary(next, params.primaryModelRef)
+    : next;
+}
+
+function applyProviderConfigWithModelCatalog(cfg = {}, params = {}) {
+  const providerState = resolveProviderModelMergeStateForOnboard(cfg, params.providerId);
+  const catalogModels = params.catalogModels || [];
+  const mergedModels =
+    providerState.existingModels.length > 0
+      ? [
+          ...providerState.existingModels,
+          ...catalogModels.filter(
+            (model) =>
+              !providerState.existingModels.some(
+                (existing) => existing && model && existing.id === model.id,
+              ),
+          ),
+        ]
+      : catalogModels;
+  return applyProviderConfigWithMergedModelsForOnboard(cfg, {
+    agentModels: params.agentModels || {},
+    providerId: params.providerId,
+    providerState,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    mergedModels,
+    fallbackModels: catalogModels,
+  });
+}
+
+function applyProviderConfigWithModelCatalogPreset(cfg = {}, params = {}) {
+  const next = applyProviderConfigWithModelCatalog(cfg, {
+    agentModels: withAgentModelAliases(
+      cfg.agents && cfg.agents.defaults && cfg.agents.defaults.models,
+      params.aliases || [],
+    ),
+    providerId: params.providerId,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    catalogModels: params.catalogModels || [],
+  });
+  return params.primaryModelRef
+    ? applyAgentDefaultModelPrimary(next, params.primaryModelRef)
+    : next;
+}
+
+function createProviderPresetAppliers(params) {
+  return {
+    applyProviderConfig(cfg, ...args) {
+      const resolved = params.resolveParams(cfg, ...args);
+      return resolved ? params.applyPreset(cfg, resolved) : cfg;
+    },
+    applyConfig(cfg, ...args) {
+      const resolved = params.resolveParams(cfg, ...args);
+      if (!resolved) {
+        return cfg;
+      }
+      return params.applyPreset(cfg, {
+        ...resolved,
+        primaryModelRef: params.primaryModelRef,
+      });
+    },
+  };
+}
+
+function createDefaultModelPresetAppliers(params) {
+  return createProviderPresetAppliers({
+    resolveParams: params.resolveParams,
+    applyPreset: applyProviderConfigWithDefaultModelPreset,
+    primaryModelRef: params.primaryModelRef,
+  });
+}
+
+function createDefaultModelsPresetAppliers(params) {
+  return createProviderPresetAppliers({
+    resolveParams: params.resolveParams,
+    applyPreset: applyProviderConfigWithDefaultModelsPreset,
+    primaryModelRef: params.primaryModelRef,
+  });
+}
+
+function createModelCatalogPresetAppliers(params) {
+  return createProviderPresetAppliers({
+    resolveParams: params.resolveParams,
+    applyPreset: applyProviderConfigWithModelCatalogPreset,
+    primaryModelRef: params.primaryModelRef,
+  });
+}
+
+function modelKeyForOnboard(provider, model) {
+  const providerId = normalizeOptionalString(provider) || "";
+  const modelId = normalizeOptionalString(model) || "";
+  if (!providerId) {
+    return modelId;
+  }
+  if (!modelId) {
+    return providerId;
+  }
+  return normalizeLowercaseStringOrEmpty(modelId).startsWith(
+    `${normalizeLowercaseStringOrEmpty(providerId)}/`,
+  )
+    ? modelId
+    : `${providerId}/${modelId}`;
+}
+
+function resolveStaticAllowlistModelKeyForOnboard(raw, defaultProvider = "openai") {
+  const trimmed = normalizeOptionalString(raw);
+  if (!trimmed) {
+    return null;
+  }
+  const slash = trimmed.indexOf("/");
+  const providerRaw =
+    slash === -1 ? defaultProvider : normalizeOptionalString(trimmed.slice(0, slash));
+  const modelRaw = slash === -1 ? trimmed : normalizeOptionalString(trimmed.slice(slash + 1));
+  if (!providerRaw || !modelRaw) {
+    return null;
+  }
+  return modelKeyForOnboard(normalizeProviderId(providerRaw), modelRaw);
+}
+
+function ensureModelAllowlistEntry(params = {}) {
+  const cfg = params.cfg || {};
+  const rawModelRef = normalizeOptionalString(params.modelRef);
+  if (!rawModelRef) {
+    return cfg;
+  }
+  const agents = cfg.agents || {};
+  const defaults = agents.defaults || {};
+  const models = { ...(defaults.models || {}) };
+  const keySet = new Set([rawModelRef]);
+  const canonicalKey = resolveStaticAllowlistModelKeyForOnboard(
+    rawModelRef,
+    params.defaultProvider || "openai",
+  );
+  if (canonicalKey) {
+    keySet.add(canonicalKey);
+  }
+  for (const key of keySet) {
+    models[key] = {
+      ...models[key],
+    };
+  }
+  return {
+    ...cfg,
+    agents: {
+      ...agents,
+      defaults: {
+        ...defaults,
+        models,
+      },
+    },
+  };
+}
+
+const providerOnboardRuntime = {
+  OPENCODE_ZEN_DEFAULT_MODEL,
+  applyAgentDefaultModelPrimary,
+  applyOnboardAuthAgentModelsAndProviders,
+  applyOpencodeZenModelDefault,
+  applyProviderConfigWithDefaultModel,
+  applyProviderConfigWithDefaultModelPreset,
+  applyProviderConfigWithDefaultModels,
+  applyProviderConfigWithDefaultModelsPreset,
+  applyProviderConfigWithModelCatalog,
+  applyProviderConfigWithModelCatalogPreset,
+  createDefaultModelPresetAppliers,
+  createDefaultModelsPresetAppliers,
+  createModelCatalogPresetAppliers,
+  ensureModelAllowlistEntry,
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+  withAgentModelAliases,
+};
+
 const providerEntryRuntime = {
   buildSingleProviderApiKeyCatalog,
   createProviderApiKeyAuthMethod,
@@ -68617,6 +69008,7 @@ const genericSdk = new Proxy(
     ...providerModelSharedRuntime,
     ...providerCatalogSharedRuntime,
     ...providerCatalogRuntime,
+    ...providerOnboardRuntime,
     ...providerEntryRuntime,
     ...providerEnableConfigRuntime,
     ...providerWebFetchContractRuntime,
@@ -69278,6 +69670,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-catalog-runtime"
   ) {
     return providerCatalogRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-onboard" ||
+    request === "@openclaw/plugin-sdk/provider-onboard"
+  ) {
+    return providerOnboardRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-entry" ||
