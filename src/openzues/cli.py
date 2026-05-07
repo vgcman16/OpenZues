@@ -61229,6 +61229,346 @@ const testEnvRuntime = {
   withTempHome,
 };
 
+function createCliRuntimeCapture() {
+  const runtimeLogs = [];
+  const runtimeErrors = [];
+  const stringifyArgs = (args) => args.map((value) => String(value)).join(" ");
+  const defaultRuntime = {};
+  defaultRuntime.log = createChannelTestMockFn((...args) => {
+    runtimeLogs.push(stringifyArgs(args));
+  });
+  defaultRuntime.error = createChannelTestMockFn((...args) => {
+    runtimeErrors.push(stringifyArgs(args));
+  });
+  defaultRuntime.writeStdout = createChannelTestMockFn((value) => {
+    defaultRuntime.log(String(value || "").replace(/\n$/u, ""));
+  });
+  defaultRuntime.writeJson = createChannelTestMockFn((value, space = 2) => {
+    defaultRuntime.log(JSON.stringify(value, null, space > 0 ? space : undefined));
+  });
+  defaultRuntime.exit = createChannelTestMockFn((code) => {
+    throw new Error(`__exit__:${code}`);
+  });
+  return {
+    runtimeLogs,
+    runtimeErrors,
+    defaultRuntime,
+    resetRuntimeCapture: () => {
+      runtimeLogs.length = 0;
+      runtimeErrors.length = 0;
+    },
+  };
+}
+
+function createRuntimeSpy(runtime, methodName) {
+  const previous = runtime[methodName];
+  const spy = createChannelTestMockFn(() => undefined);
+  spy.mockRestore = () => {
+    runtime[methodName] = previous;
+  };
+  runtime[methodName] = spy;
+  return spy;
+}
+
+function spyRuntimeLogs(runtime) {
+  return createRuntimeSpy(runtime, "log");
+}
+
+function spyRuntimeErrors(runtime) {
+  return createRuntimeSpy(runtime, "error");
+}
+
+function spyRuntimeJson(runtime) {
+  return createRuntimeSpy(runtime, "writeJson");
+}
+
+function firstWrittenJsonArg(writeJson) {
+  return (writeJson.mock && writeJson.mock.calls[0] && writeJson.mock.calls[0][0]) || null;
+}
+
+function createSandboxTestContext(params = {}) {
+  const overrides = params.overrides || {};
+  const docker = {
+    image: "openclaw-sandbox:bookworm-slim",
+    containerPrefix: "openclaw-sbx-",
+    network: "none",
+    user: "1000:1000",
+    workdir: "/workspace",
+    readOnlyRoot: false,
+    tmpfs: [],
+    capDrop: [],
+    seccompProfile: "",
+    apparmorProfile: "",
+    setupCommand: "",
+    binds: [],
+    dns: [],
+    extraHosts: [],
+    pidsLimit: 0,
+    ...(overrides.docker || {}),
+    ...(params.dockerOverrides || {}),
+  };
+  const { docker: _ignoredDocker, ...sandboxOverrides } = overrides;
+  return {
+    enabled: true,
+    backendId: "docker",
+    sessionKey: "sandbox:test",
+    workspaceDir: "/tmp/workspace",
+    agentWorkspaceDir: "/tmp/workspace",
+    workspaceAccess: "rw",
+    runtimeId: "openclaw-sbx-test",
+    runtimeLabel: "openclaw-sbx-test",
+    containerName: "openclaw-sbx-test",
+    containerWorkdir: "/workspace",
+    tools: { allow: ["*"], deny: [] },
+    browserAllowHostControl: false,
+    ...sandboxOverrides,
+    docker,
+  };
+}
+
+function createSandboxBrowserConfig(overrides = {}) {
+  return {
+    enabled: false,
+    image: "openclaw-browser",
+    containerPrefix: "openclaw-browser-",
+    network: "bridge",
+    cdpPort: 9222,
+    vncPort: 5900,
+    noVncPort: 6080,
+    headless: true,
+    enableNoVnc: false,
+    allowHostControl: false,
+    autoStart: false,
+    autoStartTimeoutMs: 1000,
+    ...overrides,
+  };
+}
+
+function createSandboxPruneConfig(overrides = {}) {
+  return {
+    idleHours: 24,
+    maxAgeDays: 7,
+    ...overrides,
+  };
+}
+
+function createSandboxSshConfig(workspaceRoot, overrides = {}) {
+  return {
+    command: "ssh",
+    workspaceRoot,
+    strictHostKeyChecking: true,
+    updateHostKeys: true,
+    ...overrides,
+  };
+}
+
+async function writeSkill(params = {}) {
+  const frontmatter = [
+    `name: ${params.name}`,
+    `description: ${params.description}`,
+    params.metadata ? `metadata: ${params.metadata}` : "",
+    params.frontmatterExtra || "",
+  ]
+    .filter((line) => line.trim().length > 0)
+    .join("\n");
+  await fs.promises.mkdir(params.dir, { recursive: true });
+  await fs.promises.writeFile(
+    path.join(params.dir, "SKILL.md"),
+    `---\n${frontmatter}\n---\n\n${params.body || `# ${params.name}\n`}`,
+    "utf8",
+  );
+}
+
+function castAgentMessage(message) {
+  return message;
+}
+
+function makeAgentUserMessage(overrides = {}) {
+  return {
+    role: "user",
+    timestamp: 0,
+    ...overrides,
+  };
+}
+
+const ZERO_USAGE_FIXTURE = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+};
+
+function makeAgentAssistantMessage(overrides = {}) {
+  return {
+    role: "assistant",
+    api: "openai-responses",
+    provider: "openai",
+    model: "test-model",
+    usage: ZERO_USAGE_FIXTURE,
+    stopReason: "stop",
+    timestamp: 0,
+    ...overrides,
+  };
+}
+
+const testFixtureSystemEvents = new Map();
+
+function peekTestFixtureSystemEvents(sessionKey) {
+  return [...(testFixtureSystemEvents.get(sessionKey) || [])];
+}
+
+function resetTestFixtureSystemEventsForTest() {
+  testFixtureSystemEvents.clear();
+}
+
+function sanitizeTerminalText(input) {
+  const stripped = String(input || "").replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
+  return stripped
+    .replace(/\r/gu, "\\r")
+    .replace(/\n/gu, "\\n")
+    .replace(/\t/gu, "\\t")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/gu, "");
+}
+
+function countLines(text) {
+  return String(text || "").split("\n").length;
+}
+
+function hasBalancedFences(chunk) {
+  let open = null;
+  for (const line of String(chunk || "").split("\n")) {
+    const match = line.match(/^( {0,3})(`{3,}|~{3,})(.*)$/u);
+    if (!match) {
+      continue;
+    }
+    const marker = match[2];
+    if (!open) {
+      open = { markerChar: marker[0], markerLen: marker.length };
+      continue;
+    }
+    if (open.markerChar === marker[0] && marker.length >= open.markerLen) {
+      open = null;
+    }
+  }
+  return open === null;
+}
+
+function expectGeneratedTokenPersistedToGatewayAuth(params = {}) {
+  providerTestAssert(
+    /^[0-9a-f]{48}$/u.test(params.generatedToken || ""),
+    "generated token must be 48 hex chars",
+  );
+  providerTestAssertEqual(params.authToken, params.generatedToken, "auth token");
+  providerTestAssertEqual(
+    params.persistedConfig?.gateway?.auth?.mode,
+    "token",
+    "gateway auth mode",
+  );
+  providerTestAssertEqual(
+    params.persistedConfig?.gateway?.auth?.token,
+    params.generatedToken,
+    "gateway auth token",
+  );
+}
+
+function typedCases(cases) {
+  return cases;
+}
+
+const BUNDLED_PLUGIN_ROOT_DIR = "extensions";
+const BUNDLED_PLUGIN_PATH_PREFIX = `${BUNDLED_PLUGIN_ROOT_DIR}/`;
+const BUNDLED_PLUGIN_TEST_GLOB = `${BUNDLED_PLUGIN_ROOT_DIR}/**/*.test.ts`;
+
+function bundledPluginRoot(pluginId) {
+  return `${BUNDLED_PLUGIN_PATH_PREFIX}${pluginId}`;
+}
+
+function bundledPluginFile(pluginId, relativePath) {
+  return `${bundledPluginRoot(pluginId)}/${relativePath}`;
+}
+
+function joinRoot(baseDir, relativePath) {
+  return `${String(baseDir || "").replace(/\/$/u, "")}/${relativePath}`;
+}
+
+function bundledPluginDirPrefix(pluginId, relativeDir) {
+  return `${bundledPluginRoot(pluginId)}/${String(relativeDir || "").replace(/\/$/u, "")}/`;
+}
+
+function bundledPluginRootAt(baseDir, pluginId) {
+  return joinRoot(baseDir, bundledPluginRoot(pluginId));
+}
+
+function bundledPluginFileAt(baseDir, pluginId, relativePath) {
+  return joinRoot(baseDir, bundledPluginFile(pluginId, relativePath));
+}
+
+function bundledDistPluginRoot(pluginId) {
+  return `dist/${bundledPluginRoot(pluginId)}`;
+}
+
+function bundledDistPluginFile(pluginId, relativePath) {
+  return `${bundledDistPluginRoot(pluginId)}/${relativePath}`;
+}
+
+function bundledDistPluginRootAt(baseDir, pluginId) {
+  return joinRoot(baseDir, bundledDistPluginRoot(pluginId));
+}
+
+function bundledDistPluginFileAt(baseDir, pluginId, relativePath) {
+  return joinRoot(baseDir, bundledDistPluginFile(pluginId, relativePath));
+}
+
+function installedPluginRoot(baseDir, pluginId) {
+  return bundledPluginRootAt(baseDir, pluginId);
+}
+
+function repoInstallSpec(pluginId) {
+  return `./${bundledPluginRoot(pluginId)}`;
+}
+
+async function importFreshModule(from, specifier) {
+  return await import(new URL(specifier, from).href);
+}
+
+const testFixturesRuntime = {
+  BUNDLED_PLUGIN_PATH_PREFIX,
+  BUNDLED_PLUGIN_ROOT_DIR,
+  BUNDLED_PLUGIN_TEST_GLOB,
+  bundledDistPluginFile,
+  bundledDistPluginFileAt,
+  bundledDistPluginRoot,
+  bundledDistPluginRootAt,
+  bundledPluginDirPrefix,
+  bundledPluginFile,
+  bundledPluginFileAt,
+  bundledPluginRoot,
+  bundledPluginRootAt,
+  castAgentMessage,
+  countLines,
+  createCliRuntimeCapture,
+  createSandboxBrowserConfig,
+  createSandboxPruneConfig,
+  createSandboxSshConfig,
+  createSandboxTestContext,
+  expectGeneratedTokenPersistedToGatewayAuth,
+  firstWrittenJsonArg,
+  hasBalancedFences,
+  importFreshModule,
+  installedPluginRoot,
+  makeAgentAssistantMessage,
+  makeAgentUserMessage,
+  peekSystemEvents: peekTestFixtureSystemEvents,
+  repoInstallSpec,
+  resetSystemEventsForTest: resetTestFixtureSystemEventsForTest,
+  sanitizeTerminalText,
+  spyRuntimeErrors,
+  spyRuntimeJson,
+  spyRuntimeLogs,
+  typedCases,
+  writeSkill,
+};
+
 function applyChannelMatchMeta(result, match = {}) {
   if (match.matchKey && match.matchSource) {
     result.matchKey = match.matchKey;
@@ -80000,6 +80340,7 @@ const genericSdk = new Proxy(
     ...pluginTestRuntimeRuntime,
     ...providerTestContractsRuntime,
     ...testEnvRuntime,
+    ...testFixturesRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
@@ -82080,6 +82421,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/test-env"
   ) {
     return testEnvRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-fixtures" ||
+    request === "@openclaw/plugin-sdk/test-fixtures"
+  ) {
+    return testFixturesRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||

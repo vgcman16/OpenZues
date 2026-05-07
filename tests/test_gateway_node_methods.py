@@ -33422,6 +33422,313 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_fixtures_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-test-fixtures.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+const fixtures = require("openclaw/plugin-sdk/test-fixtures");
+const scopedFixtures = require("@openclaw/plugin-sdk/test-fixtures");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_fixtures",
+      description: "Use OpenClaw test-fixtures SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const capture = fixtures.createCliRuntimeCapture();
+        capture.defaultRuntime.log("hello", "world");
+        capture.defaultRuntime.error("bad");
+        capture.defaultRuntime.writeStdout("stdout\\n");
+        capture.defaultRuntime.writeJson({ ok: true }, 0);
+        let exitError = "";
+        try {
+          capture.defaultRuntime.exit(7);
+        } catch (error) {
+          exitError = error.message;
+        }
+        const firstJson = fixtures.firstWrittenJsonArg(
+          capture.defaultRuntime.writeJson
+        );
+        const logSpy = fixtures.spyRuntimeLogs(capture.defaultRuntime);
+        capture.defaultRuntime.log("hidden");
+        logSpy.mockRestore();
+        const errorSpy = fixtures.spyRuntimeErrors(capture.defaultRuntime);
+        capture.defaultRuntime.error("hidden-error");
+        errorSpy.mockRestore();
+        const jsonSpy = fixtures.spyRuntimeJson(capture.defaultRuntime);
+        capture.defaultRuntime.writeJson({ hidden: true });
+        jsonSpy.mockRestore();
+        const beforeReset = {
+          logs: [...capture.runtimeLogs],
+          errors: [...capture.runtimeErrors],
+          logSpyCalls: logSpy.mock.calls.length,
+          errorSpyCalls: errorSpy.mock.calls.length,
+          jsonSpyCalls: jsonSpy.mock.calls.length
+        };
+        capture.resetRuntimeCapture();
+
+        const sandbox = fixtures.createSandboxTestContext({
+          overrides: { sessionKey: "sandbox:custom" },
+          dockerOverrides: { network: "bridge" }
+        });
+        const browser = fixtures.createSandboxBrowserConfig({
+          enabled: true,
+          cdpPort: 9333
+        });
+        const prune = fixtures.createSandboxPruneConfig({ idleHours: 12 });
+        const ssh = fixtures.createSandboxSshConfig("C:/repo", {
+          command: "plink"
+        });
+        const userMessage = fixtures.makeAgentUserMessage({ content: "hi" });
+        const assistantMessage = fixtures.makeAgentAssistantMessage({
+          content: [{ type: "text", text: "ok" }]
+        });
+        const castMessage = fixtures.castAgentMessage({ role: "tool" });
+        fixtures.resetSystemEventsForTest();
+        const systemEvents = fixtures.peekSystemEvents("agent:main:main");
+        const terminal = fixtures.sanitizeTerminalText("a\\n\\t\\u001b[31mb");
+        const cases = fixtures.typedCases([{ id: "a" }, { id: "b" }]);
+        const token = "a".repeat(48);
+        fixtures.expectGeneratedTokenPersistedToGatewayAuth({
+          generatedToken: token,
+          authToken: token,
+          persistedConfig: { gateway: { auth: { mode: "token", token } } }
+        });
+        const skillDir = path.join(__dirname, "fixture-skill");
+        await fixtures.writeSkill({
+          dir: skillDir,
+          name: "demo-skill",
+          description: "Demo skill",
+          body: "# Demo\\n"
+        });
+        const freshPath = path.join(__dirname, "fresh-module.mjs");
+        fs.writeFileSync(freshPath, "export const value = 42;\\n", "utf8");
+        const fresh = await fixtures.importFreshModule(
+          pathToFileURL(__filename).href,
+          "./fresh-module.mjs"
+        );
+
+        return {
+          keys: Object.keys(fixtures).sort(),
+          scopedSame:
+            scopedFixtures.createCliRuntimeCapture ===
+            fixtures.createCliRuntimeCapture,
+          capture: {
+            firstJson,
+            exitError,
+            beforeReset,
+            afterReset: {
+              logs: capture.runtimeLogs.length,
+              errors: capture.runtimeErrors.length
+            }
+          },
+          sandbox: {
+            context: {
+              enabled: sandbox.enabled,
+              sessionKey: sandbox.sessionKey,
+              dockerNetwork: sandbox.docker.network
+            },
+            browser: {
+              enabled: browser.enabled,
+              cdpPort: browser.cdpPort
+            },
+            prune,
+            ssh
+          },
+          messages: {
+            userMessage,
+            assistantMessage,
+            castMessage
+          },
+          misc: {
+            systemEvents,
+            terminal,
+            countLines: fixtures.countLines("a\\nb\\n"),
+            balanced: [
+              fixtures.hasBalancedFences("```\\ncode\\n```"),
+              fixtures.hasBalancedFences("```\\ncode")
+            ],
+            cases,
+            skillExists: fs.existsSync(path.join(skillDir, "SKILL.md")),
+            freshValue: fresh.value
+          },
+          paths: {
+            rootDir: fixtures.BUNDLED_PLUGIN_ROOT_DIR,
+            prefix: fixtures.BUNDLED_PLUGIN_PATH_PREFIX,
+            glob: fixtures.BUNDLED_PLUGIN_TEST_GLOB,
+            root: fixtures.bundledPluginRoot("slack"),
+            file: fixtures.bundledPluginFile("slack", "api.js"),
+            dirPrefix: fixtures.bundledPluginDirPrefix("slack", "src"),
+            rootAt: fixtures.bundledPluginRootAt("repo", "slack"),
+            fileAt: fixtures.bundledPluginFileAt("repo", "slack", "api.js"),
+            distRoot: fixtures.bundledDistPluginRoot("slack"),
+            distFile: fixtures.bundledDistPluginFile("slack", "api.js"),
+            distRootAt: fixtures.bundledDistPluginRootAt("repo", "slack"),
+            distFileAt: fixtures.bundledDistPluginFileAt(
+              "repo",
+              "slack",
+              "api.js"
+            ),
+            installed: fixtures.installedPluginRoot("repo", "slack"),
+            installSpec: fixtures.repoInstallSpec("slack")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-fixtures-plugin",
+                    "name": "Runtime Test Fixtures Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-test-fixtures.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_fixtures"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.test_fixtures"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "BUNDLED_PLUGIN_PATH_PREFIX",
+        "BUNDLED_PLUGIN_ROOT_DIR",
+        "BUNDLED_PLUGIN_TEST_GLOB",
+        "bundledDistPluginFile",
+        "bundledDistPluginFileAt",
+        "bundledDistPluginRoot",
+        "bundledDistPluginRootAt",
+        "bundledPluginDirPrefix",
+        "bundledPluginFile",
+        "bundledPluginFileAt",
+        "bundledPluginRoot",
+        "bundledPluginRootAt",
+        "castAgentMessage",
+        "countLines",
+        "createCliRuntimeCapture",
+        "createSandboxBrowserConfig",
+        "createSandboxPruneConfig",
+        "createSandboxSshConfig",
+        "createSandboxTestContext",
+        "expectGeneratedTokenPersistedToGatewayAuth",
+        "firstWrittenJsonArg",
+        "hasBalancedFences",
+        "importFreshModule",
+        "installedPluginRoot",
+        "makeAgentAssistantMessage",
+        "makeAgentUserMessage",
+        "peekSystemEvents",
+        "repoInstallSpec",
+        "resetSystemEventsForTest",
+        "sanitizeTerminalText",
+        "spyRuntimeErrors",
+        "spyRuntimeJson",
+        "spyRuntimeLogs",
+        "typedCases",
+        "writeSkill",
+    ]
+    assert result["scopedSame"] is True
+    assert result["capture"]["firstJson"] == {"ok": True}
+    assert result["capture"]["exitError"] == "__exit__:7"
+    assert result["capture"]["beforeReset"]["logs"][:3] == [
+        "hello world",
+        "stdout",
+        '{"ok":true}',
+    ]
+    assert result["capture"]["beforeReset"]["errors"] == ["bad"]
+    assert result["capture"]["beforeReset"]["logSpyCalls"] == 1
+    assert result["capture"]["beforeReset"]["errorSpyCalls"] == 1
+    assert result["capture"]["beforeReset"]["jsonSpyCalls"] == 1
+    assert result["capture"]["afterReset"] == {"logs": 0, "errors": 0}
+    assert result["sandbox"]["context"] == {
+        "enabled": True,
+        "sessionKey": "sandbox:custom",
+        "dockerNetwork": "bridge",
+    }
+    assert result["sandbox"]["browser"] == {"enabled": True, "cdpPort": 9333}
+    assert result["sandbox"]["prune"]["idleHours"] == 12
+    assert result["sandbox"]["ssh"]["command"] == "plink"
+    assert result["messages"]["userMessage"]["role"] == "user"
+    assert result["messages"]["assistantMessage"]["role"] == "assistant"
+    assert result["messages"]["assistantMessage"]["usage"] == {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+    }
+    assert result["messages"]["castMessage"] == {"role": "tool"}
+    assert result["misc"] == {
+        "systemEvents": [],
+        "terminal": "a\\n\\tb",
+        "countLines": 3,
+        "balanced": [True, False],
+        "cases": [{"id": "a"}, {"id": "b"}],
+        "skillExists": True,
+        "freshValue": 42,
+    }
+    assert result["paths"] == {
+        "rootDir": "extensions",
+        "prefix": "extensions/",
+        "glob": "extensions/**/*.test.ts",
+        "root": "extensions/slack",
+        "file": "extensions/slack/api.js",
+        "dirPrefix": "extensions/slack/src/",
+        "rootAt": "repo/extensions/slack",
+        "fileAt": "repo/extensions/slack/api.js",
+        "distRoot": "dist/extensions/slack",
+        "distFile": "dist/extensions/slack/api.js",
+        "distRootAt": "repo/dist/extensions/slack",
+        "distFileAt": "repo/dist/extensions/slack/api.js",
+        "installed": "repo/extensions/slack",
+        "installSpec": "./extensions/slack",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:
