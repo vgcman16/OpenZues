@@ -52,6 +52,10 @@ The imported `agent-runtime` tool bridge SDK helper coverage from
 `src/plugin-sdk/agent-runtime.ts`, `src/agents/tools/common.ts`, and
 `src/tools/*` descriptor/availability/planning/protocol helpers is verified in
 `01653787` and counted with the plugin/extension system row above.
+The imported `agent-runtime` facade utility coverage from model-auth markers,
+sandbox paths, identity-avatar public source projection, and simple-completion
+selection helpers is verified in `a6d70a6f` and counted with the
+plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
