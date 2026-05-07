@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-06.
-- Estimated repo-wide parity: ~91.4% overall, with a reasonable band of ~79-91%.
+- Estimated repo-wide parity: ~91.5% overall, with a reasonable band of ~79-92%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -3403,10 +3403,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 ## Current Queue Head
 
-- The private workspace package `@openclaw/memory-host-sdk` facade subpaths for
-  `query`, `multimodal`, `secret`, and `status` now resolve in native
-  installed plugin runtimes; the broader plugin SDK helper queue continues with
-  `speech-core`.
+- Imported OpenClaw plugin runtime entries now have the `speech-core` SDK
+  subpath for TTS helper behavior; the broader plugin SDK helper queue
+  continues with `video-generation-core`.
 - Browser command productization is now effectively closed for the current installed-command queue, with persistent proxy/profile mutation left intentionally guarded.
 - Cron expression schedules now create, update, list, compute due state, and launch through `cron.run mode=due`; richer upstream cron runtime semantics such as full Croner expression breadth and persisted scheduler error telemetry remain future hardening.
 - `agents.files.*` now covers OpenClaw bootstrap and memory filenames (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, `memory.md`) while retaining the existing OpenZues `.codex/AGENTS.md` path.
@@ -15701,7 +15700,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `@openclaw/memory-host-sdk/query`, `multimodal`, `secret`, and `status` to
   the same native helper shims used by the plugin SDK compatibility paths. This
   closes `OZ-PLUGIN-001ZU`; repo-wide parity is now estimated at ~91.4%.
-  Remaining plugin SDK breadth continues with `speech-core`.
+  The next plugin SDK breadth slice moved to `speech-core`.
 - Verified the memory-host-sdk package facade slice with
   `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_memory_host_sdk_facade_helpers -q`
   (`1 passed`), adjacent SDK helper proof
@@ -15712,6 +15711,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `c95e0129`.
+- Imported OpenClaw plugin runtime entries now have the `speech-core` SDK
+  subpath from `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers,
+  and `src/agents/provider-http-errors.ts`. The native shim covers TTS
+  normalization, directive parsing, effective config merging, provider id
+  helpers, provider HTTP error helpers, response text limiting, cleanup
+  scheduling, and `summarizeText` invalid-range/unavailable behavior. This
+  closes `OZ-PLUGIN-001ZV`; repo-wide parity is now estimated at ~91.5%.
+  Remaining plugin SDK breadth continues with `video-generation-core`.
+- Verified the speech-core slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_speech_core_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "speech_core or image_generation_core_auth or telegram_command_config"`
+  (`3 passed, 1016 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`207 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `ff03eba7`.
 
 ## References
 
