@@ -41984,6 +41984,32 @@ const providerUsageRuntime = {
   resolveLegacyPiAgentAccessToken,
 };
 
+function extractToolSend(args = {}, expectedAction = "sendMessage") {
+  const action = readStringValue(args.action) ? readStringValue(args.action).trim() : "";
+  if (action !== expectedAction) {
+    return null;
+  }
+  const to = readStringValue(args.to);
+  if (!to) {
+    return null;
+  }
+  const accountId = readStringValue(args.accountId)
+    ? readStringValue(args.accountId).trim()
+    : undefined;
+  const threadIdRaw =
+    typeof args.threadId === "number"
+      ? String(args.threadId)
+      : readStringValue(args.threadId)
+        ? readStringValue(args.threadId).trim()
+        : "";
+  const threadId = threadIdRaw.length > 0 ? threadIdRaw : undefined;
+  return { to, accountId, threadId };
+}
+
+const toolSendRuntime = {
+  extractToolSend,
+};
+
 const providerEntryRuntime = {
   buildSingleProviderApiKeyCatalog,
   createProviderApiKeyAuthMethod,
@@ -69884,6 +69910,7 @@ const genericSdk = new Proxy(
     ...providerCatalogRuntime,
     ...providerOnboardRuntime,
     ...providerUsageRuntime,
+    ...toolSendRuntime,
     ...providerEntryRuntime,
     ...providerEnableConfigRuntime,
     ...providerWebFetchContractRuntime,
@@ -71834,6 +71861,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/tool-payload"
   ) {
     return toolPayloadRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/tool-send" ||
+    request === "@openclaw/plugin-sdk/tool-send"
+  ) {
+    return toolSendRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/boolean-param" ||

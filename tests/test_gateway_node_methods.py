@@ -56537,6 +56537,116 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_tool_send_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-tool-send.cjs"
+    runtime_entry.write_text(
+        """
+const toolSend = require("openclaw/plugin-sdk/tool-send");
+const scopedToolSend = require("@openclaw/plugin-sdk/tool-send");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.tool_send",
+      description: "Use OpenClaw tool-send SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(toolSend).sort(),
+          scopedType: typeof scopedToolSend.extractToolSend,
+          basic: toolSend.extractToolSend({
+            action: "sendMessage",
+            to: " user-1 ",
+            accountId: " acct-1 ",
+            threadId: 42
+          }),
+          customAction: toolSend.extractToolSend({
+            action: "publish",
+            to: "room-1",
+            threadId: " thread-1 "
+          }, "publish"),
+          emptyOptionalStrings: toolSend.extractToolSend({
+            action: "sendMessage",
+            to: "room-2",
+            accountId: "   ",
+            threadId: "   "
+          }),
+          wrongAction: toolSend.extractToolSend({
+            action: "react",
+            to: "room-3"
+          }) ?? null,
+          missingTo: toolSend.extractToolSend({
+            action: "sendMessage"
+          }) ?? null
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-tool-send-plugin",
+                    "name": "Runtime Tool Send Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-tool-send-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.tool_send"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.tool_send"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["extractToolSend"],
+        "scopedType": "function",
+        "basic": {"to": " user-1 ", "accountId": "acct-1", "threadId": "42"},
+        "customAction": {"to": "room-1", "threadId": "thread-1"},
+        "emptyOptionalStrings": {"to": "room-2", "accountId": ""},
+        "wrongAction": None,
+        "missingTo": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_actions_helpers(
     tmp_path,
 ) -> None:
