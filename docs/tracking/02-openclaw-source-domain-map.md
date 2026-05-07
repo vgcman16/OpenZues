@@ -103,6 +103,9 @@ The imported `media-understanding` SDK provider-helper coverage from
 `src/media-understanding/openai-compatible-audio.ts`, and
 `src/media-understanding/shared.ts` is verified in `4a383013` and is counted
 with the plugin/extension system row above.
+The imported `messaging-targets` SDK helper coverage from
+`src/plugin-sdk/messaging-targets.ts` and `src/channels/targets.ts` is verified
+in `cd85f7f5` and is counted with the plugin/extension system row above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -257,6 +260,8 @@ and `src/image-generation/runtime.ts` is checkpointed in `719fcee8`.
 `src/media-understanding/openai-compatible-video.ts`,
 `src/media-understanding/openai-compatible-audio.ts`, and
 `src/media-understanding/shared.ts` is checkpointed in `4a383013`.
+`messaging-targets` from `src/plugin-sdk/messaging-targets.ts` and
+`src/channels/targets.ts` is checkpointed in `cd85f7f5`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
