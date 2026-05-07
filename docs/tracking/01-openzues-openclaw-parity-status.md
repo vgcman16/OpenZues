@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~98.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~98.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2268,6 +2268,17 @@ may lag behind this tracker.
   - Last verified: 2026-05-05, focused tool-payload proof (`1 passed`),
     adjacent plugin invoke proof (`22 passed, 803 deselected`), `ruff check`,
     and `mypy`.
+
+- [x] Imported plugin SDK tool-send shim.
+  - Source: `openclaw-main/src/plugin-sdk/tool-send.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `87450dcc`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused tool-send proof (`1 passed`),
+    adjacent SDK helper proof (`4 passed, 1080 deselected`), adjacent
+    imported-plugin proof (`272 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
 
 - [x] Imported plugin SDK account-core/account-resolution shim.
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
