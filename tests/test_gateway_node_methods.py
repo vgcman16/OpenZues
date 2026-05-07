@@ -38370,6 +38370,213 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_pi_embedded_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-pi-utils.cjs"
+    runtime_entry.write_text(
+        """
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+
+function message(content, extras = {}) {
+  return {
+    role: "assistant",
+    content,
+    stopReason: "stop",
+    ...extras
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_pi_utils",
+      description: "Use OpenClaw agent-runtime pi embedded helper exports",
+      parameters: { type: "object" },
+      execute() {
+        const visible = message([
+          {
+            type: "text",
+            text: "Working...",
+            textSignature: JSON.stringify({ v: 1, id: "commentary", phase: "commentary" })
+          },
+          {
+            type: "text",
+            text: "Done.",
+            textSignature: JSON.stringify({ v: 1, id: "final", phase: "final_answer" })
+          }
+        ]);
+        const thinkingMessage = message([
+          {
+            type: "thinking",
+            thinking: "",
+            thinkingSignature: JSON.stringify({ type: "reasoning", id: "rs_live" })
+          },
+          { type: "text", text: "Done." }
+        ]);
+        const promoted = message([
+          null,
+          { type: "text", text: "<antml:thinking>hidden</antml:thinking>Visible" }
+        ]);
+        agent.promoteThinkingTagsToBlocks(promoted);
+        return {
+          keys: Object.keys(agent).filter((key) => [
+            "extractAssistantText",
+            "extractAssistantThinking",
+            "extractAssistantVisibleText",
+            "extractThinkingFromTaggedStream",
+            "extractThinkingFromTaggedText",
+            "formatReasoningMessage",
+            "isAssistantMessage",
+            "promoteThinkingTagsToBlocks",
+            "splitThinkingTaggedText",
+            "stripDowngradedToolCallText",
+            "stripMinimaxToolCallXml",
+            "stripThinkingTagsFromText"
+          ].includes(key)).sort(),
+          assistant: {
+            yes: agent.isAssistantMessage({ role: "assistant" }),
+            no: agent.isAssistantMessage({ role: "user" })
+          },
+          text: {
+            normal: agent.extractAssistantText(message([
+              { type: "text", text: "This is fine." }
+            ])),
+            error: agent.extractAssistantText(message(
+              [{ type: "text", text: "500 Internal Server Error" }],
+              { stopReason: "error" }
+            )),
+            minimax: agent.extractAssistantText(message([
+              {
+                type: "text",
+                text: "Before<invoke name='Bash'>drop</invoke></minimax:tool_call>After"
+              }
+            ])),
+            visible: agent.extractAssistantVisibleText(visible)
+          },
+          thinking: {
+            native: agent.extractAssistantThinking(thinkingMessage),
+            formatted: agent.formatReasoningMessage("Line one\\n\\nLine two"),
+            stripped: agent.stripThinkingTagsFromText("A<antthinking>hidden</antthinking>B"),
+            extracted: agent.extractThinkingFromTaggedText("A<think>hidden</think>B"),
+            stream: agent.extractThinkingFromTaggedStream("prefix <think>partial"),
+            split: agent.splitThinkingTaggedText("<antml:thinking>hidden</antml:thinking>Visible"),
+            promoted: promoted.content
+          },
+          stripped: {
+            downgraded: agent.stripDowngradedToolCallText(
+              [
+                "Intro.\\n",
+                "[Tool Call: exec (ID: one)]\\n",
+                "Arguments: { \\"command\\": \\"ls\\" }\\n",
+                "After."
+              ].join("")
+            ),
+            minimaxDirect: agent.stripMinimaxToolCallXml(
+              "A<invoke name='Bash'>drop</invoke></minimax:tool_call>B"
+            )
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-pi-utils-plugin",
+                    "name": "Runtime Agent Pi Utils Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-pi-utils.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_pi_utils"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_pi_utils"})
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "extractAssistantText",
+        "extractAssistantThinking",
+        "extractAssistantVisibleText",
+        "extractThinkingFromTaggedStream",
+        "extractThinkingFromTaggedText",
+        "formatReasoningMessage",
+        "isAssistantMessage",
+        "promoteThinkingTagsToBlocks",
+        "splitThinkingTaggedText",
+        "stripDowngradedToolCallText",
+        "stripMinimaxToolCallXml",
+        "stripThinkingTagsFromText",
+    ]
+    assert result["assistant"] == {"yes": True, "no": False}
+    assert result["text"] == {
+        "normal": "This is fine.",
+        "error": "HTTP 500: Internal Server Error",
+        "minimax": "BeforeAfter",
+        "visible": "Done.",
+    }
+    assert result["thinking"] == {
+        "native": "Native reasoning was produced; no summary text was returned.",
+        "formatted": "Reasoning:\n_Line one_\n\n_Line two_",
+        "stripped": "AB",
+        "extracted": "hidden",
+        "stream": "partial",
+        "split": [
+            {"type": "thinking", "thinking": "hidden"},
+            {"type": "text", "text": "Visible"},
+        ],
+        "promoted": [
+            None,
+            {"type": "thinking", "thinking": "hidden"},
+            {"type": "text", "text": "Visible"},
+        ],
+    }
+    assert result["stripped"] == {
+        "downgraded": "Intro.\nAfter.",
+        "minimaxDirect": "AB",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

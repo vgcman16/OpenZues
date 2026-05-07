@@ -31297,13 +31297,7 @@ function extractTextFromChatContent(content, opts = {}) {
 }
 
 function stripAssistantReasoningTags(text) {
-  if (!text || !/<\s*\/?\s*(?:antml:)?(?:think(?:ing)?|thought)\b/i.test(text)) {
-    return text;
-  }
-  return text.replace(
-    /<\s*(?:antml:)?(?:think(?:ing)?|thought)\s*>[\s\S]*?<\s*\/\s*(?:antml:)?(?:think(?:ing)?|thought)\s*>/gi,
-    "",
-  );
+  return stripThinkingTagsFromText(text);
 }
 
 function stripMinimaxToolCallXml(text) {
@@ -31399,6 +31393,370 @@ function extractAssistantText(msg = {}) {
   return sanitizeUserFacingAssistantText(extracted, {
     errorContext: Boolean(msg && msg.stopReason === "error"),
   });
+}
+
+const AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN =
+  "(?:(?:antml:)?(?:think(?:ing)?|thought)|antthinking)";
+const AGENT_RUNTIME_THINKING_TAG_OPEN_RE = new RegExp(
+  `<\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\s*>`,
+  "i",
+);
+const AGENT_RUNTIME_THINKING_TAG_CLOSE_RE = new RegExp(
+  `<\\s*\\/\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\s*>`,
+  "i",
+);
+const AGENT_RUNTIME_THINKING_TAG_SCAN_RE = new RegExp(
+  `<\\s*(\\/?)\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\s*>`,
+  "gi",
+);
+const AGENT_RUNTIME_THINKING_TAG_OPEN_GLOBAL_RE = new RegExp(
+  `<\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\s*>`,
+  "gi",
+);
+const AGENT_RUNTIME_THINKING_TAG_CLOSE_GLOBAL_RE = new RegExp(
+  `<\\s*\\/\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\s*>`,
+  "gi",
+);
+const AGENT_RUNTIME_THINKING_TAG_WITH_ATTRS_RE = new RegExp(
+  `<\\s*(\\/?)\\s*${AGENT_RUNTIME_THINKING_TAG_NAME_PATTERN}\\b[^<>]*>`,
+  "gi",
+);
+const AGENT_RUNTIME_FINAL_TAG_RE = /<\s*\/?\s*final\b[^<>]*>/gi;
+
+function isAssistantMessage(msg) {
+  return Boolean(msg && msg.role === "assistant");
+}
+
+function stripThinkingTagsFromText(text) {
+  const hasThinkingTag =
+    /<\s*\/?\s*(?:(?:antml:)?(?:think(?:ing)?|thought)|antthinking|final)\b/i.test(text);
+  if (!text || !hasThinkingTag) {
+    return text;
+  }
+  const cleaned = String(text).replace(AGENT_RUNTIME_FINAL_TAG_RE, "");
+  AGENT_RUNTIME_THINKING_TAG_WITH_ATTRS_RE.lastIndex = 0;
+  let result = "";
+  let lastIndex = 0;
+  let thinkingDepth = 0;
+  let firstUnclosedContentIndex;
+  for (const match of cleaned.matchAll(AGENT_RUNTIME_THINKING_TAG_WITH_ATTRS_RE)) {
+    const idx = match.index || 0;
+    const isClose = match[1] === "/";
+    if (thinkingDepth === 0) {
+      if (isClose) {
+        result += cleaned.slice(lastIndex, idx);
+        lastIndex = idx + match[0].length;
+        continue;
+      }
+      result += cleaned.slice(lastIndex, idx);
+      thinkingDepth = 1;
+      firstUnclosedContentIndex = idx + match[0].length;
+    } else if (isClose) {
+      thinkingDepth -= 1;
+      if (thinkingDepth === 0) {
+        firstUnclosedContentIndex = undefined;
+      }
+    } else {
+      thinkingDepth += 1;
+    }
+    lastIndex = idx + match[0].length;
+  }
+  if (thinkingDepth === 0) {
+    result += cleaned.slice(lastIndex);
+  }
+  const trimmed = result.trim();
+  if (thinkingDepth > 0 && !trimmed && firstUnclosedContentIndex !== undefined && cleaned.trim()) {
+    return cleaned.slice(firstUnclosedContentIndex).trim();
+  }
+  return trimmed;
+}
+
+function agentRuntimeNormalizeAssistantPhase(value) {
+  return value === "commentary" || value === "final_answer" ? value : undefined;
+}
+
+function agentRuntimeParseAssistantTextSignature(value) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return null;
+  }
+  if (!value.startsWith("{")) {
+    return { id: value };
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || parsed.v !== 1) {
+      return null;
+    }
+    const result = {};
+    if (typeof parsed.id === "string") {
+      result.id = parsed.id;
+    }
+    const phase = agentRuntimeNormalizeAssistantPhase(parsed.phase);
+    if (phase) {
+      result.phase = phase;
+    }
+    return result;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function agentRuntimeExtractAssistantTextForPhase(msg = {}, phase) {
+  const messagePhase = agentRuntimeNormalizeAssistantPhase(msg && msg.phase);
+  const shouldIncludeContent = (resolvedPhase) => {
+    if (phase) {
+      return resolvedPhase === phase;
+    }
+    return resolvedPhase === undefined;
+  };
+  const finalize = (text) =>
+    sanitizeUserFacingAssistantText(text, {
+      errorContext: Boolean(msg && msg.stopReason === "error"),
+    });
+  if (typeof (msg && msg.content) === "string") {
+    const hadRequestedPhase = phase ? messagePhase === phase : messagePhase === undefined;
+    return {
+      text: shouldIncludeContent(messagePhase)
+        ? finalize(sanitizeAssistantVisibleText(msg.content))
+        : "",
+      hadRequestedPhase,
+    };
+  }
+  if (!Array.isArray(msg && msg.content)) {
+    return { text: "", hadRequestedPhase: false };
+  }
+  const hasExplicitPhasedTextBlocks = msg.content.some((block) => {
+    if (!block || typeof block !== "object" || block.type !== "text") {
+      return false;
+    }
+    return Boolean(agentRuntimeParseAssistantTextSignature(block.textSignature)?.phase);
+  });
+  let hadRequestedPhase = false;
+  const parts = [];
+  for (const block of msg.content) {
+    if (!block || typeof block !== "object" || block.type !== "text") {
+      continue;
+    }
+    const signature = agentRuntimeParseAssistantTextSignature(block.textSignature);
+    const resolvedPhase =
+      (signature && signature.phase) || (hasExplicitPhasedTextBlocks ? undefined : messagePhase);
+    if (phase ? resolvedPhase === phase : resolvedPhase === undefined) {
+      hadRequestedPhase = true;
+    }
+    if (!shouldIncludeContent(resolvedPhase)) {
+      continue;
+    }
+    const sanitized = sanitizeAssistantVisibleText(block.text);
+    if (sanitized.trim()) {
+      parts.push(sanitized);
+    }
+  }
+  return {
+    text: finalize(parts.join("\n").trim()),
+    hadRequestedPhase,
+  };
+}
+
+function extractAssistantVisibleText(msg = {}) {
+  const finalAnswerExtraction = agentRuntimeExtractAssistantTextForPhase(msg, "final_answer");
+  if (finalAnswerExtraction.hadRequestedPhase) {
+    return finalAnswerExtraction.text.trim() ? finalAnswerExtraction.text : "";
+  }
+  return agentRuntimeExtractAssistantTextForPhase(msg).text;
+}
+
+function extractAssistantThinking(msg = {}) {
+  if (!Array.isArray(msg && msg.content)) {
+    return "";
+  }
+  const blocks = [];
+  for (const block of msg.content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    if (block.type !== "thinking") {
+      continue;
+    }
+    const thinking = typeof block.thinking === "string" ? block.thinking.trim() : "";
+    if (thinking) {
+      blocks.push(thinking);
+      continue;
+    }
+    if (typeof block.thinkingSignature === "string" && block.thinkingSignature.trim()) {
+      blocks.push("Native reasoning was produced; no summary text was returned.");
+    }
+  }
+  return blocks.join("\n").trim();
+}
+
+function formatReasoningMessage(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const italicLines = trimmed
+    .split("\n")
+    .map((line) => (line ? `_${line}_` : line))
+    .join("\n");
+  return `Reasoning:\n${italicLines}`;
+}
+
+function splitThinkingTaggedText(text) {
+  const raw = String(text || "");
+  const trimmedStart = raw.trimStart();
+  if (!trimmedStart.startsWith("<")) {
+    return null;
+  }
+  if (!AGENT_RUNTIME_THINKING_TAG_OPEN_RE.test(trimmedStart)) {
+    return null;
+  }
+  AGENT_RUNTIME_THINKING_TAG_OPEN_RE.lastIndex = 0;
+  if (!AGENT_RUNTIME_THINKING_TAG_CLOSE_RE.test(raw)) {
+    return null;
+  }
+  AGENT_RUNTIME_THINKING_TAG_CLOSE_RE.lastIndex = 0;
+
+  let inThinking = false;
+  let cursor = 0;
+  let thinkingStart = 0;
+  const blocks = [];
+  const pushText = (value) => {
+    if (value) {
+      blocks.push({ type: "text", text: value });
+    }
+  };
+  const pushThinking = (value) => {
+    const cleaned = String(value || "").trim();
+    if (cleaned) {
+      blocks.push({ type: "thinking", thinking: cleaned });
+    }
+  };
+  for (const match of raw.matchAll(AGENT_RUNTIME_THINKING_TAG_SCAN_RE)) {
+    const index = match.index || 0;
+    const isClose = Boolean(match[1] && match[1].includes("/"));
+    if (!inThinking && !isClose) {
+      pushText(raw.slice(cursor, index));
+      thinkingStart = index + match[0].length;
+      inThinking = true;
+      continue;
+    }
+    if (inThinking && isClose) {
+      pushThinking(raw.slice(thinkingStart, index));
+      cursor = index + match[0].length;
+      inThinking = false;
+    }
+  }
+  if (inThinking) {
+    return null;
+  }
+  pushText(raw.slice(cursor));
+  return blocks.some((block) => block.type === "thinking") ? blocks : null;
+}
+
+function promoteThinkingTagsToBlocks(message) {
+  if (!message || !Array.isArray(message.content)) {
+    return;
+  }
+  if (
+    message.content.some(
+      (block) => block && typeof block === "object" && block.type === "thinking",
+    )
+  ) {
+    return;
+  }
+  const next = [];
+  let changed = false;
+  for (const block of message.content) {
+    if (!block || typeof block !== "object" || block.type !== "text") {
+      next.push(block);
+      continue;
+    }
+    const split = splitThinkingTaggedText(block.text);
+    if (!split) {
+      next.push(block);
+      continue;
+    }
+    changed = true;
+    for (const part of split) {
+      if (part.type === "thinking") {
+        next.push({ type: "thinking", thinking: part.thinking });
+      } else {
+        const cleaned = String(part.text || "").trimStart();
+        if (cleaned) {
+          next.push({ type: "text", text: cleaned });
+        }
+      }
+    }
+  }
+  if (changed) {
+    message.content = next;
+  }
+}
+
+function extractThinkingFromTaggedText(text) {
+  const raw = String(text || "");
+  if (!raw) {
+    return "";
+  }
+  let result = "";
+  let lastIndex = 0;
+  let inThinking = false;
+  for (const match of raw.matchAll(AGENT_RUNTIME_THINKING_TAG_SCAN_RE)) {
+    const idx = match.index || 0;
+    if (inThinking) {
+      result += raw.slice(lastIndex, idx);
+    }
+    const isClose = match[1] === "/";
+    inThinking = !isClose;
+    lastIndex = idx + match[0].length;
+  }
+  return result.trim();
+}
+
+function extractThinkingFromTaggedStream(text) {
+  const raw = String(text || "");
+  if (!raw) {
+    return "";
+  }
+  const closed = extractThinkingFromTaggedText(raw);
+  if (closed) {
+    return closed;
+  }
+  const openMatches = [...raw.matchAll(AGENT_RUNTIME_THINKING_TAG_OPEN_GLOBAL_RE)];
+  if (openMatches.length === 0) {
+    return "";
+  }
+  const closeMatches = [...raw.matchAll(AGENT_RUNTIME_THINKING_TAG_CLOSE_GLOBAL_RE)];
+  const lastOpen = openMatches[openMatches.length - 1];
+  const lastClose = closeMatches[closeMatches.length - 1];
+  if (lastClose && (lastClose.index || -1) > (lastOpen.index || -1)) {
+    return closed;
+  }
+  const start = (lastOpen.index || 0) + lastOpen[0].length;
+  return raw.slice(start).trim();
+}
+
+function stripDowngradedToolCallText(text) {
+  if (!text) {
+    return text;
+  }
+  if (!/\[Tool (?:Call|Result)/i.test(text) && !/\[Historical context/i.test(text)) {
+    return text;
+  }
+  let cleaned = String(text);
+  const downgradedToolCallRe = new RegExp(
+    String.raw`\[Tool Call:[^\]]*\]\s*(?:\r?\n)?\s*Arguments:\s*` +
+      String.raw`(?:\{[\s\S]*?\}|"[^"]*"|[^\r\n]*)\s*` +
+      String.raw`(?=\r?\n[A-Z][^\r\n]*|\r?\n?\[Tool |\s*$)`,
+    "gi",
+  );
+  cleaned = cleaned.replace(downgradedToolCallRe, "");
+  cleaned = cleaned.replace(
+    /\[Tool Result for ID[^\]]*\]\n?[\s\S]*?(?=\n*\[Tool |\n*$)/gi,
+    "",
+  );
+  cleaned = cleaned.replace(/\[Historical context:[^\]]*\]\n?/gi, "");
+  return cleaned.replace(/\n{2,}/g, "\n").trim();
 }
 
 function normalizeMessageChannel(raw) {
@@ -55374,14 +55732,21 @@ const agentRuntime = {
   defineToolDescriptor,
   defineToolDescriptors,
   evaluateToolAvailability,
+  extractAssistantText,
+  extractAssistantThinking,
+  extractAssistantVisibleText,
+  extractThinkingFromTaggedStream,
+  extractThinkingFromTaggedText,
   failedTextResult,
   findModelCatalogEntry: agentRuntimeFindModelCatalogEntry,
   findModelInCatalog: agentRuntimeFindModelInCatalog,
   findNormalizedProviderKey: agentRuntimeFindNormalizedProviderKey,
   findNormalizedProviderValue: agentRuntimeFindNormalizedProviderValue,
+  formatReasoningMessage,
   formatToolExecutorRef,
   formatUserTime,
   getModelRefStatus: agentRuntimeGetModelRefStatus,
+  isAssistantMessage,
   isAwsSdkAuthMarker: agentRuntimeIsAwsSdkAuthMarker,
   isKnownEnvApiKeyMarker: agentRuntimeIsKnownEnvApiKeyMarker,
   isNonSecretApiKeyMarker: agentRuntimeIsNonSecretApiKeyMarker,
@@ -55405,6 +55770,7 @@ const agentRuntime = {
   parseAvailableTags,
   parseModelRef: agentRuntimeParseModelRef,
   payloadTextResult,
+  promoteThinkingTagsToBlocks,
   readNumberParam,
   readReactionParams,
   readStringArrayParam,
@@ -55451,6 +55817,10 @@ const agentRuntime = {
   resolveUserTimeFormat,
   resolveUserTimezone,
   stringifyToolPayload,
+  splitThinkingTaggedText,
+  stripDowngradedToolCallText,
+  stripMinimaxToolCallXml,
+  stripThinkingTagsFromText,
   textResult,
   toToolProtocolDescriptor,
   toToolProtocolDescriptors,
