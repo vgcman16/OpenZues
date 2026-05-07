@@ -9494,8 +9494,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   outbound adapter helpers. Source/test checkpointed in `85e4b720`;
   repo-wide parity remains estimated at ~99.9%, with the evidence band
   tightened to ~80-99.97%.
+- Current queue-head adjustment: imported plugin SDK `plugin-runtime` now
+  exposes the source-backed plugin command/hook/HTTP/interactive/runtime scope
+  barrel for scoped and unscoped imports, including command validation,
+  registration, matching, safe execution, provider native specs, route
+  conflict handling, lazy service startup, global hook runner state,
+  conversation-binding unavailable results, and request-scoped plugin identity.
+  Source/test checkpointed in `eb39f899`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.98%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially the exact `plugin-runtime` facade, broader runtime/client
+  especially the exact `security-runtime` facade, broader runtime/client
   integration, and session runtime methods (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency

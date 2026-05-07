@@ -17625,6 +17625,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `85e4b720`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `plugin-runtime` facade from `src/plugin-sdk/plugin-runtime.ts`: scoped and
+  unscoped native runtime entries expose plugin command registry validation,
+  duplicate detection, provider native command specs, command matching and
+  safe execution, source-shaped HTTP route registration, interactive handler
+  dispatch, conversation binding unavailable responses, lazy service module
+  startup, global hook runner state, and plugin gateway request scoping. This
+  closes `OZ-PLUGIN-00282`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.98%.
+- Verified the plugin-runtime slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_plugin_runtime_helpers -q`
+  (`1 passed`), adjacent plugin-runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "plugin_runtime or plugin_config_runtime_helpers or plugin_entry_helpers or optional_channel_setup_helpers or config_runtime_helpers"`
+  (`9 passed, 1096 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`293 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `eb39f899`.
 
 ## References
 
