@@ -32069,6 +32069,474 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_plugin_test_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const testRuntime = require("openclaw/plugin-sdk/plugin-test-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/plugin-test-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.plugin_test_runtime",
+      description: "Use OpenClaw plugin-test-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const env = testRuntime.createRuntimeEnv();
+        env.log("hello");
+        let exitError = "";
+        try {
+          env.exit(3);
+        } catch (error) {
+          exitError = error.message;
+        }
+        const nonExit = testRuntime.createNonExitingRuntimeEnv();
+        nonExit.exit(0);
+
+        const captured = testRuntime.createCapturedPluginRegistration({
+          id: "captured",
+          name: "Captured",
+          config: { enabled: true }
+        });
+        captured.api.registerProvider({ id: "provider-a", label: "Provider A" });
+        captured.api.registerImageGenerationProvider({ id: "image-a" });
+        captured.api.registerTool({ name: "captured.tool" });
+        const scheduled = captured.api.registerSessionSchedulerJob({
+          id: "job-a",
+          sessionKey: "agent:main:main",
+          kind: "interval"
+        });
+
+        const capturedViaHelper = testRuntime.capturePluginRegistration({
+          register(pluginApi) {
+            pluginApi.registerProvider({ id: "provider-b" });
+          }
+        });
+        const single = await testRuntime.registerSingleProviderPlugin({
+          register(pluginApi) {
+            pluginApi.registerProvider({ id: "single-provider" });
+          }
+        });
+        const collections = await testRuntime.registerProviderPlugin({
+          id: "provider-plugin",
+          name: "Provider Plugin",
+          plugin: {
+            register(pluginApi) {
+              pluginApi.registerProvider({ id: "multi-provider" });
+              pluginApi.registerSpeechProvider({ id: "speech-provider" });
+            }
+          }
+        });
+        const providers = await testRuntime.registerProviderPlugins(
+          { register(pluginApi) { pluginApi.registerProvider({ id: "p1" }); } },
+          { register(pluginApi) { pluginApi.registerProvider({ id: "p2" }); } }
+        );
+        const required = testRuntime.requireRegisteredProvider(providers, "p2");
+
+        const registry = testRuntime.createPluginRegistry({
+          logger: { info() {}, warn() {}, error() {}, debug() {} },
+          runtime: {}
+        });
+        const record = testRuntime.createPluginRecord({
+          id: "demo",
+          name: "Demo Plugin",
+          source: "/demo/index.ts"
+        });
+        registry.registry.plugins.push(record);
+        const registryApi = registry.createApi(record, { config: { demo: true } });
+        registryApi.registerProvider({ id: "demo-provider" });
+        registryApi.registerTool({ name: "demo.tool" });
+
+        const empty = testRuntime.createEmptyPluginRegistry();
+        const channelPlugin = testRuntime.createOutboundTestPlugin({
+          id: "demo-channel",
+          outbound: { sendMessage: async () => ({ messageId: "m1" }) }
+        });
+        const channelRegistry = testRuntime.createTestRegistry([
+          { pluginId: "demo-channel", plugin: channelPlugin, source: "test" }
+        ]);
+        testRuntime.addTestHook({
+          registry: channelRegistry,
+          pluginId: "demo-channel",
+          hookName: "message_received",
+          handler: () => "handled",
+          priority: 2
+        });
+        testRuntime.setActivePluginRegistry(channelRegistry);
+        const activeRegistry = testRuntime.getActivePluginRegistry();
+        testRuntime.releasePinnedPluginChannelRegistry(channelRegistry);
+        testRuntime.resetPluginRuntimeStateForTest();
+
+        const provider = {
+          id: "wizard-provider",
+          label: "Wizard Provider",
+          auth: [{ id: "api", label: "API key", hint: "API hint" }],
+          wizard: {
+            setup: {
+              choiceLabel: "Setup Wizard",
+              groupLabel: "Wizard Group",
+              groupHint: "Wizard hint"
+            },
+            modelPicker: { label: "Wizard Model", hint: "Model hint" }
+          }
+        };
+        const restoreProviderResolver =
+          testRuntime.setProviderWizardProvidersResolverForTest(() => [provider]);
+        const wizardOptions = testRuntime.resolveProviderWizardOptions({});
+        const modelEntries = testRuntime.resolveProviderModelPickerEntries({});
+        const choice = testRuntime.resolveProviderPluginChoice({
+          providers: [provider],
+          choice: "provider-plugin:wizard-provider:api"
+        });
+        restoreProviderResolver();
+
+        const queued = testRuntime.createQueuedWizardPrompter({
+          selectValues: ["selected"],
+          textValues: ["typed"],
+          confirmValues: [true]
+        });
+        const selected = await testRuntime.selectFirstWizardOption({
+          options: [{ value: "first" }]
+        });
+        const configureResult = await testRuntime.runSetupWizardConfigure({
+          prompter: queued.prompter,
+          cfg: { existing: true },
+          forceAllowFrom: true,
+          configure: async (args) => ({
+            cfg: args.cfg,
+            forceAllowFrom: args.forceAllowFrom,
+            shouldPromptAccountIds: args.shouldPromptAccountIds
+          })
+        });
+        const prepareResult = await testRuntime.runSetupWizardPrepare({
+          accountId: "acct",
+          prepare: (args) => ({
+            accountId: args.accountId,
+            textType: typeof args.prompter.text
+          })
+        });
+        const allowFromResult = await testRuntime.resolveSetupWizardAllowFromEntries({
+          entries: ["channel:C1"],
+          resolveEntries: (args) => args.entries
+        });
+        const groupResult = await testRuntime.resolveSetupWizardGroupAllowlist({
+          entries: ["group:G1"],
+          resolveAllowlist: (args) => args.entries
+        });
+        const setupAdapter = testRuntime.createPluginSetupWizardAdapter({
+          id: "setup-plugin",
+          config: {},
+          setupWizard: {
+            status: async () => ({ status: "ready" }),
+            configure: async () => ({ configured: true })
+          }
+        });
+        const setupStatus = await setupAdapter.getStatus({
+          cfg: {},
+          accountId: "default",
+          credentialValues: {},
+          runtime: nonExit,
+          prompter: queued.prompter
+        });
+        const setupConfigured = await setupAdapter.configure({
+          cfg: {},
+          runtime: nonExit,
+          prompter: queued.prompter,
+          options: {},
+          accountOverrides: {},
+          shouldPromptAccountIds: false,
+          forceAllowFrom: false
+        });
+
+        const mockRegistry = testRuntime.createMockPluginRegistry([
+          { hookName: "message_received", handler: () => "mocked" }
+        ]);
+        const builtApi = testRuntime.buildPluginApi({
+          id: "built",
+          name: "Built",
+          source: "test",
+          config: {},
+          runtime: {},
+          logger: { info() {}, warn() {}, error() {}, debug() {} },
+          resolvePath: (input) => `built:${input}`,
+          handlers: {
+            registerProvider(provider) {
+              captured.providers.push(provider);
+            }
+          }
+        });
+        builtApi.registerProvider({ id: "built-provider" });
+        const flow = testRuntime.createRuntimeTaskFlow();
+        const boundFlow = flow.bindSession({ sessionKey: "agent:main:main" });
+
+        return {
+          keys: Object.keys(testRuntime).sort(),
+          scopedSame:
+            scopedRuntime.createRuntimeEnv === testRuntime.createRuntimeEnv,
+          env: {
+            logCalls: env.log.calls.length,
+            exitError,
+            nonExitCalls: nonExit.exit.calls.length
+          },
+          captured: {
+            providers: captured.providers.map((entry) => entry.id),
+            imageProviders:
+              captured.imageGenerationProviders.map((entry) => entry.id),
+            tools: captured.tools.map((entry) => entry.name),
+            scheduled
+          },
+          capturedViaHelper: capturedViaHelper.providers.map((entry) => entry.id),
+          providerHelpers: {
+            single,
+            collections: {
+              providers: collections.providers.map((entry) => entry.id),
+              speechProviders: collections.speechProviders.map((entry) => entry.id)
+            },
+            providers: providers.map((entry) => entry.id),
+            required
+          },
+          registry: {
+            plugins: registry.registry.plugins.map((entry) => entry.id),
+            providers: registry.registry.providers.map((entry) => entry.id),
+            tools: registry.registry.tools.map((entry) => entry.tool.name),
+            emptyTools: empty.tools.length
+          },
+          channel: {
+            channels: channelRegistry.channels.length,
+            hooks: channelRegistry.typedHooks.length,
+            activeSame: activeRegistry === channelRegistry
+          },
+          providerWizard: {
+            options: wizardOptions,
+            modelEntries,
+            choice: choice
+              ? { provider: choice.provider.id, method: choice.method.id }
+              : null
+          },
+          setup: {
+            selected,
+            configureResult,
+            prepareResult,
+            allowFromResult,
+            groupResult,
+            setupStatus,
+            setupConfigured,
+            queuedCalls: {
+              select: queued.select.calls.length,
+              text: queued.text.calls.length,
+              confirm: queued.confirm.calls.length
+            }
+          },
+          runtime: {
+            mockPlugins: mockRegistry.plugins.map((entry) => entry.id),
+            builtResolved: builtApi.resolvePath("file.txt"),
+            builtProviders: captured.providers.map((entry) => entry.id),
+            boundSessionKey: boundFlow.sessionKey,
+            facadeIds: testRuntime.listImportedBundledPluginFacadeIds()
+          },
+          contracts: {
+            providerIds:
+              testRuntime.pluginRegistrationContractRegistry.find(
+                (entry) => entry.pluginId === "openai"
+              ).providerIds,
+            providerContractIds:
+              testRuntime.resolveProviderContractProvidersForPluginIds([
+                "openai"
+              ]).map((entry) => entry.id),
+            loadError:
+              testRuntime.providerContractLoadError("demo", new Error("boom"))
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-plugin-test-runtime-plugin",
+                    "name": "Runtime Plugin Test Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-test-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.plugin_test_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.plugin_test_runtime"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "addTestHook",
+        "buildPluginApi",
+        "buildProviderPluginMethodChoice",
+        "capturePluginRegistration",
+        "createCapturedPluginRegistration",
+        "createEmptyPluginRegistry",
+        "createMockPluginRegistry",
+        "createNonExitingRuntimeEnv",
+        "createNonExitingTypedRuntimeEnv",
+        "createOutboundTestPlugin",
+        "createPluginRecord",
+        "createPluginRegistry",
+        "createPluginSetupWizardAdapter",
+        "createPluginSetupWizardConfigure",
+        "createPluginSetupWizardStatus",
+        "createQueuedWizardPrompter",
+        "createRuntimeEnv",
+        "createRuntimeTaskFlow",
+        "createSetupWizardAdapter",
+        "createTestRegistry",
+        "createTestWizardPrompter",
+        "createTypedRuntimeEnv",
+        "getActivePluginRegistry",
+        "initializeGlobalHookRunner",
+        "listImportedBundledPluginFacadeIds",
+        "loadPluginManifestRegistry",
+        "pluginRegistrationContractRegistry",
+        "promptSetupWizardAllowFrom",
+        "providerContractLoadError",
+        "registerProviderPlugin",
+        "registerProviderPlugins",
+        "registerSingleProviderPlugin",
+        "releasePinnedPluginChannelRegistry",
+        "requireRegisteredProvider",
+        "resetFacadeRuntimeStateForTest",
+        "resetGlobalHookRunner",
+        "resetPluginRuntimeStateForTest",
+        "resolveBundledExplicitProviderContractsFromPublicArtifacts",
+        "resolveBundledExplicitWebFetchProvidersFromPublicArtifacts",
+        "resolveBundledExplicitWebSearchProvidersFromPublicArtifacts",
+        "resolveProviderContractProvidersForPluginIds",
+        "resolveProviderModelPickerEntries",
+        "resolveProviderPluginChoice",
+        "resolveProviderWizardOptions",
+        "resolveSetupWizardAllowFromEntries",
+        "resolveSetupWizardGroupAllowlist",
+        "resolveWebFetchProviderContractEntriesForPluginId",
+        "resolveWebSearchProviderContractEntriesForPluginId",
+        "runProviderCatalog",
+        "runSetupWizardConfigure",
+        "runSetupWizardFinalize",
+        "runSetupWizardPrepare",
+        "selectFirstWizardOption",
+        "setActivePluginRegistry",
+        "setDefaultChannelPluginRegistryForTests",
+        "setProviderWizardProvidersResolverForTest",
+    ]
+    assert result["scopedSame"] is True
+    assert result["env"] == {
+        "logCalls": 1,
+        "exitError": "exit 3",
+        "nonExitCalls": 1,
+    }
+    assert result["captured"]["providers"] == ["provider-a", "built-provider"]
+    assert result["captured"]["imageProviders"] == ["image-a"]
+    assert result["captured"]["tools"] == ["captured.tool"]
+    assert result["captured"]["scheduled"]["id"] == "job-a"
+    assert result["capturedViaHelper"] == ["provider-b"]
+    assert result["providerHelpers"]["single"] == {"id": "single-provider"}
+    assert result["providerHelpers"]["collections"] == {
+        "providers": ["multi-provider"],
+        "speechProviders": ["speech-provider"],
+    }
+    assert result["providerHelpers"]["providers"] == ["p1", "p2"]
+    assert result["providerHelpers"]["required"] == {"id": "p2"}
+    assert result["registry"] == {
+        "plugins": ["demo"],
+        "providers": ["demo-provider"],
+        "tools": ["demo.tool"],
+        "emptyTools": 0,
+    }
+    assert result["channel"] == {
+        "channels": 1,
+        "hooks": 1,
+        "activeSame": True,
+    }
+    assert result["providerWizard"]["options"][0]["value"] == "wizard-provider"
+    assert result["providerWizard"]["modelEntries"] == [
+        {
+            "value": "wizard-provider",
+            "label": "Wizard Model",
+            "hint": "Model hint",
+        }
+    ]
+    assert result["providerWizard"]["choice"] == {
+        "provider": "wizard-provider",
+        "method": "api",
+    }
+    assert result["setup"]["selected"] == "first"
+    assert result["setup"]["configureResult"] == {
+        "cfg": {"existing": True},
+        "forceAllowFrom": True,
+        "shouldPromptAccountIds": False,
+    }
+    assert result["setup"]["prepareResult"] == {
+        "accountId": "acct",
+        "textType": "function",
+    }
+    assert result["setup"]["allowFromResult"] == ["channel:C1"]
+    assert result["setup"]["groupResult"] == ["group:G1"]
+    assert result["setup"]["setupStatus"] == {"status": "ready"}
+    assert result["setup"]["setupConfigured"] == {"configured": True}
+    assert result["runtime"] == {
+        "mockPlugins": ["test-plugin"],
+        "builtResolved": "built:file.txt",
+        "builtProviders": ["provider-a", "built-provider"],
+        "boundSessionKey": "agent:main:main",
+        "facadeIds": [],
+    }
+    assert result["contracts"] == {
+        "providerIds": ["openai", "openai-codex"],
+        "providerContractIds": ["openai", "openai-codex"],
+        "loadError": {
+            "pluginId": "demo",
+            "ok": False,
+            "error": "boom",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:

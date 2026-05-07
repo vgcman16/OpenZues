@@ -58683,6 +58683,945 @@ const pluginTestContractsRuntime = {
   uniqueSortedStrings,
 };
 
+function getActivePluginRegistry() {
+  return getPluginRegistryTestState().activeRegistry;
+}
+
+function resetPluginRuntimeStateForTest() {
+  const state = getPluginRegistryTestState();
+  state.activeRegistry = null;
+  state.channelRegistry = null;
+  state.channelPinned = false;
+}
+
+function setDefaultChannelPluginRegistryForTests(registry) {
+  const state = getPluginRegistryTestState();
+  const previous = state.channelRegistry;
+  state.channelRegistry = registry;
+  state.channelPinned = true;
+  return () => {
+    state.channelRegistry = previous;
+    state.channelPinned = false;
+  };
+}
+
+function providerContractLoadError(pluginId, error) {
+  return {
+    pluginId,
+    ok: false,
+    error: error && error.message ? error.message : String(error || "unknown error"),
+  };
+}
+
+function resolveProviderContractProvidersForPluginIds(pluginIds = []) {
+  const ids = new Set(pluginIds || []);
+  return pluginRegistrationContractRegistry
+    .filter((entry) => ids.has(entry.pluginId))
+    .flatMap((entry) => entry.providerIds || [])
+    .map((id) => ({ id }));
+}
+
+function resolveWebFetchProviderContractEntriesForPluginId(pluginId) {
+  const entry = findPluginRegistrationContract(pluginId);
+  return (entry.webFetchProviderIds || []).map((id) => ({ id, pluginId }));
+}
+
+function resolveWebSearchProviderContractEntriesForPluginId(pluginId) {
+  const entry = findPluginRegistrationContract(pluginId);
+  return (entry.webSearchProviderIds || []).map((id) => ({ id, pluginId }));
+}
+
+function loadPluginManifestRegistry(_params = {}) {
+  return { plugins: [] };
+}
+
+function resolveBundledExplicitProviderContractsFromPublicArtifacts(_params = {}) {
+  return pluginRegistrationContractRegistry.flatMap((entry) =>
+    (entry.providerIds || []).map((id) => ({ id, pluginId: entry.pluginId })),
+  );
+}
+
+function resolveBundledExplicitWebFetchProvidersFromPublicArtifacts(_params = {}) {
+  return pluginRegistrationContractRegistry.flatMap((entry) =>
+    (entry.webFetchProviderIds || []).map((id) => ({ id, pluginId: entry.pluginId })),
+  );
+}
+
+function resolveBundledExplicitWebSearchProvidersFromPublicArtifacts(_params = {}) {
+  return pluginRegistrationContractRegistry.flatMap((entry) =>
+    (entry.webSearchProviderIds || []).map((id) => ({ id, pluginId: entry.pluginId })),
+  );
+}
+
+function listImportedBundledPluginFacadeIds() {
+  return [];
+}
+
+function resetFacadeRuntimeStateForTest() {}
+
+function buildPluginApi(params = {}) {
+  const handlers = params.handlers || {};
+  return createTestPluginApi({
+    id: params.id || "test-plugin",
+    name: params.name || params.id || "test-plugin",
+    source: params.source || "test",
+    registrationMode: params.registrationMode || "full",
+    config: params.config || {},
+    runtime: params.runtime || {},
+    logger:
+      params.logger || {
+        info() {},
+        warn() {},
+        error() {},
+        debug() {},
+      },
+    resolvePath:
+      typeof params.resolvePath === "function"
+        ? params.resolvePath
+        : (input) => input,
+    registerTool(tool, opts) {
+      if (typeof handlers.registerTool === "function") {
+        return handlers.registerTool(tool, opts);
+      }
+      return undefined;
+    },
+    registerCli(registrar, opts) {
+      if (typeof handlers.registerCli === "function") {
+        return handlers.registerCli(registrar, opts);
+      }
+      return undefined;
+    },
+    registerProvider(provider) {
+      if (typeof handlers.registerProvider === "function") {
+        return handlers.registerProvider(provider);
+      }
+      return undefined;
+    },
+    registerAgentHarness(harness) {
+      if (typeof handlers.registerAgentHarness === "function") {
+        return handlers.registerAgentHarness(harness);
+      }
+      return undefined;
+    },
+    registerCliBackend(backend) {
+      if (typeof handlers.registerCliBackend === "function") {
+        return handlers.registerCliBackend(backend);
+      }
+      return undefined;
+    },
+    registerSpeechProvider(provider) {
+      if (typeof handlers.registerSpeechProvider === "function") {
+        return handlers.registerSpeechProvider(provider);
+      }
+      return undefined;
+    },
+    registerRealtimeTranscriptionProvider(provider) {
+      if (typeof handlers.registerRealtimeTranscriptionProvider === "function") {
+        return handlers.registerRealtimeTranscriptionProvider(provider);
+      }
+      return undefined;
+    },
+    registerRealtimeVoiceProvider(provider) {
+      if (typeof handlers.registerRealtimeVoiceProvider === "function") {
+        return handlers.registerRealtimeVoiceProvider(provider);
+      }
+      return undefined;
+    },
+    registerMediaUnderstandingProvider(provider) {
+      if (typeof handlers.registerMediaUnderstandingProvider === "function") {
+        return handlers.registerMediaUnderstandingProvider(provider);
+      }
+      return undefined;
+    },
+    registerImageGenerationProvider(provider) {
+      if (typeof handlers.registerImageGenerationProvider === "function") {
+        return handlers.registerImageGenerationProvider(provider);
+      }
+      return undefined;
+    },
+    registerVideoGenerationProvider(provider) {
+      if (typeof handlers.registerVideoGenerationProvider === "function") {
+        return handlers.registerVideoGenerationProvider(provider);
+      }
+      return undefined;
+    },
+    registerMusicGenerationProvider(provider) {
+      if (typeof handlers.registerMusicGenerationProvider === "function") {
+        return handlers.registerMusicGenerationProvider(provider);
+      }
+      return undefined;
+    },
+    registerWebFetchProvider(provider) {
+      if (typeof handlers.registerWebFetchProvider === "function") {
+        return handlers.registerWebFetchProvider(provider);
+      }
+      return undefined;
+    },
+    registerWebSearchProvider(provider) {
+      if (typeof handlers.registerWebSearchProvider === "function") {
+        return handlers.registerWebSearchProvider(provider);
+      }
+      return undefined;
+    },
+    registerMigrationProvider(provider) {
+      if (typeof handlers.registerMigrationProvider === "function") {
+        return handlers.registerMigrationProvider(provider);
+      }
+      return undefined;
+    },
+    registerMemoryEmbeddingProvider(provider) {
+      if (typeof handlers.registerMemoryEmbeddingProvider === "function") {
+        return handlers.registerMemoryEmbeddingProvider(provider);
+      }
+      return undefined;
+    },
+    registerSessionExtension(extension) {
+      if (typeof handlers.registerSessionExtension === "function") {
+        return handlers.registerSessionExtension(extension);
+      }
+      return undefined;
+    },
+    registerTrustedToolPolicy(policy) {
+      if (typeof handlers.registerTrustedToolPolicy === "function") {
+        return handlers.registerTrustedToolPolicy(policy);
+      }
+      return undefined;
+    },
+    registerToolMetadata(metadata) {
+      if (typeof handlers.registerToolMetadata === "function") {
+        return handlers.registerToolMetadata(metadata);
+      }
+      return undefined;
+    },
+    registerControlUiDescriptor(descriptor) {
+      if (typeof handlers.registerControlUiDescriptor === "function") {
+        return handlers.registerControlUiDescriptor(descriptor);
+      }
+      return undefined;
+    },
+    registerRuntimeLifecycle(lifecycle) {
+      if (typeof handlers.registerRuntimeLifecycle === "function") {
+        return handlers.registerRuntimeLifecycle(lifecycle);
+      }
+      return undefined;
+    },
+    registerAgentEventSubscription(subscription) {
+      if (typeof handlers.registerAgentEventSubscription === "function") {
+        return handlers.registerAgentEventSubscription(subscription);
+      }
+      return undefined;
+    },
+    registerSessionSchedulerJob(job) {
+      if (typeof handlers.registerSessionSchedulerJob === "function") {
+        return handlers.registerSessionSchedulerJob(job);
+      }
+      return {
+        id: job && job.id,
+        pluginId: params.id || "test-plugin",
+        sessionKey: job && job.sessionKey,
+        kind: job && job.kind,
+      };
+    },
+  });
+}
+
+function createCapturedPluginRegistration(params = {}) {
+  const providers = [];
+  const agentHarnesses = [];
+  const cliRegistrars = [];
+  const cliBackends = [];
+  const textTransforms = [];
+  const codexAppServerExtensionFactories = [];
+  const agentToolResultMiddlewares = [];
+  const speechProviders = [];
+  const realtimeTranscriptionProviders = [];
+  const realtimeVoiceProviders = [];
+  const mediaUnderstandingProviders = [];
+  const imageGenerationProviders = [];
+  const videoGenerationProviders = [];
+  const musicGenerationProviders = [];
+  const webFetchProviders = [];
+  const webSearchProviders = [];
+  const migrationProviders = [];
+  const memoryEmbeddingProviders = [];
+  const sessionExtensions = [];
+  const trustedToolPolicies = [];
+  const toolMetadata = [];
+  const controlUiDescriptors = [];
+  const runtimeLifecycles = [];
+  const agentEventSubscriptions = [];
+  const sessionSchedulerJobs = [];
+  const tools = [];
+  const pluginId = params.id || "captured-plugin-registration";
+  const pluginName = params.name || "Captured Plugin Registration";
+  const pluginSource = params.source || "captured-plugin-registration";
+  const captured = {
+    providers,
+    agentHarnesses,
+    cliRegistrars,
+    cliBackends,
+    textTransforms,
+    codexAppServerExtensionFactories,
+    agentToolResultMiddlewares,
+    speechProviders,
+    realtimeTranscriptionProviders,
+    realtimeVoiceProviders,
+    mediaUnderstandingProviders,
+    imageGenerationProviders,
+    videoGenerationProviders,
+    musicGenerationProviders,
+    webFetchProviders,
+    webSearchProviders,
+    migrationProviders,
+    memoryEmbeddingProviders,
+    sessionExtensions,
+    trustedToolPolicies,
+    toolMetadata,
+    controlUiDescriptors,
+    runtimeLifecycles,
+    agentEventSubscriptions,
+    sessionSchedulerJobs,
+    tools,
+    api: null,
+  };
+  captured.api = buildPluginApi({
+    id: pluginId,
+    name: pluginName,
+    source: pluginSource,
+    registrationMode: params.registrationMode || "full",
+    config: params.config || {},
+    runtime: {},
+    resolvePath: (input) => input,
+    handlers: {
+      registerCli(registrar, opts = {}) {
+        const descriptors = (opts.descriptors || [])
+          .map((descriptor) => ({
+            name: String(descriptor.name || "").trim(),
+            description: String(descriptor.description || "").trim(),
+            hasSubcommands: descriptor.hasSubcommands,
+          }))
+          .filter((descriptor) => descriptor.name && descriptor.description);
+        const commands = [...(opts.commands || []), ...descriptors.map((entry) => entry.name)]
+          .map((command) => String(command || "").trim())
+          .filter(Boolean);
+        if (commands.length > 0) {
+          cliRegistrars.push({ register: registrar, commands, descriptors });
+        }
+      },
+      registerProvider: (provider) => providers.push(provider),
+      registerAgentHarness: (harness) => agentHarnesses.push(harness),
+      registerCliBackend: (backend) => cliBackends.push(backend),
+      registerTextTransforms: (transforms) => textTransforms.push(transforms),
+      registerSpeechProvider: (provider) => speechProviders.push(provider),
+      registerRealtimeTranscriptionProvider: (provider) =>
+        realtimeTranscriptionProviders.push(provider),
+      registerRealtimeVoiceProvider: (provider) => realtimeVoiceProviders.push(provider),
+      registerMediaUnderstandingProvider: (provider) =>
+        mediaUnderstandingProviders.push(provider),
+      registerImageGenerationProvider: (provider) => imageGenerationProviders.push(provider),
+      registerVideoGenerationProvider: (provider) => videoGenerationProviders.push(provider),
+      registerMusicGenerationProvider: (provider) => musicGenerationProviders.push(provider),
+      registerWebFetchProvider: (provider) => webFetchProviders.push(provider),
+      registerWebSearchProvider: (provider) => webSearchProviders.push(provider),
+      registerMigrationProvider: (provider) => migrationProviders.push(provider),
+      registerMemoryEmbeddingProvider: (provider) => memoryEmbeddingProviders.push(provider),
+      registerSessionExtension: (extension) => sessionExtensions.push(extension),
+      registerTrustedToolPolicy: (policy) => trustedToolPolicies.push(policy),
+      registerToolMetadata: (metadata) => toolMetadata.push(metadata),
+      registerControlUiDescriptor: (descriptor) => controlUiDescriptors.push(descriptor),
+      registerRuntimeLifecycle: (lifecycle) => runtimeLifecycles.push(lifecycle),
+      registerAgentEventSubscription: (subscription) =>
+        agentEventSubscriptions.push(subscription),
+      registerSessionSchedulerJob(job) {
+        sessionSchedulerJobs.push(job);
+        return {
+          id: job.id,
+          pluginId,
+          sessionKey: job.sessionKey,
+          kind: job.kind,
+        };
+      },
+      registerTool(tool) {
+        if (typeof tool !== "function") {
+          tools.push(tool);
+        }
+      },
+    },
+  });
+  return captured;
+}
+
+function capturePluginRegistration(params = {}) {
+  const captured = createCapturedPluginRegistration();
+  if (typeof params.register === "function") {
+    params.register(captured.api);
+  }
+  return captured;
+}
+
+async function registerSingleProviderPlugin(params = {}) {
+  const captured = createCapturedPluginRegistration();
+  if (typeof params.register === "function") {
+    params.register(captured.api);
+  }
+  const provider = captured.providers[0];
+  if (!provider) {
+    throw new Error("provider registration missing");
+  }
+  return provider;
+}
+
+async function registerProviderPlugin(params = {}) {
+  const captured = createCapturedPluginRegistration({
+    id: params.id,
+    name: params.name,
+    source: "test",
+  });
+  if (params.plugin && typeof params.plugin.register === "function") {
+    params.plugin.register(captured.api);
+  }
+  return {
+    providers: captured.providers,
+    realtimeTranscriptionProviders: captured.realtimeTranscriptionProviders,
+    speechProviders: captured.speechProviders,
+    mediaProviders: captured.mediaUnderstandingProviders,
+    imageProviders: captured.imageGenerationProviders,
+    musicProviders: captured.musicGenerationProviders,
+    videoProviders: captured.videoGenerationProviders,
+  };
+}
+
+const registerProviderPlugins = registerProviders;
+const requireRegisteredProvider = requireProvider;
+
+function createRuntimeEnv(options = {}) {
+  const throwOnExit = options.throwOnExit !== undefined ? Boolean(options.throwOnExit) : true;
+  return {
+    log: createChannelTestMockFn(),
+    error: createChannelTestMockFn(),
+    writeStdout: createChannelTestMockFn(),
+    writeJson: createChannelTestMockFn(),
+    exit: createChannelTestMockFn((code) => {
+      if (throwOnExit) {
+        throw new Error(`exit ${code}`);
+      }
+      return undefined;
+    }),
+  };
+}
+
+function createTypedRuntimeEnv(options = {}, runtimeShape) {
+  const runtime = createRuntimeEnv(options);
+  if (typeof runtimeShape === "function") {
+    runtimeShape(runtime);
+  }
+  return runtime;
+}
+
+function createNonExitingRuntimeEnv() {
+  return createRuntimeEnv({ throwOnExit: false });
+}
+
+function createNonExitingTypedRuntimeEnv(runtimeShape) {
+  return createTypedRuntimeEnv({ throwOnExit: false }, runtimeShape);
+}
+
+async function selectFirstWizardOption(params = {}) {
+  const first = (params.options || [])[0];
+  if (!first) {
+    throw new Error("no options");
+  }
+  return first.value;
+}
+
+function createTestWizardPrompter(overrides = {}) {
+  return {
+    intro: createChannelTestMockFn(async () => undefined),
+    outro: createChannelTestMockFn(async () => undefined),
+    note: createChannelTestMockFn(async () => undefined),
+    plain: createChannelTestMockFn(async () => undefined),
+    select: selectFirstWizardOption,
+    multiselect: createChannelTestMockFn(async () => []),
+    text: createChannelTestMockFn(async () => ""),
+    confirm: createChannelTestMockFn(async () => false),
+    progress: createChannelTestMockFn(() => ({
+      update: createChannelTestMockFn(),
+      stop: createChannelTestMockFn(),
+    })),
+    ...overrides,
+  };
+}
+
+function createQueuedWizardPrompter(params = {}) {
+  const selectValues = [...(params.selectValues || [])];
+  const textValues = [...(params.textValues || [])];
+  const confirmValues = [...(params.confirmValues || [])];
+  const intro = createChannelTestMockFn(async () => undefined);
+  const outro = createChannelTestMockFn(async () => undefined);
+  const note = createChannelTestMockFn(async () => undefined);
+  const plain = createChannelTestMockFn(async () => undefined);
+  const select = createChannelTestMockFn(async () => selectValues.shift() || "");
+  const multiselect = createChannelTestMockFn(async () => []);
+  const text = createChannelTestMockFn(async () => textValues.shift() || "");
+  const confirm = createChannelTestMockFn(async () => confirmValues.shift() || false);
+  const progress = createChannelTestMockFn(() => ({
+    update: createChannelTestMockFn(),
+    stop: createChannelTestMockFn(),
+  }));
+  return {
+    intro,
+    outro,
+    note,
+    plain,
+    select,
+    multiselect,
+    text,
+    confirm,
+    progress,
+    prompter: createTestWizardPrompter({
+      intro,
+      outro,
+      note,
+      plain,
+      select,
+      multiselect,
+      text,
+      confirm,
+      progress,
+    }),
+  };
+}
+
+function createSetupWizardAdapter(params = {}) {
+  const wizard = params.wizard || (params.plugin && params.plugin.setupWizard) || {};
+  return {
+    getStatus: async (args = {}) =>
+      typeof wizard.status === "function" ? await wizard.status(args) : undefined,
+    configure: async (args = {}) =>
+      typeof wizard.configure === "function" ? await wizard.configure(args) : undefined,
+    prepare: async (args = {}) =>
+      typeof wizard.prepare === "function" ? await wizard.prepare(args) : undefined,
+    finalize: async (args = {}) =>
+      typeof wizard.finalize === "function" ? await wizard.finalize(args) : undefined,
+    promptAllowFrom: async (args = {}) =>
+      typeof wizard.promptAllowFrom === "function"
+        ? await wizard.promptAllowFrom(args)
+        : undefined,
+    resolveAllowFromEntries: async (args = {}) =>
+      typeof wizard.resolveAllowFromEntries === "function"
+        ? await wizard.resolveAllowFromEntries(args)
+        : undefined,
+    resolveGroupAllowlist: async (args = {}) =>
+      typeof wizard.resolveGroupAllowlist === "function"
+        ? await wizard.resolveGroupAllowlist(args)
+        : undefined,
+  };
+}
+
+function createPluginSetupWizardAdapter(plugin = {}) {
+  if (!plugin.setupWizard) {
+    throw new Error(`${plugin.id} is missing setupWizard`);
+  }
+  return createSetupWizardAdapter({ plugin, wizard: plugin.setupWizard });
+}
+
+function createPluginSetupWizardConfigure(plugin) {
+  return createPluginSetupWizardAdapter(plugin).configure;
+}
+
+function createPluginSetupWizardStatus(plugin) {
+  return createPluginSetupWizardAdapter(plugin).getStatus;
+}
+
+async function runSetupWizardConfigure(params = {}) {
+  if (typeof params.configure !== "function") {
+    return undefined;
+  }
+  return await params.configure({
+    cfg: params.cfg || {},
+    runtime: params.runtime || createRuntimeEnv(),
+    prompter: params.prompter,
+    options: params.options || {},
+    accountOverrides: params.accountOverrides || {},
+    shouldPromptAccountIds: params.shouldPromptAccountIds || false,
+    forceAllowFrom: params.forceAllowFrom || false,
+  });
+}
+
+function resolveSetupWizardAccountContext(params = {}) {
+  return {
+    cfg: params.cfg || {},
+    accountId: params.accountId || "default",
+    credentialValues: params.credentialValues || {},
+  };
+}
+
+async function runSetupWizardPrepare(params = {}) {
+  if (typeof params.prepare !== "function") {
+    return undefined;
+  }
+  return await params.prepare({
+    ...resolveSetupWizardAccountContext(params),
+    runtime: params.runtime || createRuntimeEnv({ throwOnExit: false }),
+    prompter: params.prompter || createTestWizardPrompter(),
+    options: params.options,
+  });
+}
+
+async function runSetupWizardFinalize(params = {}) {
+  if (typeof params.finalize !== "function") {
+    return undefined;
+  }
+  return await params.finalize({
+    ...resolveSetupWizardAccountContext(params),
+    runtime: params.runtime || createRuntimeEnv({ throwOnExit: false }),
+    prompter: params.prompter || createTestWizardPrompter(),
+    options: params.options,
+    forceAllowFrom: params.forceAllowFrom || false,
+  });
+}
+
+async function promptSetupWizardAllowFrom(params = {}) {
+  if (typeof params.promptAllowFrom !== "function") {
+    return undefined;
+  }
+  const context = resolveSetupWizardAccountContext(params);
+  return await params.promptAllowFrom({
+    cfg: context.cfg,
+    accountId: context.accountId,
+    prompter: params.prompter || createTestWizardPrompter(),
+  });
+}
+
+async function resolveSetupWizardAllowFromEntries(params = {}) {
+  if (typeof params.resolveEntries !== "function") {
+    return undefined;
+  }
+  return await params.resolveEntries({
+    ...resolveSetupWizardAccountContext(params),
+    entries: params.entries || [],
+  });
+}
+
+async function resolveSetupWizardGroupAllowlist(params = {}) {
+  if (typeof params.resolveAllowlist !== "function") {
+    return undefined;
+  }
+  return await params.resolveAllowlist({
+    ...resolveSetupWizardAccountContext(params),
+    entries: params.entries || [],
+    prompter: params.prompter || { note: createChannelTestMockFn(async () => undefined) },
+  });
+}
+
+function getProviderWizardState() {
+  return resolveGlobalSingleton("openzues.pluginTestRuntime.providerWizard", () => ({
+    resolver: undefined,
+  }));
+}
+
+function setProviderWizardProvidersResolverForTest(resolver) {
+  const state = getProviderWizardState();
+  const previous = state.resolver;
+  state.resolver = resolver;
+  return () => {
+    state.resolver = previous;
+  };
+}
+
+function resolveProviderWizardProviders(params = {}) {
+  const resolver = getProviderWizardState().resolver;
+  return typeof resolver === "function" ? resolver(params) : [];
+}
+
+function buildProviderPluginMethodChoice(providerId, methodId) {
+  return `provider-plugin:${normalizeOptionalString(providerId) || ""}:${
+    normalizeOptionalString(methodId) || ""
+  }`;
+}
+
+function resolveProviderMethodById(provider, methodId) {
+  const normalizedMethodId = normalizeOptionalLowercaseString(methodId);
+  if (!normalizedMethodId) {
+    return (provider.auth || [])[0];
+  }
+  return (provider.auth || []).find(
+    (method) => normalizeOptionalLowercaseString(method.id) === normalizedMethodId,
+  );
+}
+
+function resolveWizardSetupChoiceId(provider, wizard = {}) {
+  const explicitChoice = normalizeOptionalString(wizard.choiceId);
+  if (explicitChoice) {
+    return explicitChoice;
+  }
+  const explicitMethod = normalizeOptionalString(wizard.methodId);
+  if (explicitMethod) {
+    return buildProviderPluginMethodChoice(provider.id, explicitMethod);
+  }
+  if ((provider.auth || []).length === 1) {
+    return provider.id;
+  }
+  return buildProviderPluginMethodChoice(provider.id, (provider.auth || [])[0]?.id || "default");
+}
+
+function buildSetupOptionForMethod(params = {}) {
+  const provider = params.provider || {};
+  const wizard = params.wizard || {};
+  const method = params.method || {};
+  return {
+    value: normalizeOptionalString(params.value) || "",
+    label:
+      normalizeOptionalString(wizard.choiceLabel) ||
+      ((provider.auth || []).length === 1 ? provider.label : method.label),
+    hint: normalizeOptionalString(wizard.choiceHint) || method.hint,
+    groupId: normalizeOptionalString(wizard.groupId) || provider.id,
+    groupLabel: normalizeOptionalString(wizard.groupLabel) || provider.label,
+    ...(normalizeOptionalString(wizard.groupHint)
+      ? { groupHint: normalizeOptionalString(wizard.groupHint) }
+      : {}),
+    ...(wizard.onboardingScopes ? { onboardingScopes: wizard.onboardingScopes } : {}),
+    ...(typeof wizard.assistantPriority === "number" && Number.isFinite(wizard.assistantPriority)
+      ? { assistantPriority: wizard.assistantPriority }
+      : {}),
+    ...(wizard.assistantVisibility ? { assistantVisibility: wizard.assistantVisibility } : {}),
+  };
+}
+
+function resolveProviderWizardOptions(params = {}) {
+  const options = [];
+  for (const provider of resolveProviderWizardProviders(params)) {
+    const methodSetups = (provider.auth || [])
+      .map((method) => (method.wizard ? { method, wizard: method.wizard } : null))
+      .filter(Boolean);
+    for (const entry of methodSetups) {
+      options.push(
+        buildSetupOptionForMethod({
+          provider,
+          method: entry.method,
+          wizard: entry.wizard,
+          value:
+            normalizeOptionalString(entry.wizard.choiceId) ||
+            buildProviderPluginMethodChoice(provider.id, entry.method.id),
+        }),
+      );
+    }
+    if (methodSetups.length > 0) {
+      continue;
+    }
+    const setup = provider.wizard && provider.wizard.setup;
+    if (!setup) {
+      continue;
+    }
+    const method = resolveProviderMethodById(provider, setup.methodId);
+    if (method) {
+      options.push(
+        buildSetupOptionForMethod({
+          provider,
+          method,
+          wizard: setup,
+          value: resolveWizardSetupChoiceId(provider, setup),
+        }),
+      );
+    }
+  }
+  return options;
+}
+
+function resolveProviderModelPickerEntries(params = {}) {
+  const entries = [];
+  for (const provider of resolveProviderWizardProviders(params)) {
+    const modelPicker = provider.wizard && provider.wizard.modelPicker;
+    if (!modelPicker) {
+      continue;
+    }
+    entries.push({
+      value:
+        normalizeOptionalString(modelPicker.methodId) !== undefined
+          ? buildProviderPluginMethodChoice(provider.id, modelPicker.methodId)
+          : (provider.auth || []).length === 1
+            ? provider.id
+            : buildProviderPluginMethodChoice(
+                provider.id,
+                (provider.auth || [])[0]?.id || "default",
+              ),
+      label: normalizeOptionalString(modelPicker.label) || `${provider.label} (custom)`,
+      ...(normalizeOptionalString(modelPicker.hint)
+        ? { hint: normalizeOptionalString(modelPicker.hint) }
+        : {}),
+    });
+  }
+  return entries;
+}
+
+function resolveProviderPluginChoice(params = {}) {
+  const choice = normalizeOptionalString(params.choice) || "";
+  if (!choice) {
+    return null;
+  }
+  const providers = params.providers || [];
+  if (choice.startsWith("provider-plugin:")) {
+    const payload = choice.slice("provider-plugin:".length);
+    const separator = payload.indexOf(":");
+    const providerId = separator >= 0 ? payload.slice(0, separator) : payload;
+    const methodId = separator >= 0 ? payload.slice(separator + 1) : undefined;
+    const provider = providers.find(
+      (entry) =>
+        normalizeOptionalLowercaseString(entry.id) === normalizeOptionalLowercaseString(providerId),
+    );
+    if (!provider) {
+      return null;
+    }
+    const method = resolveProviderMethodById(provider, methodId);
+    return method ? { provider, method } : null;
+  }
+  for (const provider of providers) {
+    const setup = provider.wizard && provider.wizard.setup;
+    if (setup && resolveWizardSetupChoiceId(provider, setup) === choice) {
+      const method = resolveProviderMethodById(provider, setup.methodId);
+      return method ? { provider, method, wizard: setup } : null;
+    }
+    if (
+      normalizeOptionalLowercaseString(provider.id) === normalizeOptionalLowercaseString(choice) &&
+      (provider.auth || []).length > 0
+    ) {
+      return { provider, method: provider.auth[0] };
+    }
+  }
+  return null;
+}
+
+function runProviderCatalog(params = {}) {
+  return resolveProviderWizardProviders(params);
+}
+
+function createMockPluginRegistry(hooks = []) {
+  const registry = createEmptyPluginRegistry();
+  const pluginIds =
+    hooks.length > 0
+      ? [...new Set(hooks.map((hook) => hook.pluginId || "test-plugin"))]
+      : ["test-plugin"];
+  registry.plugins = pluginIds.map((pluginId) =>
+    createPluginRecord({
+      id: pluginId,
+      name: "Test Plugin",
+      source: "test",
+      hookCount: hooks.filter((hook) => (hook.pluginId || "test-plugin") === pluginId).length,
+    }),
+  );
+  registry.hooks = hooks;
+  registry.typedHooks = hooks.map((hook) => ({
+    pluginId: hook.pluginId || "test-plugin",
+    hookName: hook.hookName,
+    handler: hook.handler,
+    priority: 0,
+    source: "test",
+  }));
+  return registry;
+}
+
+function createBoundPluginRuntimeTaskFlow(params = {}) {
+  const sessionKey = params.sessionKey;
+  if (!sessionKey) {
+    throw new Error("TaskFlow runtime requires a bound sessionKey.");
+  }
+  return {
+    sessionKey,
+    ...(params.requesterOrigin ? { requesterOrigin: params.requesterOrigin } : {}),
+    createManaged: (input = {}) => ({
+      flowId: input.flowId || "flow-test",
+      controllerId: input.controllerId,
+      status: input.status,
+      sessionKey,
+    }),
+    get: () => undefined,
+    list: () => [],
+    findLatest: () => undefined,
+    resolve: () => undefined,
+    getTaskSummary: () => undefined,
+    setWaiting: () => ({ applied: false, code: "not_found" }),
+    resume: () => ({ applied: false, code: "not_found" }),
+    finish: () => ({ applied: false, code: "not_found" }),
+    fail: () => ({ applied: false, code: "not_found" }),
+    cancel: () => ({ cancelled: false, reason: "not_found" }),
+    runTask: () => ({ created: false, found: false, reason: "not_found" }),
+  };
+}
+
+function createRuntimeTaskFlow() {
+  return {
+    bindSession: (params = {}) =>
+      createBoundPluginRuntimeTaskFlow({
+        sessionKey: params.sessionKey,
+        requesterOrigin: params.requesterOrigin,
+      }),
+    fromToolContext: (ctx = {}) =>
+      createBoundPluginRuntimeTaskFlow({
+        sessionKey: ctx.sessionKey,
+        requesterOrigin: ctx.deliveryContext,
+      }),
+  };
+}
+
+const pluginTestRuntimeRuntime = {
+  addTestHook,
+  buildPluginApi,
+  buildProviderPluginMethodChoice,
+  capturePluginRegistration,
+  createCapturedPluginRegistration,
+  createEmptyPluginRegistry,
+  createMockPluginRegistry,
+  createNonExitingRuntimeEnv,
+  createNonExitingTypedRuntimeEnv,
+  createOutboundTestPlugin,
+  createPluginRecord,
+  createPluginRegistry,
+  createPluginSetupWizardAdapter,
+  createPluginSetupWizardConfigure,
+  createPluginSetupWizardStatus,
+  createQueuedWizardPrompter,
+  createRuntimeEnv,
+  createRuntimeTaskFlow,
+  createSetupWizardAdapter,
+  createTestRegistry,
+  createTestWizardPrompter,
+  createTypedRuntimeEnv,
+  getActivePluginRegistry,
+  initializeGlobalHookRunner,
+  listImportedBundledPluginFacadeIds,
+  loadPluginManifestRegistry,
+  pluginRegistrationContractRegistry,
+  promptSetupWizardAllowFrom,
+  providerContractLoadError,
+  registerProviderPlugin,
+  registerProviderPlugins,
+  registerSingleProviderPlugin,
+  releasePinnedPluginChannelRegistry,
+  requireRegisteredProvider,
+  resetFacadeRuntimeStateForTest,
+  resetGlobalHookRunner,
+  resetPluginRuntimeStateForTest,
+  resolveBundledExplicitProviderContractsFromPublicArtifacts,
+  resolveBundledExplicitWebFetchProvidersFromPublicArtifacts,
+  resolveBundledExplicitWebSearchProvidersFromPublicArtifacts,
+  resolveProviderContractProvidersForPluginIds,
+  resolveProviderModelPickerEntries,
+  resolveProviderPluginChoice,
+  resolveProviderWizardOptions,
+  resolveSetupWizardAllowFromEntries,
+  resolveSetupWizardGroupAllowlist,
+  resolveWebFetchProviderContractEntriesForPluginId,
+  resolveWebSearchProviderContractEntriesForPluginId,
+  runProviderCatalog,
+  runSetupWizardConfigure,
+  runSetupWizardFinalize,
+  runSetupWizardPrepare,
+  selectFirstWizardOption,
+  setActivePluginRegistry,
+  setDefaultChannelPluginRegistryForTests,
+  setProviderWizardProvidersResolverForTest,
+};
+
 function applyChannelMatchMeta(result, match = {}) {
   if (match.matchKey && match.matchSource) {
     result.matchKey = match.matchKey;
@@ -77451,6 +78390,7 @@ const genericSdk = new Proxy(
     ...channelTestHelpersRuntime,
     ...pluginTestApiRuntime,
     ...pluginTestContractsRuntime,
+    ...pluginTestRuntimeRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
@@ -79513,6 +80453,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-test-contracts"
   ) {
     return pluginTestContractsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/plugin-test-runtime" ||
+    request === "@openclaw/plugin-sdk/plugin-test-runtime"
+  ) {
+    return pluginTestRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||
