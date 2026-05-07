@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~99.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~99.2% overall, with a reasonable
   band of ~80-99.5%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -119,7 +119,7 @@ Current percentage rollup:
   adapter-factory, realtime-voice helper, media-understanding-runtime helper,
   media-understanding provider-helper, messaging-targets, web-media, speech,
   zalouser, zod, web-content-extractor, plugin-entry, optional-channel-setup,
-  outbound-media, and delivery-queue-runtime slices.
+  outbound-media, delivery-queue-runtime, and migration-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -9426,9 +9426,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   deliver preservation, and the native unavailable error when no queue drain
   runtime is wired. Source/test checkpointed in `183c5a68`; repo-wide parity is
   now estimated at ~99.1%.
+- Current queue-head adjustment: imported plugin SDK `migration-runtime` now
+  exposes the source-backed migration filesystem/report facade for scoped and
+  unscoped imports, including cached config runtime mutation, copy/archive
+  side effects, conflict/error shaping, report redaction, and Markdown summary
+  output. Source/test checkpointed in `7a9c8208`; repo-wide parity is now
+  estimated at ~99.2%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially `migration-runtime`, broader runtime/client integration, and
-  session runtime methods (`chat.*`, `sessions.*`), rather than the older
+  especially the sibling `migration` helper facade, broader runtime/client
+  integration, and session runtime methods (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency
   placeholders.
