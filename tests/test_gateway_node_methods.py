@@ -39884,6 +39884,286 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_agent_command_entrypoints(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    workspace_dir = (tmp_path / "workspace").as_posix()
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-command.cjs"
+    runtime_entry.write_text(
+        f"""
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+
+async function capture(fn) {{
+  try {{
+    return {{ ok: true, value: await fn() }};
+  }} catch (error) {{
+    return {{
+      ok: false,
+      name: error && error.name,
+      message: error && error.message,
+      code: error && error.code,
+      entrypoint: error && error.entrypoint,
+      senderIsOwner: error && error.senderIsOwner,
+      allowModelOverride: error && error.allowModelOverride
+    }};
+  }}
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.agent_command",
+      description: "Use OpenClaw agent-runtime agent command helpers",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const cfg = {{
+          agents: {{
+            defaults: {{ id: "main", workspace: {json.dumps(workspace_dir)} }},
+            list: [
+              {{ id: "main", workspace: {json.dumps(workspace_dir)}, default: true }},
+              {{ id: "helper", workspace: {json.dumps(workspace_dir)} }}
+            ]
+          }}
+        }};
+        const runtime = {{ config: cfg, sourceConfig: {{ marker: "source" }} }};
+        const resolved = await agent.__testing.resolveAgentRuntimeConfig(runtime);
+        const prepared = await agent.__testing.prepareAgentCommandExecution(
+          {{
+            message: "hello",
+            transcriptMessage: "visible hello",
+            agentId: "Main",
+            sessionKey: "agent:main",
+            senderIsOwner: false,
+            allowModelOverride: false,
+            modelRun: true,
+            timeout: "0",
+            workspaceDir: {json.dumps(workspace_dir)}
+          }},
+          runtime
+        );
+        return {{
+          keys: {{
+            agentCommand: typeof agent.agentCommand,
+            agentCommandFromIngress: typeof agent.agentCommandFromIngress,
+            testing: Object.keys(agent.__testing || {{}}).sort()
+          }},
+          ingressMissingOwner: await capture(() =>
+            agent.agentCommandFromIngress({{
+              message: "hello",
+              agentId: "main",
+              allowModelOverride: false,
+              modelRun: true
+            }})
+          ),
+          ingressMissingModelOverride: await capture(() =>
+            agent.agentCommandFromIngress({{
+              message: "hello",
+              agentId: "main",
+              senderIsOwner: false,
+              modelRun: true
+            }})
+          ),
+          localUnavailable: await capture(() =>
+            agent.agentCommand({{
+              message: "hello",
+              agentId: "main",
+              modelRun: true,
+              promptMode: "none"
+            }}, runtime)
+          ),
+          ingressUnavailable: await capture(() =>
+            agent.agentCommandFromIngress({{
+              message: "hello",
+              agentId: "main",
+              senderIsOwner: false,
+              allowModelOverride: false,
+              modelRun: true,
+              promptMode: "none"
+            }}, runtime)
+          ),
+          blank: await capture(() =>
+            agent.__testing.prepareAgentCommandExecution({{
+              message: "   ",
+              agentId: "main",
+              senderIsOwner: true,
+              allowModelOverride: true
+            }}, runtime)
+          ),
+          missingTarget: await capture(() =>
+            agent.__testing.prepareAgentCommandExecution({{
+              message: "hello",
+              senderIsOwner: true,
+              allowModelOverride: true
+            }}, runtime)
+          ),
+          unknownAgent: await capture(() =>
+            agent.__testing.prepareAgentCommandExecution({{
+              message: "hello",
+              agentId: "Ghost",
+              senderIsOwner: true,
+              allowModelOverride: true
+            }}, runtime)
+          ),
+          mismatch: await capture(() =>
+            agent.__testing.prepareAgentCommandExecution({{
+              message: "hello",
+              agentId: "Helper",
+              sessionKey: "agent:main",
+              senderIsOwner: true,
+              allowModelOverride: true
+            }}, runtime)
+          ),
+          resolved,
+          prepared: {{
+            body: prepared.body,
+            transcriptBody: prepared.transcriptBody,
+            sessionAgentId: prepared.sessionAgentId,
+            agentIdOverride: prepared.agentIdOverride,
+            isRawModelRun: prepared.isRawModelRun,
+            timeoutMs: prepared.timeoutMs,
+            runId: prepared.runId,
+            workspaceDir: prepared.workspaceDir,
+            senderIsOwner: prepared.senderIsOwner,
+            allowModelOverride: prepared.allowModelOverride
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-command-plugin",
+                    "name": "Runtime Agent Command Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-command.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_command"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_command"})
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == {
+        "agentCommand": "function",
+        "agentCommandFromIngress": "function",
+        "testing": ["prepareAgentCommandExecution", "resolveAgentRuntimeConfig"],
+    }
+    assert result["ingressMissingOwner"]["message"] == (
+        "senderIsOwner must be explicitly set for ingress agent runs."
+    )
+    assert result["ingressMissingModelOverride"]["message"] == (
+        "allowModelOverride must be explicitly set for ingress agent runs."
+    )
+    assert result["localUnavailable"] == {
+        "ok": False,
+        "name": "Error",
+        "message": (
+            "OpenClaw agent command runtime is unavailable in the native "
+            "OpenZues plugin bridge."
+        ),
+        "code": "agent_command_unavailable",
+        "entrypoint": "agentCommand",
+        "senderIsOwner": True,
+        "allowModelOverride": True,
+    }
+    assert result["ingressUnavailable"] == {
+        "ok": False,
+        "name": "Error",
+        "message": (
+            "OpenClaw agent command runtime is unavailable in the native "
+            "OpenZues plugin bridge."
+        ),
+        "code": "agent_command_unavailable",
+        "entrypoint": "agentCommandFromIngress",
+        "senderIsOwner": False,
+        "allowModelOverride": False,
+    }
+    assert result["blank"]["message"] == "Message (--message) is required"
+    assert result["missingTarget"]["message"] == (
+        "Pass --to <E.164>, --session-id, or --agent to choose a session"
+    )
+    assert result["unknownAgent"]["message"] == (
+        'Unknown agent id "Ghost". Use "openclaw agents list" to see configured agents.'
+    )
+    assert result["mismatch"]["message"] == (
+        'Agent id "Helper" does not match session key agent "main".'
+    )
+    assert result["resolved"] == {
+        "loadedRaw": {
+            "agents": {
+                "defaults": {"id": "main", "workspace": workspace_dir},
+                "list": [
+                    {"id": "main", "workspace": workspace_dir, "default": True},
+                    {"id": "helper", "workspace": workspace_dir},
+                ],
+            }
+        },
+        "sourceConfig": {"marker": "source"},
+        "cfg": {
+            "agents": {
+                "defaults": {"id": "main", "workspace": workspace_dir},
+                "list": [
+                    {"id": "main", "workspace": workspace_dir, "default": True},
+                    {"id": "helper", "workspace": workspace_dir},
+                ],
+            }
+        },
+    }
+    assert result["prepared"] == {
+        "body": "hello",
+        "transcriptBody": "visible hello",
+        "sessionAgentId": "main",
+        "agentIdOverride": "main",
+        "isRawModelRun": True,
+        "timeoutMs": 0,
+        "runId": "agent:main",
+        "workspaceDir": workspace_dir,
+        "senderIsOwner": False,
+        "allowModelOverride": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

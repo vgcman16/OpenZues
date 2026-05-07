@@ -57541,8 +57541,177 @@ const ttsRuntime = {
   textToSpeechTelephony,
 };
 
+const AGENT_COMMAND_UNAVAILABLE_CODE = "agent_command_unavailable";
+
+function agentCommandRuntimeAsConfig(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+async function agentCommandResolveAgentRuntimeConfig(runtime = {}, params = {}) {
+  const loadedRaw = agentCommandRuntimeAsConfig(runtime.loadedRaw || runtime.config || runtime.cfg);
+  const sourceConfig = agentCommandRuntimeAsConfig(runtime.sourceConfig || loadedRaw);
+  let cfg = agentCommandRuntimeAsConfig(runtime.cfg || loadedRaw);
+  if (
+    params &&
+    params.runtimeTargetsChannelSecrets === true &&
+    typeof runtime.resolveCommandConfigWithSecrets === "function"
+  ) {
+    const resolved = await runtime.resolveCommandConfigWithSecrets({
+      config: loadedRaw,
+      commandName: "agent",
+      runtime,
+    });
+    cfg = agentCommandRuntimeAsConfig(
+      resolved && (resolved.resolvedConfig || resolved.cfg || resolved.config),
+    );
+  }
+  return { loadedRaw, sourceConfig, cfg };
+}
+
+function readAgentCommandMessage(opts = {}) {
+  return opts.message == null ? "" : String(opts.message);
+}
+
+function readAgentCommandId(value) {
+  return normalizeOptionalString(value);
+}
+
+function parseAgentCommandTimeoutMs(opts = {}) {
+  if (opts.timeout === undefined) {
+    return undefined;
+  }
+  const timeoutSeconds = Number.parseInt(String(opts.timeout), 10);
+  if (Number.isNaN(timeoutSeconds) || timeoutSeconds < 0) {
+    throw new Error("--timeout must be a non-negative integer (seconds; 0 means no timeout)");
+  }
+  return timeoutSeconds * 1000;
+}
+
+async function agentCommandPrepareAgentCommandExecution(opts = {}, runtime = {}) {
+  const isRawModelRun = opts.modelRun === true || opts.promptMode === "none";
+  const message = readAgentCommandMessage(opts);
+  if (!message.trim()) {
+    throw new Error("Message (--message) is required");
+  }
+  if (!opts.to && !opts.sessionId && !opts.sessionKey && !opts.agentId) {
+    throw new Error("Pass --to <E.164>, --session-id, or --agent to choose a session");
+  }
+  const { cfg } = await agentCommandResolveAgentRuntimeConfig(runtime, {
+    runtimeTargetsChannelSecrets: opts.deliver === true,
+  });
+  const agentIdOverrideRaw = readAgentCommandId(opts.agentId);
+  const agentIdOverride = agentIdOverrideRaw ? normalizeAgentId(agentIdOverrideRaw) : undefined;
+  if (agentIdOverride) {
+    const knownAgents = agentRuntimeListAgentIds(cfg);
+    if (!knownAgents.includes(agentIdOverride)) {
+      throw new Error(
+        [
+          `Unknown agent id "${agentIdOverrideRaw}".`,
+          'Use "openclaw agents list" to see configured agents.',
+        ].join(" "),
+      );
+    }
+  }
+  const sessionKey = readAgentCommandId(opts.sessionKey);
+  if (agentIdOverride && sessionKey) {
+    const sessionAgentId = resolveAgentIdFromSessionKey(sessionKey);
+    if (sessionAgentId !== agentIdOverride) {
+      throw new Error(
+        `Agent id "${agentIdOverrideRaw}" does not match session key agent "${sessionAgentId}".`,
+      );
+    }
+  }
+  const sessionAgentId =
+    agentIdOverride || resolveSessionAgentId({ sessionKey, config: cfg });
+  const timeoutMs = parseAgentCommandTimeoutMs(opts);
+  const workspaceDir =
+    readAgentCommandId(opts.workspaceDir) ||
+    agentRuntimeResolveAgentWorkspaceDir(cfg, sessionAgentId);
+  const sessionId = readAgentCommandId(opts.sessionId);
+  const runId =
+    readAgentCommandId(opts.runId) || sessionId || sessionKey || `agent:${sessionAgentId}`;
+  return {
+    body: message,
+    transcriptBody: opts.transcriptMessage ?? message,
+    cfg,
+    normalizedSpawned: {
+      spawnedBy: readAgentCommandId(opts.spawnedBy),
+      groupId: readAgentCommandId(opts.groupId),
+      groupChannel: readAgentCommandId(opts.groupChannel),
+      groupSpace: readAgentCommandId(opts.groupSpace),
+      workspaceDir,
+    },
+    agentCfg: agentRuntimeResolveAgentConfig(cfg, sessionAgentId),
+    timeoutMs,
+    sessionId,
+    sessionKey,
+    sessionAgentId,
+    agentIdOverride,
+    workspaceDir,
+    agentDir: agentRuntimeResolveAgentDir(cfg, sessionAgentId),
+    runId,
+    isRawModelRun,
+    senderIsOwner: opts.senderIsOwner,
+    allowModelOverride: opts.allowModelOverride,
+  };
+}
+
+function createAgentCommandUnavailableError(entrypoint, opts = {}) {
+  const error = new Error(
+    "OpenClaw agent command runtime is unavailable in the native OpenZues plugin bridge.",
+  );
+  error.code = AGENT_COMMAND_UNAVAILABLE_CODE;
+  error.entrypoint = entrypoint;
+  error.senderIsOwner = opts.senderIsOwner;
+  error.allowModelOverride = opts.allowModelOverride;
+  return error;
+}
+
+async function agentCommandInternal(opts = {}, runtime = {}, deps, entrypoint = "agentCommand") {
+  const prepared = await agentCommandPrepareAgentCommandExecution(opts, runtime);
+  const runner =
+    runtime &&
+    (runtime.agentCommandRunner ||
+      runtime.runAgentCommand ||
+      runtime.agentCommand ||
+      (deps && deps.agentCommandRunner));
+  if (typeof runner === "function") {
+    return await runner({ opts, prepared, runtime, deps, entrypoint });
+  }
+  throw createAgentCommandUnavailableError(entrypoint, opts);
+}
+
+async function agentCommand(opts = {}, runtime = {}, deps) {
+  return await agentCommandInternal(
+    {
+      ...opts,
+      senderIsOwner: opts.senderIsOwner ?? true,
+      allowModelOverride: opts.allowModelOverride ?? true,
+    },
+    runtime,
+    deps,
+    "agentCommand",
+  );
+}
+
+async function agentCommandFromIngress(opts = {}, runtime = {}, deps) {
+  if (typeof opts.senderIsOwner !== "boolean") {
+    throw new Error("senderIsOwner must be explicitly set for ingress agent runs.");
+  }
+  if (typeof opts.allowModelOverride !== "boolean") {
+    throw new Error("allowModelOverride must be explicitly set for ingress agent runs.");
+  }
+  return await agentCommandInternal(opts, runtime, deps, "agentCommandFromIngress");
+}
+
+const agentCommandTestingFacade = {
+  prepareAgentCommandExecution: agentCommandPrepareAgentCommandExecution,
+  resolveAgentRuntimeConfig: agentCommandResolveAgentRuntimeConfig,
+};
+
 const agentRuntime = {
   ...ttsRuntime,
+  __testing: agentCommandTestingFacade,
   DEFAULT_CACHE_TTL_MINUTES,
   DEFAULT_CONTEXT_TOKENS: AGENT_RUNTIME_DEFAULT_CONTEXT_TOKENS,
   DEFAULT_MODEL: AGENT_RUNTIME_DEFAULT_MODEL,
@@ -57563,6 +57732,8 @@ const agentRuntime = {
   appendCronStyleCurrentTimeLine,
   applyAuthHeaderOverride: agentRuntimeApplyAuthHeaderOverride,
   applyLocalNoAuthHeaderOverride: agentRuntimeApplyLocalNoAuthHeaderOverride,
+  agentCommand,
+  agentCommandFromIngress,
   assertMediaNotDataUrl,
   asToolParamsRecord,
   buildAllowedModelSet: agentRuntimeBuildAllowedModelSet,
