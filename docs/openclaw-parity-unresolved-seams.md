@@ -4,8 +4,8 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~99.0% overall, with a reasonable
-  band of ~80-99%.
+- Repo-wide OpenClaw parity is estimated at ~99.1% overall, with a reasonable
+  band of ~80-99.5%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -119,7 +119,7 @@ Current percentage rollup:
   adapter-factory, realtime-voice helper, media-understanding-runtime helper,
   media-understanding provider-helper, messaging-targets, web-media, speech,
   zalouser, zod, web-content-extractor, plugin-entry, optional-channel-setup,
-  and outbound-media slices.
+  outbound-media, and delivery-queue-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -9420,10 +9420,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   explicit local-root host-read gating, and the upstream missing-local-roots
   error. Source/test checkpointed in `49969f8f`; repo-wide parity is now
   estimated at ~99.0%.
+- Current queue-head adjustment: imported plugin SDK `delivery-queue-runtime`
+  now exposes the source-backed `drainPendingDeliveries` facade for scoped and
+  unscoped imports, including default outbound deliverer injection, explicit
+  deliver preservation, and the native unavailable error when no queue drain
+  runtime is wired. Source/test checkpointed in `183c5a68`; repo-wide parity is
+  now estimated at ~99.1%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially `delivery-queue-runtime`, `migration-runtime`, broader
-  runtime/client integration, and session runtime methods (`chat.*`,
-  `sessions.*`), rather than the older
+  especially `migration-runtime`, broader runtime/client integration, and
+  session runtime methods (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency
   placeholders.
