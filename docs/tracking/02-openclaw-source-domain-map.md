@@ -132,7 +132,10 @@ coverage from `src/plugin-sdk/browser-maintenance.ts` is verified in
 `bf5ce3f0`, and imported `browser-node-host` exact facade coverage from
 `src/plugin-sdk/browser-node-host.ts` and
 `extensions/browser/src/node-host/invoke-browser.ts` is verified in
-`2ef00b04`. All are counted with the plugin/extension system row above.
+`2ef00b04`, and imported `browser-node-runtime` aggregate coverage from
+`src/plugin-sdk/browser-node-runtime.ts` and
+`extensions/browser/src/sdk-node-runtime.ts` is verified in `bc7ef301`. All
+are counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
