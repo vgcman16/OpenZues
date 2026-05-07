@@ -40389,6 +40389,471 @@ const mediaStoreRuntime = {
   saveMediaBuffer,
 };
 
+const WEB_MEDIA_MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const WEB_MEDIA_MAX_AUDIO_BYTES = 16 * 1024 * 1024;
+const WEB_MEDIA_MAX_VIDEO_BYTES = 16 * 1024 * 1024;
+const WEB_MEDIA_MAX_DOCUMENT_BYTES = 100 * 1024 * 1024;
+const WEB_MEDIA_HOST_READ_TEXT_MIMES = new Set(["text/csv", "text/markdown"]);
+const WEB_MEDIA_HOST_READ_DOCUMENT_MIMES = new Set([
+  "application/msword",
+  "application/pdf",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/csv",
+  "text/markdown",
+]);
+const WEB_MEDIA_WINDOWS_DRIVE_RE = /^[A-Za-z]:[\\/]/;
+
+class LocalMediaAccessError extends Error {
+  constructor(code, message, options) {
+    super(message, options);
+    this.name = "LocalMediaAccessError";
+    this.code = code;
+  }
+}
+
+function getDefaultLocalRoots() {
+  const stateDir = path.resolve(resolveStateDir());
+  const configDir = path.resolve(resolveConfigDir());
+  return Array.from(
+    new Set([
+      os.tmpdir(),
+      path.join(configDir, "media"),
+      path.join(stateDir, "media"),
+      path.join(stateDir, "canvas"),
+      path.join(stateDir, "workspace"),
+      path.join(stateDir, "sandboxes"),
+    ]),
+  );
+}
+
+function assertNoWindowsNetworkPathForWebMedia(filePath, label = "Path") {
+  if (isWindowsNetworkPath(String(filePath))) {
+    throw new Error(`${label} cannot use Windows network paths: ${filePath}`);
+  }
+}
+
+async function resolveWebMediaRealPath(filePath) {
+  try {
+    return await fs.promises.realpath(filePath);
+  } catch (_error) {
+    return path.resolve(filePath);
+  }
+}
+
+async function assertLocalMediaAllowed(mediaPath, localRoots) {
+  if (localRoots === "any") {
+    return;
+  }
+  try {
+    assertNoWindowsNetworkPathForWebMedia(mediaPath, "Local media path");
+  } catch (err) {
+    throw new LocalMediaAccessError("network-path-not-allowed", err.message, {
+      cause: err,
+    });
+  }
+  const roots = localRoots || getDefaultLocalRoots();
+  const resolved = await resolveWebMediaRealPath(mediaPath);
+  for (const root of roots) {
+    const resolvedRoot = await resolveWebMediaRealPath(root);
+    if (resolvedRoot === path.parse(resolvedRoot).root) {
+      throw new LocalMediaAccessError(
+        "invalid-root",
+        `Invalid localRoots entry (refuses filesystem root): ${root}. ` +
+          "Pass a narrower directory.",
+      );
+    }
+    if (isPathInsideRoot(resolvedRoot, resolved)) {
+      return;
+    }
+  }
+  throw new LocalMediaAccessError(
+    "path-not-allowed",
+    `Local media path is not under an allowed directory: ${mediaPath}`,
+  );
+}
+
+function maxBytesForWebMediaKind(kind) {
+  switch (kind) {
+    case "image":
+      return WEB_MEDIA_MAX_IMAGE_BYTES;
+    case "audio":
+      return WEB_MEDIA_MAX_AUDIO_BYTES;
+    case "video":
+      return WEB_MEDIA_MAX_VIDEO_BYTES;
+    case "document":
+    default:
+      return WEB_MEDIA_MAX_DOCUMENT_BYTES;
+  }
+}
+
+function formatWebMediaMb(bytes, digits = 2) {
+  return (bytes / (1024 * 1024)).toFixed(digits);
+}
+
+function formatWebMediaCapLimit(label, cap, size) {
+  return `${label} exceeds ${formatWebMediaMb(cap, 0)}MB limit ` +
+    `(got ${formatWebMediaMb(size)}MB)`;
+}
+
+function toWebMediaBuffer(value) {
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+  if (ArrayBuffer.isView(value)) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (value instanceof ArrayBuffer) {
+    return Buffer.from(value);
+  }
+  return Buffer.from(value || []);
+}
+
+function isSupportedWebMediaImage(buffer) {
+  return Boolean(buffer && mediaKindFromMime(sniffMime(buffer)) === "image");
+}
+
+async function optimizeImageToJpeg(buffer, maxBytes, _opts = {}) {
+  const source = toWebMediaBuffer(buffer);
+  if (!isSupportedWebMediaImage(source)) {
+    throw new Error("Failed to optimize image");
+  }
+  return {
+    buffer: source,
+    optimizedSize: source.length,
+    resizeSide: 2048,
+    quality: source.length <= maxBytes ? 80 : 40,
+  };
+}
+
+async function optimizeImageToPng(buffer, maxBytes) {
+  const source = toWebMediaBuffer(buffer);
+  if (!isSupportedWebMediaImage(source)) {
+    throw new Error("Failed to optimize PNG image");
+  }
+  return {
+    buffer: source,
+    optimizedSize: source.length,
+    resizeSide: 2048,
+    compressionLevel: source.length <= maxBytes ? 6 : 9,
+  };
+}
+
+function resolveWebMediaOptions(params) {
+  const maxBytesOrOptions = params.maxBytesOrOptions;
+  if (typeof maxBytesOrOptions === "number" || maxBytesOrOptions === undefined) {
+    return {
+      maxBytes: maxBytesOrOptions,
+      optimizeImages: params.optimizeImages,
+      ssrfPolicy: params.options && params.options.ssrfPolicy,
+      localRoots: params.options && params.options.localRoots,
+    };
+  }
+  return {
+    ...maxBytesOrOptions,
+    optimizeImages: params.optimizeImages
+      ? (maxBytesOrOptions.optimizeImages ?? true)
+      : false,
+  };
+}
+
+async function resolveMediaStoreUriToPath(mediaUrl) {
+  if (!/^media:\/\//i.test(mediaUrl)) {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = new URL(mediaUrl);
+  } catch (err) {
+    throw new LocalMediaAccessError("invalid-path", err.message, { cause: err });
+  }
+  const location = parsed.hostname;
+  const encodedId = parsed.pathname.replace(/^\/+/u, "");
+  if (location !== "inbound") {
+    throw new LocalMediaAccessError(
+      "path-not-allowed",
+      `Unsupported media store URI location: ${location || "(none)"}`,
+    );
+  }
+  if (!encodedId || hasEncodedFileUrlSeparator(encodedId)) {
+    throw new LocalMediaAccessError("invalid-path", `Invalid media store URI: ${mediaUrl}`);
+  }
+  const id = decodeURIComponent(encodedId);
+  if (!id || id.includes("/") || id.includes("\\") || id.includes("\0")) {
+    throw new LocalMediaAccessError("invalid-path", `Invalid media store URI: ${mediaUrl}`);
+  }
+  try {
+    return await resolveMediaBufferPath(id, "inbound");
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      throw new LocalMediaAccessError("not-found", `Local media file not found: ${mediaUrl}`, {
+        cause: err,
+      });
+    }
+    throw new LocalMediaAccessError("invalid-path", err.message, { cause: err });
+  }
+}
+
+function isValidatedWebMediaText(buffer) {
+  if (!buffer || buffer.length === 0) {
+    return true;
+  }
+  if (buffer.includes(0)) {
+    return false;
+  }
+  const text = buffer.toString("utf8");
+  let printable = 0;
+  let control = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) || 0;
+    if (code === 9 || code === 10 || code === 13 || code === 32) {
+      printable += 1;
+    } else if (code < 32 || (code >= 0x7f && code <= 0x9f)) {
+      control += 1;
+    } else {
+      printable += 1;
+    }
+  }
+  return printable + control > 0 && printable / (printable + control) > 0.95;
+}
+
+function assertHostReadWebMediaAllowed(params) {
+  const declaredMime = normalizeMimeType(
+    params.filePath ? MIME_BY_EXT[getFileExtension(params.filePath)] : undefined,
+  );
+  const sniffedMime = normalizeMimeType(params.sniffedContentType);
+  const contentType = normalizeMimeType(params.contentType);
+  if (
+    declaredMime &&
+    WEB_MEDIA_HOST_READ_TEXT_MIMES.has(declaredMime) &&
+    isValidatedWebMediaText(params.buffer)
+  ) {
+    return;
+  }
+  const sniffedKind = mediaKindFromMime(sniffedMime);
+  if (sniffedKind === "image" || sniffedKind === "audio" || sniffedKind === "video") {
+    return;
+  }
+  if (
+    sniffedKind === "document" &&
+    sniffedMime &&
+    WEB_MEDIA_HOST_READ_DOCUMENT_MIMES.has(sniffedMime)
+  ) {
+    return;
+  }
+  if (
+    params.kind === "document" &&
+    contentType &&
+    WEB_MEDIA_HOST_READ_DOCUMENT_MIMES.has(contentType)
+  ) {
+    throw new LocalMediaAccessError(
+      "path-not-allowed",
+      `Host-local media sends require buffer-verified media/document types ` +
+        `(got fallback ${contentType}).`,
+    );
+  }
+  throw new LocalMediaAccessError(
+    "path-not-allowed",
+    `Host-local media sends only allow buffer-verified images, audio, video, PDF, ` +
+      `and Office documents (got ${sniffedMime || contentType || "unknown"}).`,
+  );
+}
+
+async function readLocalWebMediaFile(filePath) {
+  let stat;
+  try {
+    stat = await fs.promises.lstat(filePath);
+  } catch (err) {
+    if (isNotFoundPathError(err)) {
+      throw new LocalMediaAccessError(
+        "not-found",
+        `Local media file not found: ${filePath}`,
+        { cause: err },
+      );
+    }
+    throw new LocalMediaAccessError(
+      "invalid-path",
+      `Local media path is not safe to read: ${filePath}`,
+      { cause: err },
+    );
+  }
+  if (!stat.isFile()) {
+    throw new LocalMediaAccessError(
+      "not-file",
+      `Local media path is not a file: ${filePath}`,
+    );
+  }
+  return await fs.promises.readFile(filePath);
+}
+
+async function fetchWebMediaRemote(mediaUrl, options, fetchCap) {
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    throw new Error("fetch is not available for remote media");
+  }
+  const response = await fetchImpl(mediaUrl, options.requestInit || undefined);
+  if (!response || !response.ok) {
+    const status = response && response.status ? response.status : "unknown";
+    throw new Error(`Failed to fetch remote media (${status}): ${mediaUrl}`);
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (buffer.length > fetchCap) {
+    throw new Error(formatWebMediaCapLimit("Media", fetchCap, buffer.length));
+  }
+  const contentType =
+    response.headers && typeof response.headers.get === "function"
+      ? normalizeMimeType(response.headers.get("content-type"))
+      : undefined;
+  return {
+    buffer,
+    contentType,
+    fileName: basenameFromMediaSource(mediaUrl),
+  };
+}
+
+async function finalizeWebMedia(params, options) {
+  const cap =
+    options.maxBytes !== undefined
+      ? options.maxBytes
+      : maxBytesForWebMediaKind(params.kind || "document");
+  if (params.buffer.length > cap) {
+    const label = params.contentType === "image/gif" ? "GIF" : "Media";
+    throw new Error(
+      formatWebMediaCapLimit(label, cap, params.buffer.length),
+    );
+  }
+  return {
+    buffer: params.buffer,
+    contentType: params.contentType || undefined,
+    kind: params.kind,
+    fileName: params.fileName,
+  };
+}
+
+async function loadWebMediaInternal(mediaUrl, options = {}) {
+  let source = String(mediaUrl || "");
+  if (!/^\s*media:\/\//i.test(source)) {
+    source = source.replace(/^\s*MEDIA\s*:\s*/i, "");
+  }
+  source = (await resolveMediaStoreUriToPath(source)) || source;
+  if (source.startsWith("file://")) {
+    try {
+      source = safeFileURLToPath(source);
+    } catch (err) {
+      throw new LocalMediaAccessError("invalid-file-url", err.message, { cause: err });
+    }
+  }
+  if (/^https?:\/\//i.test(source)) {
+    const defaultFetchCap = maxBytesForWebMediaKind("document");
+    const fetchCap =
+      options.maxBytes === undefined
+        ? defaultFetchCap
+        : options.optimizeImages
+          ? Math.max(options.maxBytes, defaultFetchCap)
+          : options.maxBytes;
+    const fetched = await fetchWebMediaRemote(source, options, fetchCap);
+    const mime = await detectMime({
+      buffer: fetched.buffer,
+      headerMime: fetched.contentType,
+      filePath: fetched.fileName,
+    });
+    return await finalizeWebMedia(
+      {
+        buffer: fetched.buffer,
+        contentType: mime,
+        kind: mediaKindFromMime(mime),
+        fileName: fetched.fileName,
+      },
+      options,
+    );
+  }
+  if (source.startsWith("~")) {
+    source = resolveUserPath(source);
+  }
+  if (
+    options.workspaceDir &&
+    !path.isAbsolute(source) &&
+    !WEB_MEDIA_WINDOWS_DRIVE_RE.test(source)
+  ) {
+    source = path.resolve(options.workspaceDir, source);
+  }
+  try {
+    assertNoWindowsNetworkPathForWebMedia(source, "Local media path");
+  } catch (err) {
+    throw new LocalMediaAccessError("network-path-not-allowed", err.message, {
+      cause: err,
+    });
+  }
+  if ((options.sandboxValidated || options.localRoots === "any") && !options.readFile) {
+    throw new LocalMediaAccessError(
+      "unsafe-bypass",
+      "Refusing localRoots bypass without readFile override. Use sandboxValidated " +
+        "with readFile, or pass explicit localRoots.",
+    );
+  }
+  if (!(options.sandboxValidated || options.localRoots === "any")) {
+    await assertLocalMediaAllowed(source, options.localRoots);
+  }
+  const data = toWebMediaBuffer(
+    options.readFile ? await options.readFile(source) : await readLocalWebMediaFile(source),
+  );
+  const sniffedMime = await detectMime({ buffer: data });
+  const mime = await detectMime({ buffer: data, filePath: source });
+  const kind = mediaKindFromMime(mime);
+  if (options.hostReadCapability) {
+    assertHostReadWebMediaAllowed({
+      sniffedContentType: sniffedMime,
+      contentType: mime,
+      filePath: source,
+      kind,
+      buffer: data,
+    });
+  }
+  let fileName = path.basename(source) || undefined;
+  if (fileName && !path.extname(fileName) && mime) {
+    const ext = extensionForMime(mime);
+    if (ext) {
+      fileName = `${fileName}${ext}`;
+    }
+  }
+  return await finalizeWebMedia(
+    {
+      buffer: data,
+      contentType: mime,
+      kind,
+      fileName,
+    },
+    options,
+  );
+}
+
+async function loadWebMedia(mediaUrl, maxBytesOrOptions, options) {
+  return await loadWebMediaInternal(
+    mediaUrl,
+    resolveWebMediaOptions({ maxBytesOrOptions, options, optimizeImages: true }),
+  );
+}
+
+async function loadWebMediaRaw(mediaUrl, maxBytesOrOptions, options) {
+  return await loadWebMediaInternal(
+    mediaUrl,
+    resolveWebMediaOptions({ maxBytesOrOptions, options, optimizeImages: false }),
+  );
+}
+
+const webMediaRuntime = {
+  getDefaultLocalRoots,
+  LocalMediaAccessError,
+  loadWebMedia,
+  loadWebMediaRaw,
+  optimizeImageToJpeg,
+  optimizeImageToPng,
+};
+
 const stringNormalizationRuntime = {
   normalizeAtHashSlug,
   normalizeHyphenSlug,
@@ -70080,6 +70545,7 @@ const genericSdk = new Proxy(
     ...providerOnboardRuntime,
     ...providerUsageRuntime,
     ...toolSendRuntime,
+    ...webMediaRuntime,
     ...providerEntryRuntime,
     ...providerEnableConfigRuntime,
     ...providerWebFetchContractRuntime,
@@ -70603,6 +71069,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/media-store"
   ) {
     return mediaStoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/web-media" ||
+    request === "@openclaw/plugin-sdk/web-media"
+  ) {
+    return webMediaRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/error-runtime" ||

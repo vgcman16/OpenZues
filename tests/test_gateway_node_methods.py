@@ -56810,6 +56810,240 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_web_media_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    media_root = tmp_path / "web-media-root"
+    media_root.mkdir()
+    tiny_png = media_root / "tiny.png"
+    tiny_png.write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB"
+            "/6X4n9sAAAAASUVORK5CYII="
+        )
+    )
+    report_csv = media_root / "report.csv"
+    report_csv.write_text("name,value\nalpha,1\n", encoding="utf-8", newline="\n")
+    outside_file = tmp_path / "outside.txt"
+    outside_file.write_text("secret", encoding="utf-8")
+    runtime_entry = tmp_path / "runtime-plugin-web-media.cjs"
+    runtime_entry.write_text(
+        f"""
+const path = require("node:path");
+const fs = require("node:fs/promises");
+const {{ pathToFileURL }} = require("node:url");
+const webMedia = require("openclaw/plugin-sdk/web-media");
+const scopedWebMedia = require("@openclaw/plugin-sdk/web-media");
+
+const mediaRoot = {json.dumps(str(media_root))};
+const imagePath = path.join(mediaRoot, "tiny.png");
+const csvPath = path.join(mediaRoot, "report.csv");
+const outsidePath = {json.dumps(str(outside_file))};
+
+async function captureError(fn) {{
+  try {{
+    await fn();
+    return null;
+  }} catch (error) {{
+    return {{
+      name: error.name,
+      code: error.code,
+      message: error.message,
+      localMediaAccessError: error instanceof webMedia.LocalMediaAccessError
+    }};
+  }}
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.web_media",
+      description: "Use OpenClaw web-media SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const rawImage = await webMedia.loadWebMediaRaw(imagePath, {{
+          maxBytes: 1024 * 1024,
+          localRoots: [mediaRoot]
+        }});
+        const fileUrlImage = await webMedia.loadWebMediaRaw(pathToFileURL(imagePath).href, {{
+          maxBytes: 1024 * 1024,
+          localRoots: [mediaRoot]
+        }});
+        const csv = await webMedia.loadWebMedia(csvPath, {{
+          maxBytes: 1024 * 1024,
+          optimizeImages: false,
+          localRoots: [mediaRoot]
+        }});
+        const defaults = webMedia.getDefaultLocalRoots();
+        const unsafeBypass = await captureError(() =>
+          webMedia.loadWebMediaRaw(imagePath, {{ localRoots: "any" }})
+        );
+        const outsideRoot = await captureError(() =>
+          webMedia.loadWebMediaRaw(outsidePath, {{
+            maxBytes: 1024 * 1024,
+            localRoots: [mediaRoot]
+          }})
+        );
+        const invalidFileUrl = await captureError(() =>
+          webMedia.loadWebMediaRaw("file://attacker/share/evil.png", {{
+            maxBytes: 1024 * 1024,
+            localRoots: [mediaRoot]
+          }})
+        );
+        const jpegError = await captureError(() =>
+          webMedia.optimizeImageToJpeg(Buffer.from("not an image"), 8)
+        );
+        return {{
+          keys: Object.keys(webMedia).sort(),
+          scopedType: typeof scopedWebMedia.loadWebMedia,
+          className: new webMedia.LocalMediaAccessError("not-found", "missing").name,
+          pngType: typeof webMedia.optimizeImageToPng,
+          defaultsIncludeMedia: defaults.some((root) =>
+            root.endsWith(path.join(".openclaw", "media"))
+          ),
+          rawImage: {{
+            kind: rawImage.kind,
+            contentType: rawImage.contentType,
+            fileName: rawImage.fileName,
+            length: rawImage.buffer.length
+          }},
+          fileUrlImage: {{
+            kind: fileUrlImage.kind,
+            contentType: fileUrlImage.contentType,
+            fileName: fileUrlImage.fileName,
+            length: fileUrlImage.buffer.length
+          }},
+          csv: {{
+            kind: csv.kind,
+            contentType: csv.contentType,
+            fileName: csv.fileName,
+            text: csv.buffer.toString("utf8")
+          }},
+          errors: {{
+            unsafeBypass,
+            outsideRoot,
+            invalidFileUrl,
+            jpegError
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-web-media-plugin",
+                    "name": "Runtime Web Media Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-web-media-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.web_media"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.web_media"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "LocalMediaAccessError",
+            "getDefaultLocalRoots",
+            "loadWebMedia",
+            "loadWebMediaRaw",
+            "optimizeImageToJpeg",
+            "optimizeImageToPng",
+        ],
+        "scopedType": "function",
+        "className": "LocalMediaAccessError",
+        "pngType": "function",
+        "defaultsIncludeMedia": True,
+        "rawImage": {
+            "kind": "image",
+            "contentType": "image/png",
+            "fileName": "tiny.png",
+            "length": len(tiny_png.read_bytes()),
+        },
+        "fileUrlImage": {
+            "kind": "image",
+            "contentType": "image/png",
+            "fileName": "tiny.png",
+            "length": len(tiny_png.read_bytes()),
+        },
+        "csv": {
+            "kind": "document",
+            "contentType": "text/csv",
+            "fileName": "report.csv",
+            "text": "name,value\nalpha,1\n",
+        },
+        "errors": {
+            "unsafeBypass": {
+                "name": "LocalMediaAccessError",
+                "code": "unsafe-bypass",
+                "message": (
+                    "Refusing localRoots bypass without readFile override. Use "
+                    "sandboxValidated with readFile, or pass explicit localRoots."
+                ),
+                "localMediaAccessError": True,
+            },
+            "outsideRoot": {
+                "name": "LocalMediaAccessError",
+                "code": "path-not-allowed",
+                "message": f"Local media path is not under an allowed directory: {outside_file}",
+                "localMediaAccessError": True,
+            },
+            "invalidFileUrl": {
+                "name": "LocalMediaAccessError",
+                "code": "invalid-file-url",
+                "message": "file:// URLs with remote hosts are not allowed: "
+                "file://attacker/share/evil.png",
+                "localMediaAccessError": True,
+            },
+            "jpegError": {
+                "name": "Error",
+                "message": "Failed to optimize image",
+                "localMediaAccessError": False,
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_actions_helpers(
     tmp_path,
 ) -> None:
