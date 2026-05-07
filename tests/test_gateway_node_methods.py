@@ -41899,6 +41899,109 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_maintenance_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-maintenance.cjs"
+    runtime_entry.write_text(
+        """
+const maintenance = require("openclaw/plugin-sdk/browser-maintenance");
+const scopedMaintenance = require("@openclaw/plugin-sdk/browser-maintenance");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_maintenance",
+      description: "Use OpenClaw browser maintenance helpers",
+      parameters: { type: "object" },
+      async execute() {
+        const warnings = [];
+        const empty = await maintenance.closeTrackedBrowserTabsForSessions({
+          sessionKeys: [undefined, "  "],
+          onWarn: (message) => warnings.push(message)
+        });
+        const unavailable = await maintenance.closeTrackedBrowserTabsForSessions({
+          sessionKeys: ["agent:main"],
+          onWarn: (message) => warnings.push(message)
+        });
+        return {
+          keys: Object.keys(maintenance).sort(),
+          scopedSame:
+            scopedMaintenance.closeTrackedBrowserTabsForSessions ===
+            maintenance.closeTrackedBrowserTabsForSessions,
+          moveType: typeof maintenance.movePathToTrash,
+          empty,
+          unavailable,
+          warnings
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-maintenance-plugin",
+                    "name": "Runtime Browser Maintenance Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-maintenance.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_maintenance"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.browser_maintenance"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["closeTrackedBrowserTabsForSessions", "movePathToTrash"],
+        "scopedSame": True,
+        "moveType": "function",
+        "empty": 0,
+        "unavailable": 0,
+        "warnings": payload["result"]["warnings"],
+    }
+    assert len(payload["result"]["warnings"]) == 1
+    assert payload["result"]["warnings"][0].startswith("browser cleanup unavailable:")
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -44102,11 +44205,11 @@ module.exports = {
         ],
         "scopedType": "function",
         "counts": {
-            "entrypoints": 298,
-            "subpaths": 297,
-            "specifiers": 298,
-            "exports": 298,
-            "artifacts": 596,
+            "entrypoints": 299,
+            "subpaths": 298,
+            "specifiers": 299,
+            "exports": 299,
+            "artifacts": 598,
         },
         "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
         "last": [

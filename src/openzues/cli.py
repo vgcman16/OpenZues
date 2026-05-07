@@ -39610,6 +39610,7 @@ const pluginSdkEntrypoints = [
   "browser-control-auth",
   "browser-config",
   "browser-config-runtime",
+  "browser-maintenance",
   "browser-profiles",
   "browser-trash",
   "boolean-param",
@@ -39790,6 +39791,7 @@ const publicPluginOwnedSdkEntrypoints = [
   "browser-control-auth",
   "browser-config",
   "browser-config-runtime",
+  "browser-maintenance",
   "browser-profiles",
   "browser-trash",
   "image-generation-core",
@@ -54912,6 +54914,22 @@ const browserTrashRuntime = {
   movePathToTrash,
 };
 
+async function closeTrackedBrowserTabsForSessions(params = {}) {
+  const sessionKeys = Array.isArray(params.sessionKeys) ? params.sessionKeys : [];
+  if (!sessionKeys.some((key) => normalizeOptionalString(key))) {
+    return 0;
+  }
+  if (typeof params.onWarn === "function") {
+    params.onWarn("browser cleanup unavailable: browser maintenance runtime facade unavailable");
+  }
+  return 0;
+}
+
+const browserMaintenanceRuntime = {
+  closeTrackedBrowserTabsForSessions,
+  movePathToTrash,
+};
+
 const browserSecurityRuntime = {
   SafeOpenError,
   SsrFBlockedError,
@@ -63990,6 +64008,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-trash"
   ) {
     return browserTrashRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-maintenance" ||
+    request === "@openclaw/plugin-sdk/browser-maintenance"
+  ) {
+    return browserMaintenanceRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
