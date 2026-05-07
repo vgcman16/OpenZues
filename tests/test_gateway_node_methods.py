@@ -14194,6 +14194,248 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_image_generation_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-image-generation-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const runtime = require("openclaw/plugin-sdk/image-generation-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/image-generation-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.image_generation_runtime",
+      description: "Use OpenClaw image-generation-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const warnings = [];
+        let seenRequest = null;
+        const provider = {
+          id: "openai",
+          defaultModel: "gpt-image-2",
+          isConfigured: () => true,
+          capabilities: {
+            generate: {
+              supportsSize: false,
+              supportsAspectRatio: true,
+              supportsResolution: false
+            },
+            edit: { enabled: true, supportsSize: false, supportsAspectRatio: true },
+            geometry: { aspectRatios: ["1:1", "16:9"] },
+            output: {
+              qualities: ["low", "medium", "high", "auto"],
+              formats: ["png", "jpeg"],
+              backgrounds: ["transparent", "opaque", "auto"]
+            }
+          },
+          async generateImage(req) {
+            seenRequest = {
+              provider: req.provider,
+              model: req.model,
+              prompt: req.prompt,
+              count: req.count,
+              size: req.size ?? null,
+              aspectRatio: req.aspectRatio ?? null,
+              resolution: req.resolution ?? null,
+              quality: req.quality ?? null,
+              outputFormat: req.outputFormat ?? null,
+              background: req.background ?? null,
+              timeoutMs: req.timeoutMs ?? null,
+              providerOptions: req.providerOptions ?? null
+            };
+            return {
+              images: [
+                {
+                  url: "https://example.test/cat.png",
+                  mimeType: "image/png",
+                  fileName: "cat.png"
+                }
+              ],
+              model: "gpt-image-2",
+              metadata: { providerMeta: true }
+            };
+          }
+        };
+        const deps = {
+          getProvider: (providerId) => (providerId === provider.id ? provider : undefined),
+          listProviders: (config) => {
+            warnings.push(`listed:${Boolean(config)}`);
+            return [provider];
+          },
+          getProviderEnvVars: (providerId) =>
+            providerId === "openai" ? ["OPENAI_API_KEY"] : [],
+          log: {
+            warn(message) {
+              warnings.push(message);
+            }
+          }
+        };
+        const result = await runtime.generateImage(
+          {
+            cfg: {
+              agents: {
+                defaults: {
+                  imageGenerationModel: {
+                    primary: "openai/gpt-image-2",
+                    timeoutMs: 120000
+                  }
+                }
+              }
+            },
+            prompt: "draw a cat",
+            count: 2,
+            size: "1280x720",
+            resolution: "2K",
+            quality: "high",
+            outputFormat: "png",
+            background: "transparent",
+            providerOptions: { openai: { moderation: "low" } }
+          },
+          deps
+        );
+        let noModelError = "";
+        try {
+          await runtime.generateImage(
+            { cfg: {}, prompt: "draw a dog" },
+            {
+              listProviders: () => [
+                {
+                  id: "vision-one",
+                  defaultModel: "paint-v1",
+                  isConfigured: () => false,
+                  capabilities: { generate: {}, edit: { enabled: false } },
+                  async generateImage() {
+                    return { images: [{ url: "unused" }] };
+                  }
+                }
+              ],
+              getProviderEnvVars: () => ["VISION_ONE_API_KEY"],
+              log: { warn() {} }
+            }
+          );
+        } catch (err) {
+          noModelError = String(err && err.message ? err.message : err);
+        }
+        return {
+          keys: Object.keys(runtime).sort(),
+          scopedKeys: Object.keys(scopedRuntime).sort(),
+          list: runtime.listRuntimeImageGenerationProviders({ config: { ok: true } }, deps).map(
+            (entry) => entry.id
+          ),
+          result,
+          seenRequest,
+          warnings,
+          noModelError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "image-generation-runtime-plugin",
+                    "name": "Image Generation Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-image-generation-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.image_generation_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.image_generation_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["generateImage", "listRuntimeImageGenerationProviders"],
+        "scopedKeys": ["generateImage", "listRuntimeImageGenerationProviders"],
+        "list": ["openai"],
+        "result": {
+            "images": [
+                {
+                    "url": "https://example.test/cat.png",
+                    "mimeType": "image/png",
+                    "fileName": "cat.png",
+                }
+            ],
+            "provider": "openai",
+            "model": "gpt-image-2",
+            "attempts": [],
+            "normalization": {
+                "aspectRatio": {"applied": "16:9", "derivedFrom": "size"}
+            },
+            "metadata": {
+                "providerMeta": True,
+                "requestedSize": "1280x720",
+                "normalizedAspectRatio": "16:9",
+                "aspectRatioDerivedFromSize": "16:9",
+            },
+            "ignoredOverrides": [{"key": "resolution", "value": "2K"}],
+        },
+        "seenRequest": {
+            "provider": "openai",
+            "model": "gpt-image-2",
+            "prompt": "draw a cat",
+            "count": 2,
+            "size": None,
+            "aspectRatio": "16:9",
+            "resolution": None,
+            "quality": "high",
+            "outputFormat": "png",
+            "background": "transparent",
+            "timeoutMs": 120000,
+            "providerOptions": {"openai": {"moderation": "low"}},
+        },
+        "warnings": ["listed:true", "listed:true"],
+        "noModelError": (
+            "No image-generation model configured. Set "
+            'agents.defaults.imageGenerationModel.primary to a provider/model like '
+            '"vision-one/paint-v1". If you want a specific provider, also configure '
+            "that provider's auth/API key first (vision-one: VISION_ONE_API_KEY)."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
     tmp_path,
 ) -> None:

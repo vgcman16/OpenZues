@@ -40520,6 +40520,17 @@ function resolveAgentModelFallbackValues(model) {
   return model.fallbacks;
 }
 
+function resolveAgentModelTimeoutMsValue(model) {
+  if (!model || typeof model !== "object") {
+    return undefined;
+  }
+  return typeof model.timeoutMs === "number" &&
+    Number.isFinite(model.timeoutMs) &&
+    model.timeoutMs > 0
+    ? Math.floor(model.timeoutMs)
+    : undefined;
+}
+
 function isFailoverError(err) {
   if (err instanceof Error && err.name === "FailoverError") {
     return true;
@@ -41177,6 +41188,307 @@ function getImageGenerationProvider(providerId, cfg) {
       : false;
   });
 }
+
+function finalizeImageNormalization(normalization) {
+  return hasMediaNormalizationEntry(normalization.size) ||
+    hasMediaNormalizationEntry(normalization.aspectRatio) ||
+    hasMediaNormalizationEntry(normalization.resolution)
+    ? normalization
+    : undefined;
+}
+
+function resolveImageGenerationOverrides(params = {}) {
+  const provider = params.provider || {};
+  const capabilities = provider.capabilities || {};
+  const hasInputImages = Array.isArray(params.inputImages) && params.inputImages.length > 0;
+  const modeCaps = hasInputImages
+    ? capabilities.edit || {}
+    : capabilities.generate || {};
+  const geometry = capabilities.geometry || {};
+  const ignoredOverrides = [];
+  const normalization = {};
+  let size = params.size;
+  let aspectRatio = params.aspectRatio;
+  let resolution = params.resolution;
+  let quality = params.quality;
+  let outputFormat = params.outputFormat;
+  let background = params.background;
+
+  if (size && Array.isArray(geometry.sizes) && geometry.sizes.length > 0 && modeCaps.supportsSize) {
+    const normalizedSize = resolveClosestSize({
+      requestedSize: size,
+      supportedSizes: geometry.sizes,
+    });
+    if (normalizedSize && normalizedSize !== size) {
+      normalization.size = { requested: size, applied: normalizedSize };
+    }
+    size = normalizedSize;
+  }
+
+  if (!modeCaps.supportsSize && size) {
+    let translated = false;
+    if (modeCaps.supportsAspectRatio) {
+      const normalizedAspectRatio = resolveClosestAspectRatio({
+        requestedAspectRatio: aspectRatio,
+        requestedSize: size,
+        supportedAspectRatios: geometry.aspectRatios,
+      });
+      if (normalizedAspectRatio) {
+        aspectRatio = normalizedAspectRatio;
+        normalization.aspectRatio = {
+          applied: normalizedAspectRatio,
+          derivedFrom: "size",
+        };
+        translated = true;
+      }
+    }
+    if (!translated) {
+      ignoredOverrides.push({ key: "size", value: size });
+    }
+    size = undefined;
+  }
+
+  if (
+    aspectRatio &&
+    Array.isArray(geometry.aspectRatios) &&
+    geometry.aspectRatios.length > 0 &&
+    modeCaps.supportsAspectRatio
+  ) {
+    const normalizedAspectRatio = resolveClosestAspectRatio({
+      requestedAspectRatio: aspectRatio,
+      requestedSize: size,
+      supportedAspectRatios: geometry.aspectRatios,
+    });
+    if (normalizedAspectRatio && normalizedAspectRatio !== aspectRatio) {
+      normalization.aspectRatio = {
+        requested: aspectRatio,
+        applied: normalizedAspectRatio,
+      };
+    }
+    aspectRatio = normalizedAspectRatio;
+  } else if (!modeCaps.supportsAspectRatio && aspectRatio) {
+    const derivedSize =
+      modeCaps.supportsSize && !size
+        ? resolveClosestSize({
+            requestedSize: params.size,
+            requestedAspectRatio: aspectRatio,
+            supportedSizes: geometry.sizes,
+          })
+        : undefined;
+    if (derivedSize) {
+      size = derivedSize;
+      normalization.size = { applied: derivedSize, derivedFrom: "aspectRatio" };
+    } else {
+      ignoredOverrides.push({ key: "aspectRatio", value: aspectRatio });
+    }
+    aspectRatio = undefined;
+  }
+
+  if (
+    resolution &&
+    Array.isArray(geometry.resolutions) &&
+    geometry.resolutions.length > 0 &&
+    modeCaps.supportsResolution
+  ) {
+    const normalizedResolution = resolveClosestResolution({
+      requestedResolution: resolution,
+      supportedResolutions: geometry.resolutions,
+    });
+    if (normalizedResolution && normalizedResolution !== resolution) {
+      normalization.resolution = {
+        requested: resolution,
+        applied: normalizedResolution,
+      };
+    }
+    resolution = normalizedResolution;
+  } else if (!modeCaps.supportsResolution && resolution) {
+    ignoredOverrides.push({ key: "resolution", value: resolution });
+    resolution = undefined;
+  }
+
+  const output = capabilities.output || {};
+  if (quality && !(Array.isArray(output.qualities) ? output.qualities : []).includes(quality)) {
+    ignoredOverrides.push({ key: "quality", value: quality });
+    quality = undefined;
+  }
+  if (
+    outputFormat &&
+    !(Array.isArray(output.formats) ? output.formats : []).includes(outputFormat)
+  ) {
+    ignoredOverrides.push({ key: "outputFormat", value: outputFormat });
+    outputFormat = undefined;
+  }
+  if (
+    background &&
+    !(Array.isArray(output.backgrounds) ? output.backgrounds : []).includes(background)
+  ) {
+    ignoredOverrides.push({ key: "background", value: background });
+    background = undefined;
+  }
+
+  if (
+    !normalization.aspectRatio &&
+    aspectRatio &&
+    ((!params.aspectRatio && params.size) || params.aspectRatio !== aspectRatio)
+  ) {
+    normalization.aspectRatio = {
+      applied: aspectRatio,
+      ...(params.aspectRatio ? { requested: params.aspectRatio } : {}),
+      ...(!params.aspectRatio && params.size ? { derivedFrom: "size" } : {}),
+    };
+  }
+  if (!normalization.size && size && params.size && params.size !== size) {
+    normalization.size = { requested: params.size, applied: size };
+  }
+  if (!normalization.resolution && resolution && params.resolution !== resolution) {
+    normalization.resolution = { requested: params.resolution, applied: resolution };
+  }
+
+  return {
+    size,
+    aspectRatio,
+    resolution,
+    quality,
+    outputFormat,
+    background,
+    ignoredOverrides,
+    normalization: finalizeImageNormalization(normalization),
+  };
+}
+
+function buildNoImageGenerationModelConfiguredMessage(cfg, deps = {}) {
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listImageGenerationProviders;
+  return buildNoCapabilityModelConfiguredMessage({
+    capabilityLabel: "image-generation",
+    modelConfigKey: "imageGenerationModel",
+    providers: listProviders(cfg),
+    getProviderEnvVars: deps.getProviderEnvVars,
+  });
+}
+
+function listRuntimeImageGenerationProviders(params = {}, deps = {}) {
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listImageGenerationProviders;
+  return listProviders(params.config);
+}
+
+async function generateImage(params = {}, deps = {}) {
+  const cfg = params.cfg || {};
+  const getProvider =
+    typeof deps.getProvider === "function" ? deps.getProvider : getImageGenerationProvider;
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listImageGenerationProviders;
+  const logger = deps.log || createSubsystemLogger("image-generation");
+  const timeoutMs =
+    params.timeoutMs ??
+    resolveAgentModelTimeoutMsValue(
+      cfg.agents && cfg.agents.defaults && cfg.agents.defaults.imageGenerationModel,
+    );
+  const candidates = resolveCapabilityModelCandidates({
+    cfg,
+    modelConfig: cfg.agents && cfg.agents.defaults && cfg.agents.defaults.imageGenerationModel,
+    modelOverride: params.modelOverride,
+    parseModelRef: parseImageGenerationModelRef,
+    agentDir: params.agentDir,
+    listProviders,
+  });
+  if (candidates.length === 0) {
+    throw new Error(buildNoImageGenerationModelConfiguredMessage(cfg, deps));
+  }
+
+  const attempts = [];
+  let lastError;
+  for (const candidate of candidates) {
+    const provider = getProvider(candidate.provider, cfg);
+    if (!provider) {
+      const error = `No image-generation provider registered for ${candidate.provider}`;
+      attempts.push({ provider: candidate.provider, model: candidate.model, error });
+      lastError = new Error(error);
+      if (logger && typeof logger.warn === "function") {
+        logger.warn(
+          `image-generation candidate failed: ${candidate.provider}/${candidate.model}: ${error}`,
+        );
+      }
+      continue;
+    }
+    try {
+      const sanitized = resolveImageGenerationOverrides({
+        provider,
+        size: params.size,
+        aspectRatio: params.aspectRatio,
+        resolution: params.resolution,
+        quality: params.quality,
+        outputFormat: params.outputFormat,
+        background: params.background,
+        inputImages: params.inputImages,
+      });
+      const request = {
+        provider: candidate.provider,
+        model: candidate.model,
+        prompt: params.prompt,
+        cfg,
+        agentDir: params.agentDir,
+        authStore: params.authStore,
+        count: params.count,
+        size: sanitized.size,
+        aspectRatio: sanitized.aspectRatio,
+        resolution: sanitized.resolution,
+        quality: sanitized.quality,
+        outputFormat: sanitized.outputFormat,
+        background: sanitized.background,
+        inputImages: params.inputImages,
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        providerOptions: params.providerOptions,
+      };
+      const result = await provider.generateImage(request);
+      if (!result || !Array.isArray(result.images) || result.images.length === 0) {
+        throw new Error("Image generation provider returned no images.");
+      }
+      return {
+        images: result.images,
+        provider: candidate.provider,
+        model: result.model || candidate.model,
+        attempts,
+        normalization: sanitized.normalization,
+        metadata: {
+          ...(result.metadata || {}),
+          ...buildMediaGenerationNormalizationMetadata({
+            normalization: sanitized.normalization,
+            requestedSizeForDerivedAspectRatio: params.size,
+          }),
+        },
+        ignoredOverrides: sanitized.ignoredOverrides,
+      };
+    } catch (err) {
+      lastError = err;
+      recordCapabilityCandidateFailure({
+        attempts,
+        provider: candidate.provider,
+        model: candidate.model,
+        error: err,
+      });
+      if (logger && typeof logger.warn === "function") {
+        const message = isFailoverError(err)
+          ? describeFailoverError(err).message
+          : formatErrorMessage(err);
+        logger.warn(
+          `image-generation candidate failed: ${candidate.provider}/${candidate.model}: ${message}`,
+        );
+      }
+    }
+  }
+  return throwCapabilityGenerationFailure({
+    capabilityLabel: "image generation",
+    attempts,
+    lastError,
+  });
+}
+
+const imageGenerationRuntime = {
+  generateImage,
+  listRuntimeImageGenerationProviders,
+};
 
 const OPENAI_DEFAULT_IMAGE_MODEL = "gpt-image-2";
 
@@ -53533,6 +53845,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/image-generation-core"
   ) {
     return imageGenerationCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/image-generation-runtime" ||
+    request === "@openclaw/plugin-sdk/image-generation-runtime"
+  ) {
+    return imageGenerationRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/media-generation-runtime" ||
