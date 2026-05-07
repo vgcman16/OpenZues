@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~93.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~93.2% overall, with a reasonable
   band of ~80-94%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -8998,8 +8998,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
   channel-config-helpers/channel-config-writes/channel-lifecycle path, plus
-  models-provider-runtime provider menu/list helpers and skill-commands-runtime
-  workspace/agent skill command discovery, continuing with `skills-runtime`.
+  models-provider-runtime provider menu/list helpers, skill-commands-runtime
+  workspace/agent skill command discovery, and skills-runtime refresh-state
+  helpers, continuing with `agent-runtime`.
 - Current queue-head adjustment: imported plugin SDK `models-provider-runtime`
   now exposes the upstream `buildModelsProviderData`,
   `formatModelsAvailableHeader`, and `resolveModelsCommandReply` exports for
@@ -9017,6 +9018,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   allowlist merging, missing-workspace skips, skillName de-duplication,
   command-name sanitization, descriptions, and tool dispatch metadata.
   Source/test checkpointed in `14864460`.
+- Current queue-head adjustment: imported plugin SDK `skills-runtime` now
+  exposes the upstream `bumpSkillsSnapshotVersion`,
+  `getSkillsSnapshotVersion`, `registerSkillsChangeListener`, and
+  `shouldRefreshSnapshotForVersion` exports for scoped and unscoped native
+  runtime imports. The native shim preserves global/workspace version tracking,
+  refresh comparisons, `watch`/`config-change`/`remote-node` event emission,
+  listener unsubscription, and listener-error swallowing. Source/test
+  checkpointed in `106ddcb8`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
