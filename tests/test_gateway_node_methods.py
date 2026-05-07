@@ -27583,6 +27583,181 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_dispatch_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-dispatch-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const dispatchRuntime = require("openclaw/plugin-sdk/reply-dispatch-runtime");
+const scopedDispatchRuntime = require("@openclaw/plugin-sdk/reply-dispatch-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_dispatch_runtime",
+      description: "Use OpenClaw reply-dispatch-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        globalThis.__openzuesReplyRuntime = {
+          async dispatchReplyWithDispatcher(params) {
+            calls.push({
+              method: "dispatchReplyWithDispatcher",
+              body: params.ctx.Body,
+              target: params.dispatcherOptions.target
+            });
+            return { queuedFinal: false, counts: { tool: 0, block: 1, final: 0 } };
+          },
+          async generateConversationLabel(params) {
+            calls.push({
+              method: "generateConversationLabel",
+              userMessage: params.userMessage
+            });
+            return params.userMessage.toUpperCase();
+          }
+        };
+        const dispatched = await scopedDispatchRuntime.dispatchReplyWithDispatcher({
+          ctx: { Body: "dispatch me" },
+          cfg: {},
+          dispatcherOptions: { target: "C2" }
+        });
+        const label = await dispatchRuntime.generateConversationLabel({
+          userMessage: "label",
+          prompt: "Summarize",
+          cfg: {}
+        });
+        delete globalThis.__openzuesReplyRuntime;
+        let noRuntimeError = "";
+        try {
+          await dispatchRuntime.dispatchReplyWithBufferedBlockDispatcher({
+            ctx: { Body: "missing" },
+            cfg: {},
+            dispatcherOptions: {}
+          });
+        } catch (error) {
+          noRuntimeError = error.message;
+        }
+        const finalized = dispatchRuntime.finalizeInboundContext({
+          Body: "Hi\\r\\nthere",
+          ChatType: "group",
+          GroupSubject: "Team"
+        });
+        return {
+          keys: Object.keys(dispatchRuntime).sort(),
+          scopedSame:
+            scopedDispatchRuntime.dispatchReplyWithDispatcher ===
+            dispatchRuntime.dispatchReplyWithDispatcher,
+          mode: dispatchRuntime.resolveChunkMode(
+            { channels: { telegram: { chunkMode: "newline" } } },
+            "telegram"
+          ),
+          finalized: {
+            Body: finalized.Body,
+            BodyForAgent: finalized.BodyForAgent,
+            ChatType: finalized.ChatType,
+            ConversationLabel: finalized.ConversationLabel
+          },
+          delegated: { calls, dispatched, label },
+          noRuntimeError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-dispatch-runtime-plugin",
+                    "name": "Runtime Reply Dispatch Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-reply-dispatch-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.reply_dispatch_runtime"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.reply_dispatch_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "dispatchReplyWithBufferedBlockDispatcher",
+            "dispatchReplyWithDispatcher",
+            "finalizeInboundContext",
+            "generateConversationLabel",
+            "resolveChunkMode",
+        ],
+        "scopedSame": True,
+        "mode": "newline",
+        "finalized": {
+            "Body": "Hi\nthere",
+            "BodyForAgent": "Hi\nthere",
+            "ChatType": "group",
+            "ConversationLabel": "Team",
+        },
+        "delegated": {
+            "calls": [
+                {
+                    "method": "dispatchReplyWithDispatcher",
+                    "body": "dispatch me",
+                    "target": "C2",
+                },
+                {"method": "generateConversationLabel", "userMessage": "label"},
+            ],
+            "dispatched": {
+                "queuedFinal": False,
+                "counts": {"tool": 0, "block": 1, "final": 0},
+            },
+            "label": "LABEL",
+        },
+        "noRuntimeError": (
+            "dispatchReplyWithBufferedBlockDispatcher is unavailable in "
+            "OpenZues plugin runtime."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_reply_runtime_helpers(
     tmp_path,
 ) -> None:

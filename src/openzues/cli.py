@@ -70555,6 +70555,14 @@ const replyRuntime = {
   stripHeartbeatToken,
 };
 
+const replyDispatchRuntime = {
+  dispatchReplyWithBufferedBlockDispatcher,
+  dispatchReplyWithDispatcher,
+  finalizeInboundContext,
+  generateConversationLabel,
+  resolveChunkMode,
+};
+
 const agentMediaPayloadRuntime = {
   buildAgentMediaPayload,
   getAgentScopedMediaLocalRoots,
@@ -72446,6 +72454,7 @@ const genericSdk = new Proxy(
     ...sessionKeyRuntime,
     ...sessionStoreRuntime,
     ...replyRuntime,
+    ...replyDispatchRuntime,
     ...outboundRuntime,
     ...outboundSendDepsRuntime,
     ...deliveryQueueRuntime,
@@ -74502,6 +74511,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/reply-runtime"
   ) {
     return replyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/reply-dispatch-runtime" ||
+    request === "@openclaw/plugin-sdk/reply-dispatch-runtime"
+  ) {
+    return replyDispatchRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||
