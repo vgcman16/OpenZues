@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~96.9% overall, with a reasonable band of ~80-97%.
+- Estimated repo-wide parity: ~97.0% overall, with a reasonable band of ~80-97%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -55,6 +55,8 @@
   now verified in `252f28fe` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `setup-tools` exact helper coverage is now
   verified in `e0f1e72c` and counted with the plugin helper slices above.
+- Runtime helper addendum: imported `config-runtime` exact helper coverage is
+  now verified in `74fd1711` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `file-lock` helper coverage is now
   verified in `ed03c127` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `google-model-id` alias coverage is now
@@ -16946,6 +16948,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `e0f1e72c`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `config-runtime` exact SDK surface from `src/plugin-sdk/config-runtime.ts`:
+  scoped and unscoped native runtime entries expose plugin config lookup,
+  runtime config snapshot helpers, config file IO/mutation helpers,
+  config-update logging, context/group/native-command/Telegram policy helpers,
+  cron/session-store helpers, model-session helpers, and configured secret
+  resolution through the native bridge. This closes `OZ-PLUGIN-00250`;
+  repo-wide parity is now estimated at ~97.0%. Remaining plugin/runtime
+  breadth continues with adjacent config/plugin runtime entrypoints.
+- Verified the config-runtime helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_config_runtime_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "config_runtime_helpers or setup_tools_helpers or setup_runtime_helpers or directory_config_runtime or native_command_config_runtime or browser_config_runtime"`
+  (`7 passed, 1066 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`261 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `74fd1711`.
 
 ## References
 
