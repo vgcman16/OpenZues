@@ -14436,6 +14436,343 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_video_generation_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-video-generation-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const runtime = require("openclaw/plugin-sdk/video-generation-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/video-generation-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.video_generation_runtime",
+      description: "Use OpenClaw video-generation-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const warnings = [];
+        let seenRequest = null;
+        const providers = [
+          {
+            id: "openai",
+            defaultModel: "sora-2",
+            isConfigured: () => true,
+            capabilities: { maxInputAudios: 1, providerOptions: {} },
+            async generateVideo() {
+              throw new Error("primary should have been skipped");
+            }
+          },
+          {
+            id: "runway",
+            defaultModel: "gen-4",
+            isConfigured: () => true,
+            capabilities: {
+              videoToVideo: {
+                enabled: true,
+                maxInputImages: 2,
+                maxInputVideos: 1,
+                maxInputAudios: 1,
+                supportedDurationSeconds: [4, 8],
+                supportsSize: false,
+                supportsAspectRatio: true,
+                supportsResolution: false,
+                supportsAudio: false,
+                supportsWatermark: true,
+                aspectRatios: ["1:1", "16:9"],
+                providerOptions: { seed: "number" }
+              }
+            },
+            async generateVideo(req) {
+              seenRequest = {
+                provider: req.provider,
+                model: req.model,
+                prompt: req.prompt,
+                size: req.size ?? null,
+                aspectRatio: req.aspectRatio ?? null,
+                resolution: req.resolution ?? null,
+                durationSeconds: req.durationSeconds ?? null,
+                audio: req.audio ?? null,
+                watermark: req.watermark ?? null,
+                inputImages: req.inputImages ?? null,
+                inputVideos: req.inputVideos ?? null,
+                inputAudios: req.inputAudios ?? null,
+                timeoutMs: req.timeoutMs ?? null,
+                providerOptions: req.providerOptions ?? null
+              };
+              return {
+                videos: [
+                  {
+                    url: "https://example.test/clip.mp4",
+                    mimeType: "video/mp4",
+                    fileName: "clip.mp4",
+                    metadata: { durationSeconds: 8 }
+                  }
+                ],
+                model: "gen-4",
+                metadata: { providerMeta: true }
+              };
+            }
+          }
+        ];
+        const deps = {
+          getProvider: (providerId) => providers.find((provider) => provider.id === providerId),
+          listProviders: (config) => {
+            warnings.push(`listed:${Boolean(config)}`);
+            return providers;
+          },
+          getProviderEnvVars: (providerId) =>
+            providerId === "byteplus" ? ["BYTEPLUS_API_KEY"] : [],
+          log: {
+            debug() {},
+            warn(message) {
+              warnings.push(message);
+            }
+          }
+        };
+        const result = await runtime.generateVideo(
+          {
+            cfg: {
+              agents: {
+                defaults: {
+                  videoGenerationModel: {
+                    primary: "openai/sora-2",
+                    fallbacks: ["runway/gen-4"],
+                    timeoutMs: 91000
+                  }
+                }
+              }
+            },
+            prompt: "animate a cat",
+            size: "1280x720",
+            resolution: "1080P",
+            durationSeconds: 6,
+            audio: true,
+            watermark: false,
+            inputImages: [
+              { url: "https://example.test/reference.png", role: "reference_image" }
+            ],
+            inputVideos: [
+              { url: "https://example.test/reference.mp4", role: "reference_video" }
+            ],
+            inputAudios: [
+              { url: "https://example.test/reference.mp3", role: "reference_audio" }
+            ],
+            providerOptions: { seed: 42 }
+          },
+          deps
+        );
+        let noModelError = "";
+        try {
+          await runtime.generateVideo(
+            { cfg: {}, prompt: "empty" },
+            {
+              listProviders: () => [
+                {
+                  id: "byteplus",
+                  defaultModel: "seedance-1",
+                  isConfigured: () => false,
+                  capabilities: {},
+                  async generateVideo() {
+                    return { videos: [{ url: "unused", mimeType: "video/mp4" }] };
+                  }
+                }
+              ],
+              getProviderEnvVars: () => ["BYTEPLUS_API_KEY"],
+              log: { debug() {}, warn() {} }
+            }
+          );
+        } catch (err) {
+          noModelError = String(err && err.message ? err.message : err);
+        }
+        let emptyAssetError = "";
+        try {
+          await runtime.generateVideo(
+            {
+              cfg: {
+                agents: {
+                  defaults: {
+                    videoGenerationModel: { primary: "bad/empty" }
+                  }
+                }
+              },
+              prompt: "bad asset"
+            },
+            {
+              getProvider: () => ({
+                id: "bad",
+                capabilities: {},
+                async generateVideo() {
+                  return { videos: [{ mimeType: "video/mp4" }] };
+                }
+              }),
+              listProviders: () => [],
+              log: { debug() {}, warn() {} }
+            }
+          );
+        } catch (err) {
+          emptyAssetError = String(err && err.message ? err.message : err);
+        }
+        return {
+          keys: Object.keys(runtime).sort(),
+          scopedKeys: Object.keys(scopedRuntime).sort(),
+          list: runtime.listRuntimeVideoGenerationProviders({ config: { ok: true } }, deps).map(
+            (entry) => entry.id
+          ),
+          result,
+          seenRequest,
+          warnings,
+          noModelError,
+          emptyAssetError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "video-generation-runtime-plugin",
+                    "name": "Video Generation Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-video-generation-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.video_generation_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.video_generation_runtime"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "generateVideo",
+        "listRuntimeVideoGenerationProviders",
+    ]
+    assert result["scopedKeys"] == [
+        "generateVideo",
+        "listRuntimeVideoGenerationProviders",
+    ]
+    assert result["list"] == ["openai", "runway"]
+    assert result["result"] == {
+        "videos": [
+            {
+                "url": "https://example.test/clip.mp4",
+                "mimeType": "video/mp4",
+                "fileName": "clip.mp4",
+                "metadata": {"durationSeconds": 8},
+            }
+        ],
+        "provider": "runway",
+        "model": "gen-4",
+        "attempts": [
+            {
+                "provider": "openai",
+                "model": "sora-2",
+                "error": (
+                    "openai/sora-2 does not accept providerOptions "
+                    "(caller supplied: seed); skipping"
+                ),
+            }
+        ],
+        "normalization": {
+            "aspectRatio": {"applied": "16:9", "derivedFrom": "size"},
+            "durationSeconds": {
+                "requested": 6,
+                "applied": 8,
+                "supportedValues": [4, 8],
+            },
+        },
+        "metadata": {
+            "providerMeta": True,
+            "requestedSize": "1280x720",
+            "normalizedAspectRatio": "16:9",
+            "aspectRatioDerivedFromSize": "16:9",
+            "requestedDurationSeconds": 6,
+            "normalizedDurationSeconds": 8,
+            "supportedDurationSeconds": [4, 8],
+        },
+        "ignoredOverrides": [
+            {"key": "resolution", "value": "1080P"},
+            {"key": "audio", "value": True},
+        ],
+    }
+    assert result["seenRequest"] == {
+        "provider": "runway",
+        "model": "gen-4",
+        "prompt": "animate a cat",
+        "size": None,
+        "aspectRatio": "16:9",
+        "resolution": None,
+        "durationSeconds": 8,
+        "audio": None,
+        "watermark": False,
+        "inputImages": [
+            {"url": "https://example.test/reference.png", "role": "reference_image"}
+        ],
+        "inputVideos": [
+            {"url": "https://example.test/reference.mp4", "role": "reference_video"}
+        ],
+        "inputAudios": [
+            {"url": "https://example.test/reference.mp3", "role": "reference_audio"}
+        ],
+        "timeoutMs": 91000,
+        "providerOptions": {"seed": 42},
+    }
+    assert result["warnings"][0] == "listed:true"
+    assert (
+        "video-generation candidate skipped: openai/sora-2 does not accept "
+        "providerOptions"
+    ) in result["warnings"][1]
+    assert result["warnings"][-1] == "listed:true"
+    assert result["noModelError"] == (
+        "No video-generation model configured. Set "
+        'agents.defaults.videoGenerationModel.primary to a provider/model like '
+        '"byteplus/seedance-1". If you want a specific provider, also configure '
+        "that provider's auth/API key first (byteplus: BYTEPLUS_API_KEY)."
+    )
+    assert "neither buffer nor url is set" in result["emptyAssetError"]
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
     tmp_path,
 ) -> None:

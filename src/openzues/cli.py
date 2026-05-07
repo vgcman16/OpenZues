@@ -41111,6 +41111,628 @@ function getVideoGenerationProvider(providerId, cfg) {
   });
 }
 
+function resolveVideoGenerationMode(params = {}) {
+  const inputImageCount = params.inputImageCount || 0;
+  const inputVideoCount = params.inputVideoCount || 0;
+  if (inputImageCount > 0 && inputVideoCount > 0) {
+    return null;
+  }
+  if (inputVideoCount > 0) {
+    return "videoToVideo";
+  }
+  if (inputImageCount > 0) {
+    return "imageToVideo";
+  }
+  return "generate";
+}
+
+function resolveVideoGenerationModeCapabilities(params = {}) {
+  const mode = resolveVideoGenerationMode(params);
+  const providerCapabilities = (params.provider && params.provider.capabilities) || {};
+  const withModelLimits = (caps) => {
+    if (!caps) {
+      return caps;
+    }
+    const model = normalizeOptionalString(params.model);
+    if (!model) {
+      return caps;
+    }
+    const maxInputImages = caps.maxInputImagesByModel && caps.maxInputImagesByModel[model];
+    const maxInputVideos = caps.maxInputVideosByModel && caps.maxInputVideosByModel[model];
+    const maxInputAudios = caps.maxInputAudiosByModel && caps.maxInputAudiosByModel[model];
+    if (
+      typeof maxInputImages !== "number" &&
+      typeof maxInputVideos !== "number" &&
+      typeof maxInputAudios !== "number"
+    ) {
+      return caps;
+    }
+    return {
+      ...caps,
+      ...(typeof maxInputImages === "number" ? { maxInputImages } : {}),
+      ...(typeof maxInputVideos === "number" ? { maxInputVideos } : {}),
+      ...(typeof maxInputAudios === "number" ? { maxInputAudios } : {}),
+    };
+  };
+  if (mode === "generate") {
+    return { mode, capabilities: withModelLimits(providerCapabilities.generate) };
+  }
+  if (mode === "imageToVideo") {
+    return { mode, capabilities: withModelLimits(providerCapabilities.imageToVideo) };
+  }
+  if (mode === "videoToVideo") {
+    return { mode, capabilities: withModelLimits(providerCapabilities.videoToVideo) };
+  }
+  const videoToVideoCapabilities = withModelLimits(providerCapabilities.videoToVideo);
+  if (
+    (params.inputImageCount || 0) > 0 &&
+    (params.inputVideoCount || 0) > 0 &&
+    videoToVideoCapabilities &&
+    videoToVideoCapabilities.enabled &&
+    (videoToVideoCapabilities.maxInputImages || 0) > 0
+  ) {
+    return { mode, capabilities: videoToVideoCapabilities };
+  }
+  return { mode, capabilities: undefined };
+}
+
+function normalizeVideoGenerationSupportedDurationValues(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return undefined;
+  }
+  const normalized = Array.from(new Set(values))
+    .filter((value) => typeof value === "number" && Number.isFinite(value) && value > 0)
+    .map((value) => Math.round(value))
+    .filter((value) => value > 0)
+    .sort((left, right) => left - right);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function resolveVideoGenerationSupportedDurations(params = {}) {
+  const { capabilities } = resolveVideoGenerationModeCapabilities(params);
+  const model = normalizeOptionalString(params.model);
+  const modelSpecific =
+    model &&
+    capabilities &&
+    capabilities.supportedDurationSecondsByModel &&
+    capabilities.supportedDurationSecondsByModel[model];
+  return normalizeVideoGenerationSupportedDurationValues(
+    modelSpecific || (capabilities && capabilities.supportedDurationSeconds),
+  );
+}
+
+function normalizeVideoGenerationDuration(params = {}) {
+  if (typeof params.durationSeconds !== "number" || !Number.isFinite(params.durationSeconds)) {
+    return undefined;
+  }
+  const rounded = Math.max(1, Math.round(params.durationSeconds));
+  const supported = resolveVideoGenerationSupportedDurations(params);
+  if (!supported || supported.length === 0) {
+    return rounded;
+  }
+  return supported.reduce((best, current) => {
+    const currentDistance = Math.abs(current - rounded);
+    const bestDistance = Math.abs(best - rounded);
+    if (currentDistance < bestDistance) {
+      return current;
+    }
+    if (currentDistance === bestDistance && current > best) {
+      return current;
+    }
+    return best;
+  });
+}
+
+function finalizeVideoGenerationNormalization(normalization) {
+  return hasMediaNormalizationEntry(normalization.size) ||
+    hasMediaNormalizationEntry(normalization.aspectRatio) ||
+    hasMediaNormalizationEntry(normalization.resolution) ||
+    hasMediaNormalizationEntry(normalization.durationSeconds)
+    ? normalization
+    : undefined;
+}
+
+function resolveVideoGenerationOverrides(params = {}) {
+  const { capabilities: caps } = resolveVideoGenerationModeCapabilities({
+    provider: params.provider,
+    model: params.model,
+    inputImageCount: params.inputImageCount,
+    inputVideoCount: params.inputVideoCount,
+  });
+  const ignoredOverrides = [];
+  const normalization = {};
+  let size = params.size;
+  let aspectRatio = params.aspectRatio;
+  let resolution = params.resolution;
+  let audio = params.audio;
+  let watermark = params.watermark;
+
+  if (caps) {
+    if (size && Array.isArray(caps.sizes) && caps.sizes.length > 0 && caps.supportsSize) {
+      const normalizedSize = resolveClosestSize({
+        requestedSize: size,
+        requestedAspectRatio: aspectRatio,
+        supportedSizes: caps.sizes,
+      });
+      if (normalizedSize && normalizedSize !== size) {
+        normalization.size = { requested: size, applied: normalizedSize };
+      }
+      size = normalizedSize;
+    }
+
+    if (!caps.supportsSize && size) {
+      let translated = false;
+      if (caps.supportsAspectRatio) {
+        const normalizedAspectRatio = resolveClosestAspectRatio({
+          requestedAspectRatio: aspectRatio,
+          requestedSize: size,
+          supportedAspectRatios: caps.aspectRatios,
+        });
+        if (normalizedAspectRatio) {
+          aspectRatio = normalizedAspectRatio;
+          normalization.aspectRatio = {
+            applied: normalizedAspectRatio,
+            derivedFrom: "size",
+          };
+          translated = true;
+        }
+      }
+      if (!translated) {
+        ignoredOverrides.push({ key: "size", value: size });
+      }
+      size = undefined;
+    }
+
+    if (
+      aspectRatio &&
+      Array.isArray(caps.aspectRatios) &&
+      caps.aspectRatios.length > 0 &&
+      caps.supportsAspectRatio
+    ) {
+      const normalizedAspectRatio = resolveClosestAspectRatio({
+        requestedAspectRatio: aspectRatio,
+        requestedSize: size,
+        supportedAspectRatios: caps.aspectRatios,
+      });
+      if (normalizedAspectRatio && normalizedAspectRatio !== aspectRatio) {
+        normalization.aspectRatio = {
+          requested: aspectRatio,
+          applied: normalizedAspectRatio,
+        };
+      } else if (!normalizedAspectRatio) {
+        ignoredOverrides.push({ key: "aspectRatio", value: aspectRatio });
+      }
+      aspectRatio = normalizedAspectRatio;
+    } else if (!caps.supportsAspectRatio && aspectRatio) {
+      const derivedSize =
+        caps.supportsSize && !size
+          ? resolveClosestSize({
+              requestedSize: params.size,
+              requestedAspectRatio: aspectRatio,
+              supportedSizes: caps.sizes,
+            })
+          : undefined;
+      if (derivedSize) {
+        size = derivedSize;
+        normalization.size = { applied: derivedSize, derivedFrom: "aspectRatio" };
+      } else {
+        ignoredOverrides.push({ key: "aspectRatio", value: aspectRatio });
+      }
+      aspectRatio = undefined;
+    }
+
+    if (
+      resolution &&
+      Array.isArray(caps.resolutions) &&
+      caps.resolutions.length > 0 &&
+      caps.supportsResolution
+    ) {
+      const normalizedResolution = resolveClosestResolution({
+        requestedResolution: resolution,
+        supportedResolutions: caps.resolutions,
+      });
+      if (normalizedResolution && normalizedResolution !== resolution) {
+        normalization.resolution = {
+          requested: resolution,
+          applied: normalizedResolution,
+        };
+      }
+      resolution = normalizedResolution;
+    } else if (resolution && !caps.supportsResolution) {
+      ignoredOverrides.push({ key: "resolution", value: resolution });
+      resolution = undefined;
+    }
+
+    if (typeof audio === "boolean" && !caps.supportsAudio) {
+      ignoredOverrides.push({ key: "audio", value: audio });
+      audio = undefined;
+    }
+
+    if (typeof watermark === "boolean" && !caps.supportsWatermark) {
+      ignoredOverrides.push({ key: "watermark", value: watermark });
+      watermark = undefined;
+    }
+  }
+
+  if (caps && size && !caps.supportsSize) {
+    ignoredOverrides.push({ key: "size", value: size });
+    size = undefined;
+  }
+  if (caps && aspectRatio && !caps.supportsAspectRatio) {
+    ignoredOverrides.push({ key: "aspectRatio", value: aspectRatio });
+    aspectRatio = undefined;
+  }
+  if (caps && resolution && !caps.supportsResolution) {
+    ignoredOverrides.push({ key: "resolution", value: resolution });
+    resolution = undefined;
+  }
+
+  if (!normalization.size && size && params.size && params.size !== size) {
+    normalization.size = { requested: params.size, applied: size };
+  }
+  if (
+    !normalization.aspectRatio &&
+    aspectRatio &&
+    ((!params.aspectRatio && params.size) || params.aspectRatio !== aspectRatio)
+  ) {
+    normalization.aspectRatio = {
+      applied: aspectRatio,
+      ...(params.aspectRatio ? { requested: params.aspectRatio } : {}),
+      ...(!params.aspectRatio && params.size ? { derivedFrom: "size" } : {}),
+    };
+  }
+  if (!normalization.resolution && resolution && params.resolution !== resolution) {
+    normalization.resolution = { requested: params.resolution, applied: resolution };
+  }
+
+  const requestedDurationSeconds =
+    typeof params.durationSeconds === "number" && Number.isFinite(params.durationSeconds)
+      ? Math.max(1, Math.round(params.durationSeconds))
+      : undefined;
+  const durationSeconds = normalizeVideoGenerationDuration({
+    provider: params.provider,
+    model: params.model,
+    durationSeconds: requestedDurationSeconds,
+    inputImageCount: params.inputImageCount || 0,
+    inputVideoCount: params.inputVideoCount || 0,
+  });
+  const supportedDurationSeconds = resolveVideoGenerationSupportedDurations({
+    provider: params.provider,
+    model: params.model,
+    inputImageCount: params.inputImageCount || 0,
+    inputVideoCount: params.inputVideoCount || 0,
+  });
+
+  if (
+    typeof requestedDurationSeconds === "number" &&
+    typeof durationSeconds === "number" &&
+    requestedDurationSeconds !== durationSeconds
+  ) {
+    normalization.durationSeconds = {
+      requested: requestedDurationSeconds,
+      applied: durationSeconds,
+      ...(supportedDurationSeconds && supportedDurationSeconds.length
+        ? { supportedValues: supportedDurationSeconds }
+        : {}),
+    };
+  }
+
+  return {
+    size,
+    aspectRatio,
+    resolution,
+    durationSeconds,
+    supportedDurationSeconds,
+    audio,
+    watermark,
+    ignoredOverrides,
+    normalization: finalizeVideoGenerationNormalization(normalization),
+  };
+}
+
+function validateVideoProviderOptionsAgainstDeclaration(params = {}) {
+  const providerOptions =
+    params.providerOptions && typeof params.providerOptions === "object"
+      ? params.providerOptions
+      : {};
+  const keys = Object.keys(providerOptions);
+  if (keys.length === 0) {
+    return undefined;
+  }
+  const declaration = params.declaration;
+  if (declaration === undefined) {
+    return undefined;
+  }
+  if (!declaration || Object.keys(declaration).length === 0) {
+    return (
+      `${params.providerId}/${params.model} does not accept providerOptions ` +
+      `(caller supplied: ${keys.join(", ")}); skipping`
+    );
+  }
+  const unknown = keys.filter((key) => !Object.prototype.hasOwnProperty.call(declaration, key));
+  if (unknown.length > 0) {
+    const accepted = Object.keys(declaration).join(", ");
+    return (
+      `${params.providerId}/${params.model} does not accept providerOptions keys: ` +
+      `${unknown.join(", ")} (accepted: ${accepted}); skipping`
+    );
+  }
+  for (const key of keys) {
+    const expected = declaration[key];
+    const value = providerOptions[key];
+    const actual = typeof value;
+    if (expected === "number" && (actual !== "number" || !Number.isFinite(value))) {
+      return (
+        `${params.providerId}/${params.model} expects providerOptions.${key} to be ` +
+        `a finite number, got ${actual}; skipping`
+      );
+    }
+    if (expected === "boolean" && actual !== "boolean") {
+      return (
+        `${params.providerId}/${params.model} expects providerOptions.${key} to be ` +
+        `a boolean, got ${actual}; skipping`
+      );
+    }
+    if (expected === "string" && actual !== "string") {
+      return (
+        `${params.providerId}/${params.model} expects providerOptions.${key} to be ` +
+        `a string, got ${actual}; skipping`
+      );
+    }
+  }
+  return undefined;
+}
+
+function buildNoVideoGenerationModelConfiguredMessage(cfg, deps = {}) {
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listVideoGenerationProviders;
+  return buildNoCapabilityModelConfiguredMessage({
+    capabilityLabel: "video-generation",
+    modelConfigKey: "videoGenerationModel",
+    providers: listProviders(cfg),
+    getProviderEnvVars: deps.getProviderEnvVars,
+  });
+}
+
+function listRuntimeVideoGenerationProviders(params = {}, deps = {}) {
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listVideoGenerationProviders;
+  return listProviders(params.config);
+}
+
+async function generateVideo(params = {}, deps = {}) {
+  const cfg = params.cfg || {};
+  const getProvider =
+    typeof deps.getProvider === "function" ? deps.getProvider : getVideoGenerationProvider;
+  const listProviders =
+    typeof deps.listProviders === "function" ? deps.listProviders : listVideoGenerationProviders;
+  const logger = deps.log || createSubsystemLogger("video-generation");
+  const timeoutMs =
+    params.timeoutMs ??
+    resolveAgentModelTimeoutMsValue(
+      cfg.agents && cfg.agents.defaults && cfg.agents.defaults.videoGenerationModel,
+    );
+  const candidates = resolveCapabilityModelCandidates({
+    cfg,
+    modelConfig: cfg.agents && cfg.agents.defaults && cfg.agents.defaults.videoGenerationModel,
+    modelOverride: params.modelOverride,
+    parseModelRef: parseVideoGenerationModelRef,
+    agentDir: params.agentDir,
+    listProviders,
+  });
+  if (candidates.length === 0) {
+    throw new Error(buildNoVideoGenerationModelConfiguredMessage(cfg, deps));
+  }
+
+  const attempts = [];
+  let lastError;
+  let skipWarnEmitted = false;
+  const warnOnFirstSkip = (reason) => {
+    if (!skipWarnEmitted && logger && typeof logger.warn === "function") {
+      skipWarnEmitted = true;
+      logger.warn(`video-generation candidate skipped: ${reason}`);
+    }
+  };
+
+  for (const candidate of candidates) {
+    const provider = getProvider(candidate.provider, cfg);
+    if (!provider) {
+      const error = `No video-generation provider registered for ${candidate.provider}`;
+      attempts.push({ provider: candidate.provider, model: candidate.model, error });
+      lastError = new Error(error);
+      continue;
+    }
+
+    const inputImageCount = Array.isArray(params.inputImages) ? params.inputImages.length : 0;
+    const inputVideoCount = Array.isArray(params.inputVideos) ? params.inputVideos.length : 0;
+    const inputAudioCount = Array.isArray(params.inputAudios) ? params.inputAudios.length : 0;
+    if (inputAudioCount > 0) {
+      const { capabilities: candCaps } = resolveVideoGenerationModeCapabilities({
+        provider,
+        model: candidate.model,
+        inputImageCount,
+        inputVideoCount,
+      });
+      const maxAudio =
+        (candCaps && candCaps.maxInputAudios) ||
+        (provider.capabilities && provider.capabilities.maxInputAudios) ||
+        0;
+      if (inputAudioCount > maxAudio) {
+        const error =
+          maxAudio === 0
+            ? `${candidate.provider}/${candidate.model} does not support reference ` +
+              "audio inputs; skipping to avoid silent audio drop"
+            : `${candidate.provider}/${candidate.model} supports at most ${maxAudio} ` +
+              `reference audio(s), ${inputAudioCount} requested; skipping`;
+        attempts.push({ provider: candidate.provider, model: candidate.model, error });
+        lastError = new Error(error);
+        warnOnFirstSkip(error);
+        if (logger && typeof logger.debug === "function") {
+          logger.debug(
+            "video-generation candidate skipped (audio capability): " +
+              `${candidate.provider}/${candidate.model}`,
+          );
+        }
+        continue;
+      }
+    }
+
+    if (
+      params.providerOptions &&
+      typeof params.providerOptions === "object" &&
+      Object.keys(params.providerOptions).length > 0
+    ) {
+      const { capabilities: optCaps } = resolveVideoGenerationModeCapabilities({
+        provider,
+        model: candidate.model,
+        inputImageCount,
+        inputVideoCount,
+      });
+      const declaredOptions =
+        (optCaps && optCaps.providerOptions) ||
+        (provider.capabilities && provider.capabilities.providerOptions);
+      const mismatch = validateVideoProviderOptionsAgainstDeclaration({
+        providerId: candidate.provider,
+        model: candidate.model,
+        providerOptions: params.providerOptions,
+        declaration: declaredOptions,
+      });
+      if (mismatch) {
+        attempts.push({ provider: candidate.provider, model: candidate.model, error: mismatch });
+        lastError = new Error(mismatch);
+        warnOnFirstSkip(mismatch);
+        if (logger && typeof logger.debug === "function") {
+          logger.debug(
+            "video-generation candidate skipped (providerOptions): " +
+              `${candidate.provider}/${candidate.model}`,
+          );
+        }
+        continue;
+      }
+    }
+
+    if (typeof params.durationSeconds === "number" && Number.isFinite(params.durationSeconds)) {
+      const { capabilities: durCaps } = resolveVideoGenerationModeCapabilities({
+        provider,
+        model: candidate.model,
+        inputImageCount,
+        inputVideoCount,
+      });
+      const supportedDurations = resolveVideoGenerationSupportedDurations({
+        provider,
+        model: candidate.model,
+        inputImageCount,
+        inputVideoCount,
+      });
+      const maxDuration =
+        (durCaps && durCaps.maxDurationSeconds) ||
+        (provider.capabilities && provider.capabilities.maxDurationSeconds);
+      if (
+        !supportedDurations &&
+        typeof maxDuration === "number" &&
+        Math.round(params.durationSeconds) > maxDuration
+      ) {
+        const error =
+          `${candidate.provider}/${candidate.model} supports at most ${maxDuration}s ` +
+          `per video, ${params.durationSeconds}s requested; skipping`;
+        attempts.push({ provider: candidate.provider, model: candidate.model, error });
+        lastError = new Error(error);
+        warnOnFirstSkip(error);
+        if (logger && typeof logger.debug === "function") {
+          logger.debug(
+            "video-generation candidate skipped (duration capability): " +
+              `${candidate.provider}/${candidate.model}`,
+          );
+        }
+        continue;
+      }
+    }
+
+    try {
+      const sanitized = resolveVideoGenerationOverrides({
+        provider,
+        model: candidate.model,
+        size: params.size,
+        aspectRatio: params.aspectRatio,
+        resolution: params.resolution,
+        durationSeconds: params.durationSeconds,
+        audio: params.audio,
+        watermark: params.watermark,
+        inputImageCount,
+        inputVideoCount,
+      });
+      const result = await provider.generateVideo({
+        provider: candidate.provider,
+        model: candidate.model,
+        prompt: params.prompt,
+        cfg,
+        agentDir: params.agentDir,
+        authStore: params.authStore,
+        size: sanitized.size,
+        aspectRatio: sanitized.aspectRatio,
+        resolution: sanitized.resolution,
+        durationSeconds: sanitized.durationSeconds,
+        audio: sanitized.audio,
+        watermark: sanitized.watermark,
+        inputImages: params.inputImages,
+        inputVideos: params.inputVideos,
+        inputAudios: params.inputAudios,
+        providerOptions: params.providerOptions,
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      });
+      if (!result || !Array.isArray(result.videos) || result.videos.length === 0) {
+        throw new Error("Video generation provider returned no videos.");
+      }
+      for (const [index, video] of result.videos.entries()) {
+        if (!video || (!video.buffer && !video.url)) {
+          throw new Error(
+            "Video generation provider returned an undeliverable asset at index " +
+              `${index}: neither buffer nor url is set.`,
+          );
+        }
+      }
+      return {
+        videos: result.videos,
+        provider: candidate.provider,
+        model: result.model || candidate.model,
+        attempts,
+        normalization: sanitized.normalization,
+        metadata: {
+          ...(result.metadata || {}),
+          ...buildMediaGenerationNormalizationMetadata({
+            normalization: sanitized.normalization,
+            requestedSizeForDerivedAspectRatio: params.size,
+            includeSupportedDurationSeconds: true,
+          }),
+        },
+        ignoredOverrides: sanitized.ignoredOverrides,
+      };
+    } catch (err) {
+      lastError = err;
+      recordCapabilityCandidateFailure({
+        attempts,
+        provider: candidate.provider,
+        model: candidate.model,
+        error: err,
+      });
+      if (logger && typeof logger.debug === "function") {
+        logger.debug(`video-generation candidate failed: ${candidate.provider}/${candidate.model}`);
+      }
+    }
+  }
+
+  return throwCapabilityGenerationFailure({
+    capabilityLabel: "video generation",
+    attempts,
+    lastError,
+  });
+}
+
+const videoGenerationRuntime = {
+  generateVideo,
+  listRuntimeVideoGenerationProviders,
+};
+
 const videoGenerationCoreRuntime = {
   buildNoCapabilityModelConfiguredMessage,
   createSubsystemLogger,
@@ -53875,6 +54497,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/video-generation-core"
   ) {
     return videoGenerationCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/video-generation-runtime" ||
+    request === "@openclaw/plugin-sdk/video-generation-runtime"
+  ) {
+    return videoGenerationRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/music-generation-core" ||
