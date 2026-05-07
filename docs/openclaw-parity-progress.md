@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~98.1% overall, with a reasonable band of ~80-98%.
+- Estimated repo-wide parity: ~98.2% overall, with a reasonable band of ~80-98%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -85,6 +85,8 @@
   now verified in `cbc85bd2` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `tool-send` exact helper coverage is now
   verified in `87450dcc` and counted with the plugin helper slices above.
+- Runtime helper addendum: imported `webhook-ingress` exact helper coverage is
+  now verified in `399e784a` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `file-lock` helper coverage is now
   verified in `ed03c127` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `google-model-id` alias coverage is now
@@ -17223,6 +17225,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `87450dcc`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `webhook-ingress` exact SDK surface from
+  `src/plugin-sdk/webhook-ingress.ts`, `src/gateway/auth-rate-limit.ts`,
+  `src/infra/ws.ts`, `src/plugins/http-path.ts`, and `src/infra/http-body.ts`:
+  scoped and unscoped native runtime entries expose the aggregate webhook
+  path, memory-guard, request-guard, target, raw data, plugin HTTP path, auth
+  rate-limit, and body-size helper contract. This closes `OZ-PLUGIN-00262`;
+  repo-wide parity is now estimated at ~98.2%.
+- Verified the webhook-ingress helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_webhook_ingress_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "webhook_ingress_helpers or webhook_helpers or fetch_ssrf_helpers"`
+  (`3 passed, 1082 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`273 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `399e784a`.
 
 ## References
 

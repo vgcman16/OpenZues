@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~98.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~98.2% overall, with a reasonable
   band of ~80-98%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9360,6 +9360,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   normalization, and null projection for non-send or missing-target payloads.
   Source/test checkpointed in `87450dcc`; repo-wide parity is now estimated
   at ~98.1%.
+- Current queue-head adjustment: imported plugin SDK `webhook-ingress` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: aggregate webhook path/memory/request/target helpers, raw data
+  conversion, plugin HTTP path normalization, auth rate limiting, and
+  `DEFAULT_WEBHOOK_MAX_BODY_BYTES`. Source/test checkpointed in `399e784a`;
+  repo-wide parity is now estimated at ~98.2%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
