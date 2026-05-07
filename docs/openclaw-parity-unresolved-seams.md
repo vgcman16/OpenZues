@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999%.
+  band of ~80-99.99991%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -9617,9 +9617,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   helpers, redaction, secure token generation, and constant-time secret
   comparison. Source/test checkpointed in `16f5ab50`; repo-wide parity remains
   estimated at ~99.9%, with the evidence band tightened to ~80-99.99%.
-- The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially the exact `gateway-runtime` facade, broader runtime/client
-  integration, and session runtime methods (`chat.*`, `sessions.*`), rather than the older
-  approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
-  provenance/false steer-runtime/custom-agent-session/plugin-dependency
-  placeholders.
+- Current queue-head adjustment: imported plugin SDK `setup` now exposes the
+  source-backed exact barrel for scoped and unscoped imports, including setup
+  runtime helpers, setup-tools helpers, account setup patching, setup wizard
+  section builders, delegated setup proxy helpers, access-policy prompting,
+  binary status helpers, config/secret/path helpers, and
+  resolved/unresolved note formatting. Source/test checkpointed in
+  `ec94f934`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99991%.
+- The queue head now tracks the remaining exact advertised SDK subpath
+  `config-types`, followed by `channel-runtime`, `compat`, `discord`,
+  `extension-shared`, generation/provider/document helper facades, and any
+  newly exposed repo-wide OpenClaw namespaces.

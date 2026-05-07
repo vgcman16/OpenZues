@@ -191,7 +191,11 @@ coverage from `src/plugin-sdk/setup-runtime.ts` plus adjacent setup wizard
 helpers is verified in `252f28fe`, and imported `setup-tools` exact helper
 coverage from `src/plugin-sdk/setup-tools.ts` plus adjacent CLI, archive,
 brew, binary detection, docs-link, and config-dir helpers is verified in
-`e0f1e72c`, and imported `config-runtime` exact helper coverage from
+`e0f1e72c`, and imported `setup` exact facade coverage from
+`src/plugin-sdk/setup.ts` plus adjacent setup helper, setup wizard, setup
+binary, setup proxy, setup group-access, setup-tools, config secret, utils,
+and resolution-note helpers is verified in `ec94f934`, and imported
+`config-runtime` exact helper coverage from
 `src/plugin-sdk/config-runtime.ts` plus adjacent plugin config, config IO,
 config mutation, config logging, session-store, session-reset, and config
 policy helpers is verified in `74fd1711`, and imported

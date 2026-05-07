@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99991%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -55,6 +55,8 @@
   now verified in `252f28fe` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `setup-tools` exact helper coverage is now
   verified in `e0f1e72c` and counted with the plugin helper slices above.
+- Runtime helper addendum: imported `setup` exact facade coverage is now
+  verified in `ec94f934` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `config-runtime` exact helper coverage is
   now verified in `74fd1711` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `plugin-config-runtime` exact helper
@@ -17941,6 +17943,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`308 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check`. Source/test checkpointed in `e6747208`.
+- Imported OpenClaw plugin runtime entries now have the source-backed exact
+  `setup` facade from `src/plugin-sdk/setup.ts`: scoped and unscoped native
+  runtime entries aggregate account setup helpers, setup wizard helpers,
+  setup-tools helpers, config/secret/path helpers, delegated setup proxy
+  helpers, access-policy prompting, binary status helpers, and
+  resolved/unresolved note formatting without importing the TypeScript
+  runtime. This closes `OZ-PLUGIN-00298`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99991%. Remaining
+  exact advertised SDK subpath queue head is `config-types`.
+- Verified the setup facade slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_setup_facade_helpers -q`
+  (`1 passed`), adjacent setup facade/runtime/tools proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "setup_facade or setup_runtime or setup_tools"`
+  (`4 passed, 1117 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`309 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `ec94f934`.
 
 ## References
 

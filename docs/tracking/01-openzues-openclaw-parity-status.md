@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99991% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2735,6 +2735,23 @@ may lag behind this tracker.
     passed`), adjacent testing/provider-http-test-mocks/test-node-mocks proof
     (`3 passed, 1117 deselected`), adjacent imported-plugin proof (`308
     passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK setup facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/setup.ts`,
+    `openclaw-main/src/channels/plugins/setup-helpers.ts`,
+    `openclaw-main/src/channels/plugins/setup-wizard-helpers.ts`,
+    `openclaw-main/src/channels/plugins/setup-wizard-binary.ts`,
+    `openclaw-main/src/channels/plugins/setup-wizard-proxy.ts`,
+    `openclaw-main/src/channels/plugins/setup-group-access.ts`, and
+    `openclaw-main/src/plugin-sdk/resolution-notes.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `ec94f934`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused setup facade proof (`1 passed`),
+    adjacent setup facade/runtime/tools proof (`4 passed, 1117 deselected`),
+    adjacent imported-plugin proof (`309 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin SDK account-core/account-resolution shim.
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
