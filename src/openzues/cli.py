@@ -43597,6 +43597,293 @@ const mediaUnderstandingRuntime = {
   transcribeAudioFile,
 };
 
+function resolveMediaUnderstandingString(value, fallback) {
+  const trimmed = normalizeOptionalString(value);
+  return trimmed || fallback;
+}
+
+function coerceOpenAiCompatibleVideoText(payload) {
+  const choices = payload && Array.isArray(payload.choices) ? payload.choices : [];
+  const message = choices[0] && choices[0].message;
+  if (!message) {
+    return null;
+  }
+  if (typeof message.content === "string" && message.content.trim()) {
+    return message.content.trim();
+  }
+  if (Array.isArray(message.content)) {
+    const text = message.content
+      .map((part) => (typeof part.text === "string" ? part.text.trim() : ""))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    if (text) {
+      return text;
+    }
+  }
+  if (typeof message.reasoning_content === "string" && message.reasoning_content.trim()) {
+    return message.reasoning_content.trim();
+  }
+  return null;
+}
+
+function buildOpenAiCompatibleVideoRequestBody(params) {
+  return {
+    model: params.model,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: params.prompt },
+          {
+            type: "video_url",
+            video_url: {
+              url: `data:${params.mime};base64,${Buffer.from(params.buffer).toString("base64")}`,
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function resolveAudioTranscriptionUploadFileName(fileName, mime) {
+  const trimmed = normalizeOptionalString(fileName);
+  const baseName = trimmed ? path.basename(trimmed) : "audio";
+  const lowerMime = normalizeOptionalLowercaseString(mime);
+  if (/\.aac$/i.test(baseName)) {
+    return `${baseName.slice(0, -4) || "audio"}.m4a`;
+  }
+  if (!path.extname(baseName) && lowerMime === "audio/aac") {
+    return `${baseName || "audio"}.m4a`;
+  }
+  return baseName;
+}
+
+function buildAudioTranscriptionFormData(params) {
+  const form = new FormData();
+  const bytes = new Uint8Array(Buffer.from(params.buffer));
+  const blob = new Blob([bytes], {
+    type: params.mime || "application/octet-stream",
+  });
+  form.append("file", blob, resolveAudioTranscriptionUploadFileName(params.fileName, params.mime));
+  for (const [name, value] of Object.entries(params.fields || {})) {
+    const text = typeof value === "string" ? value.trim() : value == null ? "" : String(value);
+    if (text) {
+      form.append(name, text);
+    }
+  }
+  return form;
+}
+
+function normalizeMediaUnderstandingBaseUrl(value, fallback) {
+  const raw = normalizeOptionalString(value) || normalizeOptionalString(fallback);
+  if (!raw) {
+    throw new Error("Missing baseUrl: provide baseUrl or defaultBaseUrl");
+  }
+  return raw.replace(/\/+$/, "");
+}
+
+function resolveMediaProviderHttpRequestConfig(params) {
+  const baseUrl = normalizeMediaUnderstandingBaseUrl(params.baseUrl, params.defaultBaseUrl);
+  const headers = new Headers(params.defaultHeaders || {});
+  if (params.headers) {
+    for (const [key, value] of Object.entries(params.headers)) {
+      if (typeof value === "string") {
+        headers.set(key, value);
+      }
+    }
+  }
+  return {
+    baseUrl,
+    allowPrivateNetwork: Boolean(params.allowPrivateNetwork),
+    headers,
+  };
+}
+
+async function readMediaUnderstandingErrorResponse(res) {
+  try {
+    if (typeof res.text !== "function") {
+      return undefined;
+    }
+    const text = normalizeOptionalString(await res.text());
+    if (!text) {
+      return undefined;
+    }
+    return text.slice(0, 300);
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+async function assertOkOrThrowHttpError(res, message) {
+  if (res && res.ok) {
+    return;
+  }
+  const status = res && res.status ? ` HTTP ${res.status}` : "";
+  const detail = await readMediaUnderstandingErrorResponse(res);
+  throw new Error(`${message}${status}${detail ? `: ${detail}` : ""}`);
+}
+
+function requireTranscriptionText(value, missingMessage) {
+  const text = normalizeOptionalString(value);
+  if (!text) {
+    throw new Error(missingMessage);
+  }
+  return text;
+}
+
+function resolveOpenAiCompatibleAudioModel(model, fallback) {
+  return normalizeOptionalString(model) || fallback;
+}
+
+async function postTranscriptionRequest(params) {
+  const response = await params.fetchFn(params.url, {
+    method: "POST",
+    headers: params.headers,
+    body: params.body,
+  });
+  return {
+    response,
+    release: async () => {},
+  };
+}
+
+async function transcribeOpenAiCompatibleAudio(params) {
+  const fetchFn = params.fetchFn || fetch;
+  const { baseUrl, headers } = resolveMediaProviderHttpRequestConfig({
+    baseUrl: params.baseUrl,
+    defaultBaseUrl: params.defaultBaseUrl,
+    headers: params.headers,
+    request: params.request,
+    defaultHeaders: {
+      authorization: `Bearer ${params.apiKey}`,
+    },
+    provider: params.provider,
+    api: "openai-audio-transcriptions",
+    capability: "audio",
+    transport: "media-understanding",
+  });
+  const url = `${baseUrl}/audio/transcriptions`;
+  const model = resolveOpenAiCompatibleAudioModel(params.model, params.defaultModel);
+  const form = buildAudioTranscriptionFormData({
+    buffer: params.buffer,
+    fileName: params.fileName,
+    mime: params.mime,
+    fields: {
+      model,
+      language: params.language,
+      prompt: params.prompt,
+    },
+  });
+  const { response: res, release } = await postTranscriptionRequest({
+    url,
+    headers,
+    body: form,
+    timeoutMs: params.timeoutMs,
+    fetchFn,
+    pinDns: false,
+    allowPrivateNetwork: false,
+  });
+  try {
+    await assertOkOrThrowHttpError(res, "Audio transcription failed");
+    const payload = await res.json();
+    const text = requireTranscriptionText(
+      payload && payload.text,
+      "Audio transcription response missing text",
+    );
+    return { text, model };
+  } finally {
+    await release();
+  }
+}
+
+function resolveNativeImageUnderstandingRuntimeMethod(name) {
+  const runtime = globalThis.__openzuesMediaUnderstandingImageRuntime;
+  if (runtime && typeof runtime[name] === "function") {
+    return runtime[name].bind(runtime);
+  }
+  throw new Error(`${name} requires an image understanding runtime.`);
+}
+
+async function describeImagesWithModel(params) {
+  return await resolveNativeImageUnderstandingRuntimeMethod("describeImagesWithModel")(params);
+}
+
+async function describeImagesWithModelPayloadTransform(params, onPayload) {
+  const runtime = globalThis.__openzuesMediaUnderstandingImageRuntime;
+  if (runtime && typeof runtime.describeImagesWithModelPayloadTransform === "function") {
+    return await runtime.describeImagesWithModelPayloadTransform(params, onPayload);
+  }
+  return await resolveNativeImageUnderstandingRuntimeMethod("describeImagesWithModel")(params);
+}
+
+async function describeImageWithModel(params) {
+  const runtime = globalThis.__openzuesMediaUnderstandingImageRuntime;
+  if (runtime && typeof runtime.describeImageWithModel === "function") {
+    return await runtime.describeImageWithModel(params);
+  }
+  return await describeImagesWithModel({
+    images: [
+      {
+        buffer: params.buffer,
+        fileName: params.fileName,
+        mime: params.mime,
+      },
+    ],
+    model: params.model,
+    provider: params.provider,
+    prompt: params.prompt,
+    maxTokens: params.maxTokens,
+    timeoutMs: params.timeoutMs,
+    profile: params.profile,
+    preferredProfile: params.preferredProfile,
+    authStore: params.authStore,
+    agentDir: params.agentDir,
+    cfg: params.cfg,
+  });
+}
+
+async function describeImageWithModelPayloadTransform(params, onPayload) {
+  const runtime = globalThis.__openzuesMediaUnderstandingImageRuntime;
+  if (runtime && typeof runtime.describeImageWithModelPayloadTransform === "function") {
+    return await runtime.describeImageWithModelPayloadTransform(params, onPayload);
+  }
+  return await describeImagesWithModelPayloadTransform(
+    {
+      images: [
+        {
+          buffer: params.buffer,
+          fileName: params.fileName,
+          mime: params.mime,
+        },
+      ],
+      model: params.model,
+      provider: params.provider,
+      prompt: params.prompt,
+      maxTokens: params.maxTokens,
+      timeoutMs: params.timeoutMs,
+      profile: params.profile,
+      preferredProfile: params.preferredProfile,
+      authStore: params.authStore,
+      agentDir: params.agentDir,
+      cfg: params.cfg,
+    },
+    onPayload,
+  );
+}
+
+const mediaUnderstandingProviderRuntime = {
+  buildOpenAiCompatibleVideoRequestBody,
+  coerceOpenAiCompatibleVideoText,
+  describeImageWithModel,
+  describeImageWithModelPayloadTransform,
+  describeImagesWithModel,
+  describeImagesWithModelPayloadTransform,
+  resolveMediaUnderstandingString,
+  transcribeOpenAiCompatibleAudio,
+};
+
 const videoGenerationCoreRuntime = {
   buildNoCapabilityModelConfiguredMessage,
   createSubsystemLogger,
@@ -56349,6 +56636,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/media-generation-runtime-shared"
   ) {
     return mediaGenerationRuntimeSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-understanding" ||
+    request === "@openclaw/plugin-sdk/media-understanding"
+  ) {
+    return mediaUnderstandingProviderRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/media-understanding-runtime" ||

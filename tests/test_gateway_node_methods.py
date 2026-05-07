@@ -15661,6 +15661,226 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_media_understanding_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-media-understanding-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const media = require("openclaw/plugin-sdk/media-understanding");
+const scopedMedia = require("@openclaw/plugin-sdk/media-understanding");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.media_understanding_helpers",
+      description: "Use OpenClaw media-understanding SDK helper shim",
+      parameters: { type: "object" },
+      async execute() {
+        const fetchCalls = [];
+        const fetchFn = async (url, init) => {
+          const bodyEntries = [];
+          for (const [key, value] of init.body.entries()) {
+            bodyEntries.push({
+              key,
+              value:
+                typeof value === "string"
+                  ? value
+                  : {
+                      name: value.name,
+                      type: value.type,
+                      size: value.size
+                    }
+            });
+          }
+          fetchCalls.push({
+            url,
+            method: init.method,
+            headers: Object.fromEntries(init.headers.entries()),
+            bodyEntries
+          });
+          return {
+            ok: true,
+            status: 200,
+            async json() {
+              return { text: "  transcribed speech  " };
+            }
+          };
+        };
+        const audio = await media.transcribeOpenAiCompatibleAudio({
+          buffer: Buffer.from("abc"),
+          fileName: "clip.aac",
+          mime: "audio/aac",
+          apiKey: "secret",
+          baseUrl: "https://provider.example/v1/",
+          defaultBaseUrl: "https://fallback.invalid/v1",
+          defaultModel: "fallback-model",
+          model: " custom-model ",
+          language: "en",
+          prompt: "domain words",
+          timeoutMs: 1234,
+          fetchFn
+        });
+        return {
+          keys: Object.keys(media).sort(),
+          scopedHasAudio: typeof scopedMedia.transcribeOpenAiCompatibleAudio,
+          strings: [
+            media.resolveMediaUnderstandingString("  custom  ", "fallback"),
+            media.resolveMediaUnderstandingString("   ", "fallback")
+          ],
+          videoText: [
+            media.coerceOpenAiCompatibleVideoText({
+              choices: [{ message: { content: "  direct text  " } }]
+            }),
+            media.coerceOpenAiCompatibleVideoText({
+              choices: [
+                { message: { content: [{ text: " first " }, { text: "" }, { text: "second" }] } }
+              ]
+            }),
+            media.coerceOpenAiCompatibleVideoText({
+              choices: [{ message: { reasoning_content: "  reasoned text  " } }]
+            }),
+            media.coerceOpenAiCompatibleVideoText({ choices: [] })
+          ],
+          videoBody: media.buildOpenAiCompatibleVideoRequestBody({
+            model: "video-model",
+            prompt: "describe this",
+            mime: "video/mp4",
+            buffer: Buffer.from([1, 2, 3])
+          }),
+          audio,
+          fetchCalls,
+          imageHelperTypes: {
+            describeImageWithModel: typeof media.describeImageWithModel,
+            describeImagesWithModel: typeof media.describeImagesWithModel,
+            describeImageWithModelPayloadTransform:
+              typeof media.describeImageWithModelPayloadTransform,
+            describeImagesWithModelPayloadTransform:
+              typeof media.describeImagesWithModelPayloadTransform
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "media-understanding-helpers-plugin",
+                    "name": "Media Understanding Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-media-understanding-helpers.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.media_understanding_helpers"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.media_understanding_helpers"},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    expected_keys = {
+        "buildOpenAiCompatibleVideoRequestBody",
+        "coerceOpenAiCompatibleVideoText",
+        "describeImageWithModel",
+        "describeImageWithModelPayloadTransform",
+        "describeImagesWithModel",
+        "describeImagesWithModelPayloadTransform",
+        "resolveMediaUnderstandingString",
+        "transcribeOpenAiCompatibleAudio",
+    }
+    assert expected_keys.issubset(set(result["keys"]))
+    assert result["scopedHasAudio"] == "function"
+    assert result["strings"] == ["custom", "fallback"]
+    assert result["videoText"] == [
+        "direct text",
+        "first\nsecond",
+        "reasoned text",
+        None,
+    ]
+    assert result["videoBody"] == {
+        "model": "video-model",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe this"},
+                    {
+                        "type": "video_url",
+                        "video_url": {
+                            "url": "data:video/mp4;base64,AQID",
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    assert result["audio"] == {"text": "transcribed speech", "model": "custom-model"}
+    assert result["fetchCalls"] == [
+        {
+            "url": "https://provider.example/v1/audio/transcriptions",
+            "method": "POST",
+            "headers": {"authorization": "Bearer secret"},
+            "bodyEntries": [
+                {
+                    "key": "file",
+                    "value": {"name": "clip.m4a", "type": "audio/aac", "size": 3},
+                },
+                {"key": "model", "value": "custom-model"},
+                {"key": "language", "value": "en"},
+                {"key": "prompt", "value": "domain words"},
+            ],
+        }
+    ]
+    assert result["imageHelperTypes"] == {
+        "describeImageWithModel": "function",
+        "describeImagesWithModel": "function",
+        "describeImageWithModelPayloadTransform": "function",
+        "describeImagesWithModelPayloadTransform": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
     tmp_path,
 ) -> None:
