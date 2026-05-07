@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~96.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~96.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK agent-harness-runtime helper slice is checkpointed in
-`ee7f5c49`.
+The imported plugin SDK sandbox helper slice is checkpointed in `2aba5dbc`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -873,6 +872,29 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     passed`), adjacent SDK helper proof (`6 passed, 1062 deselected`),
     adjacent imported-plugin proof (`256 passed, 812 deselected`), `ruff
     check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00246` Imported sandbox helper shim
+  - Source: `openclaw-main/src/plugin-sdk/sandbox.ts`,
+    `openclaw-main/src/agents/sandbox.ts`,
+    `openclaw-main/src/agents/sandbox/ssh.ts`,
+    `openclaw-main/src/agents/sandbox/sanitize-env-vars.ts`,
+    `openclaw-main/src/agents/sandbox/backend.ts`, and
+    `openclaw-main/src/agents/sandbox/fs-bridge-rename-targets.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `sandbox` and receive backend registry helpers, SSH command
+    builders/session config helpers, sanitized env projection, writable rename
+    target resolution, temp-dir resolution, and run-command timeout bridging,
+    with precise unavailable boundaries for remote fs bridge/upload helpers.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `2aba5dbc`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused sandbox proof (`1 passed`), adjacent
+    SDK helper proof (`7 passed, 1062 deselected`), adjacent imported-plugin
+    proof (`257 passed, 812 deselected`), `ruff check`, `mypy`, and `git diff
+    --check`.
 
 - [x] `OZ-PLUGIN-00205` Imported media-understanding provider-helper shim
   - Source: `openclaw-main/src/plugin-sdk/media-understanding.ts`,

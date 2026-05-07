@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~96.5% overall, with a reasonable band of ~80-97%.
+- Estimated repo-wide parity: ~96.6% overall, with a reasonable band of ~80-97%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -47,6 +47,8 @@
 - Runtime helper addendum: imported `agent-harness-runtime` and
   `agent-harness` exact helper coverage is now verified in `ee7f5c49` and
   counted with the plugin helper slices above.
+- Runtime helper addendum: imported `sandbox` exact helper coverage is now
+  verified in `2aba5dbc` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `file-lock` helper coverage is now
   verified in `ed03c127` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `google-model-id` alias coverage is now
@@ -16862,6 +16864,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `ee7f5c49`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `sandbox` exact SDK surface from `src/plugin-sdk/sandbox.ts`: scoped and
+  unscoped native runtime entries expose sandbox backend registry helpers,
+  SSH command builders, SSH session config helpers, environment sanitization,
+  writable rename target resolution, temp-dir resolution, and run-command
+  timeout bridging, while preserving precise native unavailable boundaries for
+  remote fs bridge/upload helpers. This closes `OZ-PLUGIN-00246`; repo-wide
+  parity is now estimated at ~96.6%. Remaining plugin/runtime breadth
+  continues with broader SDK helper/runtime surfaces such as `proxy-capture`.
+- Verified the sandbox helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_sandbox_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "sandbox_helpers or run_command_helpers or process_runtime_command_helpers or windows_spawn or cli_backend_helpers or fetch_runtime_helpers or entrypoints_helpers"`
+  (`7 passed, 1062 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`257 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `2aba5dbc`.
 
 ## References
 

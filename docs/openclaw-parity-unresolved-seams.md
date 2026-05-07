@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~96.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~96.6% overall, with a reasonable
   band of ~80-97%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -100,7 +100,7 @@ Current percentage rollup:
   browser-security-runtime helper, browser-host-inspection helper,
   browser-node-host helper, browser-node-runtime helper,
   browser-setup-tools helper, browser-support helper, browser-bridge helper,
-  agent-harness-runtime helper,
+  agent-harness-runtime helper, sandbox helper,
   fetch-runtime helper, cli-backend helper,
   type-only SDK barrel helper, config-schema helper, entrypoints helper,
   diffs helper, acpx helper, ACP runtime-backend helper, ACP runtime facade
@@ -9235,6 +9235,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   construction keeps an honest native unavailable boundary. Source/test
   checkpointed in `ee7f5c49`; broader SDK helper/runtime surface breadth
   remains the next plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `sandbox` now exposes the
+  source-backed exact helper subset for scoped and unscoped imports: sandbox
+  backend registry helpers, SSH command builders/session config helpers,
+  sanitized env projection, writable rename target resolution, temp-dir
+  lookup, and run-command timeout bridging now resolve through the native
+  plugin bridge, with honest unavailable boundaries for remote fs
+  bridge/upload helpers. Source/test checkpointed in `2aba5dbc`; broader SDK
+  helper/runtime surface breadth remains the next plugin-runtime queue head.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

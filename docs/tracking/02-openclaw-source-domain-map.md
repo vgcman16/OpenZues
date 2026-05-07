@@ -144,8 +144,10 @@ imported `browser-support` aggregate coverage from
 is verified in `f0635cce`, and imported `agent-harness-runtime` /
 `agent-harness` exact helper coverage from
 `src/plugin-sdk/agent-harness-runtime.ts` and `src/plugin-sdk/agent-harness.ts`
-is verified in `ee7f5c49`. All are counted with the plugin/extension system
-row above.
+is verified in `ee7f5c49`, and imported `sandbox` exact helper coverage from
+`src/plugin-sdk/sandbox.ts` plus adjacent `src/agents/sandbox/*` helpers is
+verified in `2aba5dbc`. All are counted with the plugin/extension system row
+above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
