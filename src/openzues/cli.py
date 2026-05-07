@@ -40592,6 +40592,133 @@ const providerCatalogSharedRuntime = {
   supportsNativeStreamingUsageCompat,
 };
 
+let nativeRegisteredProviderPlugins = [];
+
+function normalizeNativeProviderPluginId(provider) {
+  return normalizeOptionalString(provider && (provider.pluginId || provider.id)) || "";
+}
+
+function cloneNativeProviderPlugin(provider) {
+  return { ...(provider || {}) };
+}
+
+function nativeProviderPluginAllowedByConfig(provider, config) {
+  const pluginId = normalizeNativeProviderPluginId(provider);
+  const plugins = config && config.plugins;
+  if (!plugins || !pluginId) {
+    return true;
+  }
+  if (plugins.enabled === false) {
+    return false;
+  }
+  if (Array.isArray(plugins.deny) && plugins.deny.includes(pluginId)) {
+    return false;
+  }
+  const entry = plugins.entries && plugins.entries[pluginId];
+  if (entry && entry.enabled === false) {
+    return false;
+  }
+  return true;
+}
+
+function createNativePluginIdScopeSet(pluginIds) {
+  if (!Array.isArray(pluginIds) || pluginIds.length === 0) {
+    return null;
+  }
+  return new Set(pluginIds.map((pluginId) => normalizeOptionalString(pluginId)).filter(Boolean));
+}
+
+function nativeProviderMatchesRef(provider, ref) {
+  const normalized = normalizeProviderId(ref || "");
+  if (!normalized) {
+    return false;
+  }
+  if (normalizeProviderId(provider && provider.id) === normalized) {
+    return true;
+  }
+  const refs = [
+    ...((provider && Array.isArray(provider.aliases) && provider.aliases) || []),
+    ...((provider && Array.isArray(provider.hookAliases) && provider.hookAliases) || []),
+  ];
+  return refs.some((entry) => normalizeProviderId(entry) === normalized);
+}
+
+function nativeProviderPluginInScope(provider, params = {}) {
+  const pluginIdScope = createNativePluginIdScopeSet(params.onlyPluginIds);
+  const pluginId = normalizeNativeProviderPluginId(provider);
+  if (pluginIdScope && !pluginIdScope.has(pluginId)) {
+    return false;
+  }
+  if (!nativeProviderPluginAllowedByConfig(provider, params.config)) {
+    return false;
+  }
+  const providerRefs = Array.isArray(params.providerRefs) ? params.providerRefs : [];
+  if (
+    providerRefs.length > 0 &&
+    !providerRefs.some((ref) => nativeProviderMatchesRef(provider, ref))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function resolvePluginProviders(params = {}) {
+  return nativeRegisteredProviderPlugins
+    .filter((provider) => nativeProviderPluginInScope(provider, params))
+    .map(cloneNativeProviderPlugin);
+}
+
+function isPluginProvidersLoadInFlight(_params = {}) {
+  return false;
+}
+
+function dedupeSortedNativePluginIds(values) {
+  return Array.from(new Set(values.filter(Boolean))).sort((left, right) =>
+    left.localeCompare(right),
+  );
+}
+
+function resolveCatalogHookProviderPluginIds(params = {}) {
+  return dedupeSortedNativePluginIds(
+    resolvePluginProviders(params).map((provider) => normalizeNativeProviderPluginId(provider)),
+  );
+}
+
+function resolveOwningPluginIdsForProvider(params = {}) {
+  const provider = normalizeOptionalString(params.provider);
+  if (!provider) {
+    return undefined;
+  }
+  const matches = nativeRegisteredProviderPlugins
+    .filter((entry) => nativeProviderMatchesRef(entry, provider))
+    .map((entry) => normalizeNativeProviderPluginId(entry));
+  const deduped = dedupeSortedNativePluginIds(matches);
+  return deduped.length > 0 ? deduped : undefined;
+}
+
+async function augmentModelCatalogWithProviderPlugins(params = {}) {
+  const supplemental = [];
+  const providers = resolvePluginProviders(params);
+  for (const provider of providers) {
+    if (typeof provider.augmentModelCatalog !== "function") {
+      continue;
+    }
+    const next = await provider.augmentModelCatalog(params.context || {});
+    if (Array.isArray(next) && next.length > 0) {
+      supplemental.push(...next);
+    }
+  }
+  return supplemental;
+}
+
+const providerCatalogRuntime = {
+  augmentModelCatalogWithProviderPlugins,
+  isPluginProvidersLoadInFlight,
+  resolveCatalogHookProviderPluginIds,
+  resolveOwningPluginIdsForProvider,
+  resolvePluginProviders,
+};
+
 const providerEntryRuntime = {
   buildSingleProviderApiKeyCatalog,
   createProviderApiKeyAuthMethod,
@@ -68489,6 +68616,7 @@ const genericSdk = new Proxy(
     ...providerModelIdNormalizeRuntime,
     ...providerModelSharedRuntime,
     ...providerCatalogSharedRuntime,
+    ...providerCatalogRuntime,
     ...providerEntryRuntime,
     ...providerEnableConfigRuntime,
     ...providerWebFetchContractRuntime,
@@ -69144,6 +69272,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-catalog-shared"
   ) {
     return providerCatalogSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-catalog-runtime" ||
+    request === "@openclaw/plugin-sdk/provider-catalog-runtime"
+  ) {
+    return providerCatalogRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-entry" ||
@@ -70658,6 +70792,7 @@ async function activatePlugin(plugin) {
     return null;
   }
   const tools = [];
+  const providers = [];
   const registerTool = (definition, opts) => {
     const names = toolNamesFromDefinition(definition, opts);
     if (!names.length) {
@@ -70702,10 +70837,27 @@ async function activatePlugin(plugin) {
           : undefined,
     });
   };
+  const registerProvider = (provider) => {
+    if (!provider || typeof provider !== "object") {
+      return;
+    }
+    const providerId = normalizeOptionalString(provider.id);
+    if (!providerId) {
+      return;
+    }
+    providers.push({
+      ...provider,
+      id: providerId,
+      pluginId: plugin.id || plugin.pluginId,
+      pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+    });
+  };
   const api = {
     pluginId: plugin.id || plugin.pluginId,
     pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+    registerProvider,
     registerTool,
+    providers: { register: registerProvider, registerProvider },
     tools: { register: registerTool, registerTool },
     tool: { register: registerTool, registerTool },
   };
@@ -70717,6 +70869,7 @@ async function activatePlugin(plugin) {
   }
   return {
     pluginId: plugin.id || plugin.pluginId,
+    providers,
     tools,
   };
 }
@@ -70727,6 +70880,7 @@ async function activatePlugin(plugin) {
     if (!result) {
       throw new Error("OpenClaw plugin runtime execution failed: plugin did not activate");
     }
+    nativeRegisteredProviderPlugins = Array.isArray(result.providers) ? result.providers : [];
     const toolName = String(context.toolName || "").trim();
     const toolEntry = result.tools.find((entry) => entry.names.includes(toolName));
     const tool =

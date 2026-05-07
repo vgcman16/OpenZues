@@ -37196,6 +37196,179 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_catalog_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-catalog-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const providerCatalogRuntime = require("openclaw/plugin-sdk/provider-catalog-runtime");
+const scopedProviderCatalogRuntime =
+  require("@openclaw/plugin-sdk/provider-catalog-runtime");
+
+module.exports = {
+  register(api) {
+    if (typeof api.registerProvider === "function") {
+      api.registerProvider({
+        id: "demo",
+        label: "Demo",
+        aliases: ["demo-alias"],
+        hookAliases: ["demo-hook"],
+        async augmentModelCatalog(context) {
+          return [
+            {
+              provider: "demo",
+              id: `augmented-${context.entries.length}`,
+              name: "Augmented Demo"
+            }
+          ];
+        }
+      });
+      api.registerProvider({
+        id: "other",
+        label: "Other"
+      });
+    }
+    api.registerTool({
+      name: "runtime.providerCatalogRuntime",
+      description: "Use OpenClaw provider-catalog-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const allProviders = providerCatalogRuntime.resolvePluginProviders({});
+        const scopedProviders = providerCatalogRuntime.resolvePluginProviders({
+          onlyPluginIds: [api.pluginId],
+          providerRefs: ["demo-alias"]
+        });
+        const deniedProviders = providerCatalogRuntime.resolvePluginProviders({
+          config: { plugins: { deny: [api.pluginId] } }
+        });
+        const disabledProviders = providerCatalogRuntime.resolvePluginProviders({
+          config: { plugins: { entries: { [api.pluginId]: { enabled: false } } } }
+        });
+        const catalogHookIds = providerCatalogRuntime.resolveCatalogHookProviderPluginIds({});
+        const ownerIds = providerCatalogRuntime.resolveOwningPluginIdsForProvider({
+          provider: "demo-hook"
+        });
+        const missingOwnerIds = providerCatalogRuntime.resolveOwningPluginIdsForProvider({
+          provider: "missing"
+        }) ?? null;
+        const augmented = await providerCatalogRuntime.augmentModelCatalogWithProviderPlugins({
+          context: { entries: [{ provider: "base", id: "base-model" }] }
+        });
+
+        return {
+          keys: Object.keys(providerCatalogRuntime).sort(),
+          scopedType: typeof scopedProviderCatalogRuntime.resolvePluginProviders,
+          allProviders: allProviders.map((provider) => ({
+            id: provider.id,
+            label: provider.label,
+            pluginId: provider.pluginId
+          })),
+          scopedProviders: scopedProviders.map((provider) => ({
+            id: provider.id,
+            pluginId: provider.pluginId
+          })),
+          deniedCount: deniedProviders.length,
+          disabledCount: disabledProviders.length,
+          catalogHookIds,
+          ownerIds,
+          missingOwnerIds,
+          inFlight: providerCatalogRuntime.isPluginProvidersLoadInFlight({}),
+          augmented
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-catalog-plugin",
+                    "name": "Runtime Provider Catalog Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-catalog.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.providerCatalogRuntime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.providerCatalogRuntime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "augmentModelCatalogWithProviderPlugins",
+            "isPluginProvidersLoadInFlight",
+            "resolveCatalogHookProviderPluginIds",
+            "resolveOwningPluginIdsForProvider",
+            "resolvePluginProviders",
+        ],
+        "scopedType": "function",
+        "allProviders": [
+            {
+                "id": "demo",
+                "label": "Demo",
+                "pluginId": "runtime-provider-catalog-plugin",
+            },
+            {
+                "id": "other",
+                "label": "Other",
+                "pluginId": "runtime-provider-catalog-plugin",
+            },
+        ],
+        "scopedProviders": [
+            {"id": "demo", "pluginId": "runtime-provider-catalog-plugin"}
+        ],
+        "deniedCount": 0,
+        "disabledCount": 0,
+        "catalogHookIds": ["runtime-provider-catalog-plugin"],
+        "ownerIds": ["runtime-provider-catalog-plugin"],
+        "missingOwnerIds": None,
+        "inFlight": False,
+        "augmented": [
+            {"provider": "demo", "id": "augmented-1", "name": "Augmented Demo"}
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:
