@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.97%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.995%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -17663,6 +17663,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `16f5ab50`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `gateway-runtime` facade from `src/plugin-sdk/gateway-runtime.ts`: scoped
+  and unscoped native runtime entries aggregate channel status patches,
+  gateway CLI/auth/node helper exports, raw WebSocket data coercion,
+  OpenClaw-shaped gateway request errors, close-code hints, connect-challenge
+  timeout clamping, event-loop readiness startup, lightweight `GatewayClient`
+  lifecycle methods, and operator-approval gateway-client helpers without
+  importing the TypeScript runtime. This closes `OZ-PLUGIN-00284`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.995%.
+- Verified the gateway-runtime slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_gateway_runtime_helpers -q`
+  (`1 passed`), adjacent gateway/import proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "gateway_runtime or browser_node_runtime"`
+  (`3 passed, 1104 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`295 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `dc028590`.
 
 ## References
 
