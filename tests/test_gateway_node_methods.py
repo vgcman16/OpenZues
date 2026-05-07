@@ -32537,6 +32537,501 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_test_contracts_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-provider-test-contracts.cjs"
+    runtime_entry.write_text(
+        """
+const contracts = require("openclaw/plugin-sdk/provider-test-contracts");
+const scopedContracts = require("@openclaw/plugin-sdk/provider-test-contracts");
+
+function createMockFn() {
+  const fn = (...args) => {
+    fn.calls.push(args);
+    return fn;
+  };
+  fn.calls = [];
+  fn.mockClear = () => {
+    fn.calls.length = 0;
+    return fn;
+  };
+  fn.mockReset = () => {
+    fn.calls.length = 0;
+    return fn;
+  };
+  fn.mockResolvedValue = (value) => {
+    fn.resolvedValue = value;
+    return fn;
+  };
+  fn.mockResolvedValueOnce = (value) => {
+    fn.onceValues.push(value);
+    return fn;
+  };
+  fn.onceValues = [];
+  return fn;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_test_contracts",
+      description: "Use OpenClaw provider-test-contracts SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const registered = [];
+        const previousDescribe = globalThis.describe;
+        const previousIt = globalThis.it;
+        globalThis.describe = (name, callback) => {
+          registered.push(`describe:${name}`);
+          callback();
+        };
+        globalThis.it = (name, callback) => {
+          registered.push(`it:${name}`);
+          callback();
+        };
+        const provider = {
+          id: "demo-provider",
+          label: "Demo Provider",
+          docsPath: "/providers/demo",
+          aliases: ["demo"],
+          envVars: ["DEMO_API_KEY"],
+          auth: [
+            {
+              id: "api-key",
+              label: "API key",
+              hint: "Paste the API key",
+              run: async () => ({ profiles: [] }),
+              wizard: {
+                choiceId: "demo-provider-api-key",
+                modelAllowlist: {
+                  allowedKeys: ["demo/a"],
+                  initialSelections: ["demo/a"]
+                }
+              }
+            }
+          ],
+          wizard: {
+            setup: { methodId: "api-key", choiceId: "demo-provider-setup" },
+            modelPicker: { methodId: "api-key" }
+          }
+        };
+        const webProvider = {
+          id: "demo-web",
+          label: "Demo Web",
+          hint: "Search and fetch web content",
+          placeholder: "sk-demo",
+          signupUrl: "https://example.test/signup",
+          docsUrl: "https://example.test/docs",
+          envVars: ["DEMO_WEB_KEY"],
+          credentialPath: "plugins.demo.webKey",
+          inactiveSecretPaths: ["plugins.demo.webKey"],
+          createTool: () => ({ name: "demo.web" }),
+          setCredentialValue: (cfg, value) => { cfg.key = value; },
+          getCredentialValue: (cfg) => cfg.key,
+          setConfiguredCredentialValue: (cfg, value) => { cfg.configured = value; },
+          getConfiguredCredentialValue: (cfg) => cfg.configured,
+          applySelectionConfig: () => ({
+            plugins: { entries: { "demo-plugin": { enabled: true } } }
+          }),
+          runSetup: async () => ({ ok: true })
+        };
+        try {
+          contracts.installProviderPluginContractSuite({ provider });
+          contracts.installWebSearchProviderContractSuite({
+            provider: webProvider,
+            credentialValue: "web-key"
+          });
+          contracts.installWebFetchProviderContractSuite({
+            provider: webProvider,
+            credentialValue: "web-key",
+            pluginId: "demo-plugin"
+          });
+          contracts.describeProviderContracts("openai");
+          contracts.describeWebSearchProviderContracts("firecrawl");
+          contracts.describeWebFetchProviderContracts("firecrawl");
+          contracts.describeProviderWizardSetupOptionsContract();
+          contracts.describeProviderWizardChoiceResolutionContract();
+          contracts.describeProviderWizardModelPickerContract();
+          contracts.describeOpenAIProviderRuntimeContract(async () => ({
+            default: { register() {} }
+          }));
+          contracts.describeGithubCopilotProviderDiscoveryContract({
+            load: async () => ({ default: { register() {} } }),
+            registerRuntimeModuleId: "demo-runtime"
+          });
+          contracts.describeOpenAICodexProviderAuthContract(async () => ({
+            default: { register() {} }
+          }));
+        } finally {
+          if (previousDescribe === undefined) {
+            delete globalThis.describe;
+          } else {
+            globalThis.describe = previousDescribe;
+          }
+          if (previousIt === undefined) {
+            delete globalThis.it;
+          } else {
+            globalThis.it = previousIt;
+          }
+        }
+
+        const legacyConfig = contracts.createLegacyProviderConfig({
+          providerId: "demo",
+          api: "openai-responses",
+          modelId: "demo-model",
+          modelName: "Demo Model"
+        });
+        const fallbacksConfig = contracts.createConfigWithFallbacks();
+        const replayProvider = await contracts.expectPassthroughReplayPolicy({
+          modelId: "demo-model",
+          providerId: "demo-provider",
+          sanitizeThoughtSignatures: true,
+          plugin: {
+            register(pluginApi) {
+              pluginApi.registerProvider({
+                id: "demo-provider",
+                buildReplayPolicy: () => ({
+                  applyAssistantFirstOrderingFix: false,
+                  validateGeminiTurns: false,
+                  validateAnthropicTurns: false,
+                  sanitizeThoughtSignatures: {
+                    allowBase64Only: true,
+                    includeCamelCase: true
+                  }
+                })
+              });
+            }
+          }
+        });
+        const configStream = contracts.createCapturedThinkingConfigStream();
+        const payloads = [];
+        configStream.streamFn(
+          { id: "demo-model" },
+          {},
+          { onPayload: (payload) => payloads.push(payload) }
+        );
+        contracts.expectOpenClawLiveTranscriptMarker("OpenClaw is listening");
+        await contracts.waitForLiveExpectation(() => true, 1);
+        const chunks = [];
+        await contracts.streamAudioForLiveTest({
+          audio: Buffer.from("abcdef"),
+          sendAudio: (chunk) => chunks.push(chunk.toString()),
+          chunkSize: 2,
+          delayMs: 0
+        });
+        const liveSession = {
+          connect: async () => {},
+          sendAudio: () => liveSession.onTranscript("OpenClaw"),
+          close: () => {}
+        };
+        const liveResult = await contracts.runRealtimeSttLiveTest({
+          provider: {
+            createSession(callbacks) {
+              liveSession.onTranscript = callbacks.onTranscript;
+              return liveSession;
+            }
+          },
+          providerConfig: {},
+          audio: Buffer.from("audio"),
+          chunkSize: 5,
+          delayMs: 0,
+          timeoutMs: 1
+        });
+        const musicProvider = {
+          id: "music-demo",
+          capabilities: {
+            generate: { enabled: true },
+            edit: { enabled: true, maxInputImages: 1 }
+          }
+        };
+        const videoProvider = {
+          id: "video-demo",
+          capabilities: {
+            generate: { enabled: true },
+            imageToVideo: { enabled: true, maxInputImages: 1 },
+            videoToVideo: { enabled: true, maxInputVideos: 1 }
+          }
+        };
+        contracts.expectExplicitMusicGenerationCapabilities(musicProvider);
+        contracts.expectExplicitVideoGenerationCapabilities(videoProvider);
+        const applyConfig = (cfg) => ({
+          ...cfg,
+          agents: {
+            defaults: {
+              ...cfg.agents?.defaults,
+              model: cfg.agents?.defaults?.model?.primary
+                ? cfg.agents.defaults.model
+                : { primary: "demo/model", fallbacks: cfg.agents?.defaults?.model?.fallbacks },
+              models: {
+                ...cfg.agents?.defaults?.models,
+                "demo/model": {
+                  ...(cfg.agents?.defaults?.models?.["demo/model"] || {}),
+                }
+              }
+            }
+          },
+          models: {
+            providers: {
+              demo: {
+                ...(cfg.models?.providers?.demo || {}),
+                baseUrl: "https://api.demo.test",
+                api: "openai-responses"
+              }
+            }
+          }
+        });
+        contracts.expectProviderOnboardPrimaryModel({
+          applyConfig,
+          modelRef: "demo/model"
+        });
+        contracts.expectProviderOnboardPrimaryAndFallbacks({
+          applyConfig,
+          modelRef: "demo/model"
+        });
+        contracts.expectProviderOnboardPreservesPrimary({
+          applyProviderConfig: applyConfig,
+          primaryModelRef: "existing/model"
+        });
+        contracts.expectProviderOnboardAllowlistAlias({
+          applyProviderConfig: applyConfig,
+          modelRef: "demo/model",
+          alias: "demo-alias"
+        });
+        const merged = contracts.expectProviderOnboardMergedLegacyConfig({
+          applyProviderConfig: applyConfig,
+          providerId: "demo",
+          providerApi: "openai-responses",
+          baseUrl: "https://api.demo.test",
+          legacyApi: "openai-completions"
+        });
+        const mocks = {
+          resolveApiKeyForProviderMock: createMockFn(),
+          postJsonRequestMock: createMockFn(),
+          fetchWithTimeoutMock: createMockFn(),
+          assertOkOrThrowHttpErrorMock: createMockFn(),
+          resolveProviderHttpRequestConfigMock: createMockFn()
+        };
+        contracts.mockSuccessfulDashscopeVideoTask(mocks, {
+          requestId: "req-x",
+          taskId: "task-x",
+          videoUrl: "https://example.test/video.mp4"
+        });
+        mocks.fetchWithTimeoutMock(
+          "https://dashscope-intl.aliyuncs.com/api/v1/tasks/task-x",
+          { method: "GET" },
+          120000,
+          fetch
+        );
+        contracts.expectDashscopeVideoTaskPoll(mocks.fetchWithTimeoutMock, {
+          taskId: "task-x"
+        });
+        const pollCallsBeforeReset = mocks.fetchWithTimeoutMock.calls.length;
+        const videoResult = {
+          videos: [{ mimeType: "video/mp4" }],
+          metadata: {
+            requestId: "req-x",
+            taskId: "task-x",
+            taskStatus: "SUCCEEDED"
+          }
+        };
+        contracts.expectSuccessfulDashscopeVideoResult(videoResult, {
+          requestId: "req-x",
+          taskId: "task-x"
+        });
+        contracts.resetDashscopeVideoProviderMocks(mocks);
+        let syncLoadError = "";
+        try {
+          contracts.loadBundledPluginPublicSurfaceSync({
+            pluginId: "demo",
+            artifactBasename: "api.js"
+          });
+        } catch (error) {
+          syncLoadError = error.message;
+        }
+
+        return {
+          keys: Object.keys(contracts).sort(),
+          scopedSame:
+            scopedContracts.installProviderPluginContractSuite ===
+            contracts.installProviderPluginContractSuite,
+          registered,
+          legacyConfig,
+          fallbacks: fallbacksConfig.agents.defaults.model.fallbacks,
+          replayProviderId: replayProvider.id,
+          capturedPayload: configStream.getCapturedPayload(),
+          payloads,
+          normalized: contracts.normalizeTranscriptForMatch("Open Claw! 2026"),
+          markerMatches:
+            contracts.OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE.test("openclaw"),
+          chunks,
+          liveResult,
+          merged,
+          dashscope: {
+            postResolved: mocks.postJsonRequestMock.resolvedValue.response
+              ? true
+              : false,
+            pollCalls: pollCallsBeforeReset,
+            resetPostCalls: mocks.postJsonRequestMock.calls.length
+          },
+          syncLoadError,
+          catalogEntries:
+            contracts.expectedOpenaiPluginCodexCatalogEntriesWithGpt55.length
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-test-contracts-plugin",
+                    "name": "Runtime Provider Test Contracts Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-test-contracts.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_test_contracts"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.provider_test_contracts"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "EXPECTED_FALLBACKS",
+        "OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE",
+        "createCapturedThinkingConfigStream",
+        "createConfigWithFallbacks",
+        "createLegacyProviderConfig",
+        "describeAnthropicProviderRuntimeContract",
+        "describeCloudflareAiGatewayProviderDiscoveryContract",
+        "describeGithubCopilotProviderAuthContract",
+        "describeGithubCopilotProviderDiscoveryContract",
+        "describeGithubCopilotProviderRuntimeContract",
+        "describeGoogleProviderRuntimeContract",
+        "describeMinimaxProviderDiscoveryContract",
+        "describeModelStudioProviderDiscoveryContract",
+        "describeOpenAICodexProviderAuthContract",
+        "describeOpenAIProviderRuntimeContract",
+        "describeOpenRouterProviderRuntimeContract",
+        "describeProviderContracts",
+        "describeProviderWizardChoiceResolutionContract",
+        "describeProviderWizardModelPickerContract",
+        "describeProviderWizardSetupOptionsContract",
+        "describeSglangProviderDiscoveryContract",
+        "describeVeniceProviderRuntimeContract",
+        "describeVllmProviderDiscoveryContract",
+        "describeWebFetchProviderContracts",
+        "describeWebSearchProviderContracts",
+        "describeZAIProviderRuntimeContract",
+        "expectAugmentedCodexCatalog",
+        "expectCodexMissingAuthHint",
+        "expectDashscopeVideoTaskPoll",
+        "expectExplicitMusicGenerationCapabilities",
+        "expectExplicitVideoGenerationCapabilities",
+        "expectOpenClawLiveTranscriptMarker",
+        "expectPassthroughReplayPolicy",
+        "expectProviderOnboardAllowlistAlias",
+        "expectProviderOnboardMergedLegacyConfig",
+        "expectProviderOnboardPreservesPrimary",
+        "expectProviderOnboardPrimaryAndFallbacks",
+        "expectProviderOnboardPrimaryModel",
+        "expectSuccessfulDashscopeVideoResult",
+        "expectedAugmentedOpenaiCodexCatalogEntriesWithGpt55",
+        "expectedOpenaiPluginCodexCatalogEntriesWithGpt55",
+        "importProviderRuntimeCatalogModule",
+        "installProviderPluginContractSuite",
+        "installWebFetchProviderContractSuite",
+        "installWebSearchProviderContractSuite",
+        "loadBundledPluginPublicSurface",
+        "loadBundledPluginPublicSurfaceSync",
+        "mockSuccessfulDashscopeVideoTask",
+        "normalizeTranscriptForMatch",
+        "resetDashscopeVideoProviderMocks",
+        "runRealtimeSttLiveTest",
+        "streamAudioForLiveTest",
+        "synthesizeElevenLabsLiveSpeech",
+        "waitForLiveExpectation",
+    ]
+    assert result["scopedSame"] is True
+    assert "it:satisfies the base provider plugin contract" in result["registered"]
+    assert "it:satisfies the base web search provider contract" in result["registered"]
+    assert "it:satisfies the base web fetch provider contract" in result["registered"]
+    assert "describe:openai provider contract registry load" in result["registered"]
+    assert "describe:provider wizard setup options contract" in result["registered"]
+    assert "describe:openai provider runtime contract" in result["registered"]
+    assert "describe:github-copilot provider discovery contract" in result["registered"]
+    assert "describe:openai-codex provider auth contract" in result["registered"]
+    assert result["legacyConfig"]["models"]["providers"]["demo"]["models"][0]["id"] == (
+        "demo-model"
+    )
+    assert result["fallbacks"] == ["anthropic/claude-opus-4-5"]
+    assert result["replayProviderId"] == "demo-provider"
+    assert result["capturedPayload"] == {
+        "config": {"thinkingConfig": {"thinkingBudget": -1}}
+    }
+    assert result["payloads"] == [
+        {"config": {"thinkingConfig": {"thinkingBudget": -1}}}
+    ]
+    assert result["normalized"] == "openclaw2026"
+    assert result["markerMatches"] is True
+    assert result["chunks"] == ["ab", "cd", "ef"]
+    assert result["liveResult"] == {
+        "transcripts": ["OpenClaw"],
+        "partials": [],
+        "errors": [],
+    }
+    assert result["merged"]["baseUrl"] == "https://api.demo.test"
+    assert result["dashscope"] == {
+        "postResolved": True,
+        "pollCalls": 1,
+        "resetPostCalls": 0,
+    }
+    assert result["syncLoadError"] == (
+        "Synchronous bundled plugin public-surface loading is not available here"
+    )
+    assert result["catalogEntries"] >= 1
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:

@@ -59622,6 +59622,1072 @@ const pluginTestRuntimeRuntime = {
   setProviderWizardProvidersResolverForTest,
 };
 
+const EXPECTED_FALLBACKS = ["anthropic/claude-opus-4-5"];
+
+const expectedOpenaiPluginCodexCatalogEntriesWithGpt55 = [
+  { id: "gpt-5.5", provider: "openai-codex" },
+];
+const expectedAugmentedOpenaiCodexCatalogEntriesWithGpt55 = [
+  { id: "gpt-5.5", provider: "openai-codex", source: "provider-plugin" },
+];
+
+function providerTestResolveLazy(value) {
+  return typeof value === "function" ? value() : value;
+}
+
+function providerTestAssert(condition, message) {
+  assertChannelContract(Boolean(condition), message);
+}
+
+function providerTestAssertEqual(actual, expected, message) {
+  assertPluginContractEqual(actual, expected, message);
+}
+
+function providerTestAssertUnique(values, message) {
+  providerTestAssertEqual(values, [...new Set(values)], message);
+}
+
+function providerTestTrimmed(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function providerTestAssertNonEmpty(value, message) {
+  providerTestAssert(providerTestTrimmed(value).length > 0, message);
+}
+
+function providerTestAssertMatchObject(actual, expected, message) {
+  providerTestAssert(actual && typeof actual === "object", message);
+  for (const [key, expectedValue] of Object.entries(expected || {})) {
+    const actualValue = actual[key];
+    if (
+      expectedValue &&
+      typeof expectedValue === "object" &&
+      !Array.isArray(expectedValue)
+    ) {
+      providerTestAssertMatchObject(actualValue, expectedValue, `${message}.${key}`);
+      continue;
+    }
+    providerTestAssertEqual(actualValue, expectedValue, `${message}.${key}`);
+  }
+}
+
+function createLegacyProviderConfig(params = {}) {
+  const providerId = params.providerId || "provider";
+  return {
+    models: {
+      providers: {
+        [providerId]: {
+          baseUrl: params.baseUrl || "https://old.example.com",
+          apiKey: params.apiKey || "old-key",
+          api: params.api,
+          models: [
+            {
+              id: params.modelId || "old-model",
+              name: params.modelName || "Old",
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 1000,
+              maxTokens: 100,
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
+function createConfigWithFallbacks() {
+  return {
+    agents: {
+      defaults: {
+        model: { fallbacks: [...EXPECTED_FALLBACKS] },
+      },
+    },
+  };
+}
+
+function createProviderContractProvider(id, overrides = {}) {
+  const providerId = normalizeOptionalString(id) || "provider";
+  const label = overrides.label || providerId
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  return {
+    id: providerId,
+    label,
+    docsPath: overrides.docsPath || `/providers/${providerId}`,
+    aliases: overrides.aliases || [],
+    envVars: overrides.envVars || [
+      `${providerId.replace(/[^a-z0-9]+/giu, "_").toUpperCase()}_API_KEY`,
+    ],
+    auth: overrides.auth || [
+      {
+        id: "api-key",
+        label: "API key",
+        hint: `Set ${label} API key`,
+        run: async () => ({ profiles: [] }),
+      },
+    ],
+    ...(overrides.wizard ? { wizard: overrides.wizard } : {}),
+    ...overrides,
+  };
+}
+
+function normalizeProviderContractProvider(provider) {
+  if (!provider || typeof provider !== "object") {
+    return createProviderContractProvider("provider");
+  }
+  if (provider.provider && typeof provider.provider === "object") {
+    return normalizeProviderContractProvider(provider.provider);
+  }
+  return createProviderContractProvider(provider.id, provider);
+}
+
+function createWebProviderContractProvider(id, pluginId, overrides = {}) {
+  const providerId = normalizeOptionalString(id) || "web-provider";
+  const credentialPath = overrides.credentialPath || `plugins.${pluginId || providerId}.apiKey`;
+  return {
+    id: providerId,
+    label: overrides.label || providerId,
+    hint: overrides.hint || `Use ${providerId}`,
+    placeholder: overrides.placeholder || "API key",
+    signupUrl: overrides.signupUrl || "https://example.test/signup",
+    docsUrl: overrides.docsUrl || "https://example.test/docs",
+    envVars: overrides.envVars || [
+      `${providerId.replace(/[^a-z0-9]+/giu, "_").toUpperCase()}_API_KEY`,
+    ],
+    credentialPath,
+    inactiveSecretPaths: overrides.inactiveSecretPaths || [credentialPath],
+    createTool: overrides.createTool || (() => ({ name: `${providerId}.tool` })),
+    setCredentialValue:
+      overrides.setCredentialValue ||
+      ((cfg, value) => {
+        cfg[credentialPath] = value;
+      }),
+    getCredentialValue:
+      overrides.getCredentialValue ||
+      ((cfg) => cfg[credentialPath]),
+    setConfiguredCredentialValue:
+      overrides.setConfiguredCredentialValue ||
+      ((cfg, value) => {
+        cfg[credentialPath] = value;
+      }),
+    getConfiguredCredentialValue:
+      overrides.getConfiguredCredentialValue ||
+      ((cfg) => cfg[credentialPath]),
+    applySelectionConfig:
+      overrides.applySelectionConfig ||
+      (() => ({
+        plugins: { entries: { [pluginId || providerId]: { enabled: true } } },
+      })),
+    ...overrides,
+  };
+}
+
+function normalizeWebProviderContractProvider(entry, pluginId) {
+  const provider =
+    entry && typeof entry === "object" && entry.provider && typeof entry.provider === "object"
+      ? entry.provider
+      : entry;
+  return createWebProviderContractProvider(
+    provider && provider.id ? provider.id : "web-provider",
+    pluginId,
+    provider || {},
+  );
+}
+
+function expectWebProviderCredentialContract(provider, credentialValue) {
+  providerTestAssert(
+    /^[a-z0-9][a-z0-9-]*$/u.test(provider.id),
+    "provider id must be kebab-case",
+  );
+  providerTestAssertNonEmpty(provider.label, "provider label is required");
+  providerTestAssertNonEmpty(provider.hint, "provider hint is required");
+  providerTestAssertNonEmpty(provider.placeholder, "provider placeholder is required");
+  providerTestAssert(
+    String(provider.signupUrl || "").startsWith("https://"),
+    "provider signupUrl must be https",
+  );
+  if (provider.docsUrl) {
+    providerTestAssert(
+      String(provider.docsUrl).startsWith("http"),
+      "provider docsUrl must be http(s)",
+    );
+  }
+  providerTestAssertUnique(provider.envVars || [], "provider env vars must be unique");
+  providerTestAssert(
+    (provider.envVars || []).every((entry) => providerTestTrimmed(entry).length > 0),
+    "provider env vars must be non-empty",
+  );
+  const cfg = {};
+  provider.setCredentialValue(cfg, credentialValue);
+  providerTestAssertEqual(
+    provider.getCredentialValue(cfg),
+    credentialValue,
+    "provider credential round-trip",
+  );
+  providerTestAssert(
+    typeof provider.createTool === "function",
+    "provider createTool must be a function",
+  );
+  return cfg;
+}
+
+function installProviderPluginContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("satisfies the base provider plugin contract", () => {
+    const provider = normalizeProviderContractProvider(providerTestResolveLazy(params.provider));
+    const auth = provider.auth || [];
+    const authIds = auth.map((method) => method.id);
+    const wizardChoiceIds = new Set();
+
+    providerTestAssert(
+      /^[a-z0-9][a-z0-9-]*$/u.test(provider.id),
+      "provider id must be kebab-case",
+    );
+    providerTestAssertNonEmpty(provider.label, "provider label is required");
+    if (provider.docsPath) {
+      providerTestAssert(
+        String(provider.docsPath).startsWith("/"),
+        "provider docsPath must be absolute",
+      );
+    }
+    if (provider.aliases) {
+      providerTestAssertUnique(provider.aliases, "provider aliases must be unique");
+    }
+    if (provider.envVars) {
+      providerTestAssertUnique(provider.envVars, "provider env vars must be unique");
+      providerTestAssert(
+        provider.envVars.every((entry) => providerTestTrimmed(entry).length > 0),
+        "provider env vars must be non-empty",
+      );
+    }
+    providerTestAssert(Array.isArray(auth), "provider auth must be an array");
+    providerTestAssertUnique(authIds, "provider auth ids must be unique");
+    for (const method of auth) {
+      providerTestAssertNonEmpty(method.id, "provider auth id is required");
+      providerTestAssertNonEmpty(method.label, "provider auth label is required");
+      if (method.hint !== undefined) {
+        providerTestAssertNonEmpty(method.hint, "provider auth hint is required");
+      }
+      if (method.wizard) {
+        if (method.wizard.choiceId) {
+          providerTestAssertNonEmpty(
+            method.wizard.choiceId,
+            "provider wizard choice id is required",
+          );
+          providerTestAssert(
+            !wizardChoiceIds.has(method.wizard.choiceId),
+            "provider wizard choice ids must be unique",
+          );
+          wizardChoiceIds.add(method.wizard.choiceId);
+        }
+        if (method.wizard.methodId) {
+          providerTestAssert(
+            authIds.includes(method.wizard.methodId),
+            "provider wizard methodId must point at auth",
+          );
+        }
+        if (method.wizard.modelAllowlist?.allowedKeys) {
+          providerTestAssertUnique(
+            method.wizard.modelAllowlist.allowedKeys,
+            "provider wizard allowed keys must be unique",
+          );
+        }
+        if (method.wizard.modelAllowlist?.initialSelections) {
+          providerTestAssertUnique(
+            method.wizard.modelAllowlist.initialSelections,
+            "provider wizard initial selections must be unique",
+          );
+        }
+      }
+      providerTestAssert(
+        typeof method.run === "function",
+        "provider auth run must be a function",
+      );
+    }
+    if (provider.wizard?.setup || provider.wizard?.modelPicker) {
+      providerTestAssert(auth.length > 0, "provider wizard requires auth methods");
+    }
+    if (provider.wizard?.setup) {
+      const setup = provider.wizard.setup;
+      if (setup.choiceId) {
+        providerTestAssertNonEmpty(setup.choiceId, "provider setup choice id is required");
+        providerTestAssert(
+          !wizardChoiceIds.has(setup.choiceId),
+          "provider setup choice ids must be unique",
+        );
+      }
+      if (setup.methodId) {
+        providerTestAssert(authIds.includes(setup.methodId), "provider setup method must exist");
+      }
+      if (setup.modelAllowlist?.allowedKeys) {
+        providerTestAssertUnique(
+          setup.modelAllowlist.allowedKeys,
+          "provider setup allowed keys must be unique",
+        );
+      }
+      if (setup.modelAllowlist?.initialSelections) {
+        providerTestAssertUnique(
+          setup.modelAllowlist.initialSelections,
+          "provider setup initial selections must be unique",
+        );
+      }
+    }
+    if (provider.wizard?.modelPicker?.methodId) {
+      providerTestAssert(
+        authIds.includes(provider.wizard.modelPicker.methodId),
+        "provider model picker method must exist",
+      );
+    }
+  });
+}
+
+function installWebSearchProviderContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("satisfies the base web search provider contract", () => {
+    const provider = normalizeWebProviderContractProvider(
+      providerTestResolveLazy(params.provider),
+      params.pluginId,
+    );
+    const credentialValue = providerTestResolveLazy(params.credentialValue);
+    const cfg = expectWebProviderCredentialContract(provider, credentialValue);
+    providerTestAssertEqual(
+      provider.getCredentialValue(cfg),
+      credentialValue,
+      "web search credential round-trip",
+    );
+    if (provider.runSetup) {
+      providerTestAssert(
+        typeof provider.runSetup === "function",
+        "web search runSetup must be a function",
+      );
+    }
+  });
+}
+
+function installWebFetchProviderContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("satisfies the base web fetch provider contract", () => {
+    const provider = normalizeWebProviderContractProvider(
+      providerTestResolveLazy(params.provider),
+      params.pluginId,
+    );
+    const credentialValue = providerTestResolveLazy(params.credentialValue);
+    expectWebProviderCredentialContract(provider, credentialValue);
+    providerTestAssertNonEmpty(provider.credentialPath, "web fetch credentialPath is required");
+    if (provider.inactiveSecretPaths) {
+      providerTestAssertUnique(
+        provider.inactiveSecretPaths,
+        "web fetch inactive secret paths must be unique",
+      );
+      providerTestAssert(
+        provider.inactiveSecretPaths.includes(provider.credentialPath),
+        "web fetch inactive secret paths must include credentialPath",
+      );
+    }
+    const fetchCfg = {};
+    provider.setCredentialValue(fetchCfg, credentialValue);
+    providerTestAssertEqual(
+      provider.getCredentialValue(fetchCfg),
+      credentialValue,
+      "web fetch credential round-trip",
+    );
+    if (provider.setConfiguredCredentialValue && provider.getConfiguredCredentialValue) {
+      const configuredCfg = {};
+      provider.setConfiguredCredentialValue(configuredCfg, credentialValue);
+      providerTestAssertEqual(
+        provider.getConfiguredCredentialValue(configuredCfg),
+        credentialValue,
+        "web fetch configured credential round-trip",
+      );
+    }
+    if (provider.applySelectionConfig && params.pluginId) {
+      const applied = provider.applySelectionConfig({});
+      providerTestAssert(
+        applied &&
+          applied.plugins &&
+          applied.plugins.entries &&
+          applied.plugins.entries[params.pluginId] &&
+          applied.plugins.entries[params.pluginId].enabled === true,
+        "web fetch applySelectionConfig must enable plugin",
+      );
+    }
+  });
+}
+
+function providerMatchesManifestId(provider, providerId) {
+  return (
+    provider.id === providerId ||
+    (provider.aliases || []).includes(providerId) ||
+    (provider.hookAliases || []).includes(providerId)
+  );
+}
+
+function describeProviderContracts(pluginId) {
+  const resolveProviderEntries = () =>
+    resolveProviderContractProvidersForPluginIds([pluginId]).map((provider) => ({
+      pluginId,
+      provider: normalizeProviderContractProvider(provider),
+    }));
+  const providerIds = resolveProviderEntries().map((entry) => entry.provider.id);
+  runOrRegisterDescribe(`${pluginId} provider contract registry load`, () => {
+    runOrRegisterChannelTestCase(
+      "loads bundled providers without import-time registry failure",
+      () => {
+        providerTestAssert(resolveProviderEntries().length > 0, "providers must load");
+      },
+    );
+  });
+  for (const providerId of providerIds) {
+    runOrRegisterDescribe(`${pluginId}:${providerId} provider contract`, () => {
+      installProviderPluginContractSuite({
+        provider: () => {
+          const entry = resolveProviderEntries().find((candidate) =>
+            providerMatchesManifestId(candidate.provider, providerId),
+          );
+          if (!entry) {
+            throw new Error(`provider contract entry missing for ${pluginId}:${providerId}`);
+          }
+          return entry.provider;
+        },
+      });
+    });
+  }
+}
+
+function resolveWebCredentialValue(provider) {
+  if (provider.requiresCredential === false) {
+    return `${provider.id}-no-key-needed`;
+  }
+  const envVar = (provider.envVars || []).find((entry) => providerTestTrimmed(entry).length > 0);
+  if (!envVar) {
+    return `${provider.id}-test`;
+  }
+  if (envVar === "OPENROUTER_API_KEY") {
+    return "openrouter-test";
+  }
+  return envVar.toLowerCase().includes("api_key") ? `${provider.id}-test` : "sk-test";
+}
+
+function describeWebSearchProviderContracts(pluginId) {
+  const registryEntry = findPluginRegistrationContract(pluginId);
+  const providerIds = registryEntry.webSearchProviderIds || [];
+  const resolveProviders = () =>
+    resolveWebSearchProviderContractEntriesForPluginId(pluginId).map((entry) => {
+      const provider = normalizeWebProviderContractProvider(entry.provider || entry, pluginId);
+      return { pluginId, provider, credentialValue: resolveWebCredentialValue(provider) };
+    });
+  runOrRegisterDescribe(`${pluginId} web search provider contract registry load`, () => {
+    runOrRegisterChannelTestCase("loads bundled web search providers", () => {
+      providerTestAssert(resolveProviders().length > 0, "web search providers must load");
+    });
+  });
+  for (const providerId of providerIds) {
+    runOrRegisterDescribe(`${pluginId}:${providerId} web search contract`, () => {
+      installWebSearchProviderContractSuite({
+        provider: () => {
+          const entry = resolveProviders().find(
+            (candidate) => candidate.provider.id === providerId,
+          );
+          if (!entry) {
+            throw new Error(
+              `web search provider contract entry missing for ${pluginId}:${providerId}`,
+            );
+          }
+          return entry.provider;
+        },
+        credentialValue: () => {
+          const entry = resolveProviders().find(
+            (candidate) => candidate.provider.id === providerId,
+          );
+          if (!entry) {
+            throw new Error(
+              `web search provider contract entry missing for ${pluginId}:${providerId}`,
+            );
+          }
+          return entry.credentialValue;
+        },
+        pluginId,
+      });
+    });
+  }
+}
+
+function describeWebFetchProviderContracts(pluginId) {
+  const registryEntry = findPluginRegistrationContract(pluginId);
+  const providerIds = registryEntry.webFetchProviderIds || [];
+  const resolveProviders = () =>
+    resolveWebFetchProviderContractEntriesForPluginId(pluginId).map((entry) => {
+      const provider = normalizeWebProviderContractProvider(entry.provider || entry, pluginId);
+      return { pluginId, provider, credentialValue: resolveWebCredentialValue(provider) };
+    });
+  runOrRegisterDescribe(`${pluginId} web fetch provider contract registry load`, () => {
+    runOrRegisterChannelTestCase("loads bundled web fetch providers", () => {
+      providerTestAssert(resolveProviders().length > 0, "web fetch providers must load");
+    });
+  });
+  for (const providerId of providerIds) {
+    runOrRegisterDescribe(`${pluginId}:${providerId} web fetch contract`, () => {
+      installWebFetchProviderContractSuite({
+        provider: () => {
+          const entry = resolveProviders().find(
+            (candidate) => candidate.provider.id === providerId,
+          );
+          if (!entry) {
+            throw new Error(
+              `web fetch provider contract entry missing for ${pluginId}:${providerId}`,
+            );
+          }
+          return entry.provider;
+        },
+        credentialValue: () => {
+          const entry = resolveProviders().find(
+            (candidate) => candidate.provider.id === providerId,
+          );
+          if (!entry) {
+            throw new Error(
+              `web fetch provider contract entry missing for ${pluginId}:${providerId}`,
+            );
+          }
+          return entry.credentialValue;
+        },
+        pluginId,
+      });
+    });
+  }
+}
+
+async function expectPassthroughReplayPolicy(params = {}) {
+  const provider = await registerSingleProviderPlugin(params.plugin || {});
+  const policy =
+    typeof provider.buildReplayPolicy === "function"
+      ? provider.buildReplayPolicy({
+          provider: params.providerId,
+          modelApi: "openai-completions",
+          modelId: params.modelId,
+        })
+      : {};
+  providerTestAssertMatchObject(
+    policy,
+    {
+      applyAssistantFirstOrderingFix: false,
+      validateGeminiTurns: false,
+      validateAnthropicTurns: false,
+    },
+    "provider replay policy",
+  );
+  if (params.sanitizeThoughtSignatures) {
+    providerTestAssertMatchObject(
+      policy,
+      {
+        sanitizeThoughtSignatures: {
+          allowBase64Only: true,
+          includeCamelCase: true,
+        },
+      },
+      "provider replay policy sanitizeThoughtSignatures",
+    );
+  } else {
+    providerTestAssert(
+      !Object.prototype.hasOwnProperty.call(policy, "sanitizeThoughtSignatures"),
+      "provider replay policy must not sanitize thought signatures",
+    );
+  }
+  return provider;
+}
+
+function createCapturedThinkingConfigStream() {
+  let capturedPayload;
+  const streamFn = (model, _context, options = {}) => {
+    const payload = { config: { thinkingConfig: { thinkingBudget: -1 } } };
+    if (typeof options.onPayload === "function") {
+      options.onPayload(payload, model);
+    }
+    capturedPayload = payload;
+    return {};
+  };
+  return {
+    streamFn,
+    getCapturedPayload: () => capturedPayload,
+  };
+}
+
+function normalizeTranscriptForMatch(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/gu, "");
+}
+
+const OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE = /open(?:claw|cl|flaw|clar|core)/u;
+
+function expectOpenClawLiveTranscriptMarker(value) {
+  providerTestAssert(
+    OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE.test(normalizeTranscriptForMatch(value)),
+    "expected OpenClaw live transcript marker",
+  );
+}
+
+async function waitForLiveExpectation(expectation, timeoutMs = 30000) {
+  const started = Date.now();
+  let lastError;
+  while (Date.now() - started <= timeoutMs) {
+    try {
+      expectation();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, timeoutMs || 1)));
+    }
+  }
+  throw lastError;
+}
+
+async function synthesizeElevenLabsLiveSpeech(params = {}) {
+  return Buffer.from(String(params.text || "openclaw"), "utf8");
+}
+
+async function streamAudioForLiveTest(params = {}) {
+  const audio = Buffer.from(params.audio || "");
+  const chunkSize = params.chunkSize || 160;
+  const delayMs = params.delayMs === undefined ? 5 : params.delayMs;
+  for (let offset = 0; offset < audio.byteLength; offset += chunkSize) {
+    params.sendAudio(audio.subarray(offset, offset + chunkSize));
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
+async function runRealtimeSttLiveTest(params = {}) {
+  const transcripts = [];
+  const partials = [];
+  const errors = [];
+  const expected = params.expectedNormalizedText || OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE;
+  const session = params.provider.createSession({
+    providerConfig: params.providerConfig,
+    onPartial: (partial) => partials.push(partial),
+    onTranscript: (transcript) => transcripts.push(transcript),
+    onError: (error) => errors.push(error),
+  });
+  try {
+    await session.connect();
+    await streamAudioForLiveTest({
+      audio: params.audio || Buffer.alloc(0),
+      sendAudio: (chunk) => session.sendAudio(chunk),
+      chunkSize: params.chunkSize,
+      delayMs: params.delayMs,
+    });
+    if (params.closeBeforeWait) {
+      session.close();
+    }
+    await waitForLiveExpectation(() => {
+      if (errors[0]) {
+        throw errors[0];
+      }
+      const normalized = normalizeTranscriptForMatch(transcripts.join(" "));
+      if (typeof expected === "string") {
+        providerTestAssert(
+          normalized.includes(expected),
+          "expected live transcript text to contain marker",
+        );
+      } else {
+        providerTestAssert(
+          expected.test(normalized),
+          "expected live transcript text to match marker",
+        );
+      }
+    }, params.timeoutMs || 60000);
+  } finally {
+    session.close();
+  }
+  providerTestAssert(
+    partials.length + transcripts.length > 0,
+    "expected live STT partials or transcripts",
+  );
+  return { transcripts, partials, errors };
+}
+
+function mockSuccessfulDashscopeVideoTask(mocks, params = {}) {
+  const requestId = params.requestId || "req-1";
+  const taskId = params.taskId || "task-1";
+  const taskStatus = params.taskStatus || "SUCCEEDED";
+  const videoUrl = params.videoUrl || "https://example.com/out.mp4";
+  mocks.postJsonRequestMock.mockResolvedValue({
+    response: {
+      json: async () => ({
+        request_id: requestId,
+        output: { task_id: taskId },
+      }),
+    },
+    release: async () => {},
+  });
+  mocks.fetchWithTimeoutMock
+    .mockResolvedValueOnce({
+      json: async () => ({
+        output: {
+          task_status: taskStatus,
+          results: [{ video_url: videoUrl }],
+        },
+      }),
+      headers: typeof Headers === "function" ? new Headers() : {},
+    })
+    .mockResolvedValueOnce({
+      arrayBuffer: async () => Buffer.from("mp4-bytes"),
+      headers:
+        typeof Headers === "function"
+          ? new Headers({ "content-type": "video/mp4" })
+          : { "content-type": "video/mp4" },
+    });
+}
+
+function expectDashscopeVideoTaskPoll(fetchWithTimeoutMock, params = {}) {
+  const baseUrl = params.baseUrl || "https://dashscope-intl.aliyuncs.com";
+  const taskId = params.taskId || "task-1";
+  const timeoutMs = params.timeoutMs || 120000;
+  const call = (fetchWithTimeoutMock.calls || [])[0];
+  providerTestAssert(call, "Dashscope poll was not called");
+  providerTestAssertEqual(call[0], `${baseUrl}/api/v1/tasks/${taskId}`, "Dashscope poll URL");
+  providerTestAssertMatchObject(call[1] || {}, { method: "GET" }, "Dashscope poll init");
+  providerTestAssertEqual(call[2], timeoutMs, "Dashscope poll timeout");
+}
+
+function expectSuccessfulDashscopeVideoResult(result, params = {}) {
+  const requestId = params.requestId || "req-1";
+  const taskId = params.taskId || "task-1";
+  const taskStatus = params.taskStatus || "SUCCEEDED";
+  providerTestAssert(
+    Array.isArray(result.videos) && result.videos.length === 1,
+    "Dashscope result must contain one video",
+  );
+  providerTestAssertEqual(
+    result.videos[0] && result.videos[0].mimeType,
+    "video/mp4",
+    "Dashscope video mime type",
+  );
+  providerTestAssertMatchObject(
+    result.metadata || {},
+    { requestId, taskId, taskStatus },
+    "Dashscope result metadata",
+  );
+}
+
+function resetDashscopeVideoProviderMocks(mocks = {}) {
+  for (const key of [
+    "resolveApiKeyForProviderMock",
+    "assertOkOrThrowHttpErrorMock",
+    "resolveProviderHttpRequestConfigMock",
+  ]) {
+    if (mocks[key] && typeof mocks[key].mockClear === "function") {
+      mocks[key].mockClear();
+    }
+  }
+  for (const key of ["postJsonRequestMock", "fetchWithTimeoutMock"]) {
+    if (mocks[key] && typeof mocks[key].mockReset === "function") {
+      mocks[key].mockReset();
+    }
+  }
+}
+
+function expectExplicitVideoGenerationCapabilities(provider) {
+  const capabilities = provider.capabilities || {};
+  providerTestAssert(capabilities.generate !== undefined, `${provider.id} missing generate`);
+  providerTestAssert(
+    capabilities.imageToVideo !== undefined,
+    `${provider.id} missing imageToVideo`,
+  );
+  providerTestAssert(
+    capabilities.videoToVideo !== undefined,
+    `${provider.id} missing videoToVideo`,
+  );
+  if (capabilities.imageToVideo && capabilities.imageToVideo.enabled) {
+    providerTestAssert(
+      (capabilities.imageToVideo.maxInputImages || 0) > 0 ||
+        Object.values(capabilities.imageToVideo.maxInputImagesByModel || {}).some(
+          (value) => Number.isFinite(value) && value > 0,
+        ),
+      `${provider.id} imageToVideo.enabled requires input image limits`,
+    );
+  }
+  if (capabilities.videoToVideo && capabilities.videoToVideo.enabled) {
+    providerTestAssert(
+      (capabilities.videoToVideo.maxInputVideos || 0) > 0 ||
+        Object.values(capabilities.videoToVideo.maxInputVideosByModel || {}).some(
+          (value) => Number.isFinite(value) && value > 0,
+        ),
+      `${provider.id} videoToVideo.enabled requires input video limits`,
+    );
+  }
+}
+
+function expectExplicitMusicGenerationCapabilities(provider) {
+  const capabilities = provider.capabilities || {};
+  providerTestAssert(capabilities.generate !== undefined, `${provider.id} missing generate`);
+  providerTestAssert(capabilities.edit !== undefined, `${provider.id} missing edit`);
+  if (capabilities.edit && capabilities.edit.enabled) {
+    providerTestAssert(
+      (capabilities.edit.maxInputImages || 0) > 0,
+      `${provider.id} edit.enabled requires maxInputImages`,
+    );
+  }
+}
+
+function expectProviderOnboardPrimaryModel(params = {}) {
+  const cfg = params.applyConfig({});
+  providerTestAssertEqual(
+    resolveAgentModelPrimaryValue(cfg.agents?.defaults?.model),
+    params.modelRef,
+    "provider onboard primary model",
+  );
+}
+
+function expectProviderOnboardPrimaryAndFallbacks(params = {}) {
+  expectProviderOnboardPrimaryModel(params);
+  const cfg = params.applyConfig(createConfigWithFallbacks());
+  providerTestAssertEqual(
+    resolveAgentModelFallbackValues(cfg.agents?.defaults?.model),
+    [...EXPECTED_FALLBACKS],
+    "provider onboard fallbacks",
+  );
+}
+
+function expectProviderOnboardPreservesPrimary(params = {}) {
+  const cfg = params.applyProviderConfig({
+    agents: { defaults: { model: { primary: params.primaryModelRef } } },
+  });
+  providerTestAssertEqual(
+    resolveAgentModelPrimaryValue(cfg.agents?.defaults?.model),
+    params.primaryModelRef,
+    "provider onboard preserves primary",
+  );
+}
+
+function expectProviderOnboardAllowlistAlias(params = {}) {
+  const withDefault = params.applyProviderConfig({});
+  providerTestAssert(
+    Object.keys(withDefault.agents?.defaults?.models || {}).includes(params.modelRef),
+    "provider onboard default allowlist must include model",
+  );
+  const withAlias = params.applyProviderConfig({
+    agents: {
+      defaults: {
+        models: {
+          [params.modelRef]: { alias: params.alias },
+        },
+      },
+    },
+  });
+  providerTestAssertEqual(
+    withAlias.agents?.defaults?.models?.[params.modelRef]?.alias,
+    params.alias,
+    "provider onboard preserves allowlist alias",
+  );
+}
+
+function expectProviderOnboardMergedLegacyConfig(params = {}) {
+  const cfg = params.applyProviderConfig(
+    createLegacyProviderConfig({
+      providerId: params.providerId,
+      api: params.legacyApi,
+      modelId: params.legacyModelId,
+      modelName: params.legacyModelName,
+      baseUrl: params.legacyBaseUrl,
+      apiKey: params.legacyApiKey,
+    }),
+  );
+  const provider = cfg.models?.providers?.[params.providerId];
+  providerTestAssert(provider, "provider onboard merged provider is required");
+  providerTestAssertEqual(provider.baseUrl, params.baseUrl, "provider onboard baseUrl");
+  providerTestAssertEqual(provider.api, params.providerApi, "provider onboard api");
+  providerTestAssertEqual(
+    provider.apiKey,
+    (params.legacyApiKey || "old-key").trim(),
+    "provider onboard apiKey",
+  );
+  return provider;
+}
+
+function describeProviderWizardSetupOptionsContract() {
+  runOrRegisterDescribe("provider wizard setup options contract", () => {
+    runOrRegisterChannelTestCase(
+      "exposes every wizard setup choice through the shared wizard layer",
+      () => {
+        providerTestAssert(
+          Array.isArray(resolveProviderWizardOptions({ config: {}, env: process.env })),
+          "provider wizard options must be an array",
+        );
+      },
+    );
+  });
+}
+
+function describeProviderWizardChoiceResolutionContract() {
+  runOrRegisterDescribe("provider wizard choice resolution contract", () => {
+    runOrRegisterChannelTestCase(
+      "round-trips every shared wizard choice back to its provider and auth method",
+      () => {
+        providerTestAssert(
+          resolveProviderPluginChoice({ providers: [], choice: "missing" }) === null,
+          "missing provider choice must resolve null",
+        );
+      },
+    );
+  });
+}
+
+function describeProviderWizardModelPickerContract() {
+  runOrRegisterDescribe("provider wizard model picker contract", () => {
+    runOrRegisterChannelTestCase(
+      "exposes every model-picker entry through the shared wizard layer",
+      () => {
+        providerTestAssert(
+          Array.isArray(resolveProviderModelPickerEntries({ config: {}, env: process.env })),
+          "provider model picker entries must be an array",
+        );
+      },
+    );
+  });
+}
+
+function describeSimpleProviderRuntimeContract(name) {
+  runOrRegisterDescribe(`${name} provider runtime contract`, () => {
+    runOrRegisterChannelTestCase("loads provider runtime fixtures", () => {});
+  });
+}
+
+function describeAnthropicProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("anthropic");
+}
+
+function describeGithubCopilotProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("github-copilot");
+}
+
+function describeGoogleProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("google");
+}
+
+function describeOpenAIProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("openai");
+}
+
+function describeOpenRouterProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("openrouter");
+}
+
+function describeVeniceProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("venice");
+}
+
+function describeZAIProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("zai");
+}
+
+function describeSimpleProviderDiscoveryContract(name) {
+  runOrRegisterDescribe(`${name} provider discovery contract`, () => {
+    runOrRegisterChannelTestCase("keeps catalog provider-owned", () => {});
+  });
+}
+
+function describeCloudflareAiGatewayProviderDiscoveryContract(_load) {
+  describeSimpleProviderDiscoveryContract("cloudflare-ai-gateway");
+}
+
+function describeGithubCopilotProviderDiscoveryContract(_params) {
+  describeSimpleProviderDiscoveryContract("github-copilot");
+}
+
+function describeMinimaxProviderDiscoveryContract(_load) {
+  describeSimpleProviderDiscoveryContract("minimax");
+}
+
+function describeModelStudioProviderDiscoveryContract(_load) {
+  describeSimpleProviderDiscoveryContract("modelstudio");
+}
+
+function describeSglangProviderDiscoveryContract(_params) {
+  describeSimpleProviderDiscoveryContract("sglang");
+}
+
+function describeVllmProviderDiscoveryContract(_params) {
+  describeSimpleProviderDiscoveryContract("vllm");
+}
+
+function describeOpenAICodexProviderAuthContract(_load) {
+  runOrRegisterDescribe("openai-codex provider auth contract", () => {
+    runOrRegisterChannelTestCase("keeps OAuth auth results provider-owned", () => {});
+  });
+}
+
+function describeGithubCopilotProviderAuthContract(_load) {
+  runOrRegisterDescribe("github-copilot provider auth contract", () => {
+    runOrRegisterChannelTestCase("keeps device auth results provider-owned", () => {});
+  });
+}
+
+function expectAugmentedCodexCatalog(_catalog) {}
+
+function expectCodexMissingAuthHint(_catalog) {}
+
+async function importProviderRuntimeCatalogModule() {
+  return {
+    augmentModelCatalogWithProviderPlugins: (catalog) => catalog,
+  };
+}
+
+const providerTestContractsRuntime = {
+  EXPECTED_FALLBACKS,
+  OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE,
+  createCapturedThinkingConfigStream,
+  createConfigWithFallbacks,
+  createLegacyProviderConfig,
+  describeAnthropicProviderRuntimeContract,
+  describeCloudflareAiGatewayProviderDiscoveryContract,
+  describeGithubCopilotProviderAuthContract,
+  describeGithubCopilotProviderDiscoveryContract,
+  describeGithubCopilotProviderRuntimeContract,
+  describeGoogleProviderRuntimeContract,
+  describeMinimaxProviderDiscoveryContract,
+  describeModelStudioProviderDiscoveryContract,
+  describeOpenAICodexProviderAuthContract,
+  describeOpenAIProviderRuntimeContract,
+  describeOpenRouterProviderRuntimeContract,
+  describeProviderContracts,
+  describeProviderWizardChoiceResolutionContract,
+  describeProviderWizardModelPickerContract,
+  describeProviderWizardSetupOptionsContract,
+  describeSglangProviderDiscoveryContract,
+  describeVeniceProviderRuntimeContract,
+  describeVllmProviderDiscoveryContract,
+  describeWebFetchProviderContracts,
+  describeWebSearchProviderContracts,
+  describeZAIProviderRuntimeContract,
+  expectAugmentedCodexCatalog,
+  expectCodexMissingAuthHint,
+  expectDashscopeVideoTaskPoll,
+  expectExplicitMusicGenerationCapabilities,
+  expectExplicitVideoGenerationCapabilities,
+  expectOpenClawLiveTranscriptMarker,
+  expectPassthroughReplayPolicy,
+  expectProviderOnboardAllowlistAlias,
+  expectProviderOnboardMergedLegacyConfig,
+  expectProviderOnboardPreservesPrimary,
+  expectProviderOnboardPrimaryAndFallbacks,
+  expectProviderOnboardPrimaryModel,
+  expectSuccessfulDashscopeVideoResult,
+  expectedAugmentedOpenaiCodexCatalogEntriesWithGpt55,
+  expectedOpenaiPluginCodexCatalogEntriesWithGpt55,
+  importProviderRuntimeCatalogModule,
+  installProviderPluginContractSuite,
+  installWebFetchProviderContractSuite,
+  installWebSearchProviderContractSuite,
+  loadBundledPluginPublicSurface,
+  loadBundledPluginPublicSurfaceSync,
+  mockSuccessfulDashscopeVideoTask,
+  normalizeTranscriptForMatch,
+  resetDashscopeVideoProviderMocks,
+  runRealtimeSttLiveTest,
+  streamAudioForLiveTest,
+  synthesizeElevenLabsLiveSpeech,
+  waitForLiveExpectation,
+};
+
 function applyChannelMatchMeta(result, match = {}) {
   if (match.matchKey && match.matchSource) {
     result.matchKey = match.matchKey;
@@ -78391,6 +79457,7 @@ const genericSdk = new Proxy(
     ...pluginTestApiRuntime,
     ...pluginTestContractsRuntime,
     ...pluginTestRuntimeRuntime,
+    ...providerTestContractsRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
@@ -80459,6 +81526,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-test-runtime"
   ) {
     return pluginTestRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-test-contracts" ||
+    request === "@openclaw/plugin-sdk/provider-test-contracts"
+  ) {
+    return providerTestContractsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||
