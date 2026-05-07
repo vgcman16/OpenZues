@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~97.1% overall, with a reasonable band of ~80-98%.
+- Estimated repo-wide parity: ~97.2% overall, with a reasonable band of ~80-98%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -60,6 +60,8 @@
 - Runtime helper addendum: imported `plugin-config-runtime` exact helper
   coverage is now verified in `458d6c7f` and counted with the plugin helper
   slices above.
+- Runtime helper addendum: imported `config-mutation` exact helper coverage is
+  now verified in `a9813667` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `file-lock` helper coverage is now
   verified in `ed03c127` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `google-model-id` alias coverage is now
@@ -16989,6 +16991,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `458d6c7f`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `config-mutation` exact SDK surface from `src/plugin-sdk/config-mutation.ts`:
+  scoped and unscoped native runtime entries expose config snapshot reads,
+  `mutateConfigFile`, `replaceConfigFile`, `updateConfig`, and config-update
+  logging through the native bridge. This closes `OZ-PLUGIN-00252`;
+  repo-wide parity is now estimated at ~97.2%. Remaining plugin/runtime
+  breadth continues with adjacent runtime and provider entrypoints.
+- Verified the config-mutation helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_config_mutation_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "config_mutation_helpers or plugin_config_runtime_helpers or config_runtime_helpers or setup_tools_helpers or setup_runtime_helpers"`
+  (`9 passed, 1066 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`263 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `a9813667`.
 
 ## References
 

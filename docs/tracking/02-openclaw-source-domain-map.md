@@ -159,8 +159,11 @@ config mutation, config logging, session-store, session-reset, and config
 policy helpers is verified in `74fd1711`, and imported
 `plugin-config-runtime` exact helper coverage from
 `src/plugin-sdk/plugin-config-runtime.ts` plus adjacent plugin config-state
-helpers is verified in `458d6c7f`. All are counted with the plugin/extension
-system row above.
+helpers is verified in `458d6c7f`, and imported `config-mutation` exact
+helper coverage from `src/plugin-sdk/config-mutation.ts` plus adjacent config
+mutation, config IO, config logging, and model shared update helpers is
+verified in `a9813667`. All are counted with the plugin/extension system row
+above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
