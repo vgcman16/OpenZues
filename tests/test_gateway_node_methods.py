@@ -34921,6 +34921,262 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_config_runtime_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    config_path = tmp_path / "openclaw.json"
+    runtime_entry = tmp_path / "runtime-plugin-config-runtime.cjs"
+    runtime_entry.write_text(
+        f"""
+const configRuntime = require("openclaw/plugin-sdk/config-runtime");
+const scopedConfigRuntime = require("@openclaw/plugin-sdk/config-runtime");
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.configRuntime",
+      description: "Use OpenClaw config-runtime SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const sampleConfig = {{
+          agents: {{ list: [{{ id: "alpha", default: true }}] }},
+          plugins: {{
+            enabled: true,
+            allow: ["demo-plugin"],
+            entries: {{
+              "demo-plugin": {{
+                enabled: true,
+                config: {{ mode: "strict" }}
+              }},
+              "bad-plugin": {{
+                enabled: true,
+                config: ["bad"]
+              }}
+            }}
+          }},
+          sessions: {{ reset: {{ mode: "daily", atHour: 3 }} }},
+          commands: {{ native: true }},
+          markdown: {{ tables: "compact" }}
+        }};
+        let requireError = null;
+        try {{
+          configRuntime.requireRuntimeConfig(null, "demo");
+        }} catch (error) {{
+          requireError = error.message;
+        }}
+        configRuntime.setRuntimeConfigSnapshot(sampleConfig, {{ source: true }});
+        const runtimeSnapshot = configRuntime.getRuntimeConfig();
+        const sourceSnapshot = configRuntime.getRuntimeConfigSourceSnapshot();
+        configRuntime.clearRuntimeConfigSnapshot();
+        const afterClear = configRuntime.getRuntimeConfigSnapshot();
+        await configRuntime.writeConfigFile({{ saved: 1 }}, {{
+          configPath: {json.dumps(str(config_path))}
+        }});
+        const loaded = await configRuntime.loadConfig({{
+          configPath: {json.dumps(str(config_path))}
+        }});
+        const writes = [];
+        const fakeIO = {{
+          async readConfigFileSnapshotForWrite() {{
+            return {{
+              snapshot: {{
+                path: "fake-openclaw.json",
+                raw: "{{\\"saved\\":1}}",
+                hash: "base-hash",
+                config: {{ saved: 1 }},
+                parsed: {{ saved: 1 }},
+                sourceConfig: {{ saved: 1 }},
+                runtimeConfig: {{ saved: 1 }},
+                valid: true,
+                issues: []
+              }},
+              writeOptions: {{ afterWrite: "none" }}
+            }};
+          }},
+          async writeConfigFile(nextConfig, options) {{
+            writes.push({{ nextConfig, afterWrite: options && options.afterWrite }});
+          }}
+        }};
+        const replaced = await configRuntime.replaceConfigFile({{
+          nextConfig: {{ saved: 2 }},
+          baseHash: "base-hash",
+          afterWrite: "restart",
+          io: fakeIO
+        }});
+        const mutated = await configRuntime.mutateConfigFile({{
+          baseHash: "base-hash",
+          afterWrite: "reload",
+          io: fakeIO,
+          mutate(draft) {{
+            draft.extra = 3;
+            return "mutated";
+          }}
+        }});
+        const logs = [];
+        configRuntime.logConfigUpdated({{ log: (message) => logs.push(message) }}, {{
+          path: "fake-openclaw.json",
+          suffix: "after test"
+        }});
+        return {{
+          keys: Object.keys(configRuntime).filter((key) => [
+            "clearRuntimeConfigSnapshot",
+            "getRuntimeConfig",
+            "loadConfig",
+            "mutateConfigFile",
+            "replaceConfigFile",
+            "resolveLivePluginConfigObject",
+            "resolvePluginConfigObject",
+            "setRuntimeConfigSnapshot"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedConfigRuntime.resolvePluginConfigObject,
+          pluginConfig: configRuntime.resolvePluginConfigObject(sampleConfig, "demo-plugin"),
+          badPluginConfig:
+            configRuntime.resolvePluginConfigObject(sampleConfig, "bad-plugin") ?? null,
+          liveFallback: configRuntime.resolveLivePluginConfigObject(
+            undefined,
+            "demo-plugin",
+            {{ startup: true }}
+          ),
+          liveMissing: configRuntime.resolveLivePluginConfigObject(
+            () => ({{ plugins: {{ entries: {{}} }} }}),
+            "demo-plugin",
+            {{ startup: true }}
+          ) ?? null,
+          requireError,
+          runtimeDefaultAgent: configRuntime.resolveDefaultAgentId(runtimeSnapshot),
+          sourceSnapshot,
+          afterClear,
+          loaded,
+          replaced: {{
+            path: replaced.path,
+            previousHash: replaced.previousHash,
+            afterWrite: replaced.afterWrite
+          }},
+          mutated: {{
+            result: mutated.result,
+            nextConfig: mutated.nextConfig,
+            afterWrite: mutated.afterWrite
+          }},
+          writes,
+          log: logs[0],
+          groupPolicy: configRuntime.resolveDefaultGroupPolicy({{
+            channels: {{ defaults: {{ groupPolicy: "allowlist" }} }}
+          }}),
+          commandsEnabled: configRuntime.resolveNativeCommandsEnabled({{
+            providerSetting: undefined,
+            globalSetting: true
+          }}),
+          telegramName: configRuntime.normalizeTelegramCommandName("/Run-Test"),
+          sessionPolicy: configRuntime.resolveSessionResetPolicy({{
+            sessionCfg: {{ reset: {{ mode: "idle", idleMinutes: 5 }} }}
+          }}),
+          dangerousNames: configRuntime.resolveDangerousNameMatchingEnabled({{
+            providerConfig: {{ dangerouslyAllowNameMatching: true }}
+          }})
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-config-runtime-plugin",
+                    "name": "Runtime Config Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-config-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.configRuntime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.configRuntime"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "clearRuntimeConfigSnapshot",
+        "getRuntimeConfig",
+        "loadConfig",
+        "mutateConfigFile",
+        "replaceConfigFile",
+        "resolveLivePluginConfigObject",
+        "resolvePluginConfigObject",
+        "setRuntimeConfigSnapshot",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["pluginConfig"] == {"mode": "strict"}
+    assert payload["result"]["badPluginConfig"] is None
+    assert payload["result"]["liveFallback"] == {"startup": True}
+    assert payload["result"]["liveMissing"] is None
+    assert payload["result"]["requireError"] == (
+        "demo requires a resolved runtime config. Load and resolve config at the "
+        "command or gateway boundary, then pass cfg through the runtime path."
+    )
+    assert payload["result"]["runtimeDefaultAgent"] == "alpha"
+    assert payload["result"]["sourceSnapshot"] == {"source": True}
+    assert payload["result"]["afterClear"] is None
+    assert payload["result"]["loaded"] == {"saved": 1}
+    assert payload["result"]["replaced"] == {
+        "path": "fake-openclaw.json",
+        "previousHash": "base-hash",
+        "afterWrite": "restart",
+    }
+    assert payload["result"]["mutated"] == {
+        "result": "mutated",
+        "nextConfig": {"saved": 1, "extra": 3},
+        "afterWrite": "reload",
+    }
+    assert payload["result"]["writes"] == [
+        {"nextConfig": {"saved": 2}, "afterWrite": "restart"},
+        {"nextConfig": {"saved": 1, "extra": 3}, "afterWrite": "reload"},
+    ]
+    assert payload["result"]["log"] == "Updated fake-openclaw.json after test"
+    assert payload["result"]["groupPolicy"] == "allowlist"
+    assert payload["result"]["commandsEnabled"] is True
+    assert payload["result"]["telegramName"] == "run_test"
+    assert payload["result"]["sessionPolicy"] == {
+        "mode": "idle",
+        "atHour": 4,
+        "idleMinutes": 5,
+        "configured": True,
+    }
+    assert payload["result"]["dangerousNames"] is True
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:

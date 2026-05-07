@@ -56338,6 +56338,218 @@ async function writeConfigFile(nextConfig, options = {}) {
   return await createConfigIO(options).writeConfigFile(nextConfig);
 }
 
+function requireRuntimeConfig(config, contextLabel) {
+  if (config) {
+    return config;
+  }
+  throw new Error(
+    `${contextLabel} requires a resolved runtime config. ` +
+      "Load and resolve config at the command or gateway boundary, " +
+      "then pass cfg through the runtime path.",
+  );
+}
+
+function resolvePluginConfigObject(config, pluginId) {
+  const plugins =
+    config && config.plugins && typeof config.plugins === "object" && !Array.isArray(config.plugins)
+      ? config.plugins
+      : undefined;
+  const entries =
+    plugins &&
+    plugins.entries &&
+    typeof plugins.entries === "object" &&
+    !Array.isArray(plugins.entries)
+      ? plugins.entries
+      : undefined;
+  const entry = entries && entries[pluginId];
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return undefined;
+  }
+  const pluginConfig = entry.config;
+  return pluginConfig && typeof pluginConfig === "object" && !Array.isArray(pluginConfig)
+    ? pluginConfig
+    : undefined;
+}
+
+function resolveLivePluginConfigObject(runtimeConfigLoader, pluginId, startupPluginConfig) {
+  if (typeof runtimeConfigLoader !== "function") {
+    return startupPluginConfig;
+  }
+  return resolvePluginConfigObject(runtimeConfigLoader(), pluginId);
+}
+
+function hashConfigRaw(raw) {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  return crypto.createHash("sha256").update(raw).digest("hex");
+}
+
+function resolveConfigSnapshotHash(snapshot = {}) {
+  const hash = normalizeOptionalString(snapshot.hash);
+  if (hash) {
+    return hash;
+  }
+  return hashConfigRaw(snapshot.raw);
+}
+
+async function readConfigFileSnapshotForWrite(options = {}) {
+  const configIO = createConfigIO(options);
+  const configPath = configIO.configPath;
+  let raw = null;
+  let parsed = {};
+  let valid = true;
+  let issues = [];
+  try {
+    if (fs.existsSync(configPath)) {
+      raw = fs.readFileSync(configPath, "utf8");
+      parsed = raw.trim() ? JSON.parse(raw) : {};
+    }
+  } catch (error) {
+    valid = false;
+    issues = [{ message: formatErrorMessage(error) }];
+    parsed = {};
+  }
+  const sourceConfig = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  const snapshot = {
+    path: configPath,
+    raw,
+    hash: resolveConfigSnapshotHash({ raw }),
+    config: sourceConfig,
+    parsed: sourceConfig,
+    sourceConfig,
+    runtimeConfig: sourceConfig,
+    valid,
+    issues,
+  };
+  return {
+    snapshot,
+    writeOptions: { expectedConfigPath: configPath },
+  };
+}
+
+function cloneConfigForMutation(config) {
+  if (typeof structuredClone === "function") {
+    return structuredClone(config || {});
+  }
+  return JSON.parse(JSON.stringify(config || {}));
+}
+
+function assertConfigBaseHashMatches(snapshot, expectedHash) {
+  const currentHash = resolveConfigSnapshotHash(snapshot) ?? null;
+  if (expectedHash !== undefined && expectedHash !== currentHash) {
+    const error = new Error("config changed since last load");
+    error.name = "ConfigMutationConflictError";
+    error.currentHash = currentHash;
+    throw error;
+  }
+  return currentHash;
+}
+
+function resolveConfigWriteAfterWrite(afterWrite) {
+  return normalizeOptionalString(afterWrite) || "none";
+}
+
+function resolveConfigWriteFollowUp(afterWrite) {
+  switch (afterWrite) {
+    case "restart":
+      return "restart";
+    case "reload":
+      return "reload";
+    default:
+      return "none";
+  }
+}
+
+async function replaceConfigFile(params = {}) {
+  const io = params.io || {};
+  const prepared =
+    params.snapshot && params.writeOptions
+      ? { snapshot: params.snapshot, writeOptions: params.writeOptions }
+      : await (
+          typeof io.readConfigFileSnapshotForWrite === "function"
+            ? io.readConfigFileSnapshotForWrite()
+            : readConfigFileSnapshotForWrite(params.writeOptions || {})
+        );
+  const snapshot = prepared.snapshot;
+  const writeOptions = prepared.writeOptions || {};
+  const previousHash = assertConfigBaseHashMatches(snapshot, params.baseHash);
+  const afterWrite = resolveConfigWriteAfterWrite(params.afterWrite || writeOptions.afterWrite);
+  const write = typeof io.writeConfigFile === "function" ? io.writeConfigFile : writeConfigFile;
+  await write(params.nextConfig || {}, {
+    ...writeOptions,
+    ...(params.writeOptions || {}),
+    afterWrite,
+  });
+  return {
+    path: snapshot.path,
+    previousHash,
+    snapshot,
+    nextConfig: params.nextConfig || {},
+    afterWrite,
+    followUp: resolveConfigWriteFollowUp(afterWrite),
+  };
+}
+
+async function mutateConfigFile(params = {}) {
+  const io = params.io || {};
+  const prepared = await (
+    typeof io.readConfigFileSnapshotForWrite === "function"
+      ? io.readConfigFileSnapshotForWrite()
+      : readConfigFileSnapshotForWrite(params.writeOptions || {})
+  );
+  const snapshot = prepared.snapshot;
+  const writeOptions = prepared.writeOptions || {};
+  const previousHash = assertConfigBaseHashMatches(snapshot, params.baseHash);
+  const baseConfig = params.base === "runtime" ? snapshot.runtimeConfig : snapshot.sourceConfig;
+  const draft = cloneConfigForMutation(baseConfig || snapshot.config || {});
+  const result =
+    typeof params.mutate === "function"
+      ? await params.mutate(draft, { snapshot, previousHash })
+      : undefined;
+  const afterWrite = resolveConfigWriteAfterWrite(params.afterWrite || writeOptions.afterWrite);
+  const write = typeof io.writeConfigFile === "function" ? io.writeConfigFile : writeConfigFile;
+  await write(draft, {
+    ...writeOptions,
+    ...(params.writeOptions || {}),
+    afterWrite,
+  });
+  return {
+    path: snapshot.path,
+    previousHash,
+    snapshot,
+    nextConfig: draft,
+    result,
+    afterWrite,
+    followUp: resolveConfigWriteFollowUp(afterWrite),
+  };
+}
+
+async function updateConfig(mutator, options = {}) {
+  const { snapshot } = await readConfigFileSnapshotForWrite(options);
+  if (!snapshot.valid) {
+    throw new Error(`Invalid config at ${snapshot.path}`);
+  }
+  const next = typeof mutator === "function"
+    ? mutator(cloneConfigForMutation(snapshot.sourceConfig || snapshot.config || {}))
+    : cloneConfigForMutation(snapshot.sourceConfig || snapshot.config || {});
+  await replaceConfigFile({
+    nextConfig: next,
+    baseHash: snapshot.hash,
+    writeOptions: options,
+  });
+  return next;
+}
+
+function logConfigUpdated(runtime, opts = {}) {
+  if (!runtime || typeof runtime.log !== "function") {
+    return;
+  }
+  const configPath = normalizeOptionalString(opts.path) || createConfigIO().configPath;
+  const suffix = normalizeOptionalString(opts.suffix);
+  runtime.log(`Updated ${configPath}${suffix ? ` ${suffix}` : ""}`);
+}
+
 function parseBooleanValue(value, options = {}) {
   if (typeof value === "boolean") {
     return value;
@@ -65164,6 +65376,73 @@ const anthropicVertexAuthPresenceRuntime = {
   hasAnthropicVertexAvailableAuth,
 };
 
+const configRuntime = {
+  GROUP_POLICY_BLOCKED_LABEL,
+  TELEGRAM_COMMAND_NAME_PATTERN,
+  applyModelOverrideToSessionEntry,
+  canonicalizeMainSessionAlias,
+  clearConfigCache,
+  clearRuntimeConfigSnapshot,
+  clearSessionStoreCacheForTest: () => {},
+  coerceSecretRef,
+  evaluateSessionFreshness,
+  evaluateSupplementalContextVisibility,
+  filterSupplementalContextItems,
+  getRuntimeConfig,
+  getRuntimeConfigSnapshot,
+  getRuntimeConfigSourceSnapshot,
+  isDangerousNameMatchingEnabled,
+  isNativeCommandsExplicitlyDisabled,
+  loadConfig,
+  loadCronStore,
+  loadSessionStore,
+  logConfigUpdated,
+  mutateConfigFile,
+  normalizePluginsConfig,
+  normalizeTelegramCommandName: normalizeSlashCommandName,
+  readConfigFileSnapshotForWrite,
+  readSessionUpdatedAt,
+  recordSessionMetaFromInbound,
+  replaceConfigFile,
+  requireRuntimeConfig,
+  resolveActiveTalkProviderConfig,
+  resolveAgentMaxConcurrent,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveChannelContextVisibilityMode,
+  resolveChannelGroupPolicy,
+  resolveChannelGroupRequireMention,
+  resolveChannelModelOverride,
+  resolveChannelResetConfig,
+  resolveConfiguredSecretInputString,
+  resolveConfiguredSecretInputWithFallback,
+  resolveDangerousNameMatchingEnabled,
+  resolveDefaultAgentId,
+  resolveDefaultContextVisibility,
+  resolveDefaultGroupPolicy,
+  resolveGroupSessionKey,
+  resolveLivePluginConfigObject,
+  resolveMarkdownTableMode,
+  resolveNativeCommandsEnabled,
+  resolveNativeSkillsEnabled,
+  resolveOpenProviderRuntimeGroupPolicy,
+  resolvePluginConfigObject,
+  resolveRequiredConfiguredSecretRefInputString,
+  resolveSessionKey,
+  resolveSessionResetPolicy,
+  resolveSessionResetType,
+  resolveStorePath,
+  resolveThreadFlag,
+  resolveToolsBySender,
+  saveCronStore,
+  saveSessionStore,
+  setRuntimeConfigSnapshot,
+  updateConfig,
+  updateLastRoute,
+  updateSessionStore,
+  warnMissingProviderGroupPolicyFallbackOnce,
+  writeConfigFile,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -66693,6 +66972,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/setup-tools"
   ) {
     return setupToolsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/config-runtime" ||
+    request === "@openclaw/plugin-sdk/config-runtime"
+  ) {
+    return configRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||
