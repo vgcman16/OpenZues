@@ -4,8 +4,8 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~99.8% overall, with a reasonable
-  band of ~80-99.9%.
+- Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
+  band of ~80-99.95%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -121,7 +121,8 @@ Current percentage rollup:
   zalouser, zod, web-content-extractor, plugin-entry, optional-channel-setup,
   outbound-media, delivery-queue-runtime, migration-runtime, migration helper,
   outbound-send-deps, command-status-runtime, reply-runtime,
-  reply-dispatch-runtime, and inbound-reply-dispatch slices.
+  reply-dispatch-runtime, inbound-reply-dispatch, and interactive-runtime
+  slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -9471,8 +9472,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ordering, normalized outbound delivery, and fakeable native reply dispatch
   delegation. Source/test checkpointed in `25231852`; repo-wide parity is now
   estimated at ~99.8%.
+- Current queue-head adjustment: imported plugin SDK `interactive-runtime` now
+  exposes the exact source-backed interactive payload facade for scoped and
+  unscoped imports, including interactive reply normalization, message
+  presentation normalization, presentation/interactive conversion, fallback
+  text rendering, reply content/channel-data predicates, text fallback
+  extraction, and block reduction. Source/test checkpointed in `3781cad9`;
+  repo-wide parity is now estimated at ~99.9%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially the exact `interactive-runtime` facade, broader runtime/client
+  especially the exact `infra-runtime` facade, broader runtime/client
   integration, and session runtime methods (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency
