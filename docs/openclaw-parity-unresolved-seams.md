@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~93.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~93.7% overall, with a reasonable
   band of ~80-94%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9002,8 +9002,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   workspace/agent skill command discovery, skills-runtime refresh-state
   helpers, the first agent-runtime core helper subset, the bounded
   agent-runtime model-selection helper subset, the agent-runtime tool bridge
-  helper subset, and the agent-runtime facade utility subset, continuing with
-  remaining live/provider `agent-runtime` facade and agent-command breadth.
+  helper subset, the agent-runtime facade utility subset, and the
+  agent-runtime model-catalog lookup subset, continuing with remaining
+  live/provider `agent-runtime` facade and agent-command breadth.
 - Current queue-head adjustment: imported plugin SDK `models-provider-runtime`
   now exposes the upstream `buildModelsProviderData`,
   `formatModelsAvailableHeader`, and `resolveModelsCommandReply` exports for
@@ -9062,6 +9063,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   simple-completion model selection. Source/test checkpointed in `a6d70a6f`;
   live provider/model runtime helpers and agent-command entrypoints remain the
   next seam.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed model-catalog lookup helper subset for scoped and
+  unscoped imports: provider-alias-aware catalog lookup, providerless
+  unique-match lookup, and text/image/audio/document capability probes.
+  Source/test checkpointed in `a5794303`; live provider/model runtime helpers
+  and agent-command entrypoints remain the next seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
