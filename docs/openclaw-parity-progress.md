@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~96.4% overall, with a reasonable band of ~80-97%.
+- Estimated repo-wide parity: ~96.5% overall, with a reasonable band of ~80-97%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -44,6 +44,9 @@
 - Runtime helper addendum: imported `agent-runtime` agent-command entrypoint
   coverage is now verified in `9e6496fb` and counted with the plugin helper
   slices above.
+- Runtime helper addendum: imported `agent-harness-runtime` and
+  `agent-harness` exact helper coverage is now verified in `ee7f5c49` and
+  counted with the plugin helper slices above.
 - Runtime helper addendum: imported `file-lock` helper coverage is now
   verified in `ed03c127` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `google-model-id` alias coverage is now
@@ -16838,6 +16841,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `f0635cce`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `agent-harness-runtime` and `agent-harness` exact SDK surfaces from
+  `src/plugin-sdk/agent-harness-runtime.ts` and
+  `src/plugin-sdk/agent-harness.ts`: scoped and unscoped native runtime
+  entries expose terminal-outcome classification, tool metadata inference,
+  progress-output normalization/truncation, the upstream progress output cap,
+  and the agent-harness facade's coding-tool factory with a precise native
+  unavailable boundary. This closes `OZ-PLUGIN-00245`; repo-wide parity is
+  now estimated at ~96.5%. Remaining plugin/runtime breadth continues with
+  broader SDK helper/runtime surfaces outside the browser and agent harness
+  slices.
+- Verified the agent-harness-runtime helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_agent_harness_runtime_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_harness_runtime_helpers or agent_runtime_facade_utilities or agent_runtime_model_catalog_helpers or agent_runtime_pi_embedded_helpers or agent_runtime_block_chunker or entrypoints_helpers"`
+  (`6 passed, 1062 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`256 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `ee7f5c49`.
 
 ## References
 

@@ -141,7 +141,10 @@ imported `browser-setup-tools` aggregate coverage from
 imported `browser-support` aggregate coverage from
 `src/plugin-sdk/browser-support.ts` is verified in `37eec77e`, and imported
 `browser-bridge` exact facade coverage from `src/plugin-sdk/browser-bridge.ts`
-is verified in `f0635cce`. All are counted with the plugin/extension system
+is verified in `f0635cce`, and imported `agent-harness-runtime` /
+`agent-harness` exact helper coverage from
+`src/plugin-sdk/agent-harness-runtime.ts` and `src/plugin-sdk/agent-harness.ts`
+is verified in `ee7f5c49`. All are counted with the plugin/extension system
 row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
