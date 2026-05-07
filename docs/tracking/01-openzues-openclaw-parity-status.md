@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~97.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~97.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -3150,6 +3150,18 @@ may lag behind this tracker.
     adjacent SDK helper proof (`7 passed, 1066 deselected`), adjacent
     imported-plugin proof (`261 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK plugin-config-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/plugin-config-runtime.ts`,
+    `openclaw-main/src/plugins/config-state.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `458d6c7f`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused plugin-config-runtime proof (`1
+    passed`), adjacent SDK helper proof (`8 passed, 1066 deselected`),
+    adjacent imported-plugin proof (`262 passed, 812 deselected`), `ruff
+    check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin runtime tool factory context.
   - Source: `openclaw-main/src/plugins/tool-types.ts`,

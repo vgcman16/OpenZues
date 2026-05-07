@@ -156,8 +156,11 @@ brew, binary detection, docs-link, and config-dir helpers is verified in
 `e0f1e72c`, and imported `config-runtime` exact helper coverage from
 `src/plugin-sdk/config-runtime.ts` plus adjacent plugin config, config IO,
 config mutation, config logging, session-store, session-reset, and config
-policy helpers is verified in `74fd1711`. All are counted with the
-plugin/extension system row above.
+policy helpers is verified in `74fd1711`, and imported
+`plugin-config-runtime` exact helper coverage from
+`src/plugin-sdk/plugin-config-runtime.ts` plus adjacent plugin config-state
+helpers is verified in `458d6c7f`. All are counted with the plugin/extension
+system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
