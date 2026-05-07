@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9998% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2723,6 +2723,17 @@ may lag behind this tracker.
   - Last verified: 2026-05-07, focused provider-http-test-mocks proof (`1
     passed`), adjacent provider-http-test-mocks/test-node-mocks/test-fixtures
     proof (`3 passed, 1116 deselected`), adjacent imported-plugin proof (`307
+    passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK testing compatibility facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/testing.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `e6747208`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused testing compatibility proof (`1
+    passed`), adjacent testing/provider-http-test-mocks/test-node-mocks proof
+    (`3 passed, 1117 deselected`), adjacent imported-plugin proof (`308
     passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin SDK account-core/account-resolution shim.

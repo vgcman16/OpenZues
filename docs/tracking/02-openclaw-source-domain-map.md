@@ -171,7 +171,9 @@ verified in `aa63f674`, imported `test-node-mocks` aggregate coverage from
 verified in `b5b60a9e`, imported `provider-http-test-mocks` aggregate
 coverage from `src/plugin-sdk/provider-http-test-mocks.ts` and adjacent
 provider HTTP mock helpers is verified in `462e8f82`, and imported
-`browser-setup-tools` aggregate coverage from
+deprecated `testing` compatibility coverage from `src/plugin-sdk/testing.ts`
+and adjacent runtime guard/min-host/runtime-sidecar helper sources is verified
+in `e6747208`, and imported `browser-setup-tools` aggregate coverage from
 `src/plugin-sdk/browser-setup-tools.ts` and
 `extensions/browser/src/sdk-setup-tools.ts` is verified in `50876922`, and
 imported `browser-support` aggregate coverage from

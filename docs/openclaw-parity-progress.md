@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9998%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -3574,10 +3574,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 ## Current Queue Head
 
-- Imported OpenClaw plugin runtime entries now have the
-  `provider-http-test-mocks` facade, closing the current public SDK
-  test-helper subpath list; the next exact plugin-SDK queue head is the
-  deprecated `testing` compatibility barrel.
+- Imported OpenClaw plugin runtime entries now have the deprecated `testing`
+  compatibility barrel; the next exact plugin-SDK queue head is the advertised
+  `setup` facade.
 - Browser command productization is now effectively closed for the current installed-command queue, with persistent proxy/profile mutation left intentionally guarded.
 - Cron expression schedules now create, update, list, compute due state, and launch through `cron.run mode=due`; richer upstream cron runtime semantics such as full Croner expression breadth and persisted scheduler error telemetry remain future hardening.
 - `agents.files.*` now covers OpenClaw bootstrap and memory filenames (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, `memory.md`) while retaining the existing OpenZues `.codex/AGENTS.md` path.
@@ -17923,6 +17922,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`307 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check`. Source/test checkpointed in `462e8f82`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  deprecated `testing` compatibility aggregate from `src/plugin-sdk/testing.ts`:
+  scoped and unscoped native runtime entries expose the broad compatibility
+  test barrel, including CLI runtime capture, env/temp fixtures, plugin
+  registry/runtime helpers, setup wizard helpers, provider contract/test
+  helpers, semver/min-host parsing, bundled runtime sidecar path uniqueness,
+  and task-flow helpers without importing the TypeScript runtime. This closes
+  `OZ-PLUGIN-00297`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999%.
+- Verified the testing compatibility slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_testing_compat_barrel -q`
+  (`1 passed`), adjacent testing/provider-http-test-mocks/test-node-mocks
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "testing_compat or provider_http_test_mocks or test_node_mocks"`
+  (`3 passed, 1117 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`308 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `e6747208`.
 
 ## References
 

@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9998%.
+  band of ~80-99.9999%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1925,10 +1925,18 @@ OpenZues provider HTTP/auth mock helpers, including `getProviderHttpMocks`,
 `installProviderHttpMockCleanup`, provider-http/provider-auth module
 replacement after helper import, poll-loop mocks, fetch/post mocks,
 HTTP/provider assertion mocks, request config mocks, sanitizing mocks, and
-after-each cleanup semantics. Remaining plugin SDK queue heads should continue
-with the exact deprecated `testing` compatibility barrel and any newly exposed
-upstream public SDK test subpaths that still require source-backed native
-shims.
+after-each cleanup semantics.
+Imported plugin SDK `testing` is now also no longer an unresolved queue head:
+the exact scoped and unscoped subpath resolves to the native OpenZues
+deprecated compatibility test barrel, including CLI runtime capture, env/temp
+fixtures, plugin registry/runtime helpers, setup wizard helpers, provider
+contract/test helpers, semver/min-host parsing, bundled runtime sidecar path
+uniqueness, and task-flow helpers. Remaining advertised plugin SDK queue heads
+that still need exact source-backed native routes begin with `setup`, followed
+by `config-types`, `channel-runtime`, `compat`, `discord`, `extension-shared`,
+`session-transcript-hit`, `ssrf-dispatcher`, `image-generation`,
+`music-generation`, `video-generation`, `provider-model-types`,
+`document-extractor`, and `telegram-account`.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
