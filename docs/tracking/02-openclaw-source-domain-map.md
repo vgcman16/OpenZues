@@ -70,6 +70,12 @@ The imported `video-generation-runtime` SDK helper coverage from
 `src/video-generation/normalization.ts`, `src/video-generation/capabilities.ts`,
 and `src/video-generation/duration-support.ts` is verified in `2cf18309` and
 is counted with the plugin/extension system row above.
+The imported `realtime-transcription` SDK helper coverage from
+`src/plugin-sdk/realtime-transcription.ts`,
+`src/realtime-transcription/provider-registry.ts`,
+`src/plugins/provider-registry-shared.ts`, and
+`src/realtime-transcription/websocket-session.ts` is verified in `18a7e15b`
+and is counted with the plugin/extension system row above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -196,6 +202,11 @@ and `src/image-generation/runtime.ts` is checkpointed in `719fcee8`.
 `src/video-generation/runtime.ts`, `src/video-generation/normalization.ts`,
 `src/video-generation/capabilities.ts`, and
 `src/video-generation/duration-support.ts` is checkpointed in `2cf18309`.
+`realtime-transcription` from `src/plugin-sdk/realtime-transcription.ts`,
+`src/realtime-transcription/provider-registry.ts`,
+`src/plugins/provider-registry-shared.ts`, and
+`src/realtime-transcription/websocket-session.ts` is checkpointed in
+`18a7e15b`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
