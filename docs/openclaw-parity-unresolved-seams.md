@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~97.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~97.5% overall, with a reasonable
   band of ~80-98%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -103,7 +103,7 @@ Current percentage rollup:
   agent-harness-runtime helper, sandbox helper, proxy-capture helper,
   setup-runtime helper, setup-tools helper, config-runtime helper,
   plugin-config-runtime helper, config-mutation helper, provider-tools helper,
-  provider-stream-shared helper,
+  provider-stream-shared helper, provider-stream helper,
   fetch-runtime helper, cli-backend helper,
   type-only SDK barrel helper, config-schema helper, entrypoints helper,
   diffs helper, acpx helper, ACP runtime-backend helper, ACP runtime facade
@@ -9303,7 +9303,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   stripping, DeepSeek V4 reasoning-content patching, and Google thinking
   payload sanitization. Source/test checkpointed in `711865e0`; the
   `provider-stream` family facade remains the nearby plugin-runtime queue
-  head. Repo-wide parity is now estimated at ~97.4%.
+  head. Repo-wide parity was estimated at ~97.4% at that checkpoint.
+- Current queue-head adjustment: imported plugin SDK `provider-stream` and
+  `provider-stream-family` now expose the source-backed exact helper subset
+  for scoped and unscoped imports: provider stream family hook selection,
+  canonical hook constants, Google thinking wrapping, Moonshot thinking/keep,
+  Minimax fast-mode model rewriting, OpenAI response defaults, OpenRouter and
+  Kilocode reasoning wrappers, and tool-stream default-on behavior. Source/test
+  checkpointed in `da9a3e66`; `provider-transport-runtime` remains the nearby
+  plugin-runtime queue head. Repo-wide parity is now estimated at ~97.5%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

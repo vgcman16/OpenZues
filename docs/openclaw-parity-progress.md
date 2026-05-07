@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~97.4% overall, with a reasonable band of ~80-98%.
+- Estimated repo-wide parity: ~97.5% overall, with a reasonable band of ~80-98%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -67,6 +67,9 @@
 - Runtime helper addendum: imported `provider-stream-shared` exact helper
   coverage is now verified in `711865e0` and counted with the plugin helper
   slices above.
+- Runtime helper addendum: imported `provider-stream` and
+  `provider-stream-family` exact helper coverage is now verified in
+  `da9a3e66` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `file-lock` helper coverage is now
   verified in `ed03c127` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `google-model-id` alias coverage is now
@@ -17057,6 +17060,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `711865e0`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `provider-stream` and `provider-stream-family` exact SDK surfaces from
+  `src/plugin-sdk/provider-stream.ts` and
+  `src/plugin-sdk/provider-stream-family.ts`: scoped and unscoped native
+  runtime entries expose the provider stream hook matrix, canonical hook
+  constants, Google thinking payload wrapping, Moonshot thinking/keep handling,
+  Minimax fast-mode model rewriting, OpenAI response defaults, OpenRouter and
+  Kilocode reasoning wrappers, and tool-stream default-on behavior through the
+  native bridge. This closes `OZ-PLUGIN-00255`; repo-wide parity is now
+  estimated at ~97.5%. Remaining plugin/runtime breadth continues with
+  `provider-transport-runtime`.
+- Verified the provider-stream helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_provider_stream_family_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "provider_stream_family_helpers or provider_stream_shared_helpers or provider_tools_helpers or config_mutation_helpers or plugin_config_runtime_helpers"`
+  (`5 passed, 1073 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`266 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `da9a3e66`.
 
 ## References
 
