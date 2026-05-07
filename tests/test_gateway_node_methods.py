@@ -41094,6 +41094,155 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_config_facade_exports(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-config.cjs"
+    runtime_entry.write_text(
+        """
+const browserConfig = require("openclaw/plugin-sdk/browser-config");
+const scopedBrowserConfig = require("@openclaw/plugin-sdk/browser-config");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_config",
+      description: "Use OpenClaw browser config facade exports",
+      parameters: { type: "object" },
+      execute() {
+        const parsed = browserConfig.parseBrowserHttpUrl(
+          "http://user:pass@127.0.0.1:9222/",
+          "browser.cdpUrl"
+        );
+        return {
+          keys: Object.keys(browserConfig).sort(),
+          scopedSame:
+            scopedBrowserConfig.parseBrowserHttpUrl === browserConfig.parseBrowserHttpUrl,
+          constants: {
+            DEFAULT_AI_SNAPSHOT_MAX_CHARS: browserConfig.DEFAULT_AI_SNAPSHOT_MAX_CHARS,
+            DEFAULT_BROWSER_ACTION_TIMEOUT_MS: browserConfig.DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
+            DEFAULT_BROWSER_DEFAULT_PROFILE_NAME:
+              browserConfig.DEFAULT_BROWSER_DEFAULT_PROFILE_NAME,
+            DEFAULT_BROWSER_EVALUATE_ENABLED: browserConfig.DEFAULT_BROWSER_EVALUATE_ENABLED,
+            DEFAULT_OPENCLAW_BROWSER_COLOR: browserConfig.DEFAULT_OPENCLAW_BROWSER_COLOR,
+            DEFAULT_OPENCLAW_BROWSER_ENABLED: browserConfig.DEFAULT_OPENCLAW_BROWSER_ENABLED,
+            DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME:
+              browserConfig.DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME,
+            uploadDirType: typeof browserConfig.DEFAULT_UPLOAD_DIR
+          },
+          parsed: {
+            port: parsed.port,
+            normalized: parsed.normalized
+          },
+          redacted: browserConfig.redactCdpUrl(parsed.normalized),
+          functionTypes: {
+            ensureBrowserControlAuth: typeof browserConfig.ensureBrowserControlAuth,
+            movePathToTrash: typeof browserConfig.movePathToTrash,
+            resolveBrowserConfig: typeof browserConfig.resolveBrowserConfig,
+            resolveBrowserControlAuth: typeof browserConfig.resolveBrowserControlAuth,
+            resolveProfile: typeof browserConfig.resolveProfile
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-config-plugin",
+                    "name": "Runtime Browser Config Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-config.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_config"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.browser_config"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "DEFAULT_AI_SNAPSHOT_MAX_CHARS",
+            "DEFAULT_BROWSER_ACTION_TIMEOUT_MS",
+            "DEFAULT_BROWSER_DEFAULT_PROFILE_NAME",
+            "DEFAULT_BROWSER_EVALUATE_ENABLED",
+            "DEFAULT_OPENCLAW_BROWSER_COLOR",
+            "DEFAULT_OPENCLAW_BROWSER_ENABLED",
+            "DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME",
+            "DEFAULT_UPLOAD_DIR",
+            "ensureBrowserControlAuth",
+            "movePathToTrash",
+            "parseBrowserHttpUrl",
+            "redactCdpUrl",
+            "resolveBrowserConfig",
+            "resolveBrowserControlAuth",
+            "resolveProfile",
+        ],
+        "scopedSame": True,
+        "constants": {
+            "DEFAULT_AI_SNAPSHOT_MAX_CHARS": 80000,
+            "DEFAULT_BROWSER_ACTION_TIMEOUT_MS": 60000,
+            "DEFAULT_BROWSER_DEFAULT_PROFILE_NAME": "openclaw",
+            "DEFAULT_BROWSER_EVALUATE_ENABLED": True,
+            "DEFAULT_OPENCLAW_BROWSER_COLOR": "#FF4500",
+            "DEFAULT_OPENCLAW_BROWSER_ENABLED": True,
+            "DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME": "openclaw",
+            "uploadDirType": "string",
+        },
+        "parsed": {
+            "port": 9222,
+            "normalized": "http://user:pass@127.0.0.1:9222",
+        },
+        "redacted": "http://127.0.0.1:9222",
+        "functionTypes": {
+            "ensureBrowserControlAuth": "function",
+            "movePathToTrash": "function",
+            "resolveBrowserConfig": "function",
+            "resolveBrowserControlAuth": "function",
+            "resolveProfile": "function",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

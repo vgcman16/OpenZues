@@ -54244,6 +54244,14 @@ const DEFAULT_BROWSER_CDP_PORT_RANGE_END = 18899;
 const DEFAULT_BROWSER_CDP_PORT_RANGE_SPAN =
   DEFAULT_BROWSER_CDP_PORT_RANGE_END - DEFAULT_BROWSER_CDP_PORT_RANGE_START;
 const DEFAULT_BROWSER_CONTROL_PORT = 18791;
+const DEFAULT_OPENCLAW_BROWSER_ENABLED = true;
+const DEFAULT_BROWSER_EVALUATE_ENABLED = true;
+const DEFAULT_OPENCLAW_BROWSER_COLOR = "#FF4500";
+const DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME = "openclaw";
+const DEFAULT_BROWSER_DEFAULT_PROFILE_NAME = "openclaw";
+const DEFAULT_BROWSER_ACTION_TIMEOUT_MS = 60000;
+const DEFAULT_AI_SNAPSHOT_MAX_CHARS = 80000;
+const DEFAULT_UPLOAD_DIR = path.join(resolvePreferredOpenClawTmpDir(), "uploads");
 
 function isValidPort(port) {
   return Number.isFinite(port) && port > 0 && port <= 65535;
@@ -54313,6 +54321,186 @@ const browserConfigSupportRuntime = {
   resolveGatewayPort,
   resolveUserPath,
   shortenHomePath,
+};
+
+function resolveBrowserConfig(cfg = {}, rootConfig = {}) {
+  const browserConfig = cfg && typeof cfg === "object" ? cfg : {};
+  const gatewayPort = resolveGatewayPort(rootConfig || {});
+  const controlPort =
+    typeof browserConfig.controlPort === "number" && browserConfig.controlPort > 0
+      ? browserConfig.controlPort
+      : deriveDefaultBrowserControlPort(gatewayPort);
+  const cdpRange = deriveDefaultBrowserCdpPortRange(controlPort);
+  const cdpHost =
+    typeof browserConfig.cdpHost === "string" && browserConfig.cdpHost.trim()
+      ? browserConfig.cdpHost.trim()
+      : "127.0.0.1";
+  const profiles =
+    browserConfig.profiles && typeof browserConfig.profiles === "object"
+      ? browserConfig.profiles
+      : {
+          [DEFAULT_BROWSER_DEFAULT_PROFILE_NAME]: {
+            cdpPort: cdpRange.start,
+            color: DEFAULT_OPENCLAW_BROWSER_COLOR,
+          },
+        };
+  return {
+    enabled: browserConfig.enabled !== false,
+    evaluateEnabled: browserConfig.evaluateEnabled !== false,
+    controlPort,
+    cdpPortRangeStart: cdpRange.start,
+    cdpPortRangeEnd: cdpRange.end,
+    cdpProtocol: browserConfig.cdpProtocol === "https" ? "https" : "http",
+    cdpHost,
+    cdpIsLoopback: isLoopbackHost(cdpHost),
+    actionTimeoutMs:
+      typeof browserConfig.actionTimeoutMs === "number"
+        ? browserConfig.actionTimeoutMs
+        : DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
+    color:
+      typeof browserConfig.color === "string" && browserConfig.color.trim()
+        ? browserConfig.color
+        : DEFAULT_OPENCLAW_BROWSER_COLOR,
+    headless: browserConfig.headless === true,
+    noSandbox: browserConfig.noSandbox === true,
+    attachOnly: browserConfig.attachOnly === true,
+    defaultProfile:
+      typeof browserConfig.defaultProfile === "string" && browserConfig.defaultProfile.trim()
+        ? browserConfig.defaultProfile
+        : DEFAULT_BROWSER_DEFAULT_PROFILE_NAME,
+    profiles,
+    tabCleanup: {
+      enabled: true,
+      idleMinutes: 60,
+      maxTabsPerSession: 20,
+      sweepMinutes: 10,
+    },
+    extraArgs: Array.isArray(browserConfig.extraArgs) ? browserConfig.extraArgs : [],
+  };
+}
+
+function resolveProfile(resolved, profileName) {
+  if (!resolved || typeof resolved !== "object") {
+    return null;
+  }
+  const requestedName =
+    typeof profileName === "string" && profileName.trim()
+      ? profileName.trim()
+      : resolved.defaultProfile || DEFAULT_BROWSER_DEFAULT_PROFILE_NAME;
+  const profile =
+    resolved.profiles && typeof resolved.profiles === "object"
+      ? resolved.profiles[requestedName]
+      : undefined;
+  if (!profile || typeof profile !== "object") {
+    return null;
+  }
+  const cdpPort =
+    typeof profile.cdpPort === "number" && profile.cdpPort > 0
+      ? profile.cdpPort
+      : resolved.cdpPortRangeStart;
+  const cdpHost =
+    typeof profile.cdpHost === "string" && profile.cdpHost.trim()
+      ? profile.cdpHost.trim()
+      : resolved.cdpHost || "127.0.0.1";
+  const cdpProtocol = profile.cdpProtocol || resolved.cdpProtocol || "http";
+  return {
+    name: requestedName,
+    cdpPort,
+    cdpUrl:
+      typeof profile.cdpUrl === "string" && profile.cdpUrl.trim()
+        ? profile.cdpUrl.trim()
+        : `${cdpProtocol}://${cdpHost}:${cdpPort}`,
+    cdpHost,
+    cdpIsLoopback: isLoopbackHost(cdpHost),
+    ...(profile.userDataDir ? { userDataDir: profile.userDataDir } : {}),
+    color: profile.color || resolved.color || DEFAULT_OPENCLAW_BROWSER_COLOR,
+    driver: profile.driver === "existing-session" ? "existing-session" : "openclaw",
+    headless: profile.headless === true,
+    attachOnly: profile.attachOnly === true || resolved.attachOnly === true,
+  };
+}
+
+function resolveBrowserControlAuth(cfg = {}, env = process.env) {
+  const browserConfig =
+    cfg && cfg.browser && typeof cfg.browser === "object" ? cfg.browser : cfg || {};
+  const auth =
+    browserConfig.controlAuth && typeof browserConfig.controlAuth === "object"
+      ? browserConfig.controlAuth
+      : browserConfig.auth && typeof browserConfig.auth === "object"
+        ? browserConfig.auth
+        : {};
+  const token =
+    normalizeOptionalString(auth.token) ||
+    normalizeOptionalString(env && env.OPENCLAW_BROWSER_CONTROL_TOKEN);
+  const password =
+    normalizeOptionalString(auth.password) ||
+    normalizeOptionalString(env && env.OPENCLAW_BROWSER_CONTROL_PASSWORD);
+  return {
+    ...(token ? { token } : {}),
+    ...(password ? { password } : {}),
+  };
+}
+
+async function ensureBrowserControlAuth(params = {}) {
+  const auth = resolveBrowserControlAuth(params.cfg || {}, params.env || process.env);
+  if (auth.token || auth.password) {
+    return { auth };
+  }
+  const generatedToken = generateSecureToken(24);
+  return { auth: { token: generatedToken }, generatedToken };
+}
+
+function assertTrashTargetAllowed(targetPath, allowedRoots) {
+  const roots = Array.from(allowedRoots || [os.homedir(), os.tmpdir()]).map((root) =>
+    path.resolve(String(root)),
+  );
+  const resolvedTarget = path.resolve(targetPath);
+  if (
+    !roots.some(
+      (root) => resolvedTarget !== root && resolvedTarget.startsWith(`${root}${path.sep}`),
+    )
+  ) {
+    throw new Error(`Refusing to trash path outside allowed roots: ${targetPath}`);
+  }
+}
+
+async function movePathToTrash(targetPath, options = {}) {
+  assertTrashTargetAllowed(targetPath, options.allowedRoots);
+  const trashDir = path.join(os.homedir(), ".Trash");
+  fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+  const base = path.basename(path.resolve(targetPath)).replace(/[\\/]+/g, "");
+  if (!base) {
+    throw new Error(`Unable to derive safe trash basename for: ${targetPath}`);
+  }
+  const destination = path.join(trashDir, `${base}-${Date.now()}`);
+  try {
+    fs.renameSync(targetPath, destination);
+  } catch (error) {
+    if (!error || error.code !== "EXDEV") {
+      throw error;
+    }
+    fs.cpSync(targetPath, destination, { recursive: true, force: false, errorOnExist: true });
+    fs.rmSync(targetPath, { recursive: true, force: false });
+  }
+  return destination;
+}
+
+const browserConfigRuntime = {
+  DEFAULT_AI_SNAPSHOT_MAX_CHARS,
+  DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
+  DEFAULT_BROWSER_DEFAULT_PROFILE_NAME,
+  DEFAULT_BROWSER_EVALUATE_ENABLED,
+  DEFAULT_OPENCLAW_BROWSER_COLOR,
+  DEFAULT_OPENCLAW_BROWSER_ENABLED,
+  DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME,
+  DEFAULT_UPLOAD_DIR,
+  ensureBrowserControlAuth,
+  movePathToTrash,
+  parseBrowserHttpUrl,
+  redactCdpUrl,
+  resolveBrowserConfig,
+  resolveBrowserControlAuth,
+  resolveProfile,
 };
 
 const browserSecurityRuntime = {
@@ -61809,6 +61997,7 @@ const genericSdk = new Proxy(
     ...fileLockRuntime,
     ...browserCdpRuntime,
     ...browserConfigSupportRuntime,
+    ...browserConfigRuntime,
     ...secretFileRuntime,
     ...runtimeEnvRuntime,
     ...runtimeRuntime,
@@ -63362,6 +63551,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-config-support"
   ) {
     return browserConfigSupportRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-config" ||
+    request === "@openclaw/plugin-sdk/browser-config"
+  ) {
+    return browserConfigRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
