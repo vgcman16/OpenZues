@@ -107,7 +107,9 @@ the imported `open-prose` exact helper coverage from
 `runtime-group-policy` helper coverage from
 `src/plugin-sdk/runtime-group-policy.ts` is verified in `b11adc13`; imported
 `browser-cdp` helper coverage from `src/plugin-sdk/browser-cdp.ts` is verified
-in `4e15c3c2`. All are counted with the plugin/extension system row above.
+in `4e15c3c2`, and imported `browser-config-support` coverage from
+`src/plugin-sdk/browser-config-support.ts` is verified in `33463b7c`. All are
+counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
