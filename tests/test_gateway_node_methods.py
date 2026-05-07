@@ -27583,6 +27583,288 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const replyRuntime = require("openclaw/plugin-sdk/reply-runtime");
+const scopedReplyRuntime = require("@openclaw/plugin-sdk/reply-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_runtime",
+      description: "Use OpenClaw reply-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        globalThis.__openzuesReplyRuntime = {
+          createReplyDispatcher(opts) {
+            calls.push({ method: "createReplyDispatcher", target: opts.target });
+            return { kind: "dispatcher", target: opts.target };
+          },
+          async dispatchInboundMessage(params) {
+            calls.push({
+              method: "dispatchInboundMessage",
+              body: params.ctx.Body,
+              target: params.dispatcher.target
+            });
+            return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
+          },
+          async getReplyFromConfig(ctx, opts, cfg) {
+            calls.push({
+              method: "getReplyFromConfig",
+              body: ctx.Body,
+              timeout: opts.timeoutOverrideSeconds,
+              marker: cfg.marker
+            });
+            return { text: "delegated reply" };
+          },
+          async generateConversationLabel(params) {
+            calls.push({
+              method: "generateConversationLabel",
+              prompt: params.prompt,
+              userMessage: params.userMessage
+            });
+            return `${params.userMessage}:${params.prompt}`.slice(0, params.maxLength);
+          }
+        };
+        const dispatcher = replyRuntime.createReplyDispatcher({ target: "C1" });
+        const dispatched = await replyRuntime.dispatchInboundMessage({
+          ctx: { Body: "hello" },
+          cfg: {},
+          dispatcher
+        });
+        const reply = await scopedReplyRuntime.getReplyFromConfig(
+          { Body: "question" },
+          { timeoutOverrideSeconds: 7 },
+          { marker: "cfg" }
+        );
+        const label = await replyRuntime.generateConversationLabel({
+          userMessage: "hello world",
+          prompt: "Summarize",
+          cfg: {},
+          maxLength: 12
+        });
+        delete globalThis.__openzuesReplyRuntime;
+        let noRuntimeError = "";
+        try {
+          await replyRuntime.dispatchReplyWithDispatcher({
+            ctx: { Body: "hello" },
+            cfg: {},
+            dispatcherOptions: {}
+          });
+        } catch (error) {
+          noRuntimeError = error.message;
+        }
+        const finalized = replyRuntime.finalizeInboundContext({
+          Body: "Hi\\r\\nthere",
+          RawBody: "Raw\\r\\nLine",
+          ChatType: "DIRECT",
+          From: "Alice",
+          MediaPaths: ["one.png"],
+          CommandAuthorized: "yes"
+        });
+        return {
+          keys: Object.keys(replyRuntime).sort(),
+          scopedSame:
+            scopedReplyRuntime.dispatchInboundMessage ===
+            replyRuntime.dispatchInboundMessage,
+          constants: [
+            replyRuntime.HEARTBEAT_TOKEN,
+            replyRuntime.SILENT_REPLY_TOKEN,
+            replyRuntime.DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
+            replyRuntime.HEARTBEAT_PROMPT.includes("HEARTBEAT.md")
+          ],
+          chunking: {
+            text: replyRuntime.chunkText("one two three", 7),
+            markdown: replyRuntime.chunkMarkdownText("alpha beta", 5),
+            mode: replyRuntime.resolveChunkMode(
+              { channels: { slack: { chunkMode: "newline" } } },
+              "slack"
+            )
+          },
+          commands: [
+            replyRuntime.normalizeGroupActivation("mention"),
+            replyRuntime.parseActivationCommand("/activation always").mode,
+            replyRuntime.isAbortRequestText("/stop"),
+            replyRuntime.isBtwRequestText("/btw note"),
+            replyRuntime.isSilentReplyText(" NO_REPLY ")
+          ],
+          heartbeat: {
+            prompt: replyRuntime.resolveHeartbeatPrompt("  ping  "),
+            stripped: replyRuntime.stripHeartbeatToken("**HEARTBEAT_OK**", {
+              mode: "heartbeat"
+            }),
+            payload: replyRuntime.resolveHeartbeatReplyPayload([
+              { text: "" },
+              { text: "done" }
+            ])
+          },
+          finalized: {
+            Body: finalized.Body,
+            RawBody: finalized.RawBody,
+            BodyForAgent: finalized.BodyForAgent,
+            BodyForCommands: finalized.BodyForCommands,
+            ChatType: finalized.ChatType,
+            ConversationLabel: finalized.ConversationLabel,
+            CommandAuthorized: finalized.CommandAuthorized,
+            MediaType: finalized.MediaType,
+            MediaTypes: finalized.MediaTypes
+          },
+          delegated: { calls, dispatched, reply, label },
+          noRuntimeError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-runtime-plugin",
+                    "name": "Runtime Reply Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-reply-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "DEFAULT_HEARTBEAT_ACK_MAX_CHARS",
+            "HEARTBEAT_PROMPT",
+            "HEARTBEAT_TOKEN",
+            "SILENT_REPLY_TOKEN",
+            "chunkMarkdownText",
+            "chunkMarkdownTextWithMode",
+            "chunkText",
+            "chunkTextWithMode",
+            "createInboundDebouncer",
+            "createReplyDispatcher",
+            "createReplyDispatcherWithTyping",
+            "createReplyReferencePlanner",
+            "dispatchInboundMessage",
+            "dispatchInboundMessageWithBufferedDispatcher",
+            "dispatchInboundMessageWithDispatcher",
+            "dispatchReplyWithBufferedBlockDispatcher",
+            "dispatchReplyWithDispatcher",
+            "finalizeInboundContext",
+            "generateConversationLabel",
+            "getReplyFromConfig",
+            "isAbortRequestText",
+            "isBtwRequestText",
+            "isSilentReplyText",
+            "normalizeGroupActivation",
+            "parseActivationCommand",
+            "resetInboundDedupe",
+            "resolveChunkMode",
+            "resolveHeartbeatPrompt",
+            "resolveHeartbeatReplyPayload",
+            "resolveInboundDebounceMs",
+            "resolveTextChunkLimit",
+            "settleReplyDispatcher",
+            "stripHeartbeatToken",
+        ],
+        "scopedSame": True,
+        "constants": ["HEARTBEAT_OK", "NO_REPLY", 300, True],
+        "chunking": {
+            "text": ["one", "two", "three"],
+            "markdown": ["alpha", "beta"],
+            "mode": "newline",
+        },
+        "commands": ["mention", "always", True, True, True],
+        "heartbeat": {
+            "prompt": "ping",
+            "stripped": {"shouldSkip": True, "text": "", "didStrip": True},
+            "payload": {"text": "done"},
+        },
+        "finalized": {
+            "Body": "Hi\nthere",
+            "RawBody": "Raw\nLine",
+            "BodyForAgent": "Raw\nLine",
+            "BodyForCommands": "Raw\nLine",
+            "ChatType": "direct",
+            "ConversationLabel": "Alice",
+            "CommandAuthorized": False,
+            "MediaType": "application/octet-stream",
+            "MediaTypes": ["application/octet-stream"],
+        },
+        "delegated": {
+            "calls": [
+                {"method": "createReplyDispatcher", "target": "C1"},
+                {
+                    "method": "dispatchInboundMessage",
+                    "body": "hello",
+                    "target": "C1",
+                },
+                {
+                    "method": "getReplyFromConfig",
+                    "body": "question",
+                    "timeout": 7,
+                    "marker": "cfg",
+                },
+                {
+                    "method": "generateConversationLabel",
+                    "prompt": "Summarize",
+                    "userMessage": "hello world",
+                },
+            ],
+            "dispatched": {
+                "queuedFinal": True,
+                "counts": {"tool": 0, "block": 0, "final": 1},
+            },
+            "reply": {"text": "delegated reply"},
+            "label": "hello world:",
+        },
+        "noRuntimeError": (
+            "dispatchReplyWithDispatcher is unavailable in OpenZues plugin runtime."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_reply_reference_helpers(
     tmp_path,
 ) -> None:

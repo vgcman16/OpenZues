@@ -37223,7 +37223,14 @@ function resolveAgentRoute(input) {
 
 const DEFAULT_CHUNK_LIMIT = 4000;
 const DEFAULT_CHUNK_MODE = "length";
+const HEARTBEAT_TOKEN = "HEARTBEAT_OK";
+const HEARTBEAT_PROMPT =
+  "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. " +
+  "Do not infer or repeat old tasks from prior chats. If nothing needs attention, " +
+  "reply HEARTBEAT_OK.";
+const DEFAULT_HEARTBEAT_ACK_MAX_CHARS = 300;
 const SILENT_REPLY_TOKEN = "NO_REPLY";
+const DEFAULT_INBOUND_MEDIA_TYPE = "application/octet-stream";
 
 function chunkTextByBreakResolver(text, limit, resolveBreakIndex) {
   if (!text) {
@@ -37345,6 +37352,10 @@ function chunkTextWithMode(text, limit, mode) {
 
 function chunkMarkdownTextWithMode(text, limit, mode) {
   return chunkTextWithMode(text, limit, mode);
+}
+
+function chunkMarkdownText(text, limit) {
+  return chunkMarkdownTextWithMode(text, limit, DEFAULT_CHUNK_MODE);
 }
 
 function resolveProviderChunkConfig(cfg, provider) {
@@ -37549,6 +37560,200 @@ function isSilentReplyEnvelopeText(text, token = SILENT_REPLY_TOKEN) {
 
 function isSilentReplyPayloadText(text, token = SILENT_REPLY_TOKEN) {
   return isSilentReplyText(text, token) || isSilentReplyEnvelopeText(text, token);
+}
+
+function resolveHeartbeatPrompt(raw) {
+  const trimmed = normalizeOptionalString(raw) || "";
+  return trimmed || HEARTBEAT_PROMPT;
+}
+
+function stripHeartbeatToken(raw, opts = {}) {
+  if (!raw) {
+    return { shouldSkip: true, text: "", didStrip: false };
+  }
+  const trimmed = String(raw).trim();
+  if (!trimmed) {
+    return { shouldSkip: true, text: "", didStrip: false };
+  }
+  const stripMarkup = (text) =>
+    String(text)
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/^[*`~_]+/, "")
+      .replace(/[*`~_]+$/, "")
+      .trim();
+  const normalized = stripMarkup(trimmed);
+  if (!trimmed.includes(HEARTBEAT_TOKEN) && !normalized.includes(HEARTBEAT_TOKEN)) {
+    return { shouldSkip: false, text: trimmed, didStrip: false };
+  }
+  const stripToken = (text) =>
+    String(text)
+      .replace(new RegExp(`^\\s*${HEARTBEAT_TOKEN}\\s*`, "i"), "")
+      .replace(new RegExp(`\\s*${HEARTBEAT_TOKEN}[^\\w]{0,4}\\s*$`, "i"), "")
+      .trim()
+      .replace(/\s+/g, " ");
+  const stripped = stripToken(trimmed) || stripToken(normalized);
+  if (!stripped) {
+    return { shouldSkip: true, text: "", didStrip: true };
+  }
+  const maxAckCharsRaw = opts.maxAckChars;
+  const maxAckChars =
+    typeof maxAckCharsRaw === "number" && Number.isFinite(maxAckCharsRaw)
+      ? Math.max(0, Math.trunc(maxAckCharsRaw))
+      : DEFAULT_HEARTBEAT_ACK_MAX_CHARS;
+  if ((opts.mode || "message") === "heartbeat" && stripped.length <= maxAckChars) {
+    return { shouldSkip: true, text: "", didStrip: true };
+  }
+  return { shouldSkip: false, text: stripped, didStrip: true };
+}
+
+function resolveHeartbeatReplyPayload(replyResult) {
+  if (!replyResult) {
+    return undefined;
+  }
+  if (!Array.isArray(replyResult)) {
+    return replyResult;
+  }
+  for (let idx = replyResult.length - 1; idx >= 0; idx -= 1) {
+    const payload = replyResult[idx];
+    if (payload && hasOutboundReplyContent(payload)) {
+      return payload;
+    }
+  }
+  return undefined;
+}
+
+function normalizeInboundTextField(value, fallback = undefined) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/<\/?system[^>]*>/gi, "")
+    .trim();
+}
+
+function countInboundMediaEntries(ctx) {
+  const pathCount = Array.isArray(ctx.MediaPaths) ? ctx.MediaPaths.length : 0;
+  const urlCount = Array.isArray(ctx.MediaUrls) ? ctx.MediaUrls.length : 0;
+  const single = ctx.MediaPath || ctx.MediaUrl ? 1 : 0;
+  return Math.max(pathCount, urlCount, single);
+}
+
+function finalizeInboundContext(ctx = {}, opts = {}) {
+  const normalized = { ...(ctx && typeof ctx === "object" ? ctx : {}) };
+  normalized.Body = normalizeInboundTextField(normalized.Body, "") || "";
+  normalized.RawBody = normalizeInboundTextField(normalized.RawBody);
+  normalized.CommandBody = normalizeInboundTextField(normalized.CommandBody);
+  normalized.Transcript = normalizeInboundTextField(normalized.Transcript);
+  normalized.ThreadStarterBody = normalizeInboundTextField(normalized.ThreadStarterBody);
+  normalized.ThreadHistoryBody = normalizeInboundTextField(normalized.ThreadHistoryBody);
+  if (Array.isArray(normalized.UntrustedContext)) {
+    normalized.UntrustedContext = normalized.UntrustedContext
+      .map((entry) => normalizeInboundTextField(entry, ""))
+      .filter(Boolean);
+  }
+  const chatType = normalizeChatType(normalized.ChatType);
+  if (chatType && (opts.forceChatType || normalized.ChatType !== chatType)) {
+    normalized.ChatType = chatType;
+  }
+  const bodyForAgentSource = opts.forceBodyForAgent
+    ? normalized.Body
+    : normalized.BodyForAgent ??
+      normalized.CommandBody ??
+      normalized.RawBody ??
+      normalized.Body;
+  normalized.BodyForAgent = normalizeInboundTextField(bodyForAgentSource, "") || "";
+  const bodyForCommandsSource = opts.forceBodyForCommands
+    ? normalized.CommandBody ?? normalized.RawBody ?? normalized.Body
+    : normalized.BodyForCommands ??
+      normalized.CommandBody ??
+      normalized.RawBody ??
+      normalized.Body;
+  normalized.BodyForCommands = normalizeInboundTextField(bodyForCommandsSource, "") || "";
+  const explicitLabel = normalizeOptionalString(normalized.ConversationLabel);
+  if (opts.forceConversationLabel || !explicitLabel) {
+    const resolved = normalizeOptionalString(resolveConversationLabel(normalized));
+    if (resolved) {
+      normalized.ConversationLabel = resolved;
+    }
+  } else {
+    normalized.ConversationLabel = explicitLabel;
+  }
+  normalized.CommandAuthorized = normalized.CommandAuthorized === true;
+  const mediaCount = countInboundMediaEntries(normalized);
+  if (mediaCount > 0) {
+    const mediaType = normalizeOptionalString(normalized.MediaType);
+    const rawMediaTypes = Array.isArray(normalized.MediaTypes)
+      ? normalized.MediaTypes.map((entry) => normalizeOptionalString(entry))
+      : undefined;
+    let mediaTypes = [];
+    if (rawMediaTypes && rawMediaTypes.length > 0) {
+      mediaTypes = rawMediaTypes.slice();
+      while (mediaTypes.length < mediaCount) {
+        mediaTypes.push(undefined);
+      }
+      mediaTypes = mediaTypes.map((entry) => entry || DEFAULT_INBOUND_MEDIA_TYPE);
+    } else if (mediaType) {
+      mediaTypes = Array.from({ length: mediaCount }, (_value, idx) =>
+        idx === 0 ? mediaType : DEFAULT_INBOUND_MEDIA_TYPE,
+      );
+    } else {
+      mediaTypes = Array.from({ length: mediaCount }, () => DEFAULT_INBOUND_MEDIA_TYPE);
+    }
+    normalized.MediaTypes = mediaTypes;
+    normalized.MediaType = mediaType || mediaTypes[0] || DEFAULT_INBOUND_MEDIA_TYPE;
+  }
+  return normalized;
+}
+
+function resolveReplyRuntimeMethod(name) {
+  const runtime = globalThis.__openzuesReplyRuntime;
+  if (runtime && typeof runtime[name] === "function") {
+    return runtime[name].bind(runtime);
+  }
+  throw new Error(`${name} is unavailable in OpenZues plugin runtime.`);
+}
+
+async function getReplyFromConfig(ctx, opts, configOverride) {
+  return await resolveReplyRuntimeMethod("getReplyFromConfig")(ctx, opts, configOverride);
+}
+
+async function dispatchInboundMessage(params) {
+  return await resolveReplyRuntimeMethod("dispatchInboundMessage")(params);
+}
+
+async function dispatchInboundMessageWithBufferedDispatcher(params) {
+  return await resolveReplyRuntimeMethod("dispatchInboundMessageWithBufferedDispatcher")(params);
+}
+
+async function dispatchInboundMessageWithDispatcher(params) {
+  return await resolveReplyRuntimeMethod("dispatchInboundMessageWithDispatcher")(params);
+}
+
+async function settleReplyDispatcher(dispatcher) {
+  return await resolveReplyRuntimeMethod("settleReplyDispatcher")(dispatcher);
+}
+
+async function dispatchReplyWithBufferedBlockDispatcher(params) {
+  return await resolveReplyRuntimeMethod("dispatchReplyWithBufferedBlockDispatcher")(params);
+}
+
+async function dispatchReplyWithDispatcher(params) {
+  return await resolveReplyRuntimeMethod("dispatchReplyWithDispatcher")(params);
+}
+
+function createReplyDispatcher(options) {
+  return resolveReplyRuntimeMethod("createReplyDispatcher")(options);
+}
+
+function createReplyDispatcherWithTyping(options) {
+  return resolveReplyRuntimeMethod("createReplyDispatcherWithTyping")(options);
+}
+
+async function generateConversationLabel(params) {
+  return await resolveReplyRuntimeMethod("generateConversationLabel")(params);
 }
 
 const REASONING_PREFIX = "reasoning:";
@@ -70314,6 +70519,42 @@ const replyPayloadRuntime = {
   sendTextMediaPayload,
 };
 
+const replyRuntime = {
+  DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
+  HEARTBEAT_PROMPT,
+  HEARTBEAT_TOKEN,
+  SILENT_REPLY_TOKEN,
+  chunkMarkdownText,
+  chunkMarkdownTextWithMode,
+  chunkText,
+  chunkTextWithMode,
+  createInboundDebouncer,
+  createReplyDispatcher,
+  createReplyDispatcherWithTyping,
+  createReplyReferencePlanner,
+  dispatchInboundMessage,
+  dispatchInboundMessageWithBufferedDispatcher,
+  dispatchInboundMessageWithDispatcher,
+  dispatchReplyWithBufferedBlockDispatcher,
+  dispatchReplyWithDispatcher,
+  finalizeInboundContext,
+  generateConversationLabel,
+  getReplyFromConfig,
+  isAbortRequestText,
+  isBtwRequestText,
+  isSilentReplyText,
+  normalizeGroupActivation,
+  parseActivationCommand,
+  resetInboundDedupe,
+  resolveChunkMode,
+  resolveHeartbeatPrompt,
+  resolveHeartbeatReplyPayload,
+  resolveInboundDebounceMs,
+  resolveTextChunkLimit,
+  settleReplyDispatcher,
+  stripHeartbeatToken,
+};
+
 const agentMediaPayloadRuntime = {
   buildAgentMediaPayload,
   getAgentScopedMediaLocalRoots,
@@ -72204,6 +72445,7 @@ const genericSdk = new Proxy(
     ...threadBindingsSessionRuntime,
     ...sessionKeyRuntime,
     ...sessionStoreRuntime,
+    ...replyRuntime,
     ...outboundRuntime,
     ...outboundSendDepsRuntime,
     ...deliveryQueueRuntime,
@@ -74254,6 +74496,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-status"
   ) {
     return channelStatusRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/reply-runtime" ||
+    request === "@openclaw/plugin-sdk/reply-runtime"
+  ) {
+    return replyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||
