@@ -61569,6 +61569,65 @@ const testFixturesRuntime = {
   writeSkill,
 };
 
+function resolveNodeBuiltinMockOverrides(actual, factory) {
+  return typeof factory === "function" ? factory(actual) : factory;
+}
+
+function resolveNodeBuiltinDefaultBase(actual) {
+  const defaultExport = actual && actual.default;
+  if (
+    defaultExport &&
+    typeof defaultExport === "object" &&
+    !Array.isArray(defaultExport)
+  ) {
+    return defaultExport;
+  }
+  return actual || {};
+}
+
+async function mockNodeBuiltinModule(loadActual, factory, options = {}) {
+  const actual = await loadActual();
+  const overrides = resolveNodeBuiltinMockOverrides(actual, factory) || {};
+  const mocked = {
+    ...(actual || {}),
+    ...overrides,
+  };
+  if (!options.mirrorToDefault) {
+    return mocked;
+  }
+  return {
+    ...mocked,
+    default: {
+      ...resolveNodeBuiltinDefaultBase(actual),
+      ...overrides,
+    },
+  };
+}
+
+async function mockNodeChildProcessSpawnSync(spawnSync) {
+  return mockNodeBuiltinModule(
+    () => import("node:child_process"),
+    {
+      spawnSync: (...args) => spawnSync(...args),
+    },
+  );
+}
+
+async function mockNodeChildProcessExecFile(execFile) {
+  return mockNodeBuiltinModule(
+    () => import("node:child_process"),
+    {
+      execFile,
+    },
+  );
+}
+
+const testNodeMocksRuntime = {
+  mockNodeBuiltinModule,
+  mockNodeChildProcessExecFile,
+  mockNodeChildProcessSpawnSync,
+};
+
 function applyChannelMatchMeta(result, match = {}) {
   if (match.matchKey && match.matchSource) {
     result.matchKey = match.matchKey;
@@ -80341,6 +80400,7 @@ const genericSdk = new Proxy(
     ...providerTestContractsRuntime,
     ...testEnvRuntime,
     ...testFixturesRuntime,
+    ...testNodeMocksRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
@@ -82427,6 +82487,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/test-fixtures"
   ) {
     return testFixturesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-node-mocks" ||
+    request === "@openclaw/plugin-sdk/test-node-mocks"
+  ) {
+    return testNodeMocksRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||

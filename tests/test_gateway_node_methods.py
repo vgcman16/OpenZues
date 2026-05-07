@@ -33729,6 +33729,209 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_node_mocks_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-test-node-mocks.cjs"
+    runtime_entry.write_text(
+        """
+const mocks = require("openclaw/plugin-sdk/test-node-mocks");
+const scopedMocks = require("@openclaw/plugin-sdk/test-node-mocks");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_node_mocks",
+      description: "Use OpenClaw test-node-mocks SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const actual = {
+          readFileSync: () => "actual",
+          watch: () => "watch"
+        };
+        const readFileSync = () => "mock";
+        const merged = await mocks.mockNodeBuiltinModule(async () => actual, {
+          readFileSync
+        });
+        const homedir = () => "/tmp/home";
+        const mirrored = await mocks.mockNodeBuiltinModule(
+          async () => ({ tmpdir: () => "/tmp" }),
+          (real) => ({
+            homedir,
+            fromActual: real.tmpdir()
+          }),
+          { mirrorToDefault: true }
+        );
+        const preserved = await mocks.mockNodeBuiltinModule(
+          async () => ({
+            readFileSync: () => "actual",
+            default: {
+              readFileSync: () => "actual-default",
+              statSync: () => "stat"
+            }
+          }),
+          { readFileSync },
+          { mirrorToDefault: true }
+        );
+
+        let spawnArgs = [];
+        const childSpawn = await mocks.mockNodeChildProcessSpawnSync((...args) => {
+          spawnArgs = args;
+          return { status: 0, stdout: "ok" };
+        });
+        const spawnResult = childSpawn.spawnSync("cmd", ["a"], {
+          cwd: "C:/repo"
+        });
+
+        let execArgs = [];
+        let execCallback = "";
+        function execFile(...args) {
+          execArgs = args.map((arg) =>
+            typeof arg === "function" ? "callback" : arg
+          );
+          const callback = args.find((arg) => typeof arg === "function");
+          if (callback) {
+            callback(null, "out", "");
+          }
+          return { pid: 42 };
+        }
+        const childExec = await mocks.mockNodeChildProcessExecFile(execFile);
+        const execReturn = childExec.execFile(
+          "cmd",
+          ["b"],
+          { windowsHide: true },
+          (_error, stdout) => {
+            execCallback = stdout;
+          }
+        );
+
+        return {
+          keys: Object.keys(mocks).sort(),
+          scopedSame:
+            scopedMocks.mockNodeBuiltinModule === mocks.mockNodeBuiltinModule,
+          merged: {
+            readFileSync: merged.readFileSync(),
+            watch: merged.watch(),
+            hasDefault: Object.prototype.hasOwnProperty.call(merged, "default")
+          },
+          mirrored: {
+            homedir: mirrored.homedir(),
+            fromActual: mirrored.fromActual,
+            defaultHomedir: mirrored.default.homedir(),
+            defaultFromActual: mirrored.default.fromActual,
+            defaultTmpdir: mirrored.default.tmpdir()
+          },
+          preserved: {
+            readFileSync: preserved.readFileSync(),
+            defaultReadFileSync: preserved.default.readFileSync(),
+            defaultStatSync: preserved.default.statSync()
+          },
+          spawn: {
+            result: spawnResult,
+            args: spawnArgs,
+            hasExecFile: typeof childSpawn.execFile === "function"
+          },
+          execFile: {
+            returnValue: execReturn,
+            args: execArgs,
+            callback: execCallback,
+            hasSpawnSync: typeof childExec.spawnSync === "function"
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-node-mocks-plugin",
+                    "name": "Runtime Test Node Mocks Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-test-node-mocks.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_node_mocks"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.test_node_mocks"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "mockNodeBuiltinModule",
+        "mockNodeChildProcessExecFile",
+        "mockNodeChildProcessSpawnSync",
+    ]
+    assert result["scopedSame"] is True
+    assert result["merged"] == {
+        "readFileSync": "mock",
+        "watch": "watch",
+        "hasDefault": False,
+    }
+    assert result["mirrored"] == {
+        "homedir": "/tmp/home",
+        "fromActual": "/tmp",
+        "defaultHomedir": "/tmp/home",
+        "defaultFromActual": "/tmp",
+        "defaultTmpdir": "/tmp",
+    }
+    assert result["preserved"] == {
+        "readFileSync": "mock",
+        "defaultReadFileSync": "mock",
+        "defaultStatSync": "stat",
+    }
+    assert result["spawn"] == {
+        "result": {"status": 0, "stdout": "ok"},
+        "args": ["cmd", ["a"], {"cwd": "C:/repo"}],
+        "hasExecFile": True,
+    }
+    assert result["execFile"] == {
+        "returnValue": {"pid": 42},
+        "args": ["cmd", ["b"], {"windowsHide": True}, "callback"],
+        "callback": "out",
+        "hasSpawnSync": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:
