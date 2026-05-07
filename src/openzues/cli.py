@@ -55660,6 +55660,158 @@ const setupAdapterRuntime = {
   createEnvPatchedAccountSetupAdapter,
 };
 
+function isSafeExecutableValue(value) {
+  const trimmed = String(value || "").trim();
+  return Boolean(trimmed) && !/[\0\r\n]/.test(trimmed);
+}
+
+function isSetupExecutablePath(filePath) {
+  try {
+    fs.accessSync(filePath, fs.constants.X_OK);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function resolveBrewFromPath(pathEnv = process.env.PATH) {
+  for (const dir of String(pathEnv || "").split(path.delimiter)) {
+    const trimmed = dir.trim();
+    if (!trimmed || !path.isAbsolute(trimmed)) {
+      continue;
+    }
+    const candidate = path.join(trimmed, "brew");
+    if (isSetupExecutablePath(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function resolveBrewPathDirs(opts = {}) {
+  const homeDir = opts.homeDir || os.homedir();
+  return [
+    path.join(homeDir, ".linuxbrew", "bin"),
+    path.join(homeDir, ".linuxbrew", "sbin"),
+    "/home/linuxbrew/.linuxbrew/bin",
+    "/home/linuxbrew/.linuxbrew/sbin",
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+  ];
+}
+
+function resolveBrewExecutable(opts = {}) {
+  const homeDir = opts.homeDir || os.homedir();
+  const pathBrew = resolveBrewFromPath();
+  if (pathBrew) {
+    return pathBrew;
+  }
+  const candidates = [
+    path.join(homeDir, ".linuxbrew", "bin", "brew"),
+    "/home/linuxbrew/.linuxbrew/bin/brew",
+    "/opt/homebrew/bin/brew",
+    "/usr/local/bin/brew",
+  ];
+  return candidates.find(isSetupExecutablePath);
+}
+
+async function detectBinary(name) {
+  const raw = String(name || "");
+  if (!raw.trim() || !isSafeExecutableValue(raw)) {
+    return false;
+  }
+  const resolved = raw.startsWith("~") ? resolveUserPath(raw) : raw;
+  if (
+    path.isAbsolute(resolved) ||
+    resolved.startsWith(".") ||
+    resolved.includes("/") ||
+    resolved.includes("\\")
+  ) {
+    try {
+      await fs.promises.access(resolved);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+  const argv = process.platform === "win32" ? ["where", raw] : ["/usr/bin/env", "which", raw];
+  try {
+    const result = await runCommandWithTimeout(argv, { timeoutMs: 2000 });
+    return result.code === 0 && String(result.stdout || "").trim().length > 0;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function resolveSetupArchiveKind(filePath) {
+  const lower = normalizeLowercaseStringOrEmpty(filePath);
+  if (lower.endsWith(".zip")) {
+    return "zip";
+  }
+  if (lower.endsWith(".tgz") || lower.endsWith(".tar.gz") || lower.endsWith(".tar")) {
+    return "tar";
+  }
+  return null;
+}
+
+function quotePowerShellLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+async function extractArchive(params = {}) {
+  const archivePath = normalizeOptionalString(params.archivePath);
+  const destDir = normalizeOptionalString(params.destDir);
+  const kind = params.kind || resolveSetupArchiveKind(archivePath);
+  if (!kind) {
+    throw new Error(`unsupported archive: ${archivePath}`);
+  }
+  if (!archivePath || !destDir) {
+    throw new Error("archivePath and destDir are required");
+  }
+  const timeoutMs = Number.isFinite(params.timeoutMs) ? Math.max(0, params.timeoutMs) : 60000;
+  await fs.promises.mkdir(destDir, { recursive: true });
+  if (kind === "zip" && process.platform === "win32") {
+    const command =
+      `Expand-Archive -LiteralPath ${quotePowerShellLiteral(archivePath)} ` +
+      `-DestinationPath ${quotePowerShellLiteral(destDir)} -Force`;
+    const result = await runCommandWithTimeout(
+      ["powershell.exe", "-NoProfile", "-Command", command],
+      { timeoutMs },
+    );
+    if (result.code !== 0) {
+      throw new Error(String(result.stderr || result.stdout || "extract zip failed").trim());
+    }
+    return;
+  }
+  const argv =
+    kind === "zip"
+      ? ["unzip", "-qq", archivePath, "-d", destDir]
+      : [
+          "tar",
+          "-xf",
+          archivePath,
+          "-C",
+          destDir,
+          ...(Number.isFinite(params.stripComponents)
+            ? ["--strip-components", String(Math.max(0, Math.floor(params.stripComponents)))]
+            : []),
+        ];
+  const result = await runCommandWithTimeout(argv, { timeoutMs });
+  if (result.code !== 0) {
+    throw new Error(String(result.stderr || result.stdout || "extract archive failed").trim());
+  }
+}
+
+const setupToolsRuntime = {
+  CONFIG_DIR,
+  detectBinary,
+  extractArchive,
+  formatCliCommand: formatOpenClawCliCommand,
+  formatDocsLink,
+  resolveBrewExecutable,
+  resolveBrewPathDirs,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -66535,6 +66687,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/setup-adapter-runtime"
   ) {
     return setupAdapterRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/setup-tools" ||
+    request === "@openclaw/plugin-sdk/setup-tools"
+  ) {
+    return setupToolsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

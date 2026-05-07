@@ -34794,6 +34794,133 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_setup_tools_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    fake_home = tmp_path / "home"
+    fake_brew = fake_home / ".linuxbrew" / "bin" / "brew"
+    fake_brew.parent.mkdir(parents=True)
+    fake_brew.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_binary = tmp_path / "tool.exe"
+    fake_binary.write_text("", encoding="utf-8")
+    runtime_entry = tmp_path / "runtime-plugin-setup-tools.cjs"
+    runtime_entry.write_text(
+        f"""
+const setup = require("openclaw/plugin-sdk/setup-tools");
+const scopedSetup = require("@openclaw/plugin-sdk/setup-tools");
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.setupTools",
+      description: "Use OpenClaw setup-tools SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const archiveError = await setup.extractArchive({{
+          archivePath: "bundle.rar",
+          destDir: {json.dumps(str(tmp_path / "extract"))},
+          timeoutMs: 100
+        }}).then(() => null, (error) => error.message);
+        return {{
+          keys: Object.keys(setup).filter((key) => [
+            "CONFIG_DIR",
+            "detectBinary",
+            "extractArchive",
+            "formatCliCommand",
+            "formatDocsLink",
+            "resolveBrewExecutable"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedSetup.detectBinary,
+          commands: [
+            setup.formatCliCommand("openclaw run", {{ OPENCLAW_CONTAINER_HINT: "dev" }}),
+            setup.formatCliCommand("openclaw update", {{ OPENCLAW_CONTAINER_HINT: "dev" }}),
+            setup.formatCliCommand("openclaw chat", {{ OPENCLAW_PROFILE: "work" }}),
+            setup.formatCliCommand("node script.js", {{ OPENCLAW_PROFILE: "work" }})
+          ],
+          docs: setup.formatDocsLink("/browser", "Browser"),
+          configDirType: typeof setup.CONFIG_DIR,
+          brew: setup.resolveBrewExecutable({{ homeDir: {json.dumps(str(fake_home))} }}),
+          binary: [
+            await setup.detectBinary({json.dumps(str(fake_binary))}),
+            await setup.detectBinary("")
+          ],
+          archiveError
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-setup-tools-plugin",
+                    "name": "Runtime Setup Tools Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-setup-tools.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.setupTools"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.setupTools"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "CONFIG_DIR",
+        "detectBinary",
+        "extractArchive",
+        "formatCliCommand",
+        "formatDocsLink",
+        "resolveBrewExecutable",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["commands"] == [
+        "openclaw --container dev run",
+        "openclaw update",
+        "openclaw --profile work chat",
+        "node script.js",
+    ]
+    assert payload["result"]["docs"] == "Browser (https://docs.openclaw.ai/browser)"
+    assert payload["result"]["configDirType"] == "string"
+    assert payload["result"]["brew"] == str(fake_brew)
+    assert payload["result"]["binary"] == [True, False]
+    assert payload["result"]["archiveError"] == "unsupported archive: bundle.rar"
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:
