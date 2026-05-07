@@ -40665,6 +40665,169 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_runtime_group_policy_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-runtime-group-policy.cjs"
+    runtime_entry.write_text(
+        """
+const policy = require("openclaw/plugin-sdk/runtime-group-policy");
+const scopedPolicy = require("@openclaw/plugin-sdk/runtime-group-policy");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.group_policy",
+      description: "Use OpenClaw runtime group policy helpers",
+      parameters: { type: "object" },
+      execute() {
+        const lines = [];
+        const firstWarn = policy.warnMissingProviderGroupPolicyFallbackOnce({
+          providerMissingFallbackApplied: true,
+          providerKey: "telegram",
+          accountId: "main",
+          blockedLabel: policy.GROUP_POLICY_BLOCKED_LABEL.room,
+          log: (message) => lines.push(message)
+        });
+        const secondWarn = policy.warnMissingProviderGroupPolicyFallbackOnce({
+          providerMissingFallbackApplied: true,
+          providerKey: "telegram",
+          accountId: "main",
+          blockedLabel: policy.GROUP_POLICY_BLOCKED_LABEL.room,
+          log: (message) => lines.push(message)
+        });
+        const ignoredWarn = policy.warnMissingProviderGroupPolicyFallbackOnce({
+          providerMissingFallbackApplied: false,
+          providerKey: "telegram",
+          log: (message) => lines.push(message)
+        });
+        return {
+          keys: Object.keys(policy).sort(),
+          scopedSame:
+            scopedPolicy.resolveAllowlistProviderRuntimeGroupPolicy ===
+            policy.resolveAllowlistProviderRuntimeGroupPolicy,
+          defaultPolicy: policy.resolveDefaultGroupPolicy({
+            channels: { defaults: { groupPolicy: "disabled" } }
+          }),
+          open: policy.resolveOpenProviderRuntimeGroupPolicy({
+            providerConfigPresent: true
+          }),
+          openMissing: policy.resolveOpenProviderRuntimeGroupPolicy({
+            providerConfigPresent: false,
+            defaultGroupPolicy: "open"
+          }),
+          allowlist: policy.resolveAllowlistProviderRuntimeGroupPolicy({
+            providerConfigPresent: true
+          }),
+          explicit: policy.resolveAllowlistProviderRuntimeGroupPolicy({
+            providerConfigPresent: false,
+            groupPolicy: "disabled",
+            defaultGroupPolicy: "open"
+          }),
+          labels: policy.GROUP_POLICY_BLOCKED_LABEL,
+          warnings: { firstWarn, secondWarn, ignoredWarn, lines }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-group-policy-plugin",
+                    "name": "Runtime Group Policy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-runtime-group-policy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.group_policy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.group_policy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "GROUP_POLICY_BLOCKED_LABEL",
+            "resolveAllowlistProviderRuntimeGroupPolicy",
+            "resolveDefaultGroupPolicy",
+            "resolveOpenProviderRuntimeGroupPolicy",
+            "warnMissingProviderGroupPolicyFallbackOnce",
+        ],
+        "scopedSame": True,
+        "defaultPolicy": "disabled",
+        "open": {
+            "groupPolicy": "open",
+            "providerMissingFallbackApplied": False,
+        },
+        "openMissing": {
+            "groupPolicy": "allowlist",
+            "providerMissingFallbackApplied": True,
+        },
+        "allowlist": {
+            "groupPolicy": "allowlist",
+            "providerMissingFallbackApplied": False,
+        },
+        "explicit": {
+            "groupPolicy": "disabled",
+            "providerMissingFallbackApplied": False,
+        },
+        "labels": {
+            "group": "group messages",
+            "guild": "guild messages",
+            "room": "room messages",
+            "channel": "channel messages",
+            "space": "space messages",
+        },
+        "warnings": {
+            "firstWarn": True,
+            "secondWarn": False,
+            "ignoredWarn": False,
+            "lines": [
+                'telegram: channels.telegram is missing; defaulting groupPolicy to "allowlist" '
+                "(room messages blocked until explicitly configured)."
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

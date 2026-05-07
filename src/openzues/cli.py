@@ -33149,17 +33149,31 @@ function evaluateSenderGroupAccessForPolicy(params) {
 }
 
 function resolveRuntimeGroupPolicy(params) {
-  const configuredFallbackPolicy = params.configuredFallbackPolicy || "open";
-  const missingProviderFallbackPolicy = params.missingProviderFallbackPolicy || "allowlist";
+  const configuredFallbackPolicy = params.configuredFallbackPolicy ?? "open";
+  const missingProviderFallbackPolicy = params.missingProviderFallbackPolicy ?? "allowlist";
   const groupPolicy = params.providerConfigPresent
-    ? params.groupPolicy || params.defaultGroupPolicy || configuredFallbackPolicy
-    : params.groupPolicy || missingProviderFallbackPolicy;
+    ? (params.groupPolicy ?? params.defaultGroupPolicy ?? configuredFallbackPolicy)
+    : (params.groupPolicy ?? missingProviderFallbackPolicy);
   return {
     groupPolicy,
     providerMissingFallbackApplied:
       !params.providerConfigPresent && params.groupPolicy === undefined,
   };
 }
+
+function resolveDefaultGroupPolicy(cfg) {
+  return cfg && cfg.channels && cfg.channels.defaults
+    ? cfg.channels.defaults.groupPolicy
+    : undefined;
+}
+
+const GROUP_POLICY_BLOCKED_LABEL = {
+  group: "group messages",
+  guild: "guild messages",
+  room: "room messages",
+  channel: "channel messages",
+  space: "space messages",
+};
 
 function resolveOpenProviderRuntimeGroupPolicy(params) {
   return resolveRuntimeGroupPolicy({
@@ -33169,6 +33183,38 @@ function resolveOpenProviderRuntimeGroupPolicy(params) {
     configuredFallbackPolicy: "open",
     missingProviderFallbackPolicy: "allowlist",
   });
+}
+
+function resolveAllowlistProviderRuntimeGroupPolicy(params) {
+  return resolveRuntimeGroupPolicy({
+    providerConfigPresent: params.providerConfigPresent,
+    groupPolicy: params.groupPolicy,
+    defaultGroupPolicy: params.defaultGroupPolicy,
+    configuredFallbackPolicy: "allowlist",
+    missingProviderFallbackPolicy: "allowlist",
+  });
+}
+
+const warnedMissingProviderGroupPolicy = new Set();
+
+function warnMissingProviderGroupPolicyFallbackOnce(params) {
+  if (!params.providerMissingFallbackApplied) {
+    return false;
+  }
+  const key = `${params.providerKey}:${params.accountId ?? "*"}`;
+  if (warnedMissingProviderGroupPolicy.has(key)) {
+    return false;
+  }
+  warnedMissingProviderGroupPolicy.add(key);
+  const blockedLabel = normalizeOptionalString(params.blockedLabel) || "group messages";
+  if (typeof params.log === "function") {
+    const message =
+      `${params.providerKey}: channels.${params.providerKey} is missing; ` +
+      `defaulting groupPolicy to "allowlist" (` +
+      `${blockedLabel} blocked until explicitly configured).`;
+    params.log(message);
+  }
+  return true;
 }
 
 function evaluateSenderGroupAccess(params) {
@@ -52807,6 +52853,14 @@ const groupAccessRuntime = {
   resolveSenderScopedGroupPolicy,
 };
 
+const runtimeGroupPolicyRuntime = {
+  GROUP_POLICY_BLOCKED_LABEL,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveDefaultGroupPolicy,
+  resolveOpenProviderRuntimeGroupPolicy,
+  warnMissingProviderGroupPolicyFallbackOnce,
+};
+
 const groupActivationRuntime = {
   normalizeGroupActivation,
   parseActivationCommand,
@@ -61526,6 +61580,7 @@ const genericSdk = new Proxy(
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
+    ...runtimeGroupPolicyRuntime,
     ...providerSelectionRuntime,
     ...windowsSpawnRuntime,
     ...allowFromRuntime,
@@ -62845,6 +62900,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/group-access"
   ) {
     return groupAccessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-group-policy" ||
+    request === "@openclaw/plugin-sdk/runtime-group-policy"
+  ) {
+    return runtimeGroupPolicyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/group-activation" ||
