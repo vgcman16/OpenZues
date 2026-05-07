@@ -33882,6 +33882,242 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_sandbox_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-sandbox.cjs"
+    runtime_entry.write_text(
+        """
+const sandbox = require("openclaw/plugin-sdk/sandbox");
+const scopedSandbox = require("@openclaw/plugin-sdk/sandbox");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.sandbox",
+      description: "Use OpenClaw sandbox SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const factory = async () => ({ id: "test" });
+        const manager = {
+          describeRuntime: async () => ({ running: true, configLabelMatch: true }),
+          removeRuntime: async () => {}
+        };
+        const restore = sandbox.registerSandboxBackend(" Test-Backend ", { factory, manager });
+        const requiredSame =
+          sandbox.requireSandboxBackendFactory("test-backend") === factory;
+        const managerSame =
+          sandbox.getSandboxBackendManager("test-backend") === manager;
+        restore();
+        const restored = sandbox.getSandboxBackendFactory("test-backend") === null;
+        let missingMessage = "";
+        try {
+          sandbox.requireSandboxBackendFactory("missing-backend");
+        } catch (error) {
+          missingMessage = error.message;
+        }
+
+        const sanitized = sandbox.sanitizeEnvVars({
+          NODE_ENV: "test",
+          OPENAI_API_KEY: "sk-live-xxx",
+          MY_TOKEN: "abc",
+          USER: "alice",
+          SAFE_TEXT:
+            "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ==",
+          NULL: "a\\0b"
+        });
+        const strict = sandbox.sanitizeEnvVars({
+          NODE_ENV: "test",
+          FOO: "bar"
+        }, { strictMode: true });
+        const remoteCommand = sandbox.buildExecRemoteCommand({
+          command: "pwd && printenv TOKEN",
+          workdir: "/sandbox/project",
+          env: { TOKEN: "abc 123" }
+        });
+        const sshArgv = sandbox.buildSshSandboxArgv({
+          session: {
+            command: "sshx",
+            configPath: "/tmp/openclaw-ssh",
+            host: "openclaw-sandbox"
+          },
+          remoteCommand: "echo hi",
+          tty: true
+        });
+        const rename = sandbox.resolveWritableRenameTargets({
+          from: "old.txt",
+          to: "nested/new.txt",
+          cwd: "/workspace",
+          action: "move files",
+          resolveTarget({ filePath, cwd }) {
+            return { containerPath: `${cwd}/${filePath}` };
+          },
+          ensureWritable(target, action) {
+            if (!target.containerPath.startsWith("/workspace/")) {
+              throw new Error(action);
+            }
+          }
+        });
+        const resolver = sandbox.createWritableRenameTargetResolver(
+          ({ filePath, cwd }) => ({ containerPath: `${cwd}/${filePath}` }),
+          () => {}
+        );
+        return {
+          keys: Object.keys(sandbox).filter((key) => [
+            "buildExecRemoteCommand",
+            "buildRemoteCommand",
+            "buildSshSandboxArgv",
+            "createWritableRenameTargetResolver",
+            "getSandboxBackendFactory",
+            "getSandboxBackendManager",
+            "registerSandboxBackend",
+            "requireSandboxBackendFactory",
+            "resolvePreferredOpenClawTmpDir",
+            "resolveWritableRenameTargets",
+            "resolveWritableRenameTargetsForBridge",
+            "runPluginCommandWithTimeout",
+            "sanitizeEnvVars",
+            "shellEscape"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedSandbox.sanitizeEnvVars,
+          backend: { requiredSame, managerSame, restored, missingMessage },
+          sanitized,
+          strict,
+          shell: {
+            escaped: sandbox.shellEscape("a'b"),
+            remote: sandbox.buildRemoteCommand(["echo", "a b"]),
+            exec: remoteCommand,
+            argv: sshArgv
+          },
+          rename: {
+            from: rename.from.containerPath,
+            to: rename.to.containerPath,
+            resolver: resolver({ from: "a", to: "b", cwd: "/w" }).to.containerPath
+          },
+          tmpDirType: typeof sandbox.resolvePreferredOpenClawTmpDir(),
+          runType: typeof sandbox.runPluginCommandWithTimeout
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-sandbox-plugin",
+                    "name": "Runtime Sandbox Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-sandbox.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.sandbox"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.sandbox"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "buildExecRemoteCommand",
+        "buildRemoteCommand",
+        "buildSshSandboxArgv",
+        "createWritableRenameTargetResolver",
+        "getSandboxBackendFactory",
+        "getSandboxBackendManager",
+        "registerSandboxBackend",
+        "requireSandboxBackendFactory",
+        "resolvePreferredOpenClawTmpDir",
+        "resolveWritableRenameTargets",
+        "resolveWritableRenameTargetsForBridge",
+        "runPluginCommandWithTimeout",
+        "sanitizeEnvVars",
+        "shellEscape",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["backend"]["requiredSame"] is True
+    assert payload["result"]["backend"]["managerSame"] is True
+    assert payload["result"]["backend"]["restored"] is True
+    assert 'Sandbox backend "missing-backend" is not registered.' in (
+        payload["result"]["backend"]["missingMessage"]
+    )
+    assert payload["result"]["sanitized"]["allowed"] == {
+        "NODE_ENV": "test",
+        "USER": "alice",
+        "SAFE_TEXT": payload["result"]["sanitized"]["allowed"]["SAFE_TEXT"],
+    }
+    assert payload["result"]["sanitized"]["blocked"] == [
+        "OPENAI_API_KEY",
+        "MY_TOKEN",
+        "NULL",
+    ]
+    assert payload["result"]["sanitized"]["warnings"] == [
+        "SAFE_TEXT: Value looks like base64-encoded credential data"
+    ]
+    assert payload["result"]["strict"] == {
+        "allowed": {"NODE_ENV": "test"},
+        "blocked": ["FOO"],
+        "warnings": [],
+    }
+    assert payload["result"]["shell"]["escaped"] == "'a'\"'\"'b'"
+    assert payload["result"]["shell"]["remote"] == "'echo' 'a b'"
+    assert "'TOKEN=abc 123'" in payload["result"]["shell"]["exec"]
+    assert "'cd '\"'\"'/sandbox/project'\"'\"' && pwd && printenv TOKEN'" in (
+        payload["result"]["shell"]["exec"]
+    )
+    assert payload["result"]["shell"]["argv"] == [
+        "sshx",
+        "-F",
+        "/tmp/openclaw-ssh",
+        "-tt",
+        "-o",
+        "RequestTTY=force",
+        "-o",
+        "SetEnv=TERM=xterm-256color",
+        "openclaw-sandbox",
+        "echo hi",
+    ]
+    assert payload["result"]["rename"] == {
+        "from": "/workspace/old.txt",
+        "to": "/workspace/nested/new.txt",
+        "resolver": "/w/b",
+    }
+    assert payload["result"]["tmpDirType"] == "string"
+    assert payload["result"]["runType"] == "function"
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:

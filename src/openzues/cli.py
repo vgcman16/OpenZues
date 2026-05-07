@@ -53853,6 +53853,413 @@ const runCommandRuntime = {
   runPluginCommandWithTimeout,
 };
 
+const SANDBOX_BLOCKED_ENV_VAR_PATTERNS = [
+  /^ANTHROPIC_API_KEY$/i,
+  /^OPENAI_API_KEY$/i,
+  /^GEMINI_API_KEY$/i,
+  /^OPENROUTER_API_KEY$/i,
+  /^MINIMAX_API_KEY$/i,
+  /^ELEVENLABS_API_KEY$/i,
+  /^SYNTHETIC_API_KEY$/i,
+  /^TELEGRAM_BOT_TOKEN$/i,
+  /^DISCORD_BOT_TOKEN$/i,
+  /^SLACK_(BOT|APP)_TOKEN$/i,
+  /^LINE_CHANNEL_SECRET$/i,
+  /^LINE_CHANNEL_ACCESS_TOKEN$/i,
+  /^OPENCLAW_GATEWAY_(TOKEN|PASSWORD)$/i,
+  /^AWS_(SECRET_ACCESS_KEY|SECRET_KEY|SESSION_TOKEN)$/i,
+  /^(GH|GITHUB)_TOKEN$/i,
+  /^(AZURE|AZURE_OPENAI|COHERE|AI_GATEWAY|OPENROUTER)_API_KEY$/i,
+  /_?(API_KEY|TOKEN|PASSWORD|PRIVATE_KEY|SECRET)$/i,
+];
+const SANDBOX_ALLOWED_ENV_VAR_PATTERNS = [
+  /^LANG$/,
+  /^LC_.*$/i,
+  /^PATH$/i,
+  /^HOME$/i,
+  /^USER$/i,
+  /^SHELL$/i,
+  /^TERM$/i,
+  /^TZ$/i,
+  /^NODE_ENV$/i,
+];
+const sandboxBackendFactories = new Map();
+
+function sandboxMatchesAnyPattern(value, patterns) {
+  return patterns.some((pattern) => pattern.test(value));
+}
+
+function validateSandboxEnvVarValue(value) {
+  if (String(value).includes("\0")) {
+    return "Contains null bytes";
+  }
+  if (String(value).length > 32768) {
+    return "Value exceeds maximum length";
+  }
+  if (/^[A-Za-z0-9+/=]{80,}$/.test(String(value))) {
+    return "Value looks like base64-encoded credential data";
+  }
+  return undefined;
+}
+
+function sanitizeEnvVars(envVars = {}, options = {}) {
+  const allowed = {};
+  const blocked = [];
+  const warnings = [];
+  const blockedPatterns = [
+    ...SANDBOX_BLOCKED_ENV_VAR_PATTERNS,
+    ...((options && options.customBlockedPatterns) || []),
+  ];
+  const allowedPatterns = [
+    ...SANDBOX_ALLOWED_ENV_VAR_PATTERNS,
+    ...((options && options.customAllowedPatterns) || []),
+  ];
+  for (const [rawKey, value] of Object.entries(envVars || {})) {
+    const key = String(rawKey || "").trim();
+    if (!key || value === undefined) {
+      continue;
+    }
+    if (sandboxMatchesAnyPattern(key, blockedPatterns)) {
+      blocked.push(key);
+      continue;
+    }
+    if (options && options.strictMode && !sandboxMatchesAnyPattern(key, allowedPatterns)) {
+      blocked.push(key);
+      continue;
+    }
+    const warning = validateSandboxEnvVarValue(String(value));
+    if (warning) {
+      if (warning === "Contains null bytes") {
+        blocked.push(key);
+        continue;
+      }
+      warnings.push(`${key}: ${warning}`);
+    }
+    allowed[key] = String(value);
+  }
+  return { allowed, blocked, warnings };
+}
+
+function normalizeSandboxBackendId(id) {
+  const normalized = normalizeOptionalString(id)?.toLowerCase();
+  if (!normalized) {
+    throw new Error("Sandbox backend id must not be empty.");
+  }
+  return normalized;
+}
+
+function registerSandboxBackend(id, registration) {
+  const normalizedId = normalizeSandboxBackendId(id);
+  const resolved =
+    typeof registration === "function" ? { factory: registration } : { ...(registration || {}) };
+  const previous = sandboxBackendFactories.get(normalizedId);
+  sandboxBackendFactories.set(normalizedId, resolved);
+  return () => {
+    if (previous) {
+      sandboxBackendFactories.set(normalizedId, previous);
+    } else {
+      sandboxBackendFactories.delete(normalizedId);
+    }
+  };
+}
+
+function getSandboxBackendFactory(id) {
+  const registration = sandboxBackendFactories.get(normalizeSandboxBackendId(id));
+  return registration && typeof registration.factory === "function" ? registration.factory : null;
+}
+
+function getSandboxBackendManager(id) {
+  const registration = sandboxBackendFactories.get(normalizeSandboxBackendId(id));
+  return registration && registration.manager ? registration.manager : null;
+}
+
+function requireSandboxBackendFactory(id) {
+  const factory = getSandboxBackendFactory(id);
+  if (factory) {
+    return factory;
+  }
+  throw new Error(
+    [
+      `Sandbox backend "${id}" is not registered.`,
+      "Load the plugin that provides it, or set agents.defaults.sandbox.backend=docker.",
+    ].join("\n"),
+  );
+}
+
+function shellEscape(value) {
+  return `'${String(value).replaceAll("'", `'"'"'`)}'`;
+}
+
+function buildRemoteCommand(argv = []) {
+  return (Array.isArray(argv) ? argv : []).map((entry) => shellEscape(entry)).join(" ");
+}
+
+function buildExecRemoteCommand(params = {}) {
+  const body = params.workdir
+    ? `cd ${shellEscape(params.workdir)} && ${params.command || ""}`
+    : String(params.command || "");
+  const env = params.env && typeof params.env === "object" ? params.env : {};
+  const entries = Object.entries(env);
+  const argv =
+    entries.length > 0
+      ? ["env", ...entries.map(([key, value]) => `${key}=${value}`), "/bin/sh", "-c", body]
+      : ["/bin/sh", "-c", body];
+  return buildRemoteCommand(argv);
+}
+
+function buildSshSandboxArgv(params = {}) {
+  const session = params.session || {};
+  return [
+    session.command || "ssh",
+    "-F",
+    session.configPath,
+    ...(params.tty
+      ? ["-tt", "-o", "RequestTTY=force", "-o", "SetEnv=TERM=xterm-256color"]
+      : ["-T", "-o", "RequestTTY=no"]),
+    session.host,
+    params.remoteCommand || "",
+  ];
+}
+
+function parseSandboxSshTarget(target) {
+  const trimmed = normalizeOptionalString(target);
+  if (!trimmed) {
+    return null;
+  }
+  const atIndex = trimmed.lastIndexOf("@");
+  const user = atIndex >= 0 ? trimmed.slice(0, atIndex) : undefined;
+  const hostPort = atIndex >= 0 ? trimmed.slice(atIndex + 1) : trimmed;
+  const colonIndex = hostPort.lastIndexOf(":");
+  const host = colonIndex >= 0 ? hostPort.slice(0, colonIndex) : hostPort;
+  const portRaw = colonIndex >= 0 ? hostPort.slice(colonIndex + 1) : "";
+  const port = portRaw ? Number.parseInt(portRaw, 10) : 22;
+  if (!host || !Number.isFinite(port)) {
+    return null;
+  }
+  return { host, port, ...(user ? { user } : {}) };
+}
+
+function normalizeInlineSshMaterial(contents, filename) {
+  const withoutBom = String(contents || "").replace(/^\uFEFF/, "");
+  const normalizedNewlines = withoutBom.replace(/\r\n?/g, "\n");
+  const normalizedEscapedNewlines = normalizedNewlines
+    .replace(/\\r\\n/g, "\\n")
+    .replace(/\\r/g, "\\n");
+  const expanded =
+    filename === "identity" || filename === "certificate.pub"
+      ? normalizedEscapedNewlines.replace(/\\n/g, "\n")
+      : normalizedEscapedNewlines;
+  return expanded.endsWith("\n") ? expanded : `${expanded}\n`;
+}
+
+async function writeSshSecretMaterial(configDir, filename, contents) {
+  const filePath = path.join(configDir, filename);
+  await fs.promises.writeFile(filePath, normalizeInlineSshMaterial(contents, filename), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  try {
+    await fs.promises.chmod(filePath, 0o600);
+  } catch {}
+  return filePath;
+}
+
+function resolveOptionalSshLocalPath(value) {
+  const raw = normalizeOptionalString(value);
+  return raw ? resolveUserPath(raw) : undefined;
+}
+
+async function createSshSandboxSessionFromSettings(settings = {}) {
+  const parsed = parseSandboxSshTarget(settings.target);
+  if (!parsed) {
+    throw new Error(`Invalid sandbox SSH target: ${settings.target}`);
+  }
+  const configDir = await fs.promises.mkdtemp(
+    path.join(resolvePreferredOpenClawTmpDir(), "openclaw-sandbox-ssh-"),
+  );
+  try {
+    const identityFile = settings.identityData
+      ? await writeSshSecretMaterial(configDir, "identity", settings.identityData)
+      : resolveOptionalSshLocalPath(settings.identityFile);
+    const certificateFile = settings.certificateData
+      ? await writeSshSecretMaterial(configDir, "certificate.pub", settings.certificateData)
+      : resolveOptionalSshLocalPath(settings.certificateFile);
+    const knownHostsFile = settings.knownHostsData
+      ? await writeSshSecretMaterial(configDir, "known_hosts", settings.knownHostsData)
+      : resolveOptionalSshLocalPath(settings.knownHostsFile);
+    const configPath = path.join(configDir, "config");
+    const lines = [
+      "Host openclaw-sandbox",
+      `  HostName ${parsed.host}`,
+      `  Port ${parsed.port}`,
+      "  BatchMode yes",
+      "  ConnectTimeout 5",
+      "  ServerAliveInterval 15",
+      "  ServerAliveCountMax 3",
+      `  StrictHostKeyChecking ${settings.strictHostKeyChecking ? "yes" : "no"}`,
+      `  UpdateHostKeys ${settings.updateHostKeys ? "yes" : "no"}`,
+    ];
+    if (parsed.user) {
+      lines.push(`  User ${parsed.user}`);
+    }
+    if (knownHostsFile) {
+      lines.push(`  UserKnownHostsFile ${knownHostsFile}`);
+    } else if (!settings.strictHostKeyChecking) {
+      lines.push("  UserKnownHostsFile /dev/null");
+    }
+    if (identityFile) {
+      lines.push(`  IdentityFile ${identityFile}`);
+    }
+    if (certificateFile) {
+      lines.push(`  CertificateFile ${certificateFile}`);
+    }
+    if (identityFile || certificateFile) {
+      lines.push("  IdentitiesOnly yes");
+    }
+    await fs.promises.writeFile(configPath, `${lines.join("\n")}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    try {
+      await fs.promises.chmod(configPath, 0o600);
+    } catch {}
+    return {
+      command: normalizeOptionalString(settings.command) || "ssh",
+      configPath,
+      host: "openclaw-sandbox",
+    };
+  } catch (error) {
+    await fs.promises.rm(configDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function createSshSandboxSessionFromConfigText(params = {}) {
+  const host =
+    normalizeOptionalString(params.host) ||
+    (String(params.configText || "").match(/^\s*Host\s+(\S+)/m) || [])[1];
+  if (!host) {
+    throw new Error("Failed to parse SSH config output.");
+  }
+  const configDir = await fs.promises.mkdtemp(
+    path.join(resolvePreferredOpenClawTmpDir(), "openclaw-sandbox-ssh-"),
+  );
+  const configPath = path.join(configDir, "config");
+  await fs.promises.writeFile(configPath, String(params.configText || ""), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  try {
+    await fs.promises.chmod(configPath, 0o600);
+  } catch {}
+  return {
+    command: normalizeOptionalString(params.command) || "ssh",
+    configPath,
+    host,
+  };
+}
+
+async function disposeSshSandboxSession(session = {}) {
+  if (session.configPath) {
+    await fs.promises.rm(path.dirname(session.configPath), { recursive: true, force: true });
+  }
+}
+
+async function runSshSandboxCommand(params = {}) {
+  const argv = buildSshSandboxArgv(params);
+  return await new Promise((resolve, reject) => {
+    const child = spawn(argv[0], argv.slice(1), {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: sanitizeEnvVars(process.env).allowed,
+      signal: params.signal,
+      windowsHide: true,
+    });
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    child.stdout?.on("data", (chunk) => {
+      stdoutChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderrChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      const stdout = Buffer.concat(stdoutChunks);
+      const stderr = Buffer.concat(stderrChunks);
+      const exitCode = code ?? 0;
+      if (exitCode !== 0 && !params.allowFailure) {
+        const error = new Error(
+          stderr.toString("utf8").trim() || `ssh exited with code ${exitCode}`,
+        );
+        error.code = exitCode;
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr, code: exitCode });
+    });
+    if (params.stdin !== undefined) {
+      child.stdin.end(params.stdin);
+    } else {
+      child.stdin.end();
+    }
+  });
+}
+
+async function uploadDirectoryToSshTarget() {
+  throw new Error(
+    "SSH sandbox directory upload is unavailable in the native OpenZues plugin bridge.",
+  );
+}
+
+function resolveWritableRenameTargets(params = {}) {
+  const action = params.action || "rename files";
+  const from = params.resolveTarget({ filePath: params.from, cwd: params.cwd });
+  const to = params.resolveTarget({ filePath: params.to, cwd: params.cwd });
+  params.ensureWritable(from, action);
+  params.ensureWritable(to, action);
+  return { from, to };
+}
+
+function resolveWritableRenameTargetsForBridge(params = {}, resolveTarget, ensureWritable) {
+  return resolveWritableRenameTargets({ ...params, resolveTarget, ensureWritable });
+}
+
+function createWritableRenameTargetResolver(resolveTarget, ensureWritable) {
+  return (params = {}) =>
+    resolveWritableRenameTargetsForBridge(params, resolveTarget, ensureWritable);
+}
+
+function createRemoteShellSandboxFsBridge() {
+  throw new Error(
+    "Remote shell sandbox fs bridge is unavailable in the native OpenZues plugin bridge.",
+  );
+}
+
+const sandboxRuntime = {
+  buildExecRemoteCommand,
+  buildRemoteCommand,
+  buildSshSandboxArgv,
+  createRemoteShellSandboxFsBridge,
+  createSshSandboxSessionFromConfigText,
+  createSshSandboxSessionFromSettings,
+  createWritableRenameTargetResolver,
+  disposeSshSandboxSession,
+  getSandboxBackendFactory,
+  getSandboxBackendManager,
+  registerSandboxBackend,
+  requireSandboxBackendFactory,
+  resolvePreferredOpenClawTmpDir,
+  resolveWritableRenameTargets,
+  resolveWritableRenameTargetsForBridge,
+  runPluginCommandWithTimeout,
+  runSshSandboxCommand,
+  sanitizeEnvVars,
+  shellEscape,
+  uploadDirectoryToSshTarget,
+};
+
 const simpleCompletionRuntime = {
   extractAssistantText,
 };
@@ -63689,6 +64096,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/self-hosted-provider-setup"
   ) {
     return providerSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/sandbox" ||
+    request === "@openclaw/plugin-sdk/sandbox"
+  ) {
+    return sandboxRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/lmstudio" ||
