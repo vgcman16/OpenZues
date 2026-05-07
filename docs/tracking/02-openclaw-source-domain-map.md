@@ -112,8 +112,11 @@ in `4e15c3c2`, imported `browser-config-support` coverage from
 imported `browser-config` facade coverage from
 `src/plugin-sdk/browser-config.ts`, `src/plugin-sdk/browser-profiles.ts`,
 `src/plugin-sdk/browser-control-auth.ts`, and
-`src/plugin-sdk/browser-trash.ts` is verified in `300224b7`. All are counted
-with the plugin/extension system row above.
+`src/plugin-sdk/browser-trash.ts` is verified in `300224b7`, and imported
+`browser-control-auth` exact helper coverage from
+`src/plugin-sdk/browser-control-auth.ts` plus
+`extensions/browser/src/browser/control-auth.ts` is verified in `d1d7b371`.
+All are counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted

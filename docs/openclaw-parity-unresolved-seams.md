@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~95.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~95.4% overall, with a reasonable
   band of ~80-96%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9188,6 +9188,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   helpers, CDP URL helpers, and safe trash facade exports. Source/test
   checkpointed in `300224b7`; broader browser runtime/control helper surface
   remains a nearby plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `browser-control-auth`
+  now exposes the source-backed exact helper subset for scoped and unscoped
+  imports: gateway-auth-mode credential projection, config-first token/password
+  resolution, OPENCLAW_GATEWAY_* env fallbacks, test/Vitest auto-generation
+  suppression, and the ensure helper. Source/test checkpointed in `d1d7b371`;
+  broader browser profiles/runtime helper surface remains a nearby
+  plugin-runtime queue head.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
