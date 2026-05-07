@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9992%.
+  band of ~80-99.9993%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1860,23 +1860,23 @@ unresolved queue head: the exact scoped and unscoped subpath resolves to native
 OpenZues target-resolution error-case helpers, preserving the four upstream
 common error cases and supporting both fakeable test registration and immediate
 assertion execution. Remaining plugin SDK queue heads should continue with
-exact `plugin-test-runtime` and other public test/contract barrels that still
-require source-backed native shims.
+exact `provider-test-contracts` and other public test/contract barrels that
+still require source-backed native shims.
 Imported plugin SDK `channel-test-helpers` is now also no longer an unresolved
 queue head: the exact scoped and unscoped subpath resolves to native OpenZues
 test helper shims for directory surfaces, channel contract suites,
 registry/outbound plugin builders, hook handlers, send-config assertions,
 account lifecycle helpers, bundled entry assertions, envelope timestamps,
 pairing reply extraction, and plugin runtime mocks. Remaining plugin SDK queue
-heads should continue with exact `plugin-test-runtime` and adjacent public test
-barrels that still require source-backed native shims.
+heads should continue with exact `provider-test-contracts` and adjacent public
+test barrels that still require source-backed native shims.
 Imported plugin SDK `plugin-test-api` is now also no longer an unresolved queue
 head: the exact scoped and unscoped subpath resolves to native OpenZues
 `createTestPluginApi` defaults, no-op registration methods, next-turn
 injection fallback, logger/runtime/config defaults, run-context no-ops, and
 caller override handling. Remaining plugin SDK queue heads should continue with
-exact `plugin-test-runtime` and adjacent public test barrels that still require
-source-backed native shims.
+exact `provider-test-contracts` and adjacent public test barrels that still
+require source-backed native shims.
 Imported plugin SDK `plugin-test-contracts` is now also no longer an
 unresolved queue head: the exact scoped and unscoped subpath resolves to native
 OpenZues contract helper shims for registry fixtures, virtual/test plugin
@@ -1884,8 +1884,17 @@ registration, provider capture/lookup, import side-effect assertions, direct
 import smoke execution, package and registration contract registration, public
 artifact guards, public-surface loader helpers, and bundled plugin registration
 case maps. Remaining plugin SDK queue heads should continue with exact
-`plugin-test-runtime` and adjacent public test barrels that still require
+`provider-test-contracts` and adjacent public test barrels that still require
 source-backed native shims.
+Imported plugin SDK `plugin-test-runtime` is now also no longer an unresolved
+queue head: the exact scoped and unscoped subpath resolves to native OpenZues
+aggregate runtime test helper shims for registry helpers, captured
+registration, provider registration helpers, runtime env mocks, setup wizard
+helper runners, provider wizard option resolution, hook registry helpers,
+provider contract lookup, and lightweight task-flow binding. Remaining plugin
+SDK queue heads should continue with exact `provider-test-contracts`,
+`test-env`, `test-fixtures`, `test-node-mocks`, `provider-http-test-mocks`,
+and adjacent public test barrels that still require source-backed native shims.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
