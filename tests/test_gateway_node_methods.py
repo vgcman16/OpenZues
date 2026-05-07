@@ -41383,6 +41383,196 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_profiles_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-profiles.cjs"
+    runtime_entry.write_text(
+        """
+const profiles = require("openclaw/plugin-sdk/browser-profiles");
+const scopedProfiles = require("@openclaw/plugin-sdk/browser-profiles");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_profiles",
+      description: "Use OpenClaw browser profiles helpers",
+      parameters: { type: "object" },
+      execute() {
+        const resolved = profiles.resolveBrowserConfig({
+          controlPort: 19000,
+          cdpHost: "localhost",
+          cdpProtocol: "https",
+          defaultProfile: "work",
+          profiles: {
+            work: {
+              cdpPort: 19001,
+              cdpHost: "localhost",
+              cdpProtocol: "https",
+              color: "#0066CC",
+              userDataDir: "C:/tmp/openclaw-work",
+              driver: "existing-session",
+              headless: true,
+              attachOnly: true
+            }
+          }
+        }, { gateway: { port: 18789 } });
+        const defaultResolved = profiles.resolveBrowserConfig(undefined, {
+          gateway: { port: 18789 }
+        });
+        return {
+          keys: Object.keys(profiles).sort(),
+          scopedSame: scopedProfiles.resolveProfile === profiles.resolveProfile,
+          constants: {
+            DEFAULT_AI_SNAPSHOT_MAX_CHARS: profiles.DEFAULT_AI_SNAPSHOT_MAX_CHARS,
+            DEFAULT_BROWSER_ACTION_TIMEOUT_MS: profiles.DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
+            DEFAULT_BROWSER_DEFAULT_PROFILE_NAME: profiles.DEFAULT_BROWSER_DEFAULT_PROFILE_NAME,
+            DEFAULT_BROWSER_EVALUATE_ENABLED: profiles.DEFAULT_BROWSER_EVALUATE_ENABLED,
+            DEFAULT_OPENCLAW_BROWSER_COLOR: profiles.DEFAULT_OPENCLAW_BROWSER_COLOR,
+            DEFAULT_OPENCLAW_BROWSER_ENABLED: profiles.DEFAULT_OPENCLAW_BROWSER_ENABLED,
+            DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME: profiles.DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME,
+            uploadDirType: typeof profiles.DEFAULT_UPLOAD_DIR
+          },
+          resolved: {
+            enabled: resolved.enabled,
+            evaluateEnabled: resolved.evaluateEnabled,
+            controlPort: resolved.controlPort,
+            cdpPortRangeStart: resolved.cdpPortRangeStart,
+            cdpPortRangeEnd: resolved.cdpPortRangeEnd,
+            cdpHost: resolved.cdpHost,
+            cdpIsLoopback: resolved.cdpIsLoopback,
+            defaultProfile: resolved.defaultProfile,
+            tabCleanup: resolved.tabCleanup
+          },
+          defaultResolved: {
+            controlPort: defaultResolved.controlPort,
+            cdpPortRangeStart: defaultResolved.cdpPortRangeStart,
+            cdpPortRangeEnd: defaultResolved.cdpPortRangeEnd,
+            defaultProfile: defaultResolved.defaultProfile,
+            profileNames: Object.keys(defaultResolved.profiles).sort()
+          },
+          profile: profiles.resolveProfile(resolved, "work"),
+          missingProfile: profiles.resolveProfile(resolved, "missing")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-profiles-plugin",
+                    "name": "Runtime Browser Profiles Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-profiles.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_profiles"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.browser_profiles"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "DEFAULT_AI_SNAPSHOT_MAX_CHARS",
+            "DEFAULT_BROWSER_ACTION_TIMEOUT_MS",
+            "DEFAULT_BROWSER_DEFAULT_PROFILE_NAME",
+            "DEFAULT_BROWSER_EVALUATE_ENABLED",
+            "DEFAULT_OPENCLAW_BROWSER_COLOR",
+            "DEFAULT_OPENCLAW_BROWSER_ENABLED",
+            "DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME",
+            "DEFAULT_UPLOAD_DIR",
+            "resolveBrowserConfig",
+            "resolveProfile",
+        ],
+        "scopedSame": True,
+        "constants": {
+            "DEFAULT_AI_SNAPSHOT_MAX_CHARS": 80000,
+            "DEFAULT_BROWSER_ACTION_TIMEOUT_MS": 60000,
+            "DEFAULT_BROWSER_DEFAULT_PROFILE_NAME": "openclaw",
+            "DEFAULT_BROWSER_EVALUATE_ENABLED": True,
+            "DEFAULT_OPENCLAW_BROWSER_COLOR": "#FF4500",
+            "DEFAULT_OPENCLAW_BROWSER_ENABLED": True,
+            "DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME": "openclaw",
+            "uploadDirType": "string",
+        },
+        "resolved": {
+            "enabled": True,
+            "evaluateEnabled": True,
+            "controlPort": 19000,
+            "cdpPortRangeStart": 19009,
+            "cdpPortRangeEnd": 19108,
+            "cdpHost": "localhost",
+            "cdpIsLoopback": True,
+            "defaultProfile": "work",
+            "tabCleanup": {
+                "enabled": True,
+                "idleMinutes": 60,
+                "maxTabsPerSession": 20,
+                "sweepMinutes": 10,
+            },
+        },
+        "defaultResolved": {
+            "controlPort": 18791,
+            "cdpPortRangeStart": 18800,
+            "cdpPortRangeEnd": 18899,
+            "defaultProfile": "openclaw",
+            "profileNames": ["openclaw"],
+        },
+        "profile": {
+            "name": "work",
+            "cdpPort": 19001,
+            "cdpUrl": "https://localhost:19001",
+            "cdpHost": "localhost",
+            "cdpIsLoopback": True,
+            "userDataDir": "C:/tmp/openclaw-work",
+            "color": "#0066CC",
+            "driver": "existing-session",
+            "headless": True,
+            "attachOnly": True,
+        },
+        "missingProfile": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -43586,11 +43776,11 @@ module.exports = {
         ],
         "scopedType": "function",
         "counts": {
-            "entrypoints": 295,
-            "subpaths": 294,
-            "specifiers": 295,
-            "exports": 295,
-            "artifacts": 590,
+            "entrypoints": 296,
+            "subpaths": 295,
+            "specifiers": 296,
+            "exports": 296,
+            "artifacts": 592,
         },
         "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
         "last": [

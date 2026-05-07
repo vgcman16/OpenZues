@@ -39609,6 +39609,7 @@ const pluginSdkEntrypoints = [
   "allowlist-config-edit",
   "browser-control-auth",
   "browser-config",
+  "browser-profiles",
   "boolean-param",
   "channel-contract-testing",
   "dangerous-name-runtime",
@@ -39786,6 +39787,7 @@ const supportedBundledFacadeSdkEntrypoints = [
 const publicPluginOwnedSdkEntrypoints = [
   "browser-control-auth",
   "browser-config",
+  "browser-profiles",
   "image-generation-core",
   "memory-core-host-engine-embeddings",
   "memory-core-host-engine-foundation",
@@ -54551,6 +54553,19 @@ const browserControlAuthRuntime = {
   shouldAutoGenerateBrowserAuth,
 };
 
+const browserProfilesRuntime = {
+  DEFAULT_AI_SNAPSHOT_MAX_CHARS,
+  DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
+  DEFAULT_BROWSER_DEFAULT_PROFILE_NAME,
+  DEFAULT_BROWSER_EVALUATE_ENABLED,
+  DEFAULT_OPENCLAW_BROWSER_COLOR,
+  DEFAULT_OPENCLAW_BROWSER_ENABLED,
+  DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME,
+  DEFAULT_UPLOAD_DIR,
+  resolveBrowserConfig,
+  resolveProfile,
+};
+
 const browserSecurityRuntime = {
   SafeOpenError,
   SsrFBlockedError,
@@ -63611,6 +63626,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-control-auth"
   ) {
     return browserControlAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-profiles" ||
+    request === "@openclaw/plugin-sdk/browser-profiles"
+  ) {
+    return browserProfilesRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
