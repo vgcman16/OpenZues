@@ -4,8 +4,8 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~99.6% overall, with a reasonable
-  band of ~80-99.7%.
+- Repo-wide OpenClaw parity is estimated at ~99.7% overall, with a reasonable
+  band of ~80-99.8%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -120,7 +120,8 @@ Current percentage rollup:
   media-understanding provider-helper, messaging-targets, web-media, speech,
   zalouser, zod, web-content-extractor, plugin-entry, optional-channel-setup,
   outbound-media, delivery-queue-runtime, migration-runtime, migration helper,
-  outbound-send-deps, command-status-runtime, and reply-runtime slices.
+  outbound-send-deps, command-status-runtime, reply-runtime, and
+  reply-dispatch-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -9455,8 +9456,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   conversation-label helpers with fakeable native host delegation for heavy
   runtime calls. Source/test checkpointed in `32213a5c`; repo-wide parity is
   now estimated at ~99.6%.
+- Current queue-head adjustment: imported plugin SDK
+  `reply-dispatch-runtime` now exposes the exact source-backed dispatch facade
+  for scoped and unscoped imports, including chunk-mode resolution, inbound
+  context finalization, conversation label delegation, buffered block dispatch
+  delegation, direct dispatcher delegation, narrow export shape, and precise
+  unavailable error projection. Source/test checkpointed in `c587ef3e`;
+  repo-wide parity is now estimated at ~99.7%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially the exact `reply-dispatch-runtime` facade, broader runtime/client
+  especially the exact `inbound-reply-dispatch` facade, broader runtime/client
   integration, and session runtime methods (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency
