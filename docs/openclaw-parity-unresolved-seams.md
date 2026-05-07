@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~97.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~97.7% overall, with a reasonable
   band of ~80-98%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9322,6 +9322,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   stream shape, and stream finalization/failure helpers. Source/test
   checkpointed in `dd8bcfd8`; adjacent provider runtime breadth remains open.
   Repo-wide parity is now estimated at ~97.6%.
+- Current queue-head adjustment: imported plugin SDK `provider-http` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: provider HTTP error projection, response-text limiting,
+  transcription FormData/file-name helpers, operation deadlines and polling,
+  guarded JSON/multipart/transcription posts, provider attribution/policy/
+  capability resolution, provider request-header merging, transport override
+  sanitization, and dispatcher/TLS policy shaping. Source/test checkpointed in
+  `750bbf71`; adjacent provider SDK breadth remains open with
+  `provider-usage`, `provider-onboard`, or `provider-catalog-runtime`.
+  Repo-wide parity is now estimated at ~97.7%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

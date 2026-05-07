@@ -175,7 +175,11 @@ helper coverage from `src/plugin-sdk/provider-stream.ts` and
 imported `provider-transport-runtime` exact helper coverage from
 `src/plugin-sdk/provider-transport-runtime.ts` plus adjacent transport stream,
 message-transform, prompt-boundary, and OpenAI completions helpers is verified
-in `dd8bcfd8`. All are counted with the plugin/extension system row above.
+in `dd8bcfd8`, and imported `provider-http` exact helper coverage from
+`src/plugin-sdk/provider-http.ts`, `src/agents/provider-http-errors.ts`,
+`src/media-understanding/shared.ts`, `src/agents/provider-attribution.ts`, and
+`src/agents/provider-request-config.ts` is verified in `750bbf71`. All are
+counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
@@ -361,6 +365,10 @@ in `ebd215d5`; `@openclaw/memory-host-sdk/query`, `multimodal`, `secret`, and
 `speech-core` from `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*`
 helpers, and `src/agents/provider-http-errors.ts` is checkpointed in
 `ff03eba7`.
+`provider-http` from `src/plugin-sdk/provider-http.ts`, adjacent
+`src/agents/provider-http-errors.ts`, `src/media-understanding/shared.ts`,
+`src/agents/provider-attribution.ts`, and
+`src/agents/provider-request-config.ts` is checkpointed in `750bbf71`.
 `video-generation-core` from `src/plugin-sdk/video-generation-core.ts`,
 adjacent video/media generation helpers, failover helpers, model input
 helpers, logging, and provider env-var helpers is checkpointed in `f85c7465`.
