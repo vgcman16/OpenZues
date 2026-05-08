@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999999%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19791,6 +19791,31 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `48ee7b20`.
+- Native dev-channel git updates now honor OpenClaw's
+  `OPENCLAW_UPDATE_DEV_TARGET_REF` / `devTargetRef` path by resolving the
+  freshly fetched remote/tag candidate, preflighting only the resolved target
+  SHA, and finishing with a detached checkout instead of upstream rebase. The
+  CLI trims and forwards the env ref only for effective dev-channel git
+  updates. This closes `OZ-PKG-001BY`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999998%.
+- Verified dev target ref updates with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase -q`
+  (`1 failed` before implementation, then `1 passed`), focused CLI red/green
+  `python -m pytest tests\test_cli.py::test_update_json_passes_dev_target_ref_env_to_git_runtime -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent runtime proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_repairs_failed_preflight_cleanup -q`
+  (`4 passed`), adjacent CLI proof
+  `python -m pytest tests\test_cli.py::test_update_json_passes_dev_target_ref_env_to_git_runtime tests\test_cli.py::test_update_json_dispatches_runtime_update_service tests\test_cli.py::test_update_dry_run_json_uses_stored_update_channel -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`45 passed`),
+  adjacent update CLI selection
+  `python -m pytest tests\test_cli.py -q -k "update_json_passes_dev_target_ref_env_to_git_runtime or update_json_dispatches_runtime_update_service or update_dry_run_json_uses_stored_update_channel or beta_channel_to_latest"`
+  (`5 passed, 555 deselected`), `ruff check
+  src\openzues\services\runtime_updates.py src\openzues\cli.py
+  tests\test_runtime_updates.py tests\test_cli.py`, `mypy
+  src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `8f305c47`.
 
 ## References
 
