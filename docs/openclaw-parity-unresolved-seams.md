@@ -10114,3 +10114,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `0f2cb0c1`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.9999999999999995%. Continue broader release/update
   packaging breadth next.
+- Current queue-head adjustment: native package-update global install commands
+  now have focused proof that caller-provided `COREPACK_ENABLE_DOWNLOAD_PROMPT`
+  values are preserved through package-manager dispatch and parent env
+  restoration. Test checkpointed in `9fd00cad`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999996%. Continue broader release/update packaging breadth
+  next.
