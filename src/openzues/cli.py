@@ -607,7 +607,10 @@ hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
 )
-update_app = typer.Typer(help="Inspect self-update posture and restart-safe repo state.")
+update_app = typer.Typer(
+    help="Inspect self-update posture and restart-safe repo state.",
+    invoke_without_command=True,
+)
 setup_app = typer.Typer(
     help="Inspect, reuse, or reset the saved setup posture.",
     invoke_without_command=True,
@@ -10058,6 +10061,39 @@ def _emit_update_status(payload: dict[str, object], *, json_output: bool) -> Non
         )
 
 
+def _emit_update_dry_run_preview(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+
+    typer.echo("Update dry-run")
+    typer.echo("No changes were applied.")
+    typer.echo("")
+    typer.echo(f"  Root: {payload.get('root')}")
+    typer.echo(f"  Install kind: {payload.get('installKind')}")
+    typer.echo(f"  Mode: {payload.get('mode')}")
+    typer.echo(f"  Channel: {payload.get('effectiveChannel')}")
+    typer.echo(f"  Tag/spec: {payload.get('tag')}")
+    current_version = _optional_cli_string(payload.get("currentVersion"))
+    if current_version is not None:
+        typer.echo(f"  Current version: {current_version}")
+    target_version = _optional_cli_string(payload.get("targetVersion"))
+    if target_version is not None:
+        typer.echo(f"  Target version: {target_version}")
+    actions = payload.get("actions")
+    if isinstance(actions, list):
+        typer.echo("")
+        typer.echo("Planned actions:")
+        for action in actions:
+            typer.echo(f"  - {action}")
+    notes = payload.get("notes")
+    if isinstance(notes, list) and notes:
+        typer.echo("")
+        typer.echo("Notes:")
+        for note in notes:
+            typer.echo(f"  - {note}")
+
+
 def _openclaw_update_available_hint(payload: Mapping[str, object]) -> str | None:
     availability = payload.get("availability")
     if not isinstance(availability, Mapping) or availability.get("available") is not True:
@@ -10075,6 +10111,8 @@ def _openclaw_update_available_hint(payload: Mapping[str, object]) -> str | None
 
 _OPENCLAW_UPDATE_CHANNELS = {"stable", "beta", "dev"}
 _OPENCLAW_UPDATE_PACKAGE_MANAGERS = {"pnpm", "bun", "npm"}
+_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME = "openzues"
+_OPENZUES_MAIN_PACKAGE_SPEC = "github:openzues/openzues#main"
 
 
 def _openclaw_update_config_channel(config_snapshot: object) -> str | None:
@@ -10087,12 +10125,162 @@ def _openclaw_update_config_channel(config_snapshot: object) -> str | None:
     return channel if channel in _OPENCLAW_UPDATE_CHANNELS else None
 
 
+def _openclaw_update_normalize_channel(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    channel = value.strip().lower()
+    return channel if channel in _OPENCLAW_UPDATE_CHANNELS else None
+
+
 def _openclaw_update_install_kind(root: Path) -> str:
     if _doctor_path_exists(root / ".git"):
         return "git"
     if _doctor_path_exists(root):
         return "package"
     return "unknown"
+
+
+def _openclaw_update_read_package_version(root: Path) -> str | None:
+    package_json = root / "package.json"
+    if not _doctor_path_exists(package_json):
+        return None
+    try:
+        parsed = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, Mapping):
+        return None
+    return _optional_cli_string(parsed.get("version"))
+
+
+def _openclaw_update_normalize_package_target(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _openclaw_update_is_main_package_target(value: object) -> bool:
+    return _openclaw_update_normalize_package_target(value).lower() == "main"
+
+
+def _openclaw_update_is_explicit_package_install_spec(value: object) -> bool:
+    target = _openclaw_update_normalize_package_target(value)
+    if not target:
+        return False
+    return (
+        "://" in target
+        or "#" in target
+        or re.match(r"^(?:file|github|git\+ssh|git\+https|git\+http|git\+file|npm):", target, re.I)
+        is not None
+    )
+
+
+def _openclaw_update_can_resolve_registry_version_for_target(value: object) -> bool:
+    target = _openclaw_update_normalize_package_target(value)
+    if not target:
+        return True
+    return not _openclaw_update_is_main_package_target(
+        target
+    ) and not _openclaw_update_is_explicit_package_install_spec(target)
+
+
+def _openclaw_update_resolve_global_install_spec(*, package_name: str, tag: str) -> str:
+    override = (
+        os.environ.get("OPENCLAW_UPDATE_PACKAGE_SPEC", "").strip()
+        or os.environ.get("OPENZUES_UPDATE_PACKAGE_SPEC", "").strip()
+    )
+    if override:
+        return override
+    target = _openclaw_update_normalize_package_target(tag)
+    if _openclaw_update_is_main_package_target(target):
+        return _OPENZUES_MAIN_PACKAGE_SPEC
+    if _openclaw_update_is_explicit_package_install_spec(target):
+        return target
+    return f"{package_name}@{target}"
+
+
+def _openclaw_update_channel_to_package_tag(channel: str) -> str:
+    return "latest" if channel == "stable" else channel
+
+
+def _openclaw_update_dry_run_preview(
+    *,
+    requested_channel: str | None,
+    tag_override: str | None,
+    restart: bool,
+) -> dict[str, object]:
+    root = _openzues_package_root()
+    install_kind = _openclaw_update_install_kind(root)
+    switch_to_git = requested_channel == "dev" and install_kind != "git"
+    switch_to_package = (
+        requested_channel is not None and requested_channel != "dev" and install_kind == "git"
+    )
+    update_install_kind = (
+        "git" if switch_to_git else "package" if switch_to_package else install_kind
+    )
+    default_channel = "dev" if update_install_kind == "git" else "stable"
+    effective_channel = requested_channel or default_channel
+    explicit_tag = _openclaw_update_normalize_package_target(tag_override)
+    target_tag = explicit_tag or _openclaw_update_channel_to_package_tag(effective_channel)
+    package_install_spec: str | None = None
+    current_version = None if switch_to_package else _openclaw_update_read_package_version(root)
+    mode = "unknown"
+
+    if update_install_kind == "git":
+        mode = "git"
+    elif update_install_kind == "package":
+        mode = _openclaw_update_package_manager(root)
+        package_install_spec = _openclaw_update_resolve_global_install_spec(
+            package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
+            tag=target_tag,
+        )
+
+    actions: list[str] = []
+    if requested_channel is not None:
+        actions.append(f"Persist update.channel={requested_channel} in config")
+    if switch_to_git:
+        actions.append("Switch install mode from package to git checkout (dev channel)")
+    elif switch_to_package:
+        actions.append(f"Switch install mode from git to package manager ({mode})")
+    elif update_install_kind == "git":
+        actions.append(
+            f"Run git update flow on channel {effective_channel} (fetch/rebase/build/doctor)"
+        )
+    else:
+        actions.append(
+            f"Run global package manager update with spec {package_install_spec or target_tag}"
+        )
+    actions.append("Run plugin update sync after core update")
+    actions.append("Refresh shell completion cache (if needed)")
+    actions.append(
+        "Restart gateway service and run doctor checks"
+        if restart
+        else "Skip restart (because --no-restart is set)"
+    )
+
+    notes: list[str] = []
+    if explicit_tag and update_install_kind == "git":
+        notes.append("--tag applies to npm installs only; git updates ignore it.")
+    if explicit_tag and not _openclaw_update_can_resolve_registry_version_for_target(target_tag):
+        notes.append("Non-registry package specs skip npm version lookup and downgrade previews.")
+
+    return {
+        "dryRun": True,
+        "root": str(root),
+        "installKind": install_kind,
+        "mode": mode,
+        "updateInstallKind": update_install_kind,
+        "switchToGit": switch_to_git,
+        "switchToPackage": switch_to_package,
+        "restart": restart,
+        "requestedChannel": requested_channel,
+        "storedChannel": None,
+        "effectiveChannel": effective_channel,
+        "tag": package_install_spec or target_tag,
+        "currentVersion": current_version,
+        "targetVersion": None,
+        "downgradeRisk": False,
+        "actions": actions,
+        "notes": notes,
+    }
 
 
 def _openclaw_update_package_manager(root: Path) -> str:
@@ -97807,6 +97995,68 @@ def hermes_profile_set(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_payload(payload, json_output=json_output)
+
+
+@update_app.callback()
+def update_root(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output update results as JSON.",
+    ),
+    restart: bool = typer.Option(
+        True,
+        "--restart/--no-restart",
+        help="Restart the gateway service after a successful update.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview update actions without making changes.",
+    ),
+    channel: str | None = typer.Option(
+        None,
+        "--channel",
+        help="Persist update channel: stable, beta, or dev.",
+    ),
+    tag: str | None = typer.Option(
+        None,
+        "--tag",
+        help="Override the package target for this update.",
+    ),
+    timeout: str | None = typer.Option(
+        None,
+        "--timeout",
+        help="Timeout for each update step in seconds.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Skip confirmation prompts.",
+    ),
+) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
+    _ = (timeout, yes)
+    requested_channel = _openclaw_update_normalize_channel(channel)
+    if channel is not None and requested_channel is None:
+        typer.echo(f'--channel must be "stable", "beta", or "dev" (got "{channel}")', err=True)
+        raise typer.Exit(code=1)
+    if dry_run:
+        payload = _openclaw_update_dry_run_preview(
+            requested_channel=requested_channel,
+            tag_override=tag,
+            restart=restart,
+        )
+        _emit_update_dry_run_preview(payload, json_output=json_output)
+        return
+    typer.echo(
+        "OpenZues native self-update execution is not available yet; "
+        "rerun with --dry-run to preview.",
+        err=True,
+    )
+    raise typer.Exit(code=1)
 
 
 @update_app.command("status")
