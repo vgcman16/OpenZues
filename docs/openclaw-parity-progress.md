@@ -19374,6 +19374,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `ad9ba5a5`.
+- Native package update verification now rejects package roots that resolve to
+  source checkouts before post-update doctor/swap, matching OpenClaw's
+  `collectInstalledGlobalPackageErrors` source-checkout guard. This closes
+  `OZ-PKG-001AZ`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999999997%.
+- Verified source-checkout package-root rejection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package
+  verification proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`21 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `a330fecc`.
 
 ## References
 

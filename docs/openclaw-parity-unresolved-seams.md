@@ -10153,3 +10153,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Source/test checkpointed in `ad9ba5a5`; repo-wide parity remains estimated
   at ~99.9%, with the evidence band tightened to ~80-99.99999999999999996%.
   Continue broader release/update packaging breadth next.
+- Current queue-head adjustment: native package update verification now
+  rejects package roots resolving to source checkouts before post-update
+  doctor/swap, matching OpenClaw's `collectInstalledGlobalPackageErrors`
+  source-checkout guard. Source/test checkpointed in `a330fecc`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999997%. Continue package dist inventory verification in
+  the update path and broader release/update packaging breadth next.
