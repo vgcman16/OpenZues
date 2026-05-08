@@ -21439,6 +21439,108 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_api_baseline_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-api-baseline.cjs"
+    runtime_entry.write_text(
+        """
+const baseline = require("openclaw/plugin-sdk/api-baseline");
+const scopedBaseline = require("@openclaw/plugin-sdk/api-baseline");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.api_baseline",
+      description: "Use OpenClaw plugin SDK API baseline shim",
+      parameters: { type: "object" },
+      execute() {
+        const rendered = {
+          json: "{\\"baseline\\":true}\\n",
+          jsonl: "{\\"recordType\\":\\"module\\"}\\n"
+        };
+        return {
+          keys: Object.keys(baseline).sort(),
+          scopedSame:
+            scopedBaseline.computePluginSdkApiBaselineHashFileContent ===
+            baseline.computePluginSdkApiBaselineHashFileContent,
+          hash: baseline.computePluginSdkApiBaselineHashFileContent(rendered),
+          renderType: typeof baseline.renderPluginSdkApiBaseline,
+          writeType: typeof baseline.writePluginSdkApiBaselineStatefile
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-api-baseline-plugin",
+                    "name": "Runtime API Baseline Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-api-baseline.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.api_baseline"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.api_baseline"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "computePluginSdkApiBaselineHashFileContent",
+            "renderPluginSdkApiBaseline",
+            "writePluginSdkApiBaselineStatefile",
+        ],
+        "scopedSame": True,
+        "hash": (
+            "fa1bd2c1343b99da0ace6a3c78fbb77df6276948af31c9a9d6a67debaef6c8c0"
+            "  plugin-sdk-api-baseline.json\n"
+            "79718455cc7d728402e641afda0fc69a87eae27452554efb10cf5df337e43f4a"
+            "  plugin-sdk-api-baseline.jsonl\n"
+        ),
+        "renderType": "function",
+        "writeType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_feishu_root_helpers(
     tmp_path,
 ) -> None:

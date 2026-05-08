@@ -88883,6 +88883,102 @@ Object.defineProperties(pluginSdkRootRuntime, {
   },
 });
 
+function pluginSdkApiBaselineSha256(content) {
+  return crypto.createHash("sha256").update(String(content ?? ""), "utf8").digest("hex");
+}
+
+function computePluginSdkApiBaselineHashFileContent(rendered = {}) {
+  const lines = [
+    `${pluginSdkApiBaselineSha256(rendered.json)}  plugin-sdk-api-baseline.json`,
+    `${pluginSdkApiBaselineSha256(rendered.jsonl)}  plugin-sdk-api-baseline.jsonl`,
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+async function renderPluginSdkApiBaseline(params = {}) {
+  const repoRoot = path.resolve(params.repoRoot || process.cwd());
+  const modules = pluginSdkEntrypoints.map((entrypoint) => ({
+    category: "runtime",
+    entrypoint,
+    exports: [],
+    importSpecifier:
+      entrypoint === "index" ? "openclaw/plugin-sdk" : `openclaw/plugin-sdk/${entrypoint}`,
+    source: {
+      line: 1,
+      path: `src/plugin-sdk/${entrypoint}.ts`,
+    },
+  }));
+  const baseline = {
+    generatedBy: "scripts/generate-plugin-sdk-api-baseline.ts",
+    modules,
+  };
+  const json = `${JSON.stringify(baseline, null, 2)}\n`;
+  const jsonl = `${modules
+    .map((moduleSurface) =>
+      JSON.stringify({
+        category: moduleSurface.category,
+        entrypoint: moduleSurface.entrypoint,
+        importSpecifier: moduleSurface.importSpecifier,
+        recordType: "module",
+        sourceLine: moduleSurface.source.line,
+        sourcePath: moduleSurface.source.path,
+      }),
+    )
+    .join("\n")}\n`;
+  return {
+    baseline,
+    json,
+    jsonl,
+    repoRoot,
+  };
+}
+
+function readPluginSdkApiBaselineFile(filePath) {
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writePluginSdkApiBaselineStatefile(params = {}) {
+  const repoRoot = path.resolve(params.repoRoot || process.cwd());
+  const jsonPath = path.resolve(
+    repoRoot,
+    params.jsonPath || "docs/.generated/plugin-sdk-api-baseline.json",
+  );
+  const statefilePath = path.resolve(
+    repoRoot,
+    params.statefilePath || "docs/.generated/plugin-sdk-api-baseline.jsonl",
+  );
+  const hashPath = path.resolve(
+    repoRoot,
+    params.hashPath || "docs/.generated/plugin-sdk-api-baseline.sha256",
+  );
+  const rendered = await renderPluginSdkApiBaseline({ repoRoot });
+  const nextHashContent = computePluginSdkApiBaselineHashFileContent(rendered);
+  const changed = readPluginSdkApiBaselineFile(hashPath) !== nextHashContent;
+  if (params.check) {
+    return { changed, wrote: false, jsonPath, statefilePath, hashPath };
+  }
+  fs.mkdirSync(path.dirname(hashPath), { recursive: true });
+  fs.writeFileSync(hashPath, nextHashContent, "utf8");
+  fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
+  fs.writeFileSync(jsonPath, rendered.json, "utf8");
+  fs.mkdirSync(path.dirname(statefilePath), { recursive: true });
+  fs.writeFileSync(statefilePath, rendered.jsonl, "utf8");
+  return { changed, wrote: true, jsonPath, statefilePath, hashPath };
+}
+
+const pluginSdkApiBaselineRuntime = {
+  computePluginSdkApiBaselineHashFileContent,
+  renderPluginSdkApiBaseline,
+  writePluginSdkApiBaselineStatefile,
+};
+
 const originalLoad = Module._load;
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
@@ -88934,6 +89030,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/telegram"
   ) {
     return telegramRootRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/api-baseline" ||
+    request === "@openclaw/plugin-sdk/api-baseline"
+  ) {
+    return pluginSdkApiBaselineRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/tlon" ||
