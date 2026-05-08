@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999994% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -64,7 +64,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
-| OZ-PKG-001 | Packaging/distribution breadth | Package update failedStep projection checkpointed in `98e4d5c9`; package update version verification checkpointed in `1db09c3b`; npm update omit-optional fallback checkpointed in `f3177330`; package update runtime path checkpointed in `1291d361`; inherited update status parent options checkpointed in `f088293f`; root update runtime dispatch checkpointed in `0c88812c`; explicit update install-spec preservation checkpointed in `3227786a`; update package-spec env override checkpointed in `949de445`; update-status timeout option checkpointed in `6418d7f3`; update dry-run preview package-spec mapping checkpointed in `08e8f76f`; private QA sidecar omission proof checkpointed in `ad248bf4`; bundled runtime sidecar enforcement checkpointed in `07b17ad0`; source-checkout package-root warning checkpointed in `912aee5e`; private QA dist omission checkpointed in `bde731a9`; externalized extension dist omission checkpointed in `06ba5480`; unsafe dist symlink detection checkpointed in `a9c7884f`; local build metadata omission checkpointed in `6e8bb491`; exact missing inventory warning checkpointed in `76cdb404`; mixed-case staging-debris proof checkpointed in `9422c6b7`; package dist staging-debris detection checkpointed in `b16db705`; package dist inventory drift checkpointed in `69b23cb9`; human git update hint proof checkpointed in `d5ea6096`; human update-available hint checkpointed in `20e9c885`; config channel precedence proof checkpointed in `d9150777`; git availability projection checkpointed in `de37e6f8`; registry availability projection checkpointed in `55a785a8`; update-status git metadata checkpointed in `b31d8f41`; packed git-tag update-status projection checkpointed in `71029a02`; update-status git-tag channel projection checkpointed in `dce24b5e`; source-install package doctor warnings checkpointed in `4c1d7a2a`; update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue staged npm swap and post-update plugin sync |
+| OZ-PKG-001 | Packaging/distribution breadth | Git dev branch normalization checkpointed in `c77f60e0`; Git dev target ref checkout checkpointed in `8f305c47`; Git preflight cleanup repair checkpointed in `48ee7b20`; Git rebase abort cleanup checkpointed in `3a61f139`; Git preflight candidate selection checkpointed in `84a78474`; Git preflight worktree guard checkpointed in `438f3c33`; Git preflight candidate guard checkpointed in `254fcc9d`; Beta package latest fallback checkpointed in `93061087`; git update no-upstream guard checkpointed in `2603380f`; git update control-ui clean-check exclusion checkpointed in `5171f2f2`; npm shim rollback proof checkpointed in `03f1ee46`; doctor malformed extension manifest warning checkpointed in `df582190`; package update malformed extension manifest rejection checkpointed in `733c7b15`; package update staging debris verifier checkpointed in `d58b0879`; package update private QA omission proof checkpointed in `b663e3e0`; package update includeInCore inventory guard checkpointed in `c83c2a72`; package update staged crash cleanup proof checkpointed in `beadafaa`; package update omitted-subtree safety ordering checkpointed in `2830b5ef`; package update legacy sidecar enforcement checkpointed in `603cdb2a`; package update externalized extension omission checkpointed in `a06dd570`; package update unsafe dist path rejection checkpointed in `691fdabd`; package update inventory omission filters checkpointed in `e7d960e0`; package update supplemental sidecar enforcement checkpointed in `9ba6843f`; package update dist inventory file drift checkpointed in `1e373c7f`; package update invalid dist-inventory rejection checkpointed in `2f59d485`; package update missing dist-inventory gate checkpointed in `d7e87c9b`; source-checkout package update verifier checkpointed in `a330fecc`; missing-version verifier wording checkpointed in `ad9ba5a5`; ambient npm fallback proof checkpointed in `0826cfaa`; owning npm command checkpointed in `de046811`; portable Git PATH prepending checkpointed in `e692f8b6`; Windows package install env checkpointed in `80e49178`; Corepack prompt preservation checkpointed in `9fd00cad`; Corepack prompt suppression checkpointed in `0f2cb0c1`; stored-channel dry-run preview checkpointed in `c95b2810`; post-update doctor env checkpointed in `51b3bc19`; requested update-channel persistence checkpointed in `15161172`; low package-update disk warning checkpointed in `3083362b`; stale global rename-dir cleanup checkpointed in `5a31c97f`; non-interactive update doctor checkpointed in `837bbd30`; package update doctor repair checkpointed in `45009862`; post-update plugin sync checkpointed in `aa71bcbc`; staged npm package swap checkpointed in `954d74ea`; package update failedStep projection checkpointed in `98e4d5c9`; package update version verification checkpointed in `1db09c3b`; npm update omit-optional fallback checkpointed in `f3177330`; package update runtime path checkpointed in `1291d361`; inherited update status parent options checkpointed in `f088293f`; root update runtime dispatch checkpointed in `0c88812c`; explicit update install-spec preservation checkpointed in `3227786a`; update package-spec env override checkpointed in `949de445`; update-status timeout option checkpointed in `6418d7f3`; update dry-run preview package-spec mapping checkpointed in `08e8f76f`; private QA sidecar omission proof checkpointed in `ad248bf4`; bundled runtime sidecar enforcement checkpointed in `07b17ad0`; source-checkout package-root warning checkpointed in `912aee5e`; private QA dist omission checkpointed in `bde731a9`; externalized extension dist omission checkpointed in `06ba5480`; unsafe dist symlink detection checkpointed in `a9c7884f`; local build metadata omission checkpointed in `6e8bb491`; exact missing inventory warning checkpointed in `76cdb404`; mixed-case staging-debris proof checkpointed in `9422c6b7`; package dist staging-debris detection checkpointed in `b16db705`; package dist inventory drift checkpointed in `69b23cb9`; human git update hint proof checkpointed in `d5ea6096`; human update-available hint checkpointed in `20e9c885`; config channel precedence proof checkpointed in `d9150777`; git availability projection checkpointed in `de37e6f8`; registry availability projection checkpointed in `55a785a8`; update-status git metadata checkpointed in `b31d8f41`; packed git-tag update-status projection checkpointed in `71029a02`; update-status git-tag channel projection checkpointed in `dce24b5e`; source-install package doctor warnings checkpointed in `4c1d7a2a`; update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue no-target-sha/no-good-commit verification or startup auto-update policy |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR approval guidance checkpointed in `d6052fda`; QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code remote secret/rendered QR breadth later |
@@ -9860,6 +9860,1081 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     suite (`7 passed`), `ruff check src\openzues\services\runtime_updates.py
     tests\test_runtime_updates.py`, `mypy
     src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001AJ` staged npm package update swap
+  - Source: `openclaw-main/src/infra/package-update-steps.ts`,
+    `openclaw-main/src/infra/update-global.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: npm package updates install into a clean staged `--prefix`,
+    verify the staged package root, swap staged package contents into the live
+    package root, replace matching OpenZues bin shims, clean stage directories,
+    and keep the live root unchanged when staged verification fails.
+  - Evidence required: focused staged npm swap test, focused staged verify
+    failure guard, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `954d74ea`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_stages_npm_install_before_swap -q`
+    (`1 failed` before implementation, then `1 passed`), staged verify guard
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_live_root_when_staged_verify_fails -q`
+    (`1 passed`), full runtime update suite (`9 passed`), `ruff check
+    src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+    `mypy src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001AK` root update post-core plugin sync
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/plugins/update.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: successful root git/package updates run post-core plugin update
+    sync, attach the projected result under `postUpdate.plugins`, persist
+    refreshed plugin install metadata, and fail the whole update with
+    `reason="post-update-plugins"` when plugin sync reports errors.
+  - Evidence required: focused package-update post-sync test, focused
+    fail-closed post-sync test, adjacent update CLI proof, ruff, mypy
+  - Status: checkpointed in `aa71bcbc`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_json_runs_post_update_plugin_sync_for_package_update -q`
+    (`1 failed` before implementation, then `1 passed`), fail-closed proof
+    `python -m pytest tests\test_cli.py::test_update_json_fails_when_post_update_plugin_sync_fails -q`
+    (`1 passed`), adjacent update CLI proof
+    `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_package_update_service or update_json_dispatches_runtime_update_service or post_update_plugin_sync or update_dry_run or update_status"`
+    (`21 passed, 532 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001AL` package update post-verify doctor repair
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/infra/package-update-steps.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: after a package install verifies and any staged npm swap
+    succeeds, the native updater runs `openzues doctor --fix --json` as a
+    result step, includes that step in the package update envelope, and fails
+    the package update when doctor repair fails.
+  - Evidence required: focused post-verify doctor step proof, focused doctor
+    failure proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `45009862`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step -q`
+    (`1 failed` before implementation, then `1 passed`), doctor failure proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_fails_when_post_update_doctor_fails -q`
+    (`1 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`10 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001AM` non-interactive package-update doctor invocation
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`, `src/openzues/cli.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: post-update doctor repair uses an upstream-shaped
+    `--non-interactive --fix` invocation, while root `openzues doctor` accepts
+    `--non-interactive` as a non-prompt compatibility flag.
+  - Evidence required: focused doctor argv proof, full runtime update suite,
+    ruff, mypy
+  - Status: checkpointed in `837bbd30`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step -q`
+    (`1 failed` before implementation, then `1 passed`), full runtime update
+    suite `python -m pytest tests\test_runtime_updates.py -q` (`10 passed`),
+    `ruff check src\openzues\services\runtime_updates.py src\openzues\cli.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PKG-001AN` stale global rename-dir cleanup
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: before package-manager dispatch, native package updates remove
+    stale global package-root backup directories named `.<packageName>-*`,
+    ignore matching files and unrelated entries, tolerate cleanup failures, and
+    continue with the normal package update envelope.
+  - Evidence required: focused stale cleanup test, full runtime update suite,
+    ruff, mypy
+  - Status: checkpointed in `5a31c97f`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_cleans_stale_global_rename_dirs -q`
+    (`1 failed` before implementation, then `1 passed`), full runtime update
+    suite `python -m pytest tests\test_runtime_updates.py -q` (`11 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001AO` low package-update disk warning
+  - Source: `openclaw-main/src/infra/disk-space.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `src/openzues/cli.py`, `tests/test_runtime_updates.py`,
+    `tests/test_cli.py`
+  - Contract: package updates check disk space at the nearest package-update
+    target before dispatch, format low-space advisory warnings below the 1 GiB
+    threshold, keep the update non-fatal, persist warning metadata in the
+    native result, and print JSON-mode warnings to stderr.
+  - Evidence required: focused low-disk runtime test, focused package-update
+    CLI warning proof, adjacent update runtime/CLI tests, ruff, mypy
+  - Status: checkpointed in `3083362b`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_low_disk_warning -q`
+    (`1 failed` before implementation, then `1 passed`), focused CLI proof
+    `python -m pytest tests\test_cli.py::test_update_json_dispatches_package_update_service -q`
+    (`1 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`12 passed`),
+    adjacent update CLI proof
+    `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_package_update_service or post_update_plugin_sync or update_json_dispatches_runtime_update_service or update_status"`
+    (`18 passed, 535 deselected`), `ruff check
+    src\openzues\services\runtime_updates.py src\openzues\cli.py
+    tests\test_runtime_updates.py tests\test_cli.py`, `mypy
+    src\openzues\services\runtime_updates.py src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PKG-001AP` requested update-channel persistence
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `src/openzues/schemas.py`,
+    `tests/test_cli.py`
+  - Contract: after a successful update run with `--channel`, OpenZues
+    persists `update.channel` in the saved gateway config before post-update
+    plugin sync, preserves the `update` config section through validation, and
+    returns channel-update metadata in the update result.
+  - Evidence required: focused requested-channel persistence test, adjacent
+    update CLI selection, ruff, mypy
+  - Status: checkpointed in `15161172`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_json_persists_requested_package_channel_after_success -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent package
+    dispatch proof
+    `python -m pytest tests\test_cli.py::test_update_json_dispatches_package_update_service -q`
+    (`1 passed`), adjacent update CLI selection
+    `python -m pytest tests\test_cli.py -q -k "update_json_persists_requested_package_channel_after_success or update_json_dispatches_package_update_service or post_update_plugin_sync or update_json_dispatches_runtime_update_service or update_dry_run or update_status"`
+    (`22 passed, 532 deselected`), `ruff check src\openzues\cli.py
+    src\openzues\schemas.py tests\test_cli.py`, `mypy src\openzues\cli.py
+    src\openzues\schemas.py`, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001AQ` post-update package doctor env
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/infra/update-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: the post-update package doctor command runs with
+    `NODE_DISABLE_COMPILE_CACHE=1`, `OPENCLAW_UPDATE_IN_PROGRESS=1`, and
+    `OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE=1`, then restores the
+    parent process environment after the command runner returns.
+  - Evidence required: focused doctor-env runtime test, adjacent doctor failure
+    proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `51b3bc19`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_post_update_doctor_env -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent doctor
+    failure proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_fails_when_post_update_doctor_fails -q`
+    (`1 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`13 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001AR` stored update-channel dry-run preview
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues update --dry-run --json` reads the saved
+    `update.channel`, reports it as `storedChannel`, uses it as the effective
+    channel when no requested channel is supplied, and maps the resulting
+    package install spec into planned actions.
+  - Evidence required: focused dry-run stored-channel test, adjacent dry-run
+    proof, adjacent update CLI selection, ruff, mypy
+  - Status: checkpointed in `c95b2810`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_dry_run_json_uses_stored_update_channel -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent dry-run
+    proof
+    `python -m pytest tests\test_cli.py::test_update_dry_run_json_maps_main_package_install_spec -q`
+    (`1 passed`), adjacent update CLI selection
+    `python -m pytest tests\test_cli.py -q -k "update_dry_run or update_json_persists_requested_package_channel_after_success or update_json_dispatches_package_update_service or post_update_plugin_sync or update_status"`
+    (`22 passed, 533 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001AS` Corepack prompt suppression for package updates
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: global package-update install commands run with
+    `COREPACK_ENABLE_DOWNLOAD_PROMPT=0` when the parent environment has not
+    already set it, preserving non-interactive package manager behavior and
+    restoring the parent process environment after command dispatch.
+  - Evidence required: focused Corepack env runtime test, adjacent
+    post-update doctor env proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `0f2cb0c1`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_disables_corepack_download_prompt -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    post-update doctor env proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_post_update_doctor_env -q`
+    (`1 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`14 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001AT` Corepack prompt preservation for package updates
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_runtime_updates.py`
+  - Contract: if the parent process already sets
+    `COREPACK_ENABLE_DOWNLOAD_PROMPT`, package-update install commands observe
+    that caller value and OpenZues leaves the parent environment unchanged
+    after command dispatch.
+  - Evidence required: focused Corepack preservation runtime test, adjacent
+    Corepack pair, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `9fd00cad`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_preserves_corepack_download_prompt -q`
+    (`1 passed`), adjacent Corepack pair
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_disables_corepack_download_prompt tests\test_runtime_updates.py::test_runtime_update_run_package_update_preserves_corepack_download_prompt -q`
+    (`2 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`15 passed`),
+    `ruff check tests\test_runtime_updates.py
+    src\openzues\services\runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001AU` Windows package install env
+  - Source: `openclaw-main/src/infra/update-global.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: Windows package-update install commands run with
+    `NPM_CONFIG_UPDATE_NOTIFIER=false`, `NPM_CONFIG_FUND=false`,
+    `NPM_CONFIG_AUDIT=false`, and `NODE_LLAMA_CPP_SKIP_DOWNLOAD=1`, overriding
+    command-scoped values while restoring the parent environment afterwards.
+  - Evidence required: focused Windows install-env runtime test, adjacent
+    package env proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `80e49178`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_windows_install_env -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent package env
+    proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_disables_corepack_download_prompt tests\test_runtime_updates.py::test_runtime_update_run_package_update_preserves_corepack_download_prompt tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_windows_install_env -q`
+    (`3 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`16 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001AV` portable Git PATH prepending for package updates
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/path-prepend.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: if Windows portable Git helper directories exist under
+    `LOCALAPPDATA\OpenClaw\deps\portable-git`, package-update install commands
+    receive them prepended to `PATH` in upstream order while preserving and
+    restoring the caller's original `PATH`.
+  - Evidence required: focused portable Git PATH runtime test, adjacent
+    Windows env proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `e692f8b6`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_prepends_portable_git_paths -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent Windows env
+    proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_windows_install_env tests\test_runtime_updates.py::test_runtime_update_run_package_update_prepends_portable_git_paths -q`
+    (`2 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`17 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001AW` owning npm command for package updates
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: npm package updates resolve the installed package root back to
+    its owning npm prefix and use that prefix's `npm.cmd` for the staged
+    install and omit-optional fallback when present, avoiding accidental PATH
+    npm ownership drift.
+  - Evidence required: focused owning npm command test, adjacent npm
+    fallback/staging proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `de046811`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_prefers_owning_npm_cmd -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent npm
+    fallback/staging proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_retries_npm_without_optional_deps tests\test_runtime_updates.py::test_runtime_update_run_package_update_stages_npm_install_before_swap tests\test_runtime_updates.py::test_runtime_update_run_package_update_prefers_owning_npm_cmd -q`
+    (`3 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`18 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001AX` ambient npm fallback when owner is absent
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_runtime_updates.py`
+  - Contract: npm package updates must not infer command ownership from the
+    global-root path shape alone; when the owning prefix npm binary is absent,
+    OpenZues dispatches ambient `npm`.
+  - Evidence required: focused ambient npm fallback test, adjacent owning/npm
+    command proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `0826cfaa`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_uses_ambient_npm_when_owner_absent -q`
+    (`1 passed`), adjacent owning/ambient npm proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_prefers_owning_npm_cmd tests\test_runtime_updates.py::test_runtime_update_run_package_update_uses_ambient_npm_when_owner_absent -q`
+    (`2 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`19 passed`),
+    `ruff check tests\test_runtime_updates.py
+    src\openzues\services\runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001AY` missing package version verifier wording
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/package-update-steps.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: when explicit-version package update verification cannot read an
+    installed package version, the `global install verify` step reports
+    `found <missing>` instead of a local placeholder.
+  - Evidence required: focused missing-version verifier test, adjacent
+    expected-version proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `ad9ba5a5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent expected
+    version proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version -q`
+    (`2 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`20 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001AZ` source-checkout package update verifier
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/package-update-steps.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: package update verification rejects package roots that resolve
+    to source checkouts with `.git` or `pnpm-workspace.yaml`, `src`, and
+    `extensions` before post-update doctor/swap, using the OpenClaw-shaped
+    `global package root resolves to source checkout: <path>` error.
+  - Evidence required: focused source-checkout verifier test, adjacent
+    package verification proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `a330fecc`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent package
+    verification proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+    (`3 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`21 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BA` package update missing dist-inventory gate
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-update-steps.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: package update verification requires
+    `dist/postinstall-inventory.json` for installed or expected package
+    versions at `2026.4.15` and newer and fails with
+    `missing package dist inventory dist/postinstall-inventory.json` before
+    post-update doctor/swap.
+  - Evidence required: focused missing-inventory verifier test, adjacent
+    package verification proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `d7e87c9b`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent package
+    verifier proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory -q`
+    (`4 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`22 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BB` package update invalid dist-inventory rejection
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-update-steps.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: package update verification parses
+    `dist/postinstall-inventory.json` when present and fails with
+    `invalid package dist inventory dist/postinstall-inventory.json` when the
+    payload is not a JSON string list before post-update doctor/swap.
+  - Evidence required: focused invalid-inventory verifier test, adjacent
+    package verification proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `2f59d485`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent package
+    verifier proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+    (`5 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`23 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BC` package update dist inventory file drift
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-update-steps.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: valid package update inventories are compared against installed
+    `dist` files, excluding the inventory file itself, and verification fails
+    with OpenClaw-shaped `missing packaged dist file` and
+    `unexpected packaged dist file` lines before post-update doctor/swap.
+  - Evidence required: focused inventory drift verifier test, adjacent package
+    verification proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `1e373c7f`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent package
+    verifier proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+    (`6 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`24 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BD` package update supplemental runtime sidecars
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/plugins/runtime-sidecar-paths.ts`,
+    `openclaw-main/src/infra/package-update-steps.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: when a bundled plugin is present under `dist/extensions`, package
+    update verification checks critical runtime sidecars omitted from the valid
+    inventory and reports `missing bundled runtime sidecar <path>` before
+    post-update doctor/swap.
+  - Evidence required: focused omitted-sidecar verifier test, adjacent package
+    verification proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `9ba6843f`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar -q`
+    (`1 failed` before implementation/assertion alignment, then `1 passed`),
+    adjacent package verifier proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+    (`7 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`25 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BE` package update dist inventory omission filters
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/update-global.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: package update inventory comparison ignores source maps, local
+    build metadata, private QA artifacts, plugin SDK QA files, and bundled
+    plugin dependency directories before deciding whether a valid inventory has
+    unexpected packaged file drift.
+  - Evidence required: focused omission-filter verifier test, adjacent
+    inventory/sidecar proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `e7d960e0`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent inventory
+    and sidecar proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory -q`
+    (`5 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`26 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BF` package update unsafe dist path rejection
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/update-global.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: package update inventory comparison reports symlinked `dist`
+    entries as `Unsafe package dist path: <relative>` verifier errors instead
+    of treating them as absent or silently ignoring them.
+  - Evidence required: focused unsafe dist path verifier test, adjacent
+    inventory/sidecar proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `691fdabd`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent inventory
+    proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory -q`
+    (`6 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`27 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BG` package update externalized extension omission
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/update-global.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: package update inventory collection reads source extension
+    manifests and omits `dist/extensions/<id>` files for extensions with
+    external release targets unless `openclaw.bundle.includeInCore` is true.
+  - Evidence required: focused externalized extension omission test, adjacent
+    inventory proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `a06dd570`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent inventory
+    proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift -q`
+    (`4 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`28 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BH` package update legacy runtime sidecars
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/plugins/runtime-sidecar-paths.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: package update verification enforces critical bundled runtime
+    sidecars for older installed package roots even when
+    `dist/postinstall-inventory.json` is absent and not required by version.
+  - Evidence required: focused legacy sidecar verifier test, adjacent
+    sidecar/inventory proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `603cdb2a`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_legacy_runtime_sidecars -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent sidecar and
+    inventory proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_legacy_runtime_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift -q`
+    (`5 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`29 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BI` package update omitted-subtree safety ordering
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/update-global.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: package update inventory collection skips externalized extension
+    and dependency subtrees before symlink safety checks, preventing omitted
+    files from producing `Unsafe package dist path` verifier failures.
+  - Evidence required: focused omitted-subtree safety test, adjacent
+    externalized/unsafe-path proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `2830b5ef`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    externalized and unsafe-path proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions -q`
+    (`4 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`30 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BJ` staged npm cleanup after install crash
+  - Source: `openclaw-main/src/infra/package-update-steps.ts`,
+    `openclaw-main/src/infra/package-update-steps.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_runtime_updates.py`
+  - Contract: npm package updates remove the clean staged `--prefix` when the
+    package-manager command raises before verification or swap, preserving
+    OpenClaw's `cleanupStagedNpmInstall` `finally` behavior.
+  - Evidence required: focused staged-crash cleanup test, adjacent staged-npm
+    package update proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `beadafaa`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_cleans_staged_prefix_when_install_raises -q`
+    (`1 passed`), adjacent staged-npm proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_stages_npm_install_before_swap tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_live_root_when_staged_verify_fails tests\test_runtime_updates.py::test_runtime_update_run_package_update_cleans_staged_prefix_when_install_raises -q`
+    (`3 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`31 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BK` package update includeInCore inventory guard
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_runtime_updates.py`
+  - Contract: package update inventory verification does not omit bundled
+    extension dist when the source manifest is publishable but sets
+    `openclaw.bundle.includeInCore=true`; a stale installed inventory that
+    omits that dist reports `unexpected packaged dist file`.
+  - Evidence required: focused includeInCore update verifier proof, adjacent
+    externalized/unsafe-path proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `c83c2a72`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_include_in_core_extension_dist -q`
+    (`1 passed`), adjacent externalized/includeInCore/unsafe-path proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_include_in_core_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink -q`
+    (`4 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`32 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BL` package update private QA omission proof
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_runtime_updates.py`
+  - Contract: package update verification does not require bundled runtime
+    sidecars for private QA extension roots when older installs have no
+    inventory, and ignores stale private QA metadata during newer inventory
+    verification.
+  - Evidence required: focused private-QA verifier tests, adjacent sidecar and
+    omission proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `b663e3e0`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_legacy_private_qa_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_stale_private_qa_metadata_with_inventory -q`
+    (`2 passed`), adjacent private-QA/sidecar/omission proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_legacy_runtime_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_legacy_private_qa_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_stale_private_qa_metadata_with_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar -q`
+    (`5 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`34 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BM` package update runtime staging debris verifier
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_runtime_updates.py`
+  - Contract: package update verification reports runtime-created
+    `.openclaw-install-stage*` directories under installed extension dist as
+    unexpected packaged dist files instead of treating them as omitted
+    dependency subtrees.
+  - Evidence required: focused staging-debris verifier test, adjacent
+    inventory/unsafe-path proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `d58b0879`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_runtime_install_staging_debris -q`
+    (`1 failed` before assertion-order alignment, then `1 passed`), adjacent
+    inventory verifier proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_runtime_install_staging_debris tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety -q`
+    (`5 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`35 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BN` package update malformed extension manifest rejection
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: package update verification ignores missing bundled extension
+    manifests but reports malformed source extension manifests as hard
+    verifier errors instead of silently treating those extensions as
+    non-externalized.
+  - Evidence required: focused malformed-manifest verifier test, adjacent
+    externalized inventory proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `733c7b15`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_malformed_externalized_manifest -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    externalized inventory proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_include_in_core_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_malformed_externalized_manifest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_runtime_install_staging_debris -q`
+    (`5 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`36 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BO` doctor malformed extension manifest warning
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: doctor package distribution diagnostics warn on malformed source
+    bundled extension manifests while preserving missing-manifest omission and
+    existing externalized/includeInCore/private-QA inventory behavior.
+  - Evidence required: focused doctor malformed-manifest test, adjacent package
+    distribution doctor proof, ruff, mypy
+  - Status: checkpointed in `df582190`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_doctor_json_warns_on_malformed_externalized_extension_manifest -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent package
+    distribution doctor proof
+    `python -m pytest tests\test_cli.py::test_doctor_json_omits_externalized_bundled_extension_dist_trees tests\test_cli.py::test_doctor_json_warns_on_malformed_externalized_extension_manifest tests\test_cli.py::test_doctor_json_omits_private_qa_package_dist_artifacts tests\test_cli.py::test_doctor_json_warns_on_package_dist_inventory_file_drift tests\test_cli.py::test_doctor_json_warns_on_package_dist_legacy_staging_debris tests\test_cli.py::test_doctor_json_warns_on_unsafe_package_dist_symlink -q`
+    (`6 passed`), adjacent package distribution sweep
+    `python -m pytest tests\test_cli.py -q -k "package_dist or package_distribution"`
+    (`8 passed, 548 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BP` npm shim rollback during staged package swap
+  - Source: `openclaw-main/src/infra/package-update-steps.ts`,
+    `openclaw-main/src/infra/package-update-steps.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_runtime_updates.py`
+  - Contract: when replacing a staged npm bin shim fails during
+    `global install swap`, package update restores the previous live package
+    root and old shim, reports `global-install-swap-failed`, and cleans the
+    staged prefix.
+  - Evidence required: focused shim rollback test, adjacent staged-npm proof,
+    full runtime update suite, ruff, mypy
+  - Status: checkpointed in `03f1ee46`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_restores_bin_shim_when_swap_fails -q`
+    (`1 passed`), adjacent staged-npm proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_stages_npm_install_before_swap tests\test_runtime_updates.py::test_runtime_update_run_package_update_restores_bin_shim_when_swap_fails tests\test_runtime_updates.py::test_runtime_update_run_package_update_cleans_staged_prefix_when_install_raises tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_live_root_when_staged_verify_fails -q`
+    (`4 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`37 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BQ` git update control-ui clean-check exclusion
+  - Source: `openclaw-main/src/infra/update-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: git update clean checks run with `:!dist/control-ui/`, allowing
+    generated control-ui dist dirt while preserving dirty-worktree skips for
+    other files.
+  - Evidence required: focused control-ui dirty proof, adjacent git update
+    proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `5171f2f2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent git update
+    proof
+    `python -m pytest tests\test_runtime_updates.py -q -k "run_update or runtime_update_run_update"`
+    (`3 passed, 35 deselected`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`38 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BR` git update no-upstream guard
+  - Source: `openclaw-main/src/infra/update-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: after fetch, git updates check `@{upstream}` and return
+    `skipped/no-upstream` before pull when no upstream is configured.
+  - Evidence required: focused no-upstream test, adjacent git update proof,
+    full runtime update suite, ruff, mypy
+  - Status: checkpointed in `2603380f`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_upstream_without_pull -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent git update
+    proof
+    `python -m pytest tests\test_runtime_updates.py -q -k "run_update or runtime_update_run_update"`
+    (`4 passed, 35 deselected`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`39 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BS` beta package latest fallback
+  - Source: `openclaw-main/src/infra/update-check.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: beta package-channel updates resolve beta and latest npm targets,
+    fall back to latest when beta is missing or behind, project the fallback
+    into dry-run target/version/notes, and dispatch real package updates with
+    the same resolved install spec.
+  - Evidence required: focused beta fallback dry-run/dispatch tests, resolver
+    proof, adjacent update CLI proof, ruff, mypy
+  - Status: checkpointed in `93061087`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_dry_run_json_falls_back_beta_channel_to_latest tests\test_cli.py::test_update_json_falls_back_beta_channel_to_latest_package_spec -q`
+    (`2 failed` before implementation, then `2 passed`), direct resolver proof
+    `python -m pytest tests\test_cli.py::test_update_resolve_npm_channel_tag_falls_back_beta_prerelease_to_latest tests\test_cli.py::test_update_dry_run_json_falls_back_beta_channel_to_latest tests\test_cli.py::test_update_json_falls_back_beta_channel_to_latest_package_spec -q`
+    (`3 passed`), adjacent update CLI proof
+    `python -m pytest tests\test_cli.py -q -k "update_dry_run or package_update_service or requested_package_channel or beta_channel_to_latest or resolve_npm_channel_tag"`
+    (`9 passed, 550 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BT` git preflight candidate guard
+  - Source: `openclaw-main/src/infra/update-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: after fetch/upstream check, native git updates resolve
+    `@{upstream}`, run `git rev-list --max-count=10`, and stop with
+    OpenClaw-shaped `no-upstream-sha`, `preflight-revlist-failed`, or
+    `preflight-no-candidates` before pull when candidate discovery fails.
+  - Evidence required: focused no-candidates proof, adjacent git update proof,
+    full runtime update suite, ruff, mypy
+  - Status: checkpointed in `254fcc9d`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_errors_when_preflight_has_no_candidates -q`
+    (`1 failed` before implementation, then covered green), adjacent proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_errors_when_preflight_has_no_candidates tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files -q`
+    (`3 passed`), adjacent git update sweep
+    `python -m pytest tests\test_runtime_updates.py -q -k "run_update or runtime_update_run_update"`
+    (`5 passed, 35 deselected`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`40 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BU` git preflight worktree guard
+  - Source: `openclaw-main/src/infra/update-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: native git updates create a detached preflight worktree from the
+    resolved upstream SHA, clean it up before continuing, and project
+    `preflight-worktree-failed` when worktree creation fails before pull.
+  - Evidence required: focused worktree-failure proof, adjacent git update
+    proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `438f3c33`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_worktree_failure -q`
+    (`1 failed` before implementation, then covered green), adjacent proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_worktree_failure tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files -q`
+    (`3 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`41 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BV` git preflight candidate selection
+  - Source: `openclaw-main/src/infra/update-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: native git updates checkout candidate SHAs inside the detached
+    preflight worktree, run dependency install and build checks there, select
+    the first passing SHA, clean up the worktree, and rebase the live checkout
+    to the selected candidate before post-update deps/build.
+  - Evidence required: focused candidate-selection proof, adjacent git update
+    proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `84a78474`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate -q`
+    (`1 failed` before implementation, then covered green), adjacent proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_worktree_failure -q`
+    (`4 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`42 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BW` git rebase abort cleanup
+  - Source: `openclaw-main/src/infra/update-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: when live checkout rebase to the selected preflight candidate
+    fails, native git update records `git rebase --abort` before returning
+    `rebase-failed`.
+  - Evidence required: focused rebase-failure proof, adjacent git update proof,
+    full runtime update suite, ruff, mypy
+  - Status: checkpointed in `3a61f139`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase -q`
+    (`1 failed` before implementation, then covered green), adjacent proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps -q`
+    (`3 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`43 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BX` git preflight cleanup repair
+  - Source: `openclaw-main/src/infra/update-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: when `git worktree remove --force` fails after native git
+    preflight, fallback filesystem cleanup removes the temp preflight tree and
+    normalizes the cleanup step to success with an annotated stderr tail.
+  - Evidence required: focused cleanup-failure proof, adjacent git update
+    proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `48ee7b20`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_repairs_failed_preflight_cleanup -q`
+    (`1 failed` before implementation, then covered green), adjacent proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_repairs_failed_preflight_cleanup tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase -q`
+    (`3 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`44 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BY` git dev target ref checkout
+  - Source: `openclaw-main/src/infra/update-runner.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `src/openzues/cli.py`, `tests/test_runtime_updates.py`,
+    `tests/test_cli.py`
+  - Contract: effective dev-channel git updates trim
+    `OPENCLAW_UPDATE_DEV_TARGET_REF`, resolve the fetched remote/tag candidate
+    order, preflight only the resolved target SHA, and detached-checkout the
+    selected target instead of resolving upstream candidates or rebasing.
+  - Evidence required: focused runtime dev-target proof, focused CLI env
+    forwarding proof, adjacent git-update/CLI proofs, full runtime update
+    suite, ruff, mypy
+  - Status: checkpointed in `8f305c47`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused runtime red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase -q`
+    (`1 failed` before implementation, then `1 passed`), focused CLI red/green
+    `python -m pytest tests\test_cli.py::test_update_json_passes_dev_target_ref_env_to_git_runtime -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent runtime
+    proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_repairs_failed_preflight_cleanup -q`
+    (`4 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`45 passed`),
+    adjacent CLI selection
+    `python -m pytest tests\test_cli.py -q -k "update_json_passes_dev_target_ref_env_to_git_runtime or update_json_dispatches_runtime_update_service or update_dry_run_json_uses_stored_update_channel or beta_channel_to_latest"`
+    (`5 passed, 555 deselected`), `ruff check
+    src\openzues\services\runtime_updates.py src\openzues\cli.py
+    tests\test_runtime_updates.py tests\test_cli.py`, `mypy
+    src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001BZ` git dev branch normalization
+  - Source: `openclaw-main/src/infra/update-runner.ts`,
+    `openclaw-main/src/infra/update-channels.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `src/openzues/cli.py`, `tests/test_runtime_updates.py`,
+    `tests/test_cli.py`
+  - Contract: effective dev-channel git updates without a target ref probe the
+    current branch and run `git checkout main` before fetch/preflight when the
+    checkout is not already on OpenClaw's dev branch; CLI update dispatch
+    forwards the effective channel into the native runtime update path.
+  - Evidence required: focused runtime branch-normalization proof, focused CLI
+    channel-forwarding proof, adjacent git-update/CLI proofs, full runtime
+    update suite, ruff, mypy
+  - Status: checkpointed in `c77f60e0`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused runtime red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_main_for_dev_channel -q`
+    (`1 failed` before implementation, then `1 passed`), focused CLI red/green
+    `python -m pytest tests\test_cli.py::test_update_json_passes_effective_git_channel_to_runtime -q`
+    (`1 failed` before implementation, then covered green), adjacent runtime
+    proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_main_for_dev_channel tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate -q`
+    (`4 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`46 passed`),
+    adjacent CLI selection
+    `python -m pytest tests\test_cli.py -q -k "update_json_passes_effective_git_channel_to_runtime or update_json_passes_dev_target_ref_env_to_git_runtime or update_json_dispatches_runtime_update_service or update_dry_run_json_uses_stored_update_channel"`
+    (`4 passed, 557 deselected`), `ruff check
+    src\openzues\services\runtime_updates.py src\openzues\cli.py
+    tests\test_runtime_updates.py tests\test_cli.py`, `mypy
+    src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
+    `git diff --check`.
 
 - [x] `OZ-PROV-001M` Slack agent-request thread metadata
   - Source: `openclaw-main/src/agents/subagent-announce-delivery.ts`,

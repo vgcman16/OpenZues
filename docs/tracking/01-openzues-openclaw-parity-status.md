@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999994% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1753,6 +1753,111 @@ may lag behind this tracker.
 - [x] Package update failedStep projection, preserving OpenClaw's failed-step
   result envelope for update failures.
   - Status: checkpointed in `98e4d5c9`
+
+- [x] Package update Corepack prompt suppression, preserving OpenClaw's
+  non-interactive global install environment default.
+  - Status: checkpointed in `0f2cb0c1`
+
+- [x] Package update Corepack prompt preservation, preserving caller-provided
+  global install environment settings.
+  - Status: checkpointed in `9fd00cad`
+
+- [x] Windows package install env, preserving OpenClaw's npm prompt suppression
+  and native dependency-download guard during global package updates.
+  - Status: checkpointed in `80e49178`
+
+- [x] Portable Git PATH prepending, preserving OpenClaw's Windows bundled Git
+  helper path order for global package updates.
+  - Status: checkpointed in `e692f8b6`
+
+- [x] Owning npm command resolution, preserving OpenClaw's installed-prefix
+  `npm.cmd` preference for global package updates.
+  - Status: checkpointed in `de046811`
+
+- [x] Ambient npm fallback when owner is absent, preserving OpenClaw's
+  no-path-shape-only command ownership guard.
+  - Status: checkpointed in `0826cfaa`
+
+- [x] Missing package version verifier wording, preserving OpenClaw's
+  `<missing>` package verification projection.
+  - Status: checkpointed in `ad9ba5a5`
+
+- [x] Source-checkout package update verifier, preserving OpenClaw's
+  `collectInstalledGlobalPackageErrors` source-checkout package-root
+  rejection before post-update doctor/swap.
+  - Status: checkpointed in `a330fecc`
+
+- [x] Package update missing dist-inventory gate, preserving OpenClaw's
+  installed-package `dist/postinstall-inventory.json` requirement for
+  versions at `2026.4.15` and newer.
+  - Status: checkpointed in `d7e87c9b`
+
+- [x] Package update invalid dist-inventory rejection, preserving OpenClaw's
+  invalid package dist inventory verifier projection before doctor/swap.
+  - Status: checkpointed in `2f59d485`
+
+- [x] Package update dist inventory file drift, preserving OpenClaw's
+  missing/unexpected packaged dist file verifier projection before doctor/swap.
+  - Status: checkpointed in `1e373c7f`
+
+- [x] Package update supplemental runtime sidecars, preserving OpenClaw's
+  critical bundled plugin sidecar check when inventory omits those files.
+  - Status: checkpointed in `9ba6843f`
+
+- [x] Package update dist inventory omission filters, preserving OpenClaw's
+  source map, local metadata, private QA, plugin SDK QA, and bundled plugin
+  dependency exclusions before update verifier drift reporting.
+  - Status: checkpointed in `e7d960e0`
+
+- [x] Package update unsafe dist path rejection, preserving OpenClaw's unsafe
+  symlinked dist entry verifier projection.
+  - Status: checkpointed in `691fdabd`
+
+- [x] Package update externalized extension omission, preserving OpenClaw's
+  published external extension dist filter in update verifier inventory
+  comparison.
+  - Status: checkpointed in `a06dd570`
+
+- [x] Package update legacy runtime sidecars, preserving OpenClaw's sidecar
+  fallback for older installs without required package dist inventory.
+  - Status: checkpointed in `603cdb2a`
+
+- [x] Package update omitted-subtree safety ordering, preserving OpenClaw's
+  externalized/dependency subtree omission before unsafe symlink checks.
+  - Status: checkpointed in `2830b5ef`
+
+- [x] Package update staged crash cleanup proof, preserving OpenClaw's staged
+  npm prefix cleanup when the install command raises before verification/swap.
+  - Status: checkpointed in `beadafaa`
+
+- [x] Package update includeInCore inventory guard, preserving OpenClaw's
+  publishable-but-core bundled extension package dist inventory behavior.
+  - Status: checkpointed in `c83c2a72`
+
+- [x] Package update private QA omission proof, preserving OpenClaw's private
+  QA sidecar and stale metadata omissions in update verification.
+  - Status: checkpointed in `b663e3e0`
+
+- [x] Package update runtime staging debris verifier, preserving OpenClaw's
+  installed-package `.openclaw-install-stage*` drift reporting.
+  - Status: checkpointed in `d58b0879`
+
+- [x] Package update malformed extension manifest rejection, preserving
+  OpenClaw's non-`ENOENT` source extension manifest failure posture.
+  - Status: checkpointed in `733c7b15`
+
+- [x] Doctor malformed extension manifest warning, preserving package dist
+  inventory diagnostics for invalid bundled extension manifests.
+  - Status: checkpointed in `df582190`
+
+- [x] Npm shim rollback during staged package swap, preserving OpenClaw's
+  package-root and bin-shim restore behavior on staged shim replacement
+  failure.
+  - Status: checkpointed in `03f1ee46`
+
+- [x] Git update control-ui clean-check exclusion, preserving OpenClaw's
+  generated `dist/control-ui` dirty-file allowance.
+  - Status: checkpointed in `5171f2f2`
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.

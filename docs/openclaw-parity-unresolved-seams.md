@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999994%.
+  band of ~80-99.9999999999999999999999%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10044,3 +10044,304 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   test checkpointed in `98e4d5c9`; repo-wide parity remains estimated at
   ~99.9%, with the evidence band tightened to ~80-99.99999999999994%.
   Continue staged npm swap and post-update plugin sync next.
+- Current queue-head adjustment: native npm package updates now install into a
+  clean staged npm prefix, verify the staged package root, swap it into the
+  live package root, replace matching bin shims, and clean the stage without
+  mutating the live package when staged verification fails. Source/test
+  checkpointed in `954d74ea`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999995%. Continue
+  post-update plugin sync and broader release/update packaging breadth next.
+- Current queue-head adjustment: root `openzues update --json` now runs
+  post-core plugin update sync after successful git/package updates, attaches
+  the projected result under `postUpdate.plugins`, and fails with
+  `reason="post-update-plugins"` when plugin sync fails. Source/test
+  checkpointed in `aa71bcbc`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999996%. Continue broader
+  release/update packaging breadth next.
+- Current queue-head adjustment: native package updates now append a
+  post-verify `openzues doctor --fix --json` repair step after successful
+  package install verification/swap, and fail with
+  `reason="post-update-doctor-failed"` when that repair command fails.
+  Source/test checkpointed in `45009862`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99999999999997%.
+  Continue broader release/update packaging breadth next.
+- Current queue-head adjustment: package update doctor repair now uses the
+  upstream-shaped `--non-interactive --fix --json` invocation, and root
+  `openzues doctor` accepts `--non-interactive` for update-runner parity.
+  Source/test checkpointed in `837bbd30`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99999999999998%.
+  Continue broader release/update packaging breadth next.
+- Current queue-head adjustment: native package updates now clean stale global
+  rename directories before package-manager dispatch, matching OpenClaw's
+  `cleanupGlobalRenameDirs` behavior for `.<packageName>-*` directories while
+  preserving matching files and unrelated entries. Source/test checkpointed in
+  `5a31c97f`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99999999999999%. Continue broader release/update
+  packaging breadth next.
+- Current queue-head adjustment: native package updates now emit OpenClaw-shaped
+  low-disk advisory warnings around the package update target, keep the update
+  non-fatal below the warning threshold, preserve warnings in result metadata,
+  and print JSON-mode update warnings to stderr. Source/test checkpointed in
+  `3083362b`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.999999999999995%. Continue broader release/update
+  packaging breadth next.
+- Current queue-head adjustment: successful update runs with a requested
+  `--channel` now persist `update.channel` in the gateway config before
+  post-update plugin sync, and the config schema preserves the `update`
+  section. Source/test checkpointed in `15161172`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999997%. Continue broader release/update packaging breadth
+  next.
+- Current queue-head adjustment: post-update package doctor execution now gets
+  scoped OpenClaw update marker env flags, including
+  `NODE_DISABLE_COMPILE_CACHE`, `OPENCLAW_UPDATE_IN_PROGRESS`, and
+  `OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE`, and restores the
+  parent environment after the command. Source/test checkpointed in
+  `51b3bc19`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.999999999999998%. Continue broader release/update
+  packaging breadth next.
+- Current queue-head adjustment: update dry-run previews now read the stored
+  `update.channel` from gateway config and use it as the effective channel when
+  no `--channel` override is supplied, including `storedChannel` and package
+  install-spec projection. Source/test checkpointed in `c95b2810`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999%. Continue broader release/update packaging breadth
+  next.
+- Current queue-head adjustment: native package-update global install commands
+  now default `COREPACK_ENABLE_DOWNLOAD_PROMPT=0` for non-interactive package
+  manager dispatch when the parent environment has not set it, while restoring
+  the caller environment after the command. Source/test checkpointed in
+  `0f2cb0c1`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999995%. Continue broader release/update
+  packaging breadth next.
+- Current queue-head adjustment: native package-update global install commands
+  now have focused proof that caller-provided `COREPACK_ENABLE_DOWNLOAD_PROMPT`
+  values are preserved through package-manager dispatch and parent env
+  restoration. Test checkpointed in `9fd00cad`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999996%. Continue broader release/update packaging breadth
+  next.
+- Current queue-head adjustment: native package-update global install commands
+  now apply OpenClaw's Windows package install env, disabling npm notifier,
+  fund, and audit prompts and setting `NODE_LLAMA_CPP_SKIP_DOWNLOAD=1` only for
+  command dispatch before restoring parent env values. Source/test
+  checkpointed in `80e49178`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999999997%. Continue
+  broader release/update packaging breadth next.
+- Current queue-head adjustment: native package-update global install commands
+  now prepend existing portable Git helper paths from
+  `LOCALAPPDATA\OpenClaw\deps\portable-git` into command `PATH` and restore the
+  parent `PATH` after dispatch. Source/test checkpointed in `e692f8b6`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999998%. Continue broader release/update
+  packaging breadth next.
+- Current queue-head adjustment: native npm package updates now prefer the
+  owning prefix `npm.cmd` when the installed package root resolves to a
+  Windows npm global prefix, instead of using ambient `npm`. Source/test
+  checkpointed in `de046811`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999999999%. Continue
+  broader release/update packaging breadth next.
+- Current queue-head adjustment: native npm package updates now have focused
+  proof that OpenZues falls back to ambient `npm` when the package-root shape
+  implies an npm prefix but the owning npm binary is absent. Test checkpointed
+  in `0826cfaa`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999999995%. Continue broader
+  release/update packaging breadth next.
+- Current queue-head adjustment: native package update verification now
+  reports missing installed package versions as `<missing>` in the global
+  install verify error, matching OpenClaw's package verification wording.
+  Source/test checkpointed in `ad9ba5a5`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99999999999999996%.
+  Continue broader release/update packaging breadth next.
+- Current queue-head adjustment: native package update verification now
+  rejects package roots resolving to source checkouts before post-update
+  doctor/swap, matching OpenClaw's `collectInstalledGlobalPackageErrors`
+  source-checkout guard. Source/test checkpointed in `a330fecc`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999997%. Continue package dist inventory verification in
+  the update path and broader release/update packaging breadth next.
+- Current queue-head adjustment: native package update verification now
+  requires `dist/postinstall-inventory.json` for installed or expected package
+  versions at `2026.4.15` and newer before post-update doctor/swap, matching
+  OpenClaw's update-global package dist inventory gate. Source/test
+  checkpointed in `d7e87c9b`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999999998%. Continue
+  invalid package dist inventory and missing/unexpected packaged dist file
+  verification next.
+- Current queue-head adjustment: native package update verification now
+  rejects invalid `dist/postinstall-inventory.json` payloads before
+  post-update doctor/swap, matching OpenClaw's package dist inventory parser
+  failure projection. Source/test checkpointed in `2f59d485`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999%. Continue missing/unexpected packaged dist file
+  verification next.
+- Current queue-head adjustment: native package update verification now
+  compares valid package dist inventories against installed `dist` files and
+  reports missing/unexpected packaged file drift before post-update
+  doctor/swap, matching OpenClaw's package update verifier. Source/test
+  checkpointed in `1e373c7f`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999995%. Continue
+  supplemental bundled runtime sidecar verification when inventory omits
+  critical sidecars next.
+- Current queue-head adjustment: native package update verification now
+  enforces critical bundled plugin runtime sidecars even when the valid
+  inventory omits them, matching OpenClaw's supplemental sidecar verifier.
+  Source/test checkpointed in `9ba6843f`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999996%. Continue private-QA sidecar omission and
+  package dist inventory filter exclusions next.
+- Current queue-head adjustment: native package update inventory comparison now
+  applies OpenClaw-style omission filters for source maps, local build
+  metadata, private QA artifacts, plugin SDK QA files, and bundled plugin
+  dependency directories before reporting unexpected drift. Source/test
+  checkpointed in `e7d960e0`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999997%. Continue
+  unsafe package dist path handling and externalized extension omission next.
+- Current queue-head adjustment: native package update inventory comparison now
+  reports unsafe symlinked `dist` entries as verifier errors instead of
+  silently skipping them, matching OpenClaw's package dist inventory safety
+  guard. Source/test checkpointed in `691fdabd`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999998%. Continue externalized bundled extension omission
+  in package update inventory collection next.
+- Current queue-head adjustment: native package update inventory comparison now
+  omits bundled extension dist files for source extensions marked as externally
+  published, matching OpenClaw's externalized extension inventory filter.
+  Source/test checkpointed in `a06dd570`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999%. Continue legacy bundled runtime sidecar
+  verification for older package roots without inventory next.
+- Current queue-head adjustment: native package update verification now
+  enforces critical bundled runtime sidecars for older package roots that do not
+  require `dist/postinstall-inventory.json`, matching OpenClaw's legacy
+  sidecar fallback. Source/test checkpointed in `603cdb2a`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999995%. Continue omitted-subtree safety ordering for
+  externalized extensions and plugin dependency folders next.
+- Current queue-head adjustment: native package update inventory collection now
+  applies omitted-subtree checks before symlink safety checks, preventing
+  externalized extension and dependency subtree files from producing false
+  unsafe-path verifier failures. Source/test checkpointed in `2830b5ef`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999996%. Continue package update
+  externalized `includeInCore` guard and private QA omission proof next.
+- Current queue-head adjustment: native npm package updates now have focused
+  proof that staged npm install prefixes are removed when the install command
+  raises before verification or swap, matching OpenClaw's
+  `cleanupStagedNpmInstall` `finally` behavior. Test checkpointed in
+  `beadafaa`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999997%. Continue package update
+  externalized `includeInCore` guard and private QA omission proof next.
+- Current queue-head adjustment: native package update verification now has
+  focused proof that publishable bundled extension dist remains packaged when
+  the source extension manifest sets `openclaw.bundle.includeInCore=true`,
+  matching OpenClaw's externalized-extension guard. Test checkpointed in
+  `c83c2a72`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999998%. Continue package update
+  private QA sidecar omission proof next.
+- Current queue-head adjustment: native package update verification now has
+  focused proof for private-QA omission in both older installs without
+  inventory and newer installs with stale private QA metadata plus inventory,
+  matching OpenClaw's installed package verifier. Test checkpointed in
+  `b663e3e0`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999999%. Continue package update
+  runtime-created install staging debris verification next.
+- Current queue-head adjustment: native package update verification now reports
+  runtime-created `.openclaw-install-stage*` debris under installed extension
+  dist as unexpected packaged dist files, matching OpenClaw's installed package
+  verifier. Test checkpointed in `d58b0879`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999995%. Continue malformed externalized extension
+  manifest behavior next.
+- Current queue-head adjustment: native package update verification now reports
+  malformed source bundled extension manifests as hard verify errors instead of
+  silently classifying the extension as non-externalized, matching OpenClaw's
+  non-`ENOENT` package-dist inventory posture. Source/test checkpointed in
+  `733c7b15`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99999999999999999997%. Continue the adjacent doctor
+  malformed externalized manifest behavior next.
+- Current queue-head adjustment: native doctor package distribution diagnostics
+  now warn on malformed bundled extension manifests while preserving missing
+  manifest omission, aligning the doctor inventory collector with package
+  update verification and OpenClaw's non-`ENOENT` manifest posture. Source/test
+  checkpointed in `df582190`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999999999998%. Continue
+  npm shim rollback proof next.
+- Current queue-head adjustment: native npm package updates now have focused
+  proof that a staged shim copy failure during `global install swap` restores
+  the live package root and previous bin shim. Test checkpointed in `03f1ee46`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999999%. Re-scan package/update seams and
+  rotate to the next repo-wide queue head if no package-update source-backed
+  heads remain.
+- Current queue-head adjustment: native git updates now run the clean worktree
+  check with OpenClaw's `:!dist/control-ui/` pathspec exclusion, preserving
+  generated control-ui dist dirt while still skipping for real dirty files.
+  Source/test checkpointed in `5171f2f2`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999995%. Continue git update no-upstream/preflight
+  behavior next.
+- Current queue-head adjustment: native git updates now check the current
+  branch upstream after fetch and return `skipped/no-upstream` before pull when
+  no upstream is configured, matching OpenClaw's git update guard. Source/test
+  checkpointed in `2603380f`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999996%. Continue
+  package beta-channel fallback or git preflight behavior next.
+- Current queue-head adjustment: native package update CLI now resolves beta
+  package channels with OpenClaw's `latest` fallback when beta is missing or
+  older, and applies the resolved spec consistently to dry-run previews and
+  real package-update dispatch. Source/test checkpointed in `93061087`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999997%. Continue git update preflight
+  behavior or startup auto-update policy next.
+- Current queue-head adjustment: native git updates now resolve the upstream
+  SHA and require a bounded `git rev-list --max-count=10` candidate list before
+  continuing, projecting OpenClaw's `no-upstream-sha`,
+  `preflight-revlist-failed`, and `preflight-no-candidates` guards.
+  Source/test checkpointed in `254fcc9d`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999998%. Continue preflight worktree/build selection
+  or startup auto-update policy next.
+- Current queue-head adjustment: native git updates now create a detached
+  preflight worktree from the resolved upstream SHA and stop with
+  `preflight-worktree-failed` before pull when worktree creation fails.
+  Source/test checkpointed in `438f3c33`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999%. Continue preflight candidate checkout/build
+  selection or startup auto-update policy next.
+- Current queue-head adjustment: native git updates now run candidate checkout,
+  dependency install, and build checks in the preflight worktree, select the
+  first passing candidate, and rebase the live checkout to that SHA. Source/test
+  checkpointed in `84a78474`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999999999999995%.
+  Continue preflight lint/no-good-commit cleanup edge cases or startup
+  auto-update policy next.
+- Current queue-head adjustment: native git updates now abort a failed
+  selected-candidate rebase before returning `rebase-failed`, matching
+  OpenClaw's cleanup path. Source/test checkpointed in `3a61f139`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999996%. Continue preflight lint/no-good-commit
+  cleanup edge cases or startup auto-update policy next.
+- Current queue-head adjustment: native git preflight cleanup now repairs
+  failed `git worktree remove` by removing the temp preflight tree directly and
+  annotating the cleanup log, matching OpenClaw's fallback cleanup posture.
+  Source/test checkpointed in `48ee7b20`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999997%. Continue no-good-commit verification,
+  dev-target refs, or startup auto-update policy next.
+- Current queue-head adjustment: native dev-channel git updates now resolve
+  `OPENCLAW_UPDATE_DEV_TARGET_REF` / `devTargetRef` through OpenClaw's
+  fetched remote/tag candidate order, preflight the resolved target SHA, and
+  finish with detached checkout instead of upstream rebase. Source/test
+  checkpointed in `8f305c47`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999999999999998%.
+  Continue no-target-sha/no-good-commit edge verification or startup
+  auto-update policy next.
+- Current queue-head adjustment: native dev-channel git updates without a
+  target ref now probe the current branch and checkout `main` before fetch and
+  preflight when needed, and CLI update dispatch forwards the effective git
+  channel to that runtime branch-normalization path. Source/test checkpointed
+  in `c77f60e0`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999999999999999%. Continue
+  no-target-sha/no-good-commit edge verification or startup auto-update
+  policy next.

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999994%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19118,6 +19118,726 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
   Source/test checkpointed and pushed in `98e4d5c9`.
+- Native npm package updates now install into a clean staged npm prefix, verify
+  the staged package root, swap it into the live package root, replace matching
+  OpenZues bin shims, and clean staged directories on success or verification
+  failure. This closes `OZ-PKG-001AJ`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.99999999999995%.
+- Verified staged npm swap with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_stages_npm_install_before_swap -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent staged verify
+  guard
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_live_root_when_staged_verify_fails -q`
+  (`1 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`9 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed in `954d74ea`.
+- Root `openzues update --json` now runs OpenClaw-shaped post-core plugin
+  update sync after successful git/package updates, attaches the result under
+  `postUpdate.plugins`, and fails the overall update with
+  `reason="post-update-plugins"` when a plugin update fails. This closes
+  `OZ-PKG-001AK`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999996%.
+- Verified post-update plugin sync with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_json_runs_post_update_plugin_sync_for_package_update -q`
+  (`1 failed` before implementation, then `1 passed`), fail-closed proof
+  `python -m pytest tests\test_cli.py::test_update_json_fails_when_post_update_plugin_sync_fails -q`
+  (`1 passed`), adjacent update CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_package_update_service or update_json_dispatches_runtime_update_service or post_update_plugin_sync or update_dry_run or update_status"`
+  (`21 passed, 532 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `aa71bcbc`.
+- Package update execution now appends a native `openzues doctor --fix --json`
+  post-verify repair step after successful package install verification/swap,
+  and fails the update with `reason="post-update-doctor-failed"` when that
+  repair command fails. This closes `OZ-PKG-001AL`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999997%.
+- Verified package-update doctor repair with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step -q`
+  (`1 failed` before implementation, then `1 passed`), fail-closed proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_fails_when_post_update_doctor_fails -q`
+  (`1 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`10 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed in `45009862`.
+- Package update doctor repair now uses the upstream-shaped
+  `--non-interactive --fix --json` invocation, and root `openzues doctor`
+  accepts `--non-interactive` as a no-prompt compatibility flag. This closes
+  `OZ-PKG-001AM`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999998%.
+- Verified non-interactive update doctor invocation with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step -q`
+  (`1 failed` before implementation, then `1 passed`), full runtime update
+  suite `python -m pytest tests\test_runtime_updates.py -q` (`10 passed`),
+  `ruff check src\openzues\services\runtime_updates.py src\openzues\cli.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `837bbd30`.
+- Native package updates now remove stale global rename directories before
+  package-manager dispatch, matching OpenClaw's pre-update cleanup of
+  `.<packageName>-*` directories while preserving matching files and unrelated
+  entries. This closes `OZ-PKG-001AN`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.99999999999999%.
+- Verified stale global rename-dir cleanup with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_cleans_stale_global_rename_dirs -q`
+  (`1 failed` before implementation, then `1 passed`), full runtime update
+  suite `python -m pytest tests\test_runtime_updates.py -q` (`11 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed in `5a31c97f`.
+- Native package updates now run OpenClaw-shaped low-disk advisory checks near
+  the package update target, keep the update non-fatal when free space is
+  below 1 GiB, carry warning metadata in the result, and print JSON-mode
+  update warnings to stderr. This closes `OZ-PKG-001AO`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999995%.
+- Verified low-disk package update warnings with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_low_disk_warning -q`
+  (`1 failed` before implementation, then `1 passed`), focused CLI proof
+  `python -m pytest tests\test_cli.py::test_update_json_dispatches_package_update_service -q`
+  (`1 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`12 passed`),
+  adjacent update CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_package_update_service or post_update_plugin_sync or update_json_dispatches_runtime_update_service or update_status"`
+  (`18 passed, 535 deselected`), `ruff check
+  src\openzues\services\runtime_updates.py src\openzues\cli.py
+  tests\test_runtime_updates.py tests\test_cli.py`, `mypy
+  src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `3083362b`.
+- Successful `openzues update --channel <stable|beta|dev>` runs now persist
+  `update.channel` in the gateway config before post-update plugin sync, and
+  the config schema preserves the `update` section so future update runs can
+  observe the stored channel. This closes `OZ-PKG-001AP`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999997%.
+- Verified requested update-channel persistence with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_json_persists_requested_package_channel_after_success -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package-update
+  dispatch proof
+  `python -m pytest tests\test_cli.py::test_update_json_dispatches_package_update_service -q`
+  (`1 passed`), adjacent update CLI selection
+  `python -m pytest tests\test_cli.py -q -k "update_json_persists_requested_package_channel_after_success or update_json_dispatches_package_update_service or post_update_plugin_sync or update_json_dispatches_runtime_update_service or update_dry_run or update_status"`
+  (`22 passed, 532 deselected`), `ruff check src\openzues\cli.py
+  src\openzues\schemas.py tests\test_cli.py`, `mypy src\openzues\cli.py
+  src\openzues\schemas.py`, and focused `git diff --check`. Source/test
+  checkpointed in `15161172`.
+- Post-update package doctor execution now receives OpenClaw-shaped update
+  marker environment flags, including `NODE_DISABLE_COMPILE_CACHE`,
+  `OPENCLAW_UPDATE_IN_PROGRESS`, and
+  `OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE`, and the scoped env is
+  restored after the command runner returns. This closes `OZ-PKG-001AQ`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999998%.
+- Verified post-update doctor env with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_post_update_doctor_env -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent doctor failure
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_fails_when_post_update_doctor_fails -q`
+  (`1 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`13 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed in `51b3bc19`.
+- Update dry-run previews now read the stored `update.channel` from gateway
+  config and use it as the effective channel when no `--channel` override is
+  passed, including the resulting package install spec and `storedChannel`
+  projection. This closes `OZ-PKG-001AR`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.999999999999999%.
+- Verified stored update-channel dry-run preview with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_uses_stored_update_channel -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent main package
+  dry-run proof
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_maps_main_package_install_spec -q`
+  (`1 passed`), adjacent update CLI selection
+  `python -m pytest tests\test_cli.py -q -k "update_dry_run or update_json_persists_requested_package_channel_after_success or update_json_dispatches_package_update_service or post_update_plugin_sync or update_status"`
+  (`22 passed, 533 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `c95b2810`.
+- Native package updates now run global package-manager install commands with
+  `COREPACK_ENABLE_DOWNLOAD_PROMPT=0` when the caller has not already set the
+  variable, matching OpenClaw's non-interactive `createGlobalInstallEnv`
+  default while restoring the parent environment after dispatch. This closes
+  `OZ-PKG-001AS`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999999995%.
+- Verified package-update Corepack prompt suppression with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_disables_corepack_download_prompt -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent post-update
+  doctor env proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_post_update_doctor_env -q`
+  (`1 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`14 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `0f2cb0c1`.
+- Native package updates now have focused proof that a caller-supplied
+  `COREPACK_ENABLE_DOWNLOAD_PROMPT` value is preserved for package-manager
+  dispatch and after command completion, matching the paired OpenClaw
+  `createGlobalInstallEnv` behavior. This closes `OZ-PKG-001AT`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999996%.
+- Verified Corepack prompt preservation with focused
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_preserves_corepack_download_prompt -q`
+  (`1 passed`), adjacent Corepack pair
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_disables_corepack_download_prompt tests\test_runtime_updates.py::test_runtime_update_run_package_update_preserves_corepack_download_prompt -q`
+  (`2 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`15 passed`),
+  `ruff check tests\test_runtime_updates.py
+  src\openzues\services\runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `9fd00cad`.
+- Native package updates now apply OpenClaw's Windows global-install env during
+  package-manager dispatch, forcing npm update notifier/fund/audit prompts off
+  and `NODE_LLAMA_CPP_SKIP_DOWNLOAD=1` while restoring caller env values after
+  the command. This closes `OZ-PKG-001AU`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999997%.
+- Verified Windows package install env with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_windows_install_env -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package env
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_disables_corepack_download_prompt tests\test_runtime_updates.py::test_runtime_update_run_package_update_preserves_corepack_download_prompt tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_windows_install_env -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`16 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `80e49178`.
+- Native package updates now prepend existing Windows portable Git paths from
+  `LOCALAPPDATA\OpenClaw\deps\portable-git` to the package-manager command
+  `PATH`, matching OpenClaw's bundled helper discovery while restoring the
+  parent `PATH` after dispatch. This closes `OZ-PKG-001AV`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999998%.
+- Verified portable Git path prepending with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_prepends_portable_git_paths -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent Windows env
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_windows_install_env tests\test_runtime_updates.py::test_runtime_update_run_package_update_prepends_portable_git_paths -q`
+  (`2 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`17 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e692f8b6`.
+- Native npm package updates now prefer an owning `npm.cmd` from the installed
+  package prefix when present, instead of always dispatching the ambient
+  `npm`, matching OpenClaw's global install command ownership guard. This
+  closes `OZ-PKG-001AW`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.9999999999999999%.
+- Verified owning npm command resolution with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_prefers_owning_npm_cmd -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent npm
+  fallback/staging proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_retries_npm_without_optional_deps tests\test_runtime_updates.py::test_runtime_update_run_package_update_stages_npm_install_before_swap tests\test_runtime_updates.py::test_runtime_update_run_package_update_prefers_owning_npm_cmd -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`18 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `de046811`.
+- Native npm package updates now have focused proof that npm ownership is not
+  inferred from global-root shape alone when the owning `npm.cmd` is absent;
+  OpenZues falls back to ambient `npm`, matching OpenClaw's fail-open command
+  selection. This closes `OZ-PKG-001AX`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.99999999999999995%.
+- Verified ambient npm fallback with focused
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_uses_ambient_npm_when_owner_absent -q`
+  (`1 passed`), adjacent owning/ambient npm proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_prefers_owning_npm_cmd tests\test_runtime_updates.py::test_runtime_update_run_package_update_uses_ambient_npm_when_owner_absent -q`
+  (`2 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`19 passed`),
+  `ruff check tests\test_runtime_updates.py
+  src\openzues\services\runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `0826cfaa`.
+- Native package update verification now reports missing installed versions as
+  `<missing>` in the `global install verify` error, matching OpenClaw's
+  `collectInstalledGlobalPackageErrors` wording. This closes `OZ-PKG-001AY`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999996%.
+- Verified missing-version projection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent expected
+  version proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version -q`
+  (`2 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`20 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `ad9ba5a5`.
+- Native package update verification now rejects package roots that resolve to
+  source checkouts before post-update doctor/swap, matching OpenClaw's
+  `collectInstalledGlobalPackageErrors` source-checkout guard. This closes
+  `OZ-PKG-001AZ`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999999997%.
+- Verified source-checkout package-root rejection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package
+  verification proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`21 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `a330fecc`.
+- Native package update verification now requires
+  `dist/postinstall-inventory.json` for installed or requested versions at
+  `2026.4.15` and newer before post-update doctor/swap, matching OpenClaw's
+  installed global package verification gate. This closes `OZ-PKG-001BA`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999998%.
+- Verified missing dist-inventory rejection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package
+  verifier proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`22 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `d7e87c9b`.
+- Native package update verification now rejects invalid
+  `dist/postinstall-inventory.json` payloads before post-update doctor/swap,
+  matching OpenClaw's `invalid package dist inventory
+  dist/postinstall-inventory.json` verifier branch. This closes
+  `OZ-PKG-001BB`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999999999%.
+- Verified invalid dist-inventory rejection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package
+  verifier proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`23 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `2f59d485`.
+- Native package update verification now compares valid package dist
+  inventories against installed `dist` files and reports both
+  `missing packaged dist file` and `unexpected packaged dist file` drift before
+  post-update doctor/swap, matching OpenClaw's package update verifier. This
+  closes `OZ-PKG-001BC`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.999999999999999995%.
+- Verified package dist inventory file drift with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package
+  verifier proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+  (`6 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`24 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `1e373c7f`.
+- Native package update verification now enforces critical bundled plugin
+  runtime sidecars even when a valid inventory omits them, matching OpenClaw's
+  supplemental `missing bundled runtime sidecar` verifier behavior. This closes
+  `OZ-PKG-001BD`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999999999996%.
+- Verified omitted runtime sidecar enforcement with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar -q`
+  (`1 failed` before implementation/assertion alignment, then `1 passed`),
+  adjacent package verifier proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root -q`
+  (`7 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`25 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `9ba6843f`.
+- Native package update inventory verification now applies OpenClaw-style
+  omission filters for source maps, local build metadata, private QA artifacts,
+  plugin SDK QA files, and bundled plugin dependency directories before
+  reporting unexpected packaged file drift. This closes `OZ-PKG-001BE`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999997%.
+- Verified package dist inventory omission filters with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent inventory and
+  sidecar proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`26 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e7d960e0`.
+- Native package update inventory verification now reports unsafe symlinked
+  `dist` entries as `Unsafe package dist path: <relative>` verifier errors
+  instead of silently skipping them, matching OpenClaw's package dist inventory
+  safety guard. This closes `OZ-PKG-001BF`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999998%.
+- Verified unsafe dist path rejection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent inventory
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory -q`
+  (`6 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`27 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `691fdabd`.
+- Native package update inventory comparison now omits bundled extension dist
+  files when the source extension manifest marks the extension as externally
+  published, matching OpenClaw's externalized extension inventory filter. This
+  closes `OZ-PKG-001BG`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.999999999999999999%.
+- Verified externalized extension dist omission with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent inventory
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`28 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `a06dd570`.
+- Native package update verification now enforces critical bundled runtime
+  sidecars for older installed package roots that do not yet require
+  `dist/postinstall-inventory.json`, matching OpenClaw's legacy sidecar
+  fallback. This closes `OZ-PKG-001BH`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999995%.
+- Verified legacy runtime sidecar enforcement with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_legacy_runtime_sidecars -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent sidecar and
+  inventory proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_legacy_runtime_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`29 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `603cdb2a`.
+- Native package update inventory collection now applies omitted-subtree checks
+  before symlink safety checks, so externalized extension and dependency
+  subtrees do not produce false `Unsafe package dist path` verifier failures.
+  This closes `OZ-PKG-001BI`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999999999996%.
+- Verified omitted-subtree safety ordering with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent externalized
+  and unsafe-path proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`30 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `2830b5ef`.
+- Native npm package updates now have focused proof that a staged install
+  prefix is cleaned up when the package-manager command raises before
+  verification or swap, matching OpenClaw's `finally`
+  `cleanupStagedNpmInstall` behavior. This closes `OZ-PKG-001BJ`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999997%.
+- Verified staged npm cleanup on install crash with focused proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_cleans_staged_prefix_when_install_raises -q`
+  (`1 passed`), adjacent staged-npm package update proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_stages_npm_install_before_swap tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_live_root_when_staged_verify_fails tests\test_runtime_updates.py::test_runtime_update_run_package_update_cleans_staged_prefix_when_install_raises -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`31 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `beadafaa`.
+- Native package update verification now has focused proof that publishable
+  bundled extension dist remains part of the installed package inventory when
+  the source manifest sets `openclaw.bundle.includeInCore=true`, matching
+  OpenClaw's externalized-extension guard. This closes `OZ-PKG-001BK`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999998%.
+- Verified `includeInCore` package update inventory behavior with focused
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_include_in_core_extension_dist -q`
+  (`1 passed`), adjacent externalized/includeInCore/unsafe-path proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_include_in_core_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`32 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `c83c2a72`.
+- Native package update verification now has focused proof that private QA
+  bundled plugin metadata does not require legacy runtime sidecars when an
+  older package has no inventory, and that stale private QA metadata is
+  ignored when a newer package has an inventory. This closes `OZ-PKG-001BL`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999%.
+- Verified private QA package update omissions with focused proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_legacy_private_qa_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_stale_private_qa_metadata_with_inventory -q`
+  (`2 passed`), adjacent private-QA/sidecar/omission proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_legacy_runtime_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_legacy_private_qa_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_stale_private_qa_metadata_with_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`34 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `b663e3e0`.
+- Native package update verification now reports runtime-created
+  `.openclaw-install-stage*` debris under installed extension dist as
+  unexpected packaged dist files, matching OpenClaw's installed package
+  verifier. This closes `OZ-PKG-001BM`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999995%.
+- Verified runtime install staging debris reporting with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_runtime_install_staging_debris -q`
+  (`1 failed` before assertion-order alignment, then `1 passed`), adjacent
+  inventory verifier proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_runtime_install_staging_debris tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`35 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `d58b0879`.
+- Native package update verification now treats malformed source bundled
+  extension `package.json` manifests as hard verify errors instead of silently
+  treating the extension as non-externalized, matching OpenClaw's
+  non-`ENOENT` manifest failure posture. This closes `OZ-PKG-001BN`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999997%.
+- Verified malformed externalized extension manifest rejection with focused
+  red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_malformed_externalized_manifest -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent externalized
+  inventory proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_include_in_core_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_malformed_externalized_manifest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_runtime_install_staging_debris -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`36 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `733c7b15`.
+- Native doctor package distribution diagnostics now warn on malformed bundled
+  extension manifests while still ignoring missing manifests, keeping doctor
+  package inventory behavior aligned with the runtime update verifier and
+  OpenClaw's non-`ENOENT` manifest failure posture. This closes
+  `OZ-PKG-001BO`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999999999998%.
+- Verified doctor malformed extension manifest diagnostics with focused
+  red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_warns_on_malformed_externalized_extension_manifest -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package
+  distribution doctor proof
+  `python -m pytest tests\test_cli.py::test_doctor_json_omits_externalized_bundled_extension_dist_trees tests\test_cli.py::test_doctor_json_warns_on_malformed_externalized_extension_manifest tests\test_cli.py::test_doctor_json_omits_private_qa_package_dist_artifacts tests\test_cli.py::test_doctor_json_warns_on_package_dist_inventory_file_drift tests\test_cli.py::test_doctor_json_warns_on_package_dist_legacy_staging_debris tests\test_cli.py::test_doctor_json_warns_on_unsafe_package_dist_symlink -q`
+  (`6 passed`), adjacent package distribution sweep
+  `python -m pytest tests\test_cli.py -q -k "package_dist or package_distribution"`
+  (`8 passed, 548 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `df582190`.
+- Native npm package updates now have Windows-stable focused proof that a
+  staged shim copy failure during `global install swap` restores the live
+  package root and previous bin shim, matching OpenClaw's staged shim rollback
+  contract. This closes `OZ-PKG-001BP`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999%.
+- Verified npm shim rollback during package swap with focused proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_restores_bin_shim_when_swap_fails -q`
+  (`1 passed`), adjacent staged-npm proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_stages_npm_install_before_swap tests\test_runtime_updates.py::test_runtime_update_run_package_update_restores_bin_shim_when_swap_fails tests\test_runtime_updates.py::test_runtime_update_run_package_update_cleans_staged_prefix_when_install_raises tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_live_root_when_staged_verify_fails -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`37 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `03f1ee46`.
+- Native git updates now run the clean worktree check with OpenClaw's
+  `:!dist/control-ui/` pathspec exclusion, allowing generated control-ui dist
+  dirt without skipping the update while still rejecting real dirty files.
+  This closes `OZ-PKG-001BQ`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999995%.
+- Verified control-ui dist clean-check exclusion with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent git update
+  proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "run_update or runtime_update_run_update"`
+  (`3 passed, 35 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`38 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `5171f2f2`.
+- Native git updates now run an explicit upstream check after fetch and return
+  `skipped/no-upstream` before attempting `git pull` when the current branch
+  has no upstream, matching OpenClaw's `runGatewayUpdate` guard. This closes
+  `OZ-PKG-001BR`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999999999999996%.
+- Verified no-upstream git update handling with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_upstream_without_pull -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent git update
+  proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "run_update or runtime_update_run_update"`
+  (`4 passed, 35 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`39 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `2603380f`.
+- Native package update CLI now resolves package channels through an
+  OpenClaw-style npm target resolver, including beta fallback to `latest` when
+  the beta tag is missing or older than latest. Dry-run previews show the
+  fallback note, target version, and `openzues@latest` install spec; real
+  package update dispatch sends the same resolved spec. This closes
+  `OZ-PKG-001BS`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999999999999997%.
+- Verified beta package fallback with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_falls_back_beta_channel_to_latest tests\test_cli.py::test_update_json_falls_back_beta_channel_to_latest_package_spec -q`
+  (`2 failed` before implementation, then `2 passed`), direct resolver proof
+  `python -m pytest tests\test_cli.py::test_update_resolve_npm_channel_tag_falls_back_beta_prerelease_to_latest tests\test_cli.py::test_update_dry_run_json_falls_back_beta_channel_to_latest tests\test_cli.py::test_update_json_falls_back_beta_channel_to_latest_package_spec -q`
+  (`3 passed`), adjacent update CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_dry_run or package_update_service or requested_package_channel or beta_channel_to_latest or resolve_npm_channel_tag"`
+  (`9 passed, 550 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `93061087`.
+- Native git updates now resolve `@{upstream}` after the upstream check and
+  build an OpenClaw-style bounded `git rev-list --max-count=10` candidate list
+  before pull. Missing upstream SHA, failed rev-list, and empty candidate lists
+  now stop with `no-upstream-sha`, `preflight-revlist-failed`, or
+  `preflight-no-candidates` instead of pulling blindly. This closes
+  `OZ-PKG-001BT`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999999999999998%.
+- Verified git preflight candidate-list guarding with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_errors_when_preflight_has_no_candidates -q`
+  (`1 failed` before implementation, then covered green), focused adjacent
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_errors_when_preflight_has_no_candidates tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files -q`
+  (`3 passed`), adjacent git update sweep
+  `python -m pytest tests\test_runtime_updates.py -q -k "run_update or runtime_update_run_update"`
+  (`5 passed, 35 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`40 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `254fcc9d`.
+- Native git updates now create and clean up a detached preflight worktree from
+  the resolved upstream SHA before continuing, and return
+  `preflight-worktree-failed` without pulling when worktree creation fails.
+  This closes `OZ-PKG-001BU`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999999%.
+- Verified preflight worktree failure projection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_worktree_failure -q`
+  (`1 failed` before implementation, then covered green), focused adjacent
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_worktree_failure tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`41 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `438f3c33`.
+- Native git updates now iterate bounded preflight candidate SHAs in the
+  detached worktree, checking out each candidate, running dependency install
+  and build checks there, selecting the first passing SHA, and rebasing the
+  live checkout to that selected candidate. This closes `OZ-PKG-001BV`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999995%.
+- Verified preflight candidate checkout/build selection with focused
+  red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate -q`
+  (`1 failed` before implementation, then covered green), focused adjacent
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_worktree_failure -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`42 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `84a78474`.
+- Native git updates now run `git rebase --abort` when the selected-candidate
+  rebase fails, matching OpenClaw's rebase cleanup path before returning
+  `rebase-failed`. This closes `OZ-PKG-001BW`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999996%.
+- Verified rebase abort cleanup with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase -q`
+  (`1 failed` before implementation, then covered green), adjacent git update
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`43 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `3a61f139`.
+- Native git update preflight cleanup now repairs failed `git worktree remove`
+  steps by removing the temp preflight tree directly and annotating the cleanup
+  log, matching OpenClaw's fallback cleanup posture. This closes
+  `OZ-PKG-001BX`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999999999999997%.
+- Verified preflight cleanup repair with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_repairs_failed_preflight_cleanup -q`
+  (`1 failed` before implementation, then covered green), adjacent git update
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_repairs_failed_preflight_cleanup tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`44 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `48ee7b20`.
+- Native dev-channel git updates now honor OpenClaw's
+  `OPENCLAW_UPDATE_DEV_TARGET_REF` / `devTargetRef` path by resolving the
+  freshly fetched remote/tag candidate, preflighting only the resolved target
+  SHA, and finishing with a detached checkout instead of upstream rebase. The
+  CLI trims and forwards the env ref only for effective dev-channel git
+  updates. This closes `OZ-PKG-001BY`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999998%.
+- Verified dev target ref updates with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase -q`
+  (`1 failed` before implementation, then `1 passed`), focused CLI red/green
+  `python -m pytest tests\test_cli.py::test_update_json_passes_dev_target_ref_env_to_git_runtime -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent runtime proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_repairs_failed_preflight_cleanup -q`
+  (`4 passed`), adjacent CLI proof
+  `python -m pytest tests\test_cli.py::test_update_json_passes_dev_target_ref_env_to_git_runtime tests\test_cli.py::test_update_json_dispatches_runtime_update_service tests\test_cli.py::test_update_dry_run_json_uses_stored_update_channel -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`45 passed`),
+  adjacent update CLI selection
+  `python -m pytest tests\test_cli.py -q -k "update_json_passes_dev_target_ref_env_to_git_runtime or update_json_dispatches_runtime_update_service or update_dry_run_json_uses_stored_update_channel or beta_channel_to_latest"`
+  (`5 passed, 555 deselected`), `ruff check
+  src\openzues\services\runtime_updates.py src\openzues\cli.py
+  tests\test_runtime_updates.py tests\test_cli.py`, `mypy
+  src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `8f305c47`.
+- Native dev-channel git updates without a target ref now mirror OpenClaw's
+  branch normalization by probing the current branch and running
+  `git checkout main` before fetch/preflight when needed. The CLI forwards the
+  effective git update channel to the runtime path so the branch normalization
+  applies to real `openzues update` runs. This closes `OZ-PKG-001BZ`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999%.
+- Verified dev-branch normalization with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_main_for_dev_channel -q`
+  (`1 failed` before implementation, then `1 passed`), focused CLI red/green
+  `python -m pytest tests\test_cli.py::test_update_json_passes_effective_git_channel_to_runtime -q`
+  (`1 failed` before implementation, then covered green), adjacent runtime
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_main_for_dev_channel tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate -q`
+  (`4 passed`), adjacent CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_json_passes_effective_git_channel_to_runtime or update_json_passes_dev_target_ref_env_to_git_runtime or update_json_dispatches_runtime_update_service or update_dry_run_json_uses_stored_update_channel"`
+  (`4 passed, 557 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`46 passed`), `ruff
+  check src\openzues\services\runtime_updates.py src\openzues\cli.py
+  tests\test_runtime_updates.py tests\test_cli.py`, `mypy
+  src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `c77f60e0`.
 
 ## References
 

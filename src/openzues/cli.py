@@ -23,7 +23,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -8314,27 +8314,41 @@ def _doctor_is_publishable_externalized_manifest(value: object) -> bool:
     return release.get("publishToNpm") is True or release.get("publishToClawHub") is True
 
 
-def _doctor_collect_externalized_bundled_extension_ids(root: Path) -> set[str]:
+def _doctor_collect_externalized_bundled_extension_ids(root: Path) -> tuple[set[str], list[str]]:
     extensions_path = root / "extensions"
     if not _doctor_path_exists(extensions_path):
-        return set()
+        return set(), []
     extension_ids: set[str] = set()
+    warnings: list[str] = []
     try:
         extension_entries = list(extensions_path.iterdir())
     except OSError:
-        return set()
+        return set(), []
     for extension_entry in extension_entries:
+        manifest_path = extension_entry / "package.json"
         try:
             if not extension_entry.is_dir() or extension_entry.is_symlink():
                 continue
-            parsed = json.loads(
-                (extension_entry / "package.json").read_text(encoding="utf-8")
+            raw_manifest = manifest_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        except OSError:
+            warnings.append(
+                "invalid bundled extension manifest "
+                f"{manifest_path.relative_to(root).as_posix()}"
             )
-        except (OSError, ValueError):
+            continue
+        try:
+            parsed = json.loads(raw_manifest)
+        except ValueError:
+            warnings.append(
+                "invalid bundled extension manifest "
+                f"{manifest_path.relative_to(root).as_posix()}"
+            )
             continue
         if _doctor_is_publishable_externalized_manifest(parsed):
             extension_ids.add(extension_entry.name)
-    return extension_ids
+    return extension_ids, sorted(set(warnings))
 
 
 def _doctor_is_packaged_dist_file(
@@ -8374,11 +8388,14 @@ def _doctor_is_packaged_dist_file(
     )
 
 
-def _doctor_collect_package_dist_files(root: Path) -> list[str]:
+def _doctor_collect_package_dist_files(root: Path) -> tuple[list[str], list[str]]:
     dist_path = root / "dist"
     if not _doctor_path_exists(dist_path):
-        return []
-    externalized_extension_ids = _doctor_collect_externalized_bundled_extension_ids(root)
+        return [], []
+    (
+        externalized_extension_ids,
+        externalized_manifest_warnings,
+    ) = _doctor_collect_externalized_bundled_extension_ids(root)
     files: list[str] = []
     for path in dist_path.rglob("*"):
         try:
@@ -8389,7 +8406,7 @@ def _doctor_collect_package_dist_files(root: Path) -> list[str]:
         relative_path = _doctor_normalize_package_dist_path(path.relative_to(root).as_posix())
         if _doctor_is_packaged_dist_file(relative_path, externalized_extension_ids):
             files.append(relative_path)
-    return sorted(set(files))
+    return sorted(set(files)), externalized_manifest_warnings
 
 
 def _doctor_package_dist_unsafe_path_warnings(root: Path) -> list[str]:
@@ -8543,10 +8560,10 @@ def _doctor_package_dist_inventory_file_warnings(
 ) -> list[str]:
     if expected_files is None:
         return []
-    actual_files = _doctor_collect_package_dist_files(root)
+    actual_files, manifest_warnings = _doctor_collect_package_dist_files(root)
     actual_set = set(actual_files)
     expected_set = set(expected_files)
-    warnings: list[str] = []
+    warnings: list[str] = [*manifest_warnings]
     for relative_path in expected_files:
         if relative_path not in actual_set:
             warnings.append(f"missing packaged dist file {relative_path}")
@@ -10099,7 +10116,14 @@ def _emit_update_dry_run_preview(payload: dict[str, object], *, json_output: boo
 
 
 def _emit_update_run_result(payload: dict[str, object], *, json_output: bool) -> None:
+    warnings = [
+        str(warning)
+        for warning in _object_list(payload.get("warnings"))
+        if str(warning).strip()
+    ]
     if json_output:
+        for warning in warnings:
+            typer.echo(f"Warning: {warning}", err=True)
         _emit_payload(payload, json_output=True)
         return
     status = str(payload.get("status") or "unknown")
@@ -10115,6 +10139,107 @@ def _emit_update_run_result(payload: dict[str, object], *, json_output: bool) ->
     steps = payload.get("steps")
     if isinstance(steps, list):
         typer.echo(f"steps: {len(steps)}")
+    if warnings:
+        typer.echo("warnings:")
+        for warning in warnings:
+            typer.echo(f"  - {warning}")
+
+
+def _openclaw_post_update_plugins_payload(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    outcomes_value = payload.get("outcomes")
+    outcomes = list(outcomes_value) if isinstance(outcomes_value, list) else []
+    error_messages = [
+        str(outcome.get("message") or "plugin update failed")
+        for outcome in outcomes
+        if isinstance(outcome, Mapping) and outcome.get("status") == "error"
+    ]
+    return {
+        "status": "error" if error_messages else "ok",
+        "changed": bool(payload.get("changed")),
+        "sync": {
+            "changed": False,
+            "switchedToBundled": [],
+            "switchedToNpm": [],
+            "warnings": [],
+            "errors": error_messages,
+        },
+        "npm": {
+            "changed": bool(payload.get("changed")),
+            "outcomes": outcomes,
+        },
+        "integrityDrifts": [],
+    }
+
+
+async def _openclaw_update_attach_post_update_plugins(
+    services: CliServices,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    if payload.get("status") != "ok":
+        return payload
+    plugins_payload = await _build_plugins_update_payload(
+        services,
+        plugin_id=None,
+        all_plugins=True,
+        dry_run=False,
+    )
+    projected_plugins = _openclaw_post_update_plugins_payload(plugins_payload)
+    post_update_value = payload.get("postUpdate")
+    post_update = dict(post_update_value) if isinstance(post_update_value, Mapping) else {}
+    post_update["plugins"] = projected_plugins
+    result = dict(payload)
+    result["postUpdate"] = post_update
+    if projected_plugins.get("status") == "error":
+        result["status"] = "error"
+        result["reason"] = "post-update-plugins"
+    return result
+
+
+def _openclaw_update_attach_requested_channel(
+    services: object,
+    payload: dict[str, object],
+    requested_channel: str | None,
+) -> dict[str, object]:
+    if payload.get("status") != "ok" or requested_channel is None:
+        return payload
+    config_service = getattr(services, "gateway_config", None)
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    patch_object = getattr(config_service, "patch_object", None)
+    if not callable(build_snapshot) or not callable(patch_object):
+        return payload
+    snapshot = build_snapshot()
+    previous_channel = _openclaw_update_config_channel(snapshot)
+    result = dict(payload)
+    if previous_channel == requested_channel:
+        result["channelUpdate"] = {
+            "changed": False,
+            "previous": previous_channel,
+            "channel": requested_channel,
+        }
+        return result
+    patch_object({"update": {"channel": requested_channel}})
+    result["channelUpdate"] = {
+        "changed": True,
+        "previous": previous_channel,
+        "channel": requested_channel,
+    }
+    return result
+
+
+def _openclaw_update_read_stored_channel_for_preview() -> str | None:
+    async def read_channel(services: object) -> str | None:
+        config_service = getattr(services, "gateway_config", None)
+        build_snapshot = getattr(config_service, "build_snapshot", None)
+        if not callable(build_snapshot):
+            return None
+        return _openclaw_update_config_channel(build_snapshot())
+
+    try:
+        return _run(_run_with_services(read_channel))
+    except Exception:
+        return None
 
 
 def _parse_openclaw_update_timeout_seconds(value: str | None) -> float | None:
@@ -10167,6 +10292,13 @@ def _openclaw_update_normalize_channel(value: object) -> str | None:
         return None
     channel = value.strip().lower()
     return channel if channel in _OPENCLAW_UPDATE_CHANNELS else None
+
+
+def _openclaw_update_dev_target_ref_for_channel(channel: str | None) -> str | None:
+    if channel != "dev":
+        return None
+    target_ref = os.environ.get("OPENCLAW_UPDATE_DEV_TARGET_REF", "").strip()
+    return target_ref or None
 
 
 def _openclaw_update_install_kind(root: Path) -> str:
@@ -10238,9 +10370,142 @@ def _openclaw_update_channel_to_package_tag(channel: str) -> str:
     return "latest" if channel == "stable" else channel
 
 
+def _openclaw_update_fetch_package_target_status(
+    target: str,
+    *,
+    package_name: str = _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
+    timeout_seconds: float | None = None,
+) -> dict[str, object]:
+    normalized_target = target.strip()
+    normalized_package = package_name.strip() or _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+    timeout = max(0.25, float(timeout_seconds if timeout_seconds is not None else 3.5))
+    request = Request(
+        f"https://registry.npmjs.org/{quote(normalized_package)}/{quote(normalized_target)}",
+        headers={"Accept": "application/json"},
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            parsed = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        return {
+            "target": normalized_target,
+            "version": None,
+            "nodeEngine": None,
+            "error": f"HTTP {exc.code}",
+        }
+    except (OSError, TimeoutError, URLError, json.JSONDecodeError) as exc:
+        return {
+            "target": normalized_target,
+            "version": None,
+            "nodeEngine": None,
+            "error": str(exc),
+        }
+    if not isinstance(parsed, Mapping):
+        return {
+            "target": normalized_target,
+            "version": None,
+            "nodeEngine": None,
+            "error": "invalid registry payload",
+        }
+    engines = parsed.get("engines")
+    return {
+        "target": normalized_target,
+        "version": _optional_cli_string(parsed.get("version")),
+        "nodeEngine": (
+            _optional_cli_string(engines.get("node")) if isinstance(engines, Mapping) else None
+        ),
+    }
+
+
+def _openclaw_update_semver_prerelease(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    match = re.match(r"^v?\d+\.\d+\.\d+(?:[-.]([0-9A-Za-z][0-9A-Za-z.-]*))?", text)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def _openclaw_update_compare_prerelease(left: str | None, right: str | None) -> int:
+    if left is None and right is None:
+        return 0
+    if left is None:
+        return 1
+    if right is None:
+        return -1
+    left_parts = re.split(r"[.-]", left)
+    right_parts = re.split(r"[.-]", right)
+    for index in range(max(len(left_parts), len(right_parts))):
+        left_part = left_parts[index] if index < len(left_parts) else None
+        right_part = right_parts[index] if index < len(right_parts) else None
+        if left_part is None:
+            return -1
+        if right_part is None:
+            return 1
+        left_numeric = left_part.isdigit()
+        right_numeric = right_part.isdigit()
+        if left_numeric and right_numeric:
+            left_value = int(left_part)
+            right_value = int(right_part)
+            if left_value != right_value:
+                return -1 if left_value < right_value else 1
+            continue
+        if left_numeric != right_numeric:
+            return -1 if left_numeric else 1
+        left_lower = left_part.lower()
+        right_lower = right_part.lower()
+        if left_lower != right_lower:
+            return -1 if left_lower < right_lower else 1
+    return 0
+
+
+def _openclaw_update_compare_semver_strings(left: object, right: object) -> int | None:
+    left_tuple = _openclaw_update_semver_tuple(left)
+    right_tuple = _openclaw_update_semver_tuple(right)
+    if left_tuple is None or right_tuple is None:
+        return None
+    if left_tuple != right_tuple:
+        return -1 if left_tuple < right_tuple else 1
+    return _openclaw_update_compare_prerelease(
+        _openclaw_update_semver_prerelease(left),
+        _openclaw_update_semver_prerelease(right),
+    )
+
+
+def _openclaw_update_resolve_npm_channel_tag(
+    channel: str,
+    *,
+    timeout_seconds: float | None = None,
+) -> dict[str, str | None]:
+    channel_tag = _openclaw_update_channel_to_package_tag(channel)
+    channel_status = _openclaw_update_fetch_package_target_status(
+        channel_tag,
+        timeout_seconds=timeout_seconds,
+    )
+    channel_version = _optional_cli_string(channel_status.get("version"))
+    if channel != "beta":
+        return {"tag": channel_tag, "version": channel_version}
+
+    latest_status = _openclaw_update_fetch_package_target_status(
+        "latest",
+        timeout_seconds=timeout_seconds,
+    )
+    latest_version = _optional_cli_string(latest_status.get("version"))
+    if latest_version is None:
+        return {"tag": channel_tag, "version": channel_version}
+    if channel_version is None:
+        return {"tag": "latest", "version": latest_version}
+    comparison = _openclaw_update_compare_semver_strings(channel_version, latest_version)
+    if comparison is not None and comparison < 0:
+        return {"tag": "latest", "version": latest_version}
+    return {"tag": channel_tag, "version": channel_version}
+
+
 def _openclaw_update_dry_run_preview(
     *,
     requested_channel: str | None,
+    stored_channel: str | None,
     tag_override: str | None,
     restart: bool,
 ) -> dict[str, object]:
@@ -10253,25 +10518,32 @@ def _openclaw_update_dry_run_preview(
     update_install_kind = (
         "git" if switch_to_git else "package" if switch_to_package else install_kind
     )
-    default_channel = "dev" if update_install_kind == "git" else "stable"
+    default_channel = stored_channel or ("dev" if update_install_kind == "git" else "stable")
     effective_channel = requested_channel or default_channel
     explicit_tag = _openclaw_update_normalize_package_target(tag_override)
     target_tag = explicit_tag or _openclaw_update_channel_to_package_tag(effective_channel)
     package_install_spec: str | None = None
     current_version = None if switch_to_package else _openclaw_update_read_package_version(root)
+    target_version: str | None = None
+    fallback_to_latest = False
     mode = "unknown"
 
     if update_install_kind == "git":
         mode = "git"
     elif update_install_kind == "package":
         mode = _openclaw_update_package_manager(root)
+        if not explicit_tag:
+            resolved = _openclaw_update_resolve_npm_channel_tag(effective_channel)
+            target_tag = _optional_cli_string(resolved.get("tag")) or target_tag
+            target_version = _optional_cli_string(resolved.get("version"))
+            fallback_to_latest = effective_channel == "beta" and target_tag == "latest"
         package_install_spec = _openclaw_update_resolve_global_install_spec(
             package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
             tag=target_tag,
         )
 
     actions: list[str] = []
-    if requested_channel is not None:
+    if requested_channel is not None and requested_channel != stored_channel:
         actions.append(f"Persist update.channel={requested_channel} in config")
     if switch_to_git:
         actions.append("Switch install mode from package to git checkout (dev channel)")
@@ -10296,6 +10568,8 @@ def _openclaw_update_dry_run_preview(
     notes: list[str] = []
     if explicit_tag and update_install_kind == "git":
         notes.append("--tag applies to npm installs only; git updates ignore it.")
+    if fallback_to_latest:
+        notes.append("Beta channel resolves to latest for this run (fallback).")
     if explicit_tag and not _openclaw_update_can_resolve_registry_version_for_target(target_tag):
         notes.append("Non-registry package specs skip npm version lookup and downgrade previews.")
 
@@ -10309,11 +10583,11 @@ def _openclaw_update_dry_run_preview(
         "switchToPackage": switch_to_package,
         "restart": restart,
         "requestedChannel": requested_channel,
-        "storedChannel": None,
+        "storedChannel": stored_channel,
         "effectiveChannel": effective_channel,
         "tag": package_install_spec or target_tag,
         "currentVersion": current_version,
-        "targetVersion": None,
+        "targetVersion": target_version,
         "downgradeRisk": False,
         "actions": actions,
         "notes": notes,
@@ -97811,7 +98085,14 @@ def doctor(
         "--repair",
         help="Run repair-mode doctor checks where native adapters are available.",
     ),
+    non_interactive: bool = typer.Option(
+        False,
+        "--non-interactive",
+        help="Disable interactive doctor prompts; accepted for update-runner parity.",
+    ),
 ) -> None:
+    _ = non_interactive
+
     async def _action(services: CliServices) -> dict[str, object]:
         view = await _try_live_hermes_doctor_view(services.settings)
         if view is None:
@@ -98086,8 +98367,10 @@ def update_root(
         raise typer.Exit(code=1)
     timeout_seconds = _parse_openclaw_update_timeout_seconds(timeout)
     if dry_run:
+        stored_channel = _openclaw_update_read_stored_channel_for_preview()
         payload = _openclaw_update_dry_run_preview(
             requested_channel=requested_channel,
+            stored_channel=stored_channel,
             tag_override=tag,
             restart=restart,
         )
@@ -98098,33 +98381,74 @@ def update_root(
     install_kind = _openclaw_update_install_kind(root)
     if install_kind == "package":
         effective_channel = requested_channel or "stable"
-        target_tag = (
-            _openclaw_update_normalize_package_target(tag)
-            or _openclaw_update_channel_to_package_tag(effective_channel)
-        )
+        explicit_tag = _openclaw_update_normalize_package_target(tag)
+        target_tag = explicit_tag or _openclaw_update_channel_to_package_tag(effective_channel)
+        if not explicit_tag:
+            resolved = _openclaw_update_resolve_npm_channel_tag(
+                effective_channel,
+                timeout_seconds=timeout_seconds,
+            )
+            target_tag = _optional_cli_string(resolved.get("tag")) or target_tag
         package_spec = _openclaw_update_resolve_global_install_spec(
             package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
             tag=target_tag,
         )
         package_manager = _openclaw_update_package_manager(root)
-        payload = _run(
-            _run_with_services(
-                lambda services: services.runtime_updates.run_package_update(
-                    package_root=root,
-                    package_manager=package_manager,
-                    package_spec=package_spec,
-                    timeout_ms=timeout_ms,
-                )
+
+        async def run_package_update_with_plugins(services: CliServices) -> dict[str, object]:
+            payload = await services.runtime_updates.run_package_update(
+                package_root=root,
+                package_manager=package_manager,
+                package_spec=package_spec,
+                timeout_ms=timeout_ms,
             )
+            payload = _openclaw_update_attach_requested_channel(
+                services,
+                payload,
+                requested_channel,
+            )
+            return await _openclaw_update_attach_post_update_plugins(services, payload)
+
+        payload = _run(
+            _run_with_services(run_package_update_with_plugins)
         )
         _emit_update_run_result(payload, json_output=json_output)
         if payload.get("status") == "error":
             raise typer.Exit(code=1)
         return
-    payload = _run(
-        _run_with_services(
-            lambda services: services.runtime_updates.run_update(timeout_ms=timeout_ms)
+
+    async def run_git_update_with_plugins(services: CliServices) -> dict[str, object]:
+        config_snapshot: object = {}
+        config_service = getattr(services, "gateway_config", None)
+        build_snapshot = getattr(config_service, "build_snapshot", None)
+        if callable(build_snapshot):
+            config_snapshot = build_snapshot()
+        effective_channel = (
+            requested_channel
+            or _openclaw_update_config_channel(config_snapshot)
+            or "dev"
         )
+        dev_target_ref = _openclaw_update_dev_target_ref_for_channel(effective_channel)
+        if dev_target_ref is not None:
+            payload = await services.runtime_updates.run_update(
+                timeout_ms=timeout_ms,
+                channel=effective_channel,
+                dev_target_ref=dev_target_ref,
+            )
+        else:
+            payload = await services.runtime_updates.run_update(
+                timeout_ms=timeout_ms,
+                channel=effective_channel,
+            )
+        payload = _openclaw_update_attach_requested_channel(
+            services,
+            payload,
+            requested_channel,
+        )
+        return await _openclaw_update_attach_post_update_plugins(services, payload)
+
+    payload = _run(
+        _run_with_services(run_git_update_with_plugins)
     )
     _emit_update_run_result(payload, json_output=json_output)
     if payload.get("status") == "error":
