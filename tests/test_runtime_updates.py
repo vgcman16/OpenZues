@@ -534,6 +534,53 @@ async def test_runtime_update_run_update_selects_first_good_preflight_candidate(
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_update_aborts_failed_rebase(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[list[str]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        command_calls.append(argv)
+        if argv == ["git", "rev-parse", "@{upstream}"]:
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        if argv[:2] == ["git", "rev-list"]:
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        if argv == ["git", "rebase", "rev-b"]:
+            return {"stdout": "", "stderr": "conflict\n", "exitCode": 1}
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("rebase failure should not schedule immediate restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "error"
+    assert result["reason"] == "rebase-failed"
+    assert [step["name"] for step in result["steps"]][-2:] == [
+        "git rebase",
+        "git rebase --abort",
+    ]
+    assert command_calls[-2:] == [["git", "rebase", "rev-b"], ["git", "rebase", "--abort"]]
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_package_update_executes_global_install_step(
     tmp_path,
 ) -> None:

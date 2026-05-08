@@ -1342,8 +1342,30 @@ class RuntimeUpdateService:
                 started_at=started_at,
             )
 
+        rebase_step = await self._run_update_command_step(
+            "git rebase",
+            ["git", "rebase", selected_sha],
+            timeout_ms=timeout_ms,
+        )
+        steps.append(rebase_step)
+        if _update_step_exit_code(rebase_step) != 0:
+            abort_step = await self._run_update_command_step(
+                "git rebase --abort",
+                ["git", "rebase", "--abort"],
+                timeout_ms=timeout_ms,
+            )
+            steps.append(abort_step)
+            return self._build_update_command_result(
+                status="error",
+                reason="rebase-failed",
+                root=root,
+                before=before,
+                after=None,
+                steps=steps,
+                started_at=started_at,
+            )
+
         for name, argv, reason in (
-            ("git rebase", ["git", "rebase", selected_sha], "rebase-failed"),
             (
                 "deps install",
                 [sys.executable, "-m", "pip", "install", "-e", "."],
