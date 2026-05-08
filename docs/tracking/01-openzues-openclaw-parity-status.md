@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999987% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999988% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1725,6 +1725,10 @@ may lag behind this tracker.
 - [x] Update package-spec env override, preserving OpenClaw's
   `OPENCLAW_UPDATE_PACKAGE_SPEC` root update behavior.
   - Status: checkpointed in `949de445`
+
+- [x] Explicit update install-spec preservation, preserving raw GitHub/archive
+  package spec behavior.
+  - Status: checkpointed in `3227786a`
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
@@ -4340,6 +4344,19 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused `python -m pytest
     tests\test_cli.py::test_update_dry_run_json_honors_openclaw_package_spec_override
     -q` (`1 passed`), adjacent update proof (`15 passed, 532 deselected`),
+    `ruff check`, and `git diff --check`.
+
+- [x] Explicit update install-spec preservation.
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`
+  - Target: `tests/test_cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `3227786a`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused `python -m pytest
+    tests\test_cli.py::test_update_dry_run_json_preserves_explicit_package_install_spec
+    -q` (`1 passed`), adjacent update proof (`16 passed, 532 deselected`),
     `ruff check`, and `git diff --check`.
 
 - [x] Companion node presence alive lifecycle.

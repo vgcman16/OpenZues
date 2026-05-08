@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999987%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999988%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19024,6 +19024,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   -q -k "update_dry_run or update_status"` (`15 passed, 532 deselected`),
   `ruff check tests\test_cli.py`, and focused `git diff --check`. Test
   checkpointed and pushed in `949de445`.
+- The dry-run update preview now has focused proof that explicit package
+  install specs, such as `github:openzues/openzues#feature/native-runtime`, are
+  preserved in `tag` metadata, planned action text, and non-registry notes.
+  This closes `OZ-PKG-001AC`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999988%.
+- Verified explicit install-spec preservation with focused
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_preserves_explicit_package_install_spec -q`
+  (`1 passed`), adjacent update CLI proof `python -m pytest tests\test_cli.py
+  -q -k "update_dry_run or update_status"` (`16 passed, 532 deselected`),
+  `ruff check tests\test_cli.py`, and focused `git diff --check`. Test
+  checkpointed and pushed in `3227786a`.
 
 ## References
 
