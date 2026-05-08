@@ -21163,6 +21163,133 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_googlechat_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-googlechat.cjs"
+    runtime_entry.write_text(
+        """
+const googlechat = require("openclaw/plugin-sdk/googlechat");
+const scopedGooglechat = require("@openclaw/plugin-sdk/googlechat");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.googlechat",
+      description: "Use OpenClaw googlechat SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const setupKeys = Object.keys(googlechat)
+          .filter((key) => key.startsWith("googlechatSetup"))
+          .sort();
+        const adapter = googlechat.googlechatSetupAdapter;
+        const wizard = scopedGooglechat.googlechatSetupWizard;
+        let finalizeError = "";
+        return Promise.resolve()
+          .then(() => wizard.finalize({}))
+          .catch((error) => {
+            finalizeError = error.message;
+          })
+          .then(() => ({
+            setupKeys,
+            scopedSame:
+              scopedGooglechat.googlechatSetupAdapter === googlechat.googlechatSetupAdapter,
+            inheritedGenericType: typeof googlechat.createDedupeCache,
+            account: adapter.resolveAccountId({}),
+            validation: adapter.validateInput({}),
+            requireMention: googlechat.resolveGoogleChatGroupRequireMention({
+              cfg: {
+                channels: {
+                  googlechat: {
+                    groupPolicy: "allowlist",
+                    groups: { "space-1": { requireMention: false } }
+                  }
+                }
+              },
+              groupId: "space-1"
+            }),
+            wizard: {
+              channel: wizard.channel,
+              hint: wizard.status.unconfiguredHint,
+              selection: wizard.status.resolveSelectionHint(),
+              finalizeError
+            }
+          }));
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-googlechat-plugin",
+                    "name": "Runtime Google Chat Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-googlechat.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.googlechat"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.googlechat"})
+
+    message = (
+        "Google Chat setup requires @openclaw/googlechat to be installed. "
+        "Docs: channels/googlechat (https://docs.openclaw.ai/channels/googlechat)"
+    )
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "setupKeys": ["googlechatSetupAdapter", "googlechatSetupWizard"],
+        "scopedSame": True,
+        "inheritedGenericType": "function",
+        "account": "default",
+        "validation": message,
+        "requireMention": False,
+        "wizard": {
+            "channel": "googlechat",
+            "hint": message,
+            "selection": message,
+            "finalizeError": message,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_msteams_helpers(
     tmp_path,
 ) -> None:

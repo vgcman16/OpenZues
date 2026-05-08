@@ -88301,6 +88301,23 @@ function getOptionalChannelRootRuntime(params) {
   return runtime;
 }
 
+function getGooglechatRootRuntime() {
+  const runtime = getOptionalChannelRootRuntime({
+    channel: "googlechat",
+    label: "Google Chat",
+    npmSpec: "@openclaw/googlechat",
+    docsPath: "/channels/googlechat",
+  });
+  if (!Object.prototype.hasOwnProperty.call(runtime, "resolveGoogleChatGroupRequireMention")) {
+    Object.defineProperty(runtime, "resolveGoogleChatGroupRequireMention", {
+      enumerable: true,
+      value: (params = {}) =>
+        resolveChannelGroupRequireMention({ ...params, channel: "googlechat" }),
+    });
+  }
+  return runtime;
+}
+
 const originalLoad = Module._load;
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
@@ -88334,6 +88351,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
       npmSpec: "@openclaw/msteams",
       docsPath: "/channels/msteams",
     });
+  }
+  if (
+    request === "openclaw/plugin-sdk/googlechat" ||
+    request === "@openclaw/plugin-sdk/googlechat"
+  ) {
+    return getGooglechatRootRuntime();
   }
   if (
     request === "openclaw/plugin-sdk/tlon" ||
