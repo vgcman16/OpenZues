@@ -7793,6 +7793,106 @@ async def test_ops_mesh_service_routes_tlon_dm_firehose_event_to_session() -> No
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_tlon_group_thread_firehose_event_to_session() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-group-inbound"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "tlon-group-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_tlon_inbound_event(
+        {
+            "nest": "chat/~zod/general",
+            "response": {
+                "post": {
+                    "id": "tlon-root-post",
+                    "r-post": {
+                        "reply": {
+                            "id": "tlon-reply-1",
+                            "r-reply": {
+                                "set": {
+                                    "memo": {
+                                        "author": "~sampel-palnet",
+                                        "sent": 1713980000456,
+                                        "content": [
+                                            {
+                                                "inline": [
+                                                    "Thread reply for ",
+                                                    {"italics": ["general"]},
+                                                    ".",
+                                                ]
+                                            }
+                                        ],
+                                    },
+                                    "seal": {"parent-id": "tlon-root-post"},
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+        },
+        account_id="ship",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="tlon",
+        account_id="ship",
+        peer_kind="group",
+        peer_id="chat/~zod/general",
+    )
+    expected_base_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=expected_base_session_key,
+        thread_id="tlon-root-post",
+    ).session_key
+
+    assert session_deliveries == [
+        (expected_session_key, "Thread reply for *general*.")
+    ]
+    assert result == {
+        "ok": True,
+        "channel": "tlon",
+        "eventType": "channels",
+        "inboundMessageId": "tlon-reply-1",
+        "messageId": "tlon-group-session-message-1",
+        "sessionKey": expected_session_key,
+        "threadId": "tlon-root-post",
+        "text": "Thread reply for *general*.",
+        "senderId": "~sampel-palnet",
+        "conversationId": "chat/~zod/general",
+        "conversationType": "group",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "delivery": {"runtime": "session-backed"},
+        "timestamp": 1713980000456,
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -7328,6 +7328,60 @@ def _tlon_inbound_chat_message(event: Mapping[str, Any]) -> _TlonInboundMessage 
     )
 
 
+def _tlon_inbound_channels_message(event: Mapping[str, Any]) -> _TlonInboundMessage | None:
+    raw_nest = _tlon_read_string(event, "nest")
+    parsed_nest = _tlon_parse_channel_nest(raw_nest)
+    if parsed_nest is None:
+        return None
+    channel_target = _tlon_make_group_target(*parsed_nest)
+    if channel_target.nest is None:
+        return None
+    response = _tlon_as_mapping(event.get("response"))
+    post = _tlon_as_mapping(response.get("post")) if response is not None else None
+    r_post = _tlon_as_mapping(post.get("r-post")) if post is not None else None
+    set_record = _tlon_as_mapping(r_post.get("set")) if r_post is not None else None
+    reply = _tlon_as_mapping(r_post.get("reply")) if r_post is not None else None
+    reply_payload = _tlon_as_mapping(reply.get("r-reply")) if reply is not None else None
+    reply_set = (
+        _tlon_as_mapping(reply_payload.get("set"))
+        if reply_payload is not None
+        else None
+    )
+    essay = _tlon_as_mapping(set_record.get("essay")) if set_record is not None else None
+    memo = _tlon_as_mapping(reply_set.get("memo")) if reply_set is not None else None
+    content_record = memo or essay
+    if content_record is None:
+        return None
+    message_id = (
+        _tlon_read_string(reply, "id")
+        if memo is not None
+        else _tlon_read_string(post, "id")
+    )
+    if not message_id:
+        return None
+    sender_ship = _tlon_normalize_target_ship(_tlon_read_string(content_record, "author"))
+    if sender_ship is None:
+        return None
+    text = _tlon_extract_message_text(content_record.get("content"))
+    if not text:
+        return None
+    seal = (
+        _tlon_as_mapping(reply_set.get("seal"))
+        if memo is not None and reply_set is not None
+        else _tlon_as_mapping(set_record.get("seal")) if set_record is not None else None
+    )
+    thread_id = _tlon_read_string(seal, "parent-id") or _tlon_read_string(seal, "parent")
+    return _TlonInboundMessage(
+        event_type="channels",
+        message_id=message_id,
+        sender_ship=sender_ship,
+        text=text,
+        timestamp=_tlon_read_int(content_record, "sent"),
+        channel_nest=channel_target.nest,
+        thread_id=thread_id,
+    )
+
+
 def _tlon_inbound_session_context(
     message: _TlonInboundMessage,
     *,
@@ -13543,7 +13597,7 @@ class OpsMeshService:
         *,
         account_id: str | None = None,
     ) -> dict[str, object]:
-        message = _tlon_inbound_chat_message(event)
+        message = _tlon_inbound_chat_message(event) or _tlon_inbound_channels_message(event)
         if message is None:
             return {
                 "ok": False,
