@@ -76939,9 +76939,23 @@ async function closeActiveMemorySearchManagers(_cfg) {
   }
 }
 
+function resolveActiveMemoryBackendConfig(params = {}) {
+  const runtime = getMemoryHostSearchRuntime();
+  if (runtime && typeof runtime.resolveMemoryBackendConfig === "function") {
+    return runtime.resolveMemoryBackendConfig(params);
+  }
+  return null;
+}
+
 const memoryHostSearchRuntime = {
   closeActiveMemorySearchManagers,
   getActiveMemorySearchManager,
+};
+
+const memoryHostSearchRuntimeRuntime = {
+  closeActiveMemorySearchManagers,
+  getActiveMemorySearchManager,
+  resolveActiveMemoryBackendConfig,
 };
 
 function memoryCoreEngineRuntimeUnavailableError() {
@@ -86766,6 +86780,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-host-search"
   ) {
     return memoryHostSearchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-host-search.runtime" ||
+    request === "@openclaw/plugin-sdk/memory-host-search.runtime"
+  ) {
+    return memoryHostSearchRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-engine-runtime" ||

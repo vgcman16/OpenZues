@@ -41936,6 +41936,8 @@ async def test_tools_invoke_imported_openclaw_memory_host_search_helpers(
 const core = require("openclaw/plugin-sdk/memory-core-host-runtime-core");
 const search = require("openclaw/plugin-sdk/memory-host-search");
 const scopedSearch = require("@openclaw/plugin-sdk/memory-host-search");
+const runtimeSearch = require("openclaw/plugin-sdk/memory-host-search.runtime");
+const scopedRuntimeSearch = require("@openclaw/plugin-sdk/memory-host-search.runtime");
 
 module.exports = {
   register(api) {
@@ -41972,6 +41974,10 @@ module.exports = {
           agentId: "beta",
           purpose: "status"
         });
+        const backend = runtimeSearch.resolveActiveMemoryBackendConfig({
+          cfg,
+          agentId: "beta"
+        });
         await scopedSearch.closeActiveMemorySearchManagers(cfg);
         core.clearMemoryPluginState();
         const unavailable = await search.getActiveMemorySearchManager({
@@ -41980,8 +41986,11 @@ module.exports = {
         });
         return {
           keys: Object.keys(search).sort(),
+          runtimeKeys: Object.keys(runtimeSearch).sort(),
           scopedType: typeof scopedSearch.getActiveMemorySearchManager,
+          scopedRuntimeType: typeof scopedRuntimeSearch.resolveActiveMemoryBackendConfig,
           active,
+          backend,
           closed,
           unavailable
         };
@@ -42042,7 +42051,13 @@ module.exports = {
             "closeActiveMemorySearchManagers",
             "getActiveMemorySearchManager",
         ],
+        "runtimeKeys": [
+            "closeActiveMemorySearchManagers",
+            "getActiveMemorySearchManager",
+            "resolveActiveMemoryBackendConfig",
+        ],
         "scopedType": "function",
+        "scopedRuntimeType": "function",
         "active": {
             "manager": {
                 "id": "manager",
@@ -42051,6 +42066,7 @@ module.exports = {
                 "agentCount": 2,
             }
         },
+        "backend": {"backend": "builtin"},
         "closed": 1,
         "unavailable": {
             "manager": None,
