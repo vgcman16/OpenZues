@@ -1200,6 +1200,77 @@ def test_doctor_json_omits_local_build_metadata_and_plugin_dependency_debris(
     assert inventory_files_check["detail"] == "Package dist inventory matches packaged files."
 
 
+def test_doctor_json_warns_on_unsafe_package_dist_symlink(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    dist_path = package_root / "dist"
+    dist_path.mkdir(parents=True)
+    symlink_path = dist_path / "entry.js"
+    symlink_path.write_text("export {};\n", encoding="utf-8")
+    (dist_path / "postinstall-inventory.json").write_text(
+        json.dumps(["dist/entry.js"]),
+        encoding="utf-8",
+    )
+    original_is_symlink = Path.is_symlink
+
+    def fake_is_symlink(path: Path) -> bool:
+        if path == symlink_path:
+            return True
+        return original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    expected_warning = "Unsafe package dist path: dist/entry.js"
+    assert package_distribution["status"] == "warning"
+    assert expected_warning in package_distribution["warnings"]
+    unsafe_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "unsafe_package_dist_paths"
+    )
+    assert unsafe_check["status"] == "warning"
+    assert unsafe_check["detail"] == expected_warning
+
+
 def test_doctor_json_reports_source_install_pnpm_workspace_warnings(
     tmp_path,
     monkeypatch,

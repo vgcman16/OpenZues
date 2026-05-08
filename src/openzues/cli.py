@@ -8244,6 +8244,23 @@ def _doctor_collect_package_dist_files(root: Path) -> list[str]:
     return sorted(set(files))
 
 
+def _doctor_package_dist_unsafe_path_warnings(root: Path) -> list[str]:
+    dist_path = root / "dist"
+    if not _doctor_path_exists(dist_path):
+        return []
+    warnings: list[str] = []
+    for path in dist_path.rglob("*"):
+        try:
+            if path.is_symlink():
+                relative_path = _doctor_normalize_package_dist_path(
+                    path.relative_to(root).as_posix()
+                )
+                warnings.append(f"Unsafe package dist path: {relative_path}")
+        except OSError:
+            continue
+    return sorted(set(warnings))
+
+
 def _doctor_is_install_stage_dir_name(value: str) -> bool:
     lower = value.lower()
     return lower == ".openclaw-install-stage" or lower.startswith(
@@ -8467,6 +8484,12 @@ def _build_doctor_package_distribution_payload(
     )
     if staging_debris_warning is not None:
         warnings.append(staging_debris_warning)
+    unsafe_path_warnings = (
+        _doctor_package_dist_unsafe_path_warnings(root)
+        if inventory_required and dist_present
+        else []
+    )
+    warnings.extend(unsafe_path_warnings)
     inventory_file_warnings: list[str] = []
     if inventory_required and inventory_present and inventory_warning is None:
         inventory_file_warnings = _doctor_package_dist_inventory_file_warnings(
@@ -8561,6 +8584,16 @@ def _build_doctor_package_distribution_payload(
                 detail=staging_debris_warning
                 if staging_debris_warning is not None
                 else "No legacy plugin dependency staging debris found.",
+            )
+        )
+        checks.append(
+            _doctor_package_distribution_check(
+                key="unsafe_package_dist_paths",
+                status="warning" if unsafe_path_warnings else "ok",
+                path=dist_path,
+                detail="; ".join(unsafe_path_warnings)
+                if unsafe_path_warnings
+                else "No unsafe package dist paths found.",
             )
         )
     payload: dict[str, object] = {
