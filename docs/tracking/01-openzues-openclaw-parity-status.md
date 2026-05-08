@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999995% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6301,6 +6301,28 @@ may lag behind this tracker.
     before implementation, then `1 passed`), adjacent provider/onboard proof
     (`3 passed, 1161 deselected`), `ruff check`, `mypy`, and focused
     `git diff --check`.
+
+- [x] Imported plugin SDK ollama/ollama-runtime shim.
+  - Source: `openclaw-main/src/plugin-sdk/ollama.ts`,
+    `openclaw-main/src/plugin-sdk/ollama-runtime.ts`,
+    `openclaw-main/extensions/ollama/src/provider-models.ts`,
+    `openclaw-main/extensions/ollama/src/stream.ts`,
+    `openclaw-main/extensions/ollama/src/embedding-provider.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `ollama`/`ollama-runtime` imports expose
+    API-base normalization, chat request shaping, model id prefix trimming,
+    OpenAI-compatible `num_ctx` detection, message/tool-call conversion with
+    unsafe integer preservation, assistant message projection, tolerant NDJSON
+    parsing, and embedding-provider export posture.
+  - Evidence required: focused Ollama runtime import test, adjacent
+    provider/runtime proof, ruff, mypy
+  - Status: checkpointed in `2b1e3865`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Ollama red/green proof (exact import
+    returned generic/passthrough data before implementation, then `1 passed`),
+    adjacent provider/runtime proof (`4 passed, 1161 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 
