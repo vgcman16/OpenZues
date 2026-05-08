@@ -858,6 +858,31 @@ async def test_channels_stop_returns_idempotent_stopped_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_channels_stop_dispatches_runtime_stop_service_with_default_account() -> None:
+    stops: list[tuple[str, str]] = []
+
+    async def fake_channel_stop(channel: str, account_id: str) -> dict[str, object]:
+        stops.append((channel, account_id))
+        return {"channel": channel, "accountId": account_id, "stopped": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        channel_stop_service=fake_channel_stop,
+    )
+
+    result = await service.call(
+        "channels.stop",
+        {
+            "channel": "Tlon",
+            "accountId": "   ",
+        },
+    )
+
+    assert stops == [("tlon", "default")]
+    assert result == {"channel": "tlon", "accountId": "default", "stopped": True}
+
+
+@pytest.mark.asyncio
 async def test_channels_stop_rejects_invalid_channel() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 

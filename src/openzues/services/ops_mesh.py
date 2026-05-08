@@ -12850,6 +12850,29 @@ class OpsMeshService:
             except Exception:
                 logger.exception("Failed to stop Tlon monitor %s", handle_key)
 
+    async def _stop_tlon_provider_monitor_account(self, account_id: str) -> list[str]:
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        matching_keys = [
+            handle_key
+            for handle_key in self._tlon_monitor_handles
+            if handle_key.rsplit(":", 1)[-1] == normalized_account_id
+        ]
+        stopped_handles: list[str] = []
+        for handle_key in matching_keys:
+            handle = self._tlon_monitor_handles.pop(handle_key, None)
+            if handle is None:
+                continue
+            try:
+                await handle.close()
+            except Exception:
+                logger.exception("Failed to stop Tlon monitor %s", handle_key)
+                continue
+            stopped_handles.append(handle_key)
+        return stopped_handles
+
     async def start_channel_runtime_account(
         self,
         channel: str,
@@ -12869,6 +12892,24 @@ class OpsMeshService:
             "channel": normalized_channel,
             "accountId": normalized_account_id,
             "started": bool(started_handles),
+        }
+
+    async def stop_channel_runtime_account(
+        self,
+        channel: str,
+        account_id: str,
+    ) -> dict[str, object]:
+        normalized_channel = _canonical_native_provider_channel(channel)
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        if normalized_channel == "tlon":
+            await self._stop_tlon_provider_monitor_account(normalized_account_id)
+        return {
+            "channel": normalized_channel,
+            "accountId": normalized_account_id,
+            "stopped": True,
         }
 
     async def _queue_tlon_approval_request(

@@ -1473,6 +1473,7 @@ class GatewayNodeMethodService:
         ) = None,
         commands_service: GatewayCommandsService | None = None,
         channel_start_service: Callable[[str, str], Awaitable[dict[str, object]]] | None = None,
+        channel_stop_service: Callable[[str, str], Awaitable[dict[str, object]]] | None = None,
         config_service: GatewayConfigService | None = None,
         config_schema_service: GatewayConfigSchemaService | None = None,
         cron_service: GatewayCronService | None = None,
@@ -1560,6 +1561,7 @@ class GatewayNodeMethodService:
         self._pairing_service = pairing_service
         self._channels_service = channels_service
         self._channel_start_service = channel_start_service
+        self._channel_stop_service = channel_stop_service
         self._list_integration_views = list_integration_views
         self._list_notification_route_views = list_notification_route_views
         self._commands_service = commands_service or GatewayCommandsService()
@@ -5963,6 +5965,20 @@ class GatewayNodeMethodService:
                 ).strip()
                 if not channel_stop_account_id:
                     channel_stop_account_id = DEFAULT_ACCOUNT_ID
+            if self._channel_stop_service is not None:
+                try:
+                    return await self._channel_stop_service(
+                        normalized_channel,
+                        channel_stop_account_id,
+                    )
+                except GatewayNodeMethodError:
+                    raise
+                except RuntimeError as exc:
+                    raise GatewayNodeMethodError(
+                        code="INVALID_REQUEST",
+                        message=str(exc),
+                        status_code=400,
+                    ) from exc
             return {
                 "channel": normalized_channel,
                 "accountId": channel_stop_account_id,

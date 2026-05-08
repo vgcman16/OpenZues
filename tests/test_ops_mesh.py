@@ -8903,6 +8903,58 @@ async def test_ops_mesh_service_channels_start_starts_tlon_monitor_for_account()
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_channels_stop_closes_tlon_monitor_for_account() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-channel-stop"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Tlon Native Monitor",
+        kind="tlon",
+        target="https://zod.tlon.network?ship=~zod",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tlon-code",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "tlon",
+            "account_id": "ship",
+            "peer_kind": "direct",
+            "peer_id": "~sampel-palnet",
+        },
+    )
+
+    monitor_closes: list[str] = []
+
+    async def fake_tlon_monitor_runtime(request: object) -> object:
+        class FakeHandle:
+            async def close(self) -> None:
+                monitor_closes.append(request.account_id)
+
+        return FakeHandle()
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        tlon_monitor_runtime_service=fake_tlon_monitor_runtime,
+    )
+
+    await service.start_channel_runtime_account("tlon", "ship")
+    stop_result = await service.stop_channel_runtime_account("tlon", "ship")
+    await service.close()
+
+    assert stop_result == {"channel": "tlon", "accountId": "ship", "stopped": True}
+    assert monitor_closes == ["ship"]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_tlon_native_monitor_streams_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
