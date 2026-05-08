@@ -24,12 +24,13 @@ import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -465,6 +466,34 @@ class _TlonParsedTarget:
     channel_name: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _TlonInboundSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    sender_id: str
+    conversation_id: str
+    conversation_type: Literal["direct", "group"]
+    thread_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _TlonInboundMessage:
+    event_type: Literal["chat", "channels"]
+    message_id: str
+    sender_ship: str
+    text: str
+    content: object | None = None
+    timestamp: int | None = None
+    channel_nest: str | None = None
+    thread_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _TlonInboundImage:
+    url: str
+    alt: str | None = None
+
+
 @dataclass(frozen=True)
 class _IMessageProbeConfig:
     cli_path: str
@@ -511,6 +540,79 @@ class GatewayMSTeamsInboundMediaFetchRequest:
 GatewayMSTeamsInboundMediaFetchService = Callable[
     [GatewayMSTeamsInboundMediaFetchRequest],
     Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayTlonInboundMediaFetchRequest:
+    url: str
+    source_url: str
+    filename: str | None
+    content_type: str | None
+    max_bytes: int
+    account_id: str | None
+    message_id: str | None
+
+
+GatewayTlonInboundMediaFetchService = Callable[
+    [GatewayTlonInboundMediaFetchRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayTlonApprovalQueueRequest:
+    approval_type: Literal["dm", "channel"]
+    requesting_ship: str
+    owner_ship: str
+    message_preview: str
+    message_id: str
+    message_text: str
+    message_content: object | None
+    timestamp: int | None
+    account_id: str | None
+    channel_nest: str | None = None
+    parent_id: str | None = None
+    is_thread_reply: bool = False
+
+
+GatewayTlonApprovalQueueService = Callable[
+    [GatewayTlonApprovalQueueRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayTlonMonitorSubscription:
+    app: str
+    path: str
+    delivers_inbound: bool = False
+
+
+GatewayTlonMonitorEventHandler = Callable[
+    [Mapping[str, Any]],
+    Coroutine[Any, Any, dict[str, object]],
+]
+
+
+class GatewayTlonMonitorHandle(Protocol):
+    async def close(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayTlonMonitorStartRequest:
+    route_id: int
+    route_name: str
+    account_id: str
+    config: _TlonRouteConfig
+    subscriptions: tuple[GatewayTlonMonitorSubscription, ...]
+    handle_event: GatewayTlonMonitorEventHandler
+    channel_config: Mapping[str, Any]
+
+
+GatewayTlonMonitorRuntimeService = Callable[
+    [GatewayTlonMonitorStartRequest],
+    Awaitable[GatewayTlonMonitorHandle],
 ]
 
 
@@ -1292,6 +1394,10 @@ def _canonical_native_provider_channel(value: str | None) -> str:
     normalized = str(value or "").strip().lower()
     if normalized in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES:
         return "bluebubbles"
+    if normalized == "qq":
+        return "qqbot"
+    if normalized == "zalo-user":
+        return "zalouser"
     return normalized
 
 
@@ -7087,6 +7193,12 @@ TLON_TARGET_HINT = (
     "group:~host-ship/channel"
 )
 TLON_MEMEX_BASE_URL = "https://memex.tlon.network"
+TLON_INBOUND_MAX_IMAGES_PER_MESSAGE = 8
+TLON_INBOUND_MAX_IMAGE_BYTES = 6 * 1024 * 1024
+TLON_MONITOR_CONNECT_TIMEOUT_SECONDS = 60.0
+TLON_MONITOR_REQUEST_TIMEOUT_SECONDS = 30.0
+TLON_MONITOR_RECONNECT_DELAY_SECONDS = 5.0
+TLON_MONITOR_ACK_THRESHOLD = 20
 
 
 def _tlon_normalize_ship(raw_ship: str | None) -> str | None:
@@ -7127,11 +7239,907 @@ def _tlon_route_config(target: str | None, secret_token: str | None) -> _TlonRou
     return _TlonRouteConfig(base_url=base_url, ship=ship, code=code)
 
 
+def _tlon_monitor_subscriptions() -> tuple[GatewayTlonMonitorSubscription, ...]:
+    return (
+        GatewayTlonMonitorSubscription("channels", "/v2", delivers_inbound=True),
+        GatewayTlonMonitorSubscription("chat", "/v3", delivers_inbound=True),
+        GatewayTlonMonitorSubscription("contacts", "/v1/news"),
+        GatewayTlonMonitorSubscription("settings", "/desk/moltbot"),
+        GatewayTlonMonitorSubscription("groups", "/groups/ui"),
+        GatewayTlonMonitorSubscription("groups", "/v1/foreigns"),
+    )
+
+
+def _tlon_cookie_header(cookie: str) -> str:
+    return str(cookie or "").split(";", 1)[0].strip()
+
+
+def _tlon_monitor_auth_cookie(
+    config: _TlonRouteConfig,
+    *,
+    timeout_seconds: float,
+) -> str:
+    base_url = _tlon_http_base_url(config.base_url)
+    timeout = max(float(timeout_seconds), 0.001)
+    request = Request(
+        f"{base_url}/~/login",
+        data=urlencode({"password": config.code}).encode("utf-8"),
+        headers={
+            "Accept": "text/plain",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            status = int(getattr(response, "status", getattr(response, "code", 0)))
+            response.read()
+            if status < 200 or status >= 300:
+                raise RuntimeError(f"Login failed with status {status}")
+            cookie = str(response.headers.get("Set-Cookie") or "").strip()
+    except HTTPError as exc:
+        raise RuntimeError(f"Login failed with status {exc.code}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Tlon login failed: {exc.reason}") from exc
+    if not cookie:
+        raise RuntimeError("No authentication cookie received")
+    return cookie
+
+
+def _tlon_monitor_put_channel_payload(
+    config: _TlonRouteConfig,
+    *,
+    cookie: str,
+    channel_id: str,
+    payload: object,
+    timeout_seconds: float,
+) -> None:
+    timeout = max(float(timeout_seconds), 0.001)
+    request = Request(
+        f"{_tlon_http_base_url(config.base_url)}/~/channel/{channel_id}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Cookie": _tlon_cookie_header(cookie),
+        },
+        method="PUT",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            status = int(getattr(response, "status", getattr(response, "code", 0)))
+            response.read()
+            if status < 200 or (status >= 300 and status != 204):
+                raise RuntimeError(f"Tlon channel request failed with status {status}")
+    except HTTPError as exc:
+        error_text = exc.read().decode("utf-8", "replace").strip()
+        suffix = f" - {error_text}" if error_text else ""
+        raise RuntimeError(f"Tlon channel request failed: {exc.code}{suffix}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Tlon channel request failed: {exc.reason}") from exc
+
+
+def _tlon_monitor_delete_channel(
+    config: _TlonRouteConfig,
+    *,
+    cookie: str,
+    channel_id: str,
+    timeout_seconds: float,
+) -> None:
+    request = Request(
+        f"{_tlon_http_base_url(config.base_url)}/~/channel/{channel_id}",
+        headers={"Cookie": _tlon_cookie_header(cookie)},
+        method="DELETE",
+    )
+    with urlopen(request, timeout=max(float(timeout_seconds), 0.001)) as response:
+        response.read()
+
+
+class _TlonNativeSseMonitorHandle:
+    def __init__(self, request: GatewayTlonMonitorStartRequest) -> None:
+        self._request = request
+        self._loop = asyncio.get_running_loop()
+        self._stop_event = threading.Event()
+        self._state_lock = threading.Lock()
+        self._cookie: str | None = None
+        self._channel_id: str | None = None
+        self._last_heard_event_id = -1
+        self._last_acknowledged_event_id = -1
+        self._inbound_subscription_ids = {
+            index
+            for index, subscription in enumerate(request.subscriptions, start=1)
+            if subscription.delivers_inbound
+        }
+        self._task = asyncio.create_task(
+            self._run(),
+            name=f"openzues-tlon-monitor-{request.route_id}-{request.account_id}",
+        )
+
+    async def close(self) -> None:
+        self._stop_event.set()
+        self._task.cancel()
+        await asyncio.to_thread(self._cleanup_channel)
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+
+    async def _run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.to_thread(self._run_once)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if not self._stop_event.is_set():
+                    logger.exception(
+                        "Tlon monitor crashed for route %s account %s",
+                        self._request.route_id,
+                        self._request.account_id,
+                    )
+            finally:
+                await asyncio.to_thread(self._cleanup_channel)
+            if self._stop_event.is_set():
+                break
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._stop_event.wait),
+                    timeout=TLON_MONITOR_RECONNECT_DELAY_SECONDS,
+                )
+            except TimeoutError:
+                continue
+
+    def _run_once(self) -> None:
+        cookie = _tlon_monitor_auth_cookie(
+            self._request.config,
+            timeout_seconds=TLON_MONITOR_REQUEST_TIMEOUT_SECONDS,
+        )
+        channel_id = f"{int(time.time())}-{uuid.uuid4()}"
+        with self._state_lock:
+            self._cookie = cookie
+            self._channel_id = channel_id
+            self._last_heard_event_id = -1
+            self._last_acknowledged_event_id = -1
+        subscription_payload = [
+            {
+                "id": index,
+                "action": "subscribe",
+                "ship": self._request.config.ship.lstrip("~"),
+                "app": subscription.app,
+                "path": subscription.path,
+            }
+            for index, subscription in enumerate(self._request.subscriptions, start=1)
+        ]
+        _tlon_monitor_put_channel_payload(
+            self._request.config,
+            cookie=cookie,
+            channel_id=channel_id,
+            payload=subscription_payload,
+            timeout_seconds=TLON_MONITOR_REQUEST_TIMEOUT_SECONDS,
+        )
+        stream_request = Request(
+            f"{_tlon_http_base_url(self._request.config.base_url)}/~/channel/{channel_id}",
+            headers={
+                "Accept": "text/event-stream",
+                "Cookie": _tlon_cookie_header(cookie),
+            },
+            method="GET",
+        )
+        with urlopen(
+            stream_request,
+            timeout=TLON_MONITOR_CONNECT_TIMEOUT_SECONDS,
+        ) as response:
+            status = int(getattr(response, "status", getattr(response, "code", 0)))
+            if status < 200 or status >= 300:
+                response.read()
+                raise RuntimeError(f"Tlon SSE stream failed with status {status}")
+            event_lines: list[str] = []
+            while not self._stop_event.is_set():
+                line_bytes = response.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode("utf-8", "replace").rstrip("\r\n")
+                if line:
+                    event_lines.append(line)
+                    continue
+                if event_lines:
+                    self._process_sse_event("\n".join(event_lines))
+                    event_lines = []
+
+    def _cleanup_channel(self) -> None:
+        with self._state_lock:
+            cookie = self._cookie
+            channel_id = self._channel_id
+            self._cookie = None
+            self._channel_id = None
+        if not cookie or not channel_id:
+            return
+        unsubscribes = [
+            {"id": index, "action": "unsubscribe", "subscription": index}
+            for index, _subscription in enumerate(self._request.subscriptions, start=1)
+        ]
+        try:
+            _tlon_monitor_put_channel_payload(
+                self._request.config,
+                cookie=cookie,
+                channel_id=channel_id,
+                payload=unsubscribes,
+                timeout_seconds=TLON_MONITOR_REQUEST_TIMEOUT_SECONDS,
+            )
+            _tlon_monitor_delete_channel(
+                self._request.config,
+                cookie=cookie,
+                channel_id=channel_id,
+                timeout_seconds=TLON_MONITOR_REQUEST_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.exception(
+                "Tlon monitor cleanup failed for route %s account %s",
+                self._request.route_id,
+                self._request.account_id,
+            )
+
+    def _process_sse_event(self, event_data: str) -> None:
+        data: str | None = None
+        event_id: int | None = None
+        for line in event_data.splitlines():
+            if line.startswith("id: "):
+                try:
+                    event_id = int(line[4:].strip())
+                except ValueError:
+                    event_id = None
+            elif line.startswith("data: "):
+                data = line[6:]
+        if event_id is not None:
+            self._ack_if_needed(event_id)
+        if not data:
+            return
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError:
+            logger.exception("Tlon monitor received invalid SSE JSON")
+            return
+        if not isinstance(parsed, Mapping):
+            return
+        if parsed.get("response") == "quit":
+            return
+        payload = parsed.get("json")
+        if not isinstance(payload, Mapping):
+            return
+        subscription_id = parsed.get("id")
+        if isinstance(subscription_id, int):
+            if subscription_id in self._inbound_subscription_ids:
+                self._dispatch_inbound_event(payload)
+            return
+        self._dispatch_inbound_event(payload)
+
+    def _ack_if_needed(self, event_id: int) -> None:
+        with self._state_lock:
+            if event_id <= self._last_heard_event_id:
+                return
+            self._last_heard_event_id = event_id
+            if event_id - self._last_acknowledged_event_id <= TLON_MONITOR_ACK_THRESHOLD:
+                return
+            self._last_acknowledged_event_id = event_id
+            cookie = self._cookie
+            channel_id = self._channel_id
+        if not cookie or not channel_id:
+            return
+        try:
+            _tlon_monitor_put_channel_payload(
+                self._request.config,
+                cookie=cookie,
+                channel_id=channel_id,
+                payload=[
+                    {
+                        "id": int(time.time() * 1000),
+                        "action": "ack",
+                        "event-id": event_id,
+                    }
+                ],
+                timeout_seconds=10.0,
+            )
+        except Exception:
+            logger.exception("Tlon monitor ack failed for event %s", event_id)
+
+    def _dispatch_inbound_event(self, event: Mapping[str, Any]) -> None:
+        if self._stop_event.is_set():
+            return
+        try:
+            future: Future[dict[str, object]] = asyncio.run_coroutine_threadsafe(
+                self._request.handle_event(event),
+                self._loop,
+            )
+        except RuntimeError:
+            return
+        try:
+            future.result(timeout=TLON_MONITOR_REQUEST_TIMEOUT_SECONDS)
+        except Exception:
+            logger.exception(
+                "Tlon monitor inbound dispatch failed for route %s account %s",
+                self._request.route_id,
+                self._request.account_id,
+            )
+
+
+class _DefaultGatewayTlonMonitorRuntime:
+    async def __call__(
+        self,
+        request: GatewayTlonMonitorStartRequest,
+    ) -> GatewayTlonMonitorHandle:
+        return _TlonNativeSseMonitorHandle(request)
+
+
 def _tlon_normalize_target_ship(raw_ship: str | None) -> str | None:
     try:
         return _tlon_normalize_ship(raw_ship)
     except RuntimeError:
         return None
+
+
+def _tlon_as_mapping(value: object) -> Mapping[str, Any] | None:
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else None
+
+
+def _tlon_read_string(record: Mapping[str, Any] | None, key: str) -> str | None:
+    value = record.get(key) if record is not None else None
+    return value if isinstance(value, str) else None
+
+
+def _tlon_read_int(record: Mapping[str, Any] | None, key: str) -> int | None:
+    value = record.get(key) if record is not None else None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return math.trunc(float(value))
+    return None
+
+
+def _tlon_extract_dm_partner_ship(whom: object) -> str | None:
+    raw_ship = (
+        whom
+        if isinstance(whom, str)
+        else _tlon_read_string(_tlon_as_mapping(whom), "ship")
+    )
+    return _tlon_normalize_target_ship(str(raw_ship)) if raw_ship is not None else None
+
+
+def _tlon_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    entries: list[str] = []
+    for item in value:
+        normalized = str(item or "").strip()
+        if normalized:
+            entries.append(normalized)
+    return entries
+
+
+def _tlon_ship_list(value: object) -> list[str]:
+    ships: list[str] = []
+    for entry in _tlon_string_list(value):
+        normalized = _tlon_normalize_target_ship(entry)
+        if normalized is not None:
+            ships.append(normalized)
+    return ships
+
+
+def _tlon_channel_authorization(
+    channel_config: Mapping[str, Any],
+    channel_nest: str,
+) -> tuple[str, list[str]] | None:
+    authorization = _msteams_inbound_mapping(channel_config.get("authorization"))
+    if not authorization and "defaultAuthorizedShips" not in channel_config:
+        return None
+    channel_rules = _msteams_inbound_mapping(authorization.get("channelRules"))
+    rule = _msteams_inbound_mapping(channel_rules.get(channel_nest))
+    mode = (
+        _msteams_inbound_optional_string(rule.get("mode"))
+        or "restricted"
+    ).lower()
+    if mode != "open":
+        mode = "restricted"
+    allowed_value = (
+        rule.get("allowedShips")
+        if "allowedShips" in rule
+        else channel_config.get("defaultAuthorizedShips")
+    )
+    return mode, _tlon_ship_list(allowed_value)
+
+
+def _tlon_owner_ship(channel_config: Mapping[str, Any]) -> str | None:
+    return _tlon_normalize_target_ship(
+        _msteams_inbound_optional_string(channel_config.get("ownerShip"))
+    )
+
+
+def _tlon_channel_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> Mapping[str, Any]:
+    channels = _msteams_inbound_mapping(snapshot.get("channels"))
+    channel_config = _msteams_inbound_mapping(channels.get("tlon"))
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    accounts = _msteams_inbound_mapping(channel_config.get("accounts"))
+    account_config: Mapping[str, Any] = {}
+    if accounts:
+        account_config = _msteams_inbound_mapping(
+            accounts.get(normalized_account_id)
+            or accounts.get(DEFAULT_ACCOUNT_ID)
+            or {}
+        )
+    if not account_config:
+        return channel_config
+    merged = dict(channel_config)
+    merged.update(account_config)
+    return merged
+
+
+def _tlon_inbound_pending_approval_request(
+    message: _TlonInboundMessage,
+    *,
+    channel_config: Mapping[str, Any],
+    account_id: str | None,
+) -> GatewayTlonApprovalQueueRequest | None:
+    if not channel_config:
+        return None
+    sender_ship = _tlon_normalize_target_ship(message.sender_ship)
+    owner_ship = _tlon_owner_ship(channel_config)
+    if sender_ship is None or owner_ship is None or sender_ship == owner_ship:
+        return None
+    if sender_ship in _tlon_ship_list(channel_config.get("blockedShips")):
+        return None
+    if message.channel_nest is None:
+        if "dmAllowlist" not in channel_config:
+            return None
+        if sender_ship in _tlon_ship_list(channel_config.get("dmAllowlist")):
+            return None
+        return GatewayTlonApprovalQueueRequest(
+            approval_type="dm",
+            requesting_ship=sender_ship,
+            owner_ship=owner_ship,
+            message_preview=message.text[:100],
+            message_id=message.message_id,
+            message_text=message.text,
+            message_content=message.content,
+            timestamp=message.timestamp,
+            account_id=account_id,
+        )
+    channel_authorization = _tlon_channel_authorization(
+        channel_config,
+        message.channel_nest,
+    )
+    if channel_authorization is None:
+        return None
+    mode, allowed_ships = channel_authorization
+    if mode == "open" or sender_ship in allowed_ships:
+        return None
+    return GatewayTlonApprovalQueueRequest(
+        approval_type="channel",
+        requesting_ship=sender_ship,
+        owner_ship=owner_ship,
+        message_preview=message.text[:100],
+        message_id=message.message_id,
+        message_text=message.text,
+        message_content=message.content,
+        timestamp=message.timestamp,
+        account_id=account_id,
+        channel_nest=message.channel_nest,
+        parent_id=message.thread_id,
+        is_thread_reply=message.thread_id is not None,
+    )
+
+
+def _tlon_pending_approval_metadata(
+    request: GatewayTlonApprovalQueueRequest,
+    queue_result: object,
+) -> dict[str, object]:
+    result = _msteams_inbound_mapping(queue_result)
+    approval_id = _msteams_inbound_optional_string(result.get("approvalId"))
+    metadata: dict[str, object] = {
+        "ok": False,
+        "channel": "tlon",
+        "eventType": "channels" if request.approval_type == "channel" else "chat",
+        "skipped": True,
+        "status": "approval_pending",
+        "reason": (
+            "tlon_channel_sender_pending_approval"
+            if request.approval_type == "channel"
+            else "tlon_dm_sender_pending_approval"
+        ),
+        "approval": {
+            "type": request.approval_type,
+            "requestingShip": request.requesting_ship,
+            "ownerShip": request.owner_ship,
+            "notified": bool(result.get("notified")),
+        },
+        "inboundMessageId": request.message_id,
+        "senderId": request.requesting_ship,
+        "conversationId": request.channel_nest or request.requesting_ship,
+        "conversationType": "group" if request.channel_nest else "direct",
+        "accountId": normalize_optional_account_id(request.account_id) or DEFAULT_ACCOUNT_ID,
+    }
+    if approval_id is not None:
+        metadata["approvalId"] = approval_id
+    if request.channel_nest is not None:
+        metadata["channelNest"] = request.channel_nest
+    if request.parent_id is not None:
+        metadata["threadId"] = request.parent_id
+    return metadata
+
+
+def _tlon_inbound_blocked_sender_metadata(
+    message: _TlonInboundMessage,
+    *,
+    channel_config: Mapping[str, Any],
+    account_id: str | None,
+) -> dict[str, object] | None:
+    sender_ship = _tlon_normalize_target_ship(message.sender_ship)
+    if sender_ship is None:
+        return None
+    if sender_ship not in _tlon_ship_list(channel_config.get("blockedShips")):
+        return None
+    return {
+        "ok": False,
+        "channel": "tlon",
+        "eventType": message.event_type,
+        "skipped": True,
+        "status": "blocked",
+        "reason": "tlon_sender_blocked",
+        "inboundMessageId": message.message_id,
+        "senderId": sender_ship,
+        "conversationId": message.channel_nest or sender_ship,
+        "conversationType": "group" if message.channel_nest else "direct",
+        "accountId": normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID,
+    }
+
+
+def _tlon_parse_approval_response(text: str) -> tuple[str, str | None] | None:
+    match = re.match(r"^\s*(approve|deny|block)(?:\s+(.+?))?\s*$", text, flags=re.I)
+    if match is None:
+        return None
+    approval_id = match.group(2).strip() if match.group(2) else None
+    return match.group(1).lower(), approval_id or None
+
+
+def _tlon_parse_admin_command(text: str) -> tuple[str, str | None] | None:
+    normalized = text.strip().lower()
+    if normalized in {"blocked", "pending"}:
+        return normalized, None
+    match = re.match(r"^unblock\s+(~?[a-z-]+)\s*$", normalized, flags=re.I)
+    if match is None:
+        return None
+    ship = _tlon_normalize_target_ship(match.group(1))
+    return ("unblock", ship) if ship is not None else None
+
+
+def _tlon_pending_approval_matches(
+    pending: Mapping[str, Any],
+    *,
+    approval_id: str | None,
+) -> bool:
+    if approval_id is None:
+        return True
+    return _msteams_inbound_optional_string(pending.get("id")) == approval_id
+
+
+def _tlon_inbound_authorization_block_metadata(
+    message: _TlonInboundMessage,
+    *,
+    channel_config: Mapping[str, Any],
+    account_id: str | None,
+) -> dict[str, object] | None:
+    if not channel_config:
+        return None
+    sender_ship = _tlon_normalize_target_ship(message.sender_ship)
+    if sender_ship is None:
+        return None
+    owner_ship = _tlon_normalize_target_ship(
+        _msteams_inbound_optional_string(channel_config.get("ownerShip"))
+    )
+    if owner_ship is not None:
+        return None
+    if message.channel_nest is None:
+        if "dmAllowlist" not in channel_config:
+            return None
+        if sender_ship in _tlon_ship_list(channel_config.get("dmAllowlist")):
+            return None
+        return {
+            "ok": False,
+            "channel": "tlon",
+            "eventType": message.event_type,
+            "skipped": True,
+            "status": "blocked",
+            "reason": "tlon_dm_sender_not_allowlisted",
+            "inboundMessageId": message.message_id,
+            "senderId": sender_ship,
+            "conversationId": sender_ship,
+            "conversationType": "direct",
+            "accountId": normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID,
+        }
+    channel_authorization = _tlon_channel_authorization(
+        channel_config,
+        message.channel_nest,
+    )
+    if channel_authorization is None:
+        return None
+    mode, allowed_ships = channel_authorization
+    if mode == "open" or sender_ship in allowed_ships:
+        return None
+    return {
+        "ok": False,
+        "channel": "tlon",
+        "eventType": message.event_type,
+        "skipped": True,
+        "status": "blocked",
+        "reason": "tlon_channel_sender_not_authorized",
+        "inboundMessageId": message.message_id,
+        "senderId": sender_ship,
+        "conversationId": message.channel_nest,
+        "conversationType": "group",
+        "accountId": normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID,
+        "channelNest": message.channel_nest,
+        "authorization": {
+            "mode": mode,
+            "allowedShips": allowed_ships,
+        },
+    }
+    return None
+
+
+def _tlon_extract_inline_text(items: object) -> str:
+    if not isinstance(items, list):
+        return ""
+    return "".join(_tlon_render_inline_item(item) for item in items)
+
+
+def _tlon_render_inline_item(
+    item: object,
+    *,
+    link_mode: Literal["content-or-href", "href"] = "content-or-href",
+    allow_break: bool = False,
+    allow_blockquote: bool = False,
+) -> str:
+    if isinstance(item, str):
+        return item
+    record = _tlon_as_mapping(item)
+    if record is None:
+        return ""
+    ship = _tlon_read_string(record, "ship")
+    if ship:
+        return ship
+    if "sect" in record:
+        sect = record.get("sect")
+        return f"@{sect}" if isinstance(sect, str) and sect else "@all"
+    if allow_break and "break" in record:
+        return "\n"
+    inline_code = _tlon_read_string(record, "inline-code") or _tlon_read_string(record, "code")
+    if inline_code:
+        return f"`{inline_code}`"
+    link = _tlon_as_mapping(record.get("link"))
+    link_href = _tlon_read_string(link, "href")
+    if link is not None and link_href:
+        link_content = _tlon_read_string(link, "content")
+        return link_href if link_mode == "href" else link_content or link_href
+    if isinstance(record.get("bold"), list):
+        return f"**{_tlon_extract_inline_text(record.get('bold'))}**"
+    if isinstance(record.get("italics"), list):
+        return f"*{_tlon_extract_inline_text(record.get('italics'))}*"
+    if isinstance(record.get("strike"), list):
+        return f"~~{_tlon_extract_inline_text(record.get('strike'))}~~"
+    if allow_blockquote and isinstance(record.get("blockquote"), list):
+        return f"> {_tlon_extract_inline_text(record.get('blockquote'))}"
+    return ""
+
+
+def _tlon_extract_message_text(content: object) -> str:
+    if not isinstance(content, list):
+        return ""
+    rendered: list[str] = []
+    for verse in content:
+        verse_record = _tlon_as_mapping(verse)
+        if verse_record is None:
+            continue
+        inline = verse_record.get("inline")
+        if isinstance(inline, list):
+            rendered.append(
+                "".join(
+                    _tlon_render_inline_item(
+                        item,
+                        link_mode="href",
+                        allow_break=True,
+                        allow_blockquote=True,
+                    )
+                    for item in inline
+                )
+            )
+            continue
+        block = _tlon_as_mapping(verse_record.get("block"))
+        if block is None:
+            continue
+        image = _tlon_as_mapping(block.get("image"))
+        image_src = _tlon_read_string(image, "src")
+        if image_src:
+            alt_text = _tlon_read_string(image, "alt")
+            alt = f" ({alt_text})" if alt_text else ""
+            rendered.append(f"\n{image_src}{alt}\n")
+            continue
+        code_block = _tlon_as_mapping(block.get("code"))
+        if code_block is not None:
+            lang = _tlon_read_string(code_block, "lang") or ""
+            code = _tlon_read_string(code_block, "code") or ""
+            rendered.append(f"\n```{lang}\n{code}\n```\n")
+            continue
+        header = _tlon_as_mapping(block.get("header"))
+        header_content = header.get("content") if header is not None else None
+        if isinstance(header_content, list):
+            header_text = "".join(item for item in header_content if isinstance(item, str))
+            rendered.append(f"\n## {header_text}\n")
+            continue
+        cite = _tlon_as_mapping(block.get("cite"))
+        if cite is not None:
+            chan_cite = _tlon_as_mapping(cite.get("chan"))
+            if chan_cite is not None:
+                nest = _tlon_read_string(chan_cite, "nest") or "unknown"
+                where = _tlon_read_string(chan_cite, "where") or ""
+                match = re.search(r"/msg/(~[a-z-]+)/(.+)", where, flags=re.IGNORECASE)
+                if match:
+                    rendered.append(f"\n> [quoted: {match.group(1)} in {nest}]\n")
+                else:
+                    rendered.append(f"\n> [quoted from {nest}]\n")
+                continue
+            group = _tlon_read_string(cite, "group")
+            if group:
+                rendered.append(f"\n> [ref: group {group}]\n")
+                continue
+            desk = _tlon_as_mapping(cite.get("desk"))
+            flag = _tlon_read_string(desk, "flag")
+            if flag:
+                rendered.append(f"\n> [ref: {flag}]\n")
+                continue
+            bait = _tlon_as_mapping(cite.get("bait"))
+            graph = _tlon_read_string(bait, "graph")
+            group_name = _tlon_read_string(bait, "group")
+            if graph and group_name:
+                rendered.append(f"\n> [ref: {graph} in {group_name}]\n")
+            else:
+                rendered.append("\n> [quoted message]\n")
+    return "\n".join(rendered).strip()
+
+
+def _tlon_extract_image_blocks(content: object) -> list[_TlonInboundImage]:
+    if not isinstance(content, list):
+        return []
+    images: list[_TlonInboundImage] = []
+    for verse in content:
+        verse_record = _tlon_as_mapping(verse)
+        block = _tlon_as_mapping(verse_record.get("block")) if verse_record else None
+        image = _tlon_as_mapping(block.get("image")) if block else None
+        image_src = _tlon_read_string(image, "src")
+        if not image_src:
+            continue
+        images.append(_TlonInboundImage(url=image_src, alt=_tlon_read_string(image, "alt")))
+        if len(images) >= TLON_INBOUND_MAX_IMAGES_PER_MESSAGE:
+            break
+    return images
+
+
+def _tlon_inbound_chat_message(event: Mapping[str, Any]) -> _TlonInboundMessage | None:
+    response = _tlon_as_mapping(event.get("response"))
+    add = _tlon_as_mapping(response.get("add")) if response is not None else None
+    essay = _tlon_as_mapping(add.get("essay")) if add is not None else None
+    if essay is None:
+        return None
+    message_id = _tlon_read_string(event, "id")
+    if not message_id:
+        return None
+    author_ship = _tlon_normalize_target_ship(_tlon_read_string(essay, "author"))
+    partner_ship = _tlon_extract_dm_partner_ship(event.get("whom"))
+    sender_ship = partner_ship or author_ship
+    if sender_ship is None:
+        return None
+    text = _tlon_extract_message_text(essay.get("content"))
+    if not text:
+        return None
+    return _TlonInboundMessage(
+        event_type="chat",
+        message_id=message_id,
+        sender_ship=sender_ship,
+        text=text,
+        content=essay.get("content"),
+        timestamp=_tlon_read_int(essay, "sent"),
+    )
+
+
+def _tlon_inbound_channels_message(event: Mapping[str, Any]) -> _TlonInboundMessage | None:
+    raw_nest = _tlon_read_string(event, "nest")
+    parsed_nest = _tlon_parse_channel_nest(raw_nest)
+    if parsed_nest is None:
+        return None
+    channel_target = _tlon_make_group_target(*parsed_nest)
+    if channel_target.nest is None:
+        return None
+    response = _tlon_as_mapping(event.get("response"))
+    post = _tlon_as_mapping(response.get("post")) if response is not None else None
+    r_post = _tlon_as_mapping(post.get("r-post")) if post is not None else None
+    set_record = _tlon_as_mapping(r_post.get("set")) if r_post is not None else None
+    reply = _tlon_as_mapping(r_post.get("reply")) if r_post is not None else None
+    reply_payload = _tlon_as_mapping(reply.get("r-reply")) if reply is not None else None
+    reply_set = (
+        _tlon_as_mapping(reply_payload.get("set"))
+        if reply_payload is not None
+        else None
+    )
+    essay = _tlon_as_mapping(set_record.get("essay")) if set_record is not None else None
+    memo = _tlon_as_mapping(reply_set.get("memo")) if reply_set is not None else None
+    content_record = memo or essay
+    if content_record is None:
+        return None
+    message_id = (
+        _tlon_read_string(reply, "id")
+        if memo is not None
+        else _tlon_read_string(post, "id")
+    )
+    if not message_id:
+        return None
+    sender_ship = _tlon_normalize_target_ship(_tlon_read_string(content_record, "author"))
+    if sender_ship is None:
+        return None
+    text = _tlon_extract_message_text(content_record.get("content"))
+    if not text:
+        return None
+    seal = (
+        _tlon_as_mapping(reply_set.get("seal"))
+        if memo is not None and reply_set is not None
+        else _tlon_as_mapping(set_record.get("seal")) if set_record is not None else None
+    )
+    thread_id = _tlon_read_string(seal, "parent-id") or _tlon_read_string(seal, "parent")
+    return _TlonInboundMessage(
+        event_type="channels",
+        message_id=message_id,
+        sender_ship=sender_ship,
+        text=text,
+        content=content_record.get("content"),
+        timestamp=_tlon_read_int(content_record, "sent"),
+        channel_nest=channel_target.nest,
+        thread_id=thread_id,
+    )
+
+
+def _tlon_inbound_session_context(
+    message: _TlonInboundMessage,
+    *,
+    account_id: str | None,
+) -> _TlonInboundSessionContext:
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    is_group = message.channel_nest is not None
+    conversation_id = message.channel_nest or message.sender_ship
+    conversation_target = ConversationTargetView(
+        channel="tlon",
+        account_id=normalized_account_id,
+        peer_kind="group" if is_group else "direct",
+        peer_id=conversation_id,
+    )
+    base_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=base_session_key,
+        thread_id=message.thread_id,
+    ).session_key
+    return _TlonInboundSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        sender_id=message.sender_ship,
+        conversation_id=conversation_id,
+        conversation_type="group" if is_group else "direct",
+        thread_id=message.thread_id,
+    )
 
 
 def _tlon_parse_channel_nest(raw: str | None) -> tuple[str, str] | None:
@@ -7461,9 +8469,8 @@ def _tlon_storage_update_payload(value: object) -> dict[str, object]:
 
 
 def _tlon_has_custom_storage_credentials(value: object) -> bool:
-    payload = _tlon_storage_update_payload(value)
-    credentials = payload.get("credentials", payload)
-    if not isinstance(credentials, dict):
+    credentials = _tlon_storage_credentials(value)
+    if credentials is None:
         return False
     return all(
         str(credentials.get(key) or "").strip()
@@ -7471,11 +8478,20 @@ def _tlon_has_custom_storage_credentials(value: object) -> bool:
     )
 
 
-def _tlon_storage_service(value: object) -> str:
+def _tlon_storage_credentials(value: object) -> dict[str, object] | None:
+    payload = _tlon_storage_update_payload(value)
+    credentials = payload.get("credentials", payload)
+    return credentials if isinstance(credentials, dict) else None
+
+
+def _tlon_storage_configuration(value: object) -> dict[str, object]:
     payload = _tlon_storage_update_payload(value)
     configuration = payload.get("configuration", payload)
-    if not isinstance(configuration, dict):
-        return ""
+    return configuration if isinstance(configuration, dict) else {}
+
+
+def _tlon_storage_service(value: object) -> str:
+    configuration = _tlon_storage_configuration(value)
     return str(configuration.get("service") or "").strip()
 
 
@@ -7485,6 +8501,19 @@ def _tlon_genuine_secret(value: object) -> str | None:
     if isinstance(value, dict):
         return str(value.get("secret") or "").strip() or None
     return None
+
+
+def _tlon_assert_safe_upload_result_url(raw_url: str, label: str) -> str:
+    parsed = urlparse(str(raw_url or "").strip())
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError(f"{label} must use http or https")
+    return parsed.geturl()
+
+
+def _tlon_public_upload_url(file_key: str, public_url_base: str, signed_url: str) -> str:
+    if str(public_url_base or "").strip():
+        return urljoin(str(public_url_base), file_key)
+    return str(signed_url).split("?", 1)[0]
 
 
 def _tlon_is_image_url(media_url: str) -> bool:
@@ -11636,6 +12665,9 @@ class OpsMeshService:
     outbound_runtime_service: GatewayOutboundRuntimeService | None = None
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
     msteams_inbound_media_fetch_service: GatewayMSTeamsInboundMediaFetchService | None = None
+    tlon_inbound_media_fetch_service: GatewayTlonInboundMediaFetchService | None = None
+    tlon_approval_queue_service: GatewayTlonApprovalQueueService | None = None
+    tlon_monitor_runtime_service: GatewayTlonMonitorRuntimeService | None = None
     msteams_feedback_reflection_service: GatewayMSTeamsFeedbackReflectionService | None = None
     discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
     gateway_config_service: GatewayConfigService | None = None
@@ -11655,11 +12687,16 @@ class OpsMeshService:
         init=False,
         default_factory=dict,
     )
+    _tlon_monitor_handles: dict[str, GatewayTlonMonitorHandle] = field(
+        init=False,
+        default_factory=dict,
+    )
 
     async def start(self) -> None:
         if self._task is not None:
             return
         await self._migrate_legacy_secret_refs()
+        await self._start_tlon_provider_monitors()
         self._stop_event.clear()
         self._task = asyncio.create_task(self._runner_loop(), name="openzues-ops-mesh")
 
@@ -11672,6 +12709,7 @@ class OpsMeshService:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        await self._stop_tlon_provider_monitors()
 
     def _resolve_outbound_runtime_service(self) -> GatewayOutboundRuntimeService | None:
         runtime = self.outbound_runtime_service
@@ -11700,6 +12738,927 @@ class OpsMeshService:
     def _session_outbound_runtime_available(self) -> bool:
         runtime = self._resolve_outbound_runtime_service()
         return runtime is not None and runtime.has_session_deliverer()
+
+    def _tlon_channel_config(
+        self,
+        *,
+        account_id: str | None,
+    ) -> Mapping[str, Any]:
+        if self.gateway_config_service is None:
+            return {}
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return {}
+        if not isinstance(snapshot, Mapping):
+            return {}
+        return _tlon_channel_config_from_snapshot(snapshot, account_id=account_id)
+
+    def _tlon_monitor_runtime(self) -> GatewayTlonMonitorRuntimeService:
+        return self.tlon_monitor_runtime_service or _DefaultGatewayTlonMonitorRuntime()
+
+    @staticmethod
+    def _tlon_monitor_handle_key(route_id: int, account_id: str) -> str:
+        return f"{route_id}:{account_id}"
+
+    async def _start_tlon_provider_monitors(
+        self,
+        *,
+        account_id_filter: str | None = None,
+    ) -> list[str]:
+        runtime = self._tlon_monitor_runtime()
+        started_handles: list[str] = []
+        requested_account_id = (
+            normalize_optional_account_id(str(account_id_filter or "").strip())
+            if account_id_filter is not None
+            else None
+        )
+        for route in await self.database.list_notification_routes():
+            if not bool(route.get("enabled")):
+                continue
+            if str(route.get("kind") or "").strip().lower() != "tlon":
+                continue
+            try:
+                route_id = int(route["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            target = _normalize_conversation_target(route.get("conversation_target"))
+            account_id = (
+                normalize_optional_account_id(
+                    str((target or {}).get("account_id") or "").strip()
+                )
+                or DEFAULT_ACCOUNT_ID
+            )
+            if requested_account_id is not None and account_id != requested_account_id:
+                continue
+            handle_key = self._tlon_monitor_handle_key(route_id, account_id)
+            if handle_key in self._tlon_monitor_handles:
+                started_handles.append(handle_key)
+                continue
+            secret_token = await self._notification_route_secret_token(route)
+            if not str(secret_token or "").strip():
+                logger.warning(
+                    "Skipping Tlon monitor for route %s account %s: missing credential secret",
+                    route_id,
+                    account_id,
+                )
+                continue
+            try:
+                config = _tlon_route_config(str(route.get("target") or ""), str(secret_token))
+            except RuntimeError:
+                logger.exception(
+                    "Skipping Tlon monitor for route %s account %s: invalid route config",
+                    route_id,
+                    account_id,
+                )
+                continue
+
+            async def handle_event(
+                event: Mapping[str, Any],
+                *,
+                bound_account_id: str = account_id,
+            ) -> dict[str, object]:
+                return await self.handle_tlon_inbound_event(
+                    event,
+                    account_id=bound_account_id,
+                )
+
+            request = GatewayTlonMonitorStartRequest(
+                route_id=route_id,
+                route_name=str(route.get("name") or f"Tlon route {route_id}"),
+                account_id=account_id,
+                config=config,
+                subscriptions=_tlon_monitor_subscriptions(),
+                handle_event=handle_event,
+                channel_config=self._tlon_channel_config(account_id=account_id),
+            )
+            try:
+                handle = await runtime(request)
+            except Exception:
+                logger.exception(
+                    "Failed to start Tlon monitor for route %s account %s",
+                    route_id,
+                    account_id,
+                )
+                continue
+            self._tlon_monitor_handles[handle_key] = handle
+            started_handles.append(handle_key)
+        return started_handles
+
+    async def _stop_tlon_provider_monitors(self) -> None:
+        handles = list(self._tlon_monitor_handles.items())
+        self._tlon_monitor_handles.clear()
+        for handle_key, handle in handles:
+            try:
+                await handle.close()
+            except Exception:
+                logger.exception("Failed to stop Tlon monitor %s", handle_key)
+
+    async def _stop_tlon_provider_monitor_account(self, account_id: str) -> list[str]:
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        matching_keys = [
+            handle_key
+            for handle_key in self._tlon_monitor_handles
+            if handle_key.rsplit(":", 1)[-1] == normalized_account_id
+        ]
+        stopped_handles: list[str] = []
+        for handle_key in matching_keys:
+            handle = self._tlon_monitor_handles.pop(handle_key, None)
+            if handle is None:
+                continue
+            try:
+                await handle.close()
+            except Exception:
+                logger.exception("Failed to stop Tlon monitor %s", handle_key)
+                continue
+            stopped_handles.append(handle_key)
+        return stopped_handles
+
+    async def start_channel_runtime_account(
+        self,
+        channel: str,
+        account_id: str,
+    ) -> dict[str, object]:
+        normalized_channel = _canonical_native_provider_channel(channel)
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        if normalized_channel != "tlon":
+            raise RuntimeError(f"channel {normalized_channel} does not support runtime start")
+        started_handles = await self._start_tlon_provider_monitors(
+            account_id_filter=normalized_account_id,
+        )
+        return {
+            "channel": normalized_channel,
+            "accountId": normalized_account_id,
+            "started": bool(started_handles),
+        }
+
+    async def stop_channel_runtime_account(
+        self,
+        channel: str,
+        account_id: str,
+    ) -> dict[str, object]:
+        normalized_channel = _canonical_native_provider_channel(channel)
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        if normalized_channel == "tlon":
+            await self._stop_tlon_provider_monitor_account(normalized_account_id)
+        return {
+            "channel": normalized_channel,
+            "accountId": normalized_account_id,
+            "stopped": True,
+        }
+
+    def _clear_channel_secret_config(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+        fields: tuple[str, ...],
+    ) -> bool:
+        if self.gateway_config_service is None:
+            return False
+        snapshot = self.gateway_config_service.build_snapshot()
+        next_snapshot = json.loads(json.dumps(snapshot))
+        if not isinstance(next_snapshot, dict):
+            return False
+        channels = next_snapshot.get("channels")
+        if not isinstance(channels, dict):
+            return False
+        section = channels.get(channel)
+        if not isinstance(section, dict):
+            return False
+
+        cleared = False
+        if account_id == DEFAULT_ACCOUNT_ID:
+            for field_name in fields:
+                if section.pop(field_name, None) is not None:
+                    cleared = True
+
+        accounts = section.get("accounts")
+        if isinstance(accounts, dict):
+            account_section = accounts.get(account_id)
+            if isinstance(account_section, dict):
+                for field_name in fields:
+                    if account_section.pop(field_name, None) is not None:
+                        cleared = True
+                if not account_section:
+                    accounts.pop(account_id, None)
+            if not accounts:
+                section.pop("accounts", None)
+
+        if not cleared:
+            return False
+        if not section:
+            channels.pop(channel, None)
+        if not channels:
+            next_snapshot.pop("channels", None)
+        self.gateway_config_service.set_raw(
+            json.dumps(next_snapshot),
+            base_hash=self.gateway_config_service._snapshot_hash(snapshot),
+        )
+        return True
+
+    def _channel_secret_configured(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+        fields: tuple[str, ...],
+    ) -> bool:
+        if self.gateway_config_service is None:
+            return False
+        snapshot = self.gateway_config_service.build_snapshot()
+        channels = snapshot.get("channels")
+        section = channels.get(channel) if isinstance(channels, dict) else None
+        if not isinstance(section, dict):
+            return False
+        if account_id == DEFAULT_ACCOUNT_ID and any(
+            str(section.get(field_name) or "").strip() for field_name in fields
+        ):
+            return True
+        accounts = section.get("accounts")
+        account_section = accounts.get(account_id) if isinstance(accounts, dict) else None
+        if not isinstance(account_section, dict):
+            return False
+        return any(str(account_section.get(field_name) or "").strip() for field_name in fields)
+
+    async def logout_channel_runtime_account(
+        self,
+        channel: str,
+        account_id: str,
+    ) -> dict[str, object]:
+        normalized_channel = _canonical_native_provider_channel(channel)
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        if normalized_channel == "telegram":
+            return await self._logout_secret_backed_channel_account(
+                channel="telegram",
+                account_id=normalized_account_id,
+                fields=("botToken",),
+                env_var="TELEGRAM_BOT_TOKEN",
+            )
+        if normalized_channel == "line":
+            return await self._logout_secret_backed_channel_account(
+                channel="line",
+                account_id=normalized_account_id,
+                fields=("channelAccessToken", "channelSecret", "tokenFile", "secretFile"),
+                env_var="LINE_CHANNEL_ACCESS_TOKEN",
+            )
+        if normalized_channel == "nextcloud-talk":
+            return await self._logout_secret_backed_channel_account(
+                channel="nextcloud-talk",
+                account_id=normalized_account_id,
+                fields=("botSecret",),
+                env_var="NEXTCLOUD_TALK_BOT_SECRET",
+                env_result_key="envSecret",
+            )
+        if normalized_channel == "qqbot":
+            return await self._logout_secret_backed_channel_account(
+                channel="qqbot",
+                account_id=normalized_account_id,
+                fields=("clientSecret", "clientSecretFile"),
+                env_var="QQBOT_CLIENT_SECRET",
+                extra_result={"ok": True},
+            )
+        if normalized_channel == "whatsapp":
+            return await self._logout_whatsapp_channel_account(normalized_account_id)
+        if normalized_channel == "zalouser":
+            return await self._logout_zalouser_channel_account(normalized_account_id)
+        raise RuntimeError(f"channel {normalized_channel} does not support logout")
+
+    async def _logout_whatsapp_channel_account(self, account_id: str) -> dict[str, object]:
+        await self.stop_channel_runtime_account("whatsapp", account_id)
+        auth_dir, is_legacy_auth_dir, oauth_dir = self._resolve_whatsapp_auth_dir(account_id)
+        cleared = self._clear_whatsapp_auth_dir(
+            auth_dir=auth_dir,
+            oauth_dir=oauth_dir,
+            is_legacy_auth_dir=is_legacy_auth_dir,
+        )
+        return {
+            "channel": "whatsapp",
+            "accountId": account_id,
+            "cleared": cleared,
+            "loggedOut": cleared,
+        }
+
+    def _resolve_whatsapp_auth_dir(self, account_id: str) -> tuple[Path, bool, Path]:
+        configured_auth_dir = self._whatsapp_account_auth_dir_from_config(account_id)
+        oauth_dir = self._resolve_openclaw_oauth_dir()
+        if configured_auth_dir:
+            return configured_auth_dir, False, oauth_dir
+
+        auth_dir = oauth_dir / "whatsapp" / self._safe_whatsapp_account_dir_name(account_id)
+        legacy_auth_dir = oauth_dir
+        if (
+            account_id == DEFAULT_ACCOUNT_ID
+            and (legacy_auth_dir / "creds.json").exists()
+            and not (auth_dir / "creds.json").exists()
+        ):
+            return legacy_auth_dir, True, oauth_dir
+        return auth_dir, False, oauth_dir
+
+    def _whatsapp_account_auth_dir_from_config(self, account_id: str) -> Path | None:
+        if self.gateway_config_service is None:
+            return None
+        snapshot = self.gateway_config_service.build_snapshot()
+        channels = snapshot.get("channels")
+        section = channels.get("whatsapp") if isinstance(channels, dict) else None
+        if not isinstance(section, dict):
+            return None
+        account_config: dict[str, object] = dict(section)
+        accounts = section.get("accounts")
+        account_section = accounts.get(account_id) if isinstance(accounts, dict) else None
+        if isinstance(account_section, dict):
+            account_config.update(account_section)
+        raw_auth_dir = account_config.get("authDir")
+        if not isinstance(raw_auth_dir, str) or not raw_auth_dir.strip():
+            return None
+        return Path(os.path.expandvars(os.path.expanduser(raw_auth_dir.strip()))).resolve()
+
+    def _resolve_openclaw_oauth_dir(self) -> Path:
+        explicit_oauth_dir = os.environ.get("OPENCLAW_OAUTH_DIR", "").strip()
+        if explicit_oauth_dir:
+            return Path(os.path.expandvars(os.path.expanduser(explicit_oauth_dir))).resolve()
+        state_dir = os.environ.get("OPENCLAW_STATE_DIR", "").strip()
+        if state_dir:
+            return (
+                Path(os.path.expandvars(os.path.expanduser(state_dir))).resolve()
+                / "credentials"
+            )
+        data_dir = getattr(self.gateway_config_service, "_data_dir", None)
+        if isinstance(data_dir, Path):
+            return (data_dir / "settings" / "oauth").resolve()
+        return (Path.home() / ".openclaw" / "credentials").resolve()
+
+    @staticmethod
+    def _safe_whatsapp_account_dir_name(account_id: str) -> str:
+        safe = re.sub(r'[\\/:*?"<>|]+', "_", account_id.strip() or DEFAULT_ACCOUNT_ID)
+        safe = safe.replace("..", "_").strip(" .")
+        return safe or DEFAULT_ACCOUNT_ID
+
+    @staticmethod
+    def _is_baileys_auth_filename(name: str) -> bool:
+        if name == "oauth.json":
+            return False
+        if name in {"creds.json", "creds.json.bak"}:
+            return True
+        return name.endswith(".json") and bool(
+            re.match(r"^(app-state-sync|session|sender-key|pre-key)-", name)
+        )
+
+    @staticmethod
+    def _is_relative_to_path(path: Path, base_dir: Path) -> bool:
+        try:
+            path.relative_to(base_dir)
+            return True
+        except ValueError:
+            return False
+
+    def _path_has_symlink_component(self, base_dir: Path, target_path: Path) -> bool:
+        try:
+            relative = target_path.relative_to(base_dir)
+        except ValueError:
+            return True
+        current = base_dir
+        for segment in relative.parts:
+            current = current / segment
+            if current.exists() and current.is_symlink():
+                return True
+        return False
+
+    def _whatsapp_managed_auth_dir(self, *, auth_dir: Path, oauth_dir: Path) -> Path | None:
+        whatsapp_auth_base = (oauth_dir / "whatsapp").resolve()
+        resolved_auth_dir = auth_dir.resolve()
+        if not self._is_relative_to_path(resolved_auth_dir, whatsapp_auth_base):
+            return None
+        if self._path_has_symlink_component(whatsapp_auth_base, resolved_auth_dir):
+            return None
+        try:
+            base_real = whatsapp_auth_base.resolve(strict=True)
+            auth_real = resolved_auth_dir.resolve(strict=True)
+        except OSError:
+            return None
+        if not self._is_relative_to_path(auth_real, base_real):
+            return None
+        return auth_real
+
+    def _clear_whatsapp_auth_dir(
+        self,
+        *,
+        auth_dir: Path,
+        oauth_dir: Path,
+        is_legacy_auth_dir: bool,
+    ) -> bool:
+        if not auth_dir.exists() or not auth_dir.is_dir() or auth_dir.is_symlink():
+            return False
+        if is_legacy_auth_dir:
+            if auth_dir.resolve() != oauth_dir.resolve():
+                return False
+            cleared_any = False
+            for child in auth_dir.iterdir():
+                if child.is_file() and self._is_baileys_auth_filename(child.name):
+                    child.unlink(missing_ok=True)
+                    cleared_any = True
+            return cleared_any
+
+        if not (
+            (auth_dir / "creds.json").is_file()
+            or (auth_dir / "creds.json.bak").is_file()
+        ):
+            return False
+        managed_auth_dir = self._whatsapp_managed_auth_dir(
+            auth_dir=auth_dir,
+            oauth_dir=oauth_dir,
+        )
+        if managed_auth_dir is None:
+            return False
+        shutil.rmtree(managed_auth_dir, ignore_errors=True)
+        return True
+
+    async def _logout_zalouser_channel_account(self, account_id: str) -> dict[str, object]:
+        await self.stop_channel_runtime_account("zalouser", account_id)
+        profile = self._resolve_zalouser_profile(account_id)
+        credentials_path = self._zalouser_credentials_path(profile)
+        cleared = self._clear_zalouser_credentials(credentials_path)
+        return {
+            "channel": "zalouser",
+            "accountId": account_id,
+            "profile": profile,
+            "cleared": cleared,
+            "loggedOut": True,
+            "message": (
+                "Logged out and cleared local session."
+                if cleared
+                else "No local session to clear."
+            ),
+        }
+
+    def _resolve_zalouser_profile(self, account_id: str) -> str:
+        configured_profile = self._zalouser_profile_from_config(account_id)
+        if configured_profile:
+            return configured_profile
+        env_profile = os.environ.get("ZALOUSER_PROFILE", "").strip()
+        if env_profile:
+            return env_profile
+        legacy_env_profile = os.environ.get("ZCA_PROFILE", "").strip()
+        if legacy_env_profile:
+            return legacy_env_profile
+        if account_id != DEFAULT_ACCOUNT_ID:
+            return account_id
+        return DEFAULT_ACCOUNT_ID
+
+    def _zalouser_profile_from_config(self, account_id: str) -> str | None:
+        if self.gateway_config_service is None:
+            return None
+        snapshot = self.gateway_config_service.build_snapshot()
+        channels = snapshot.get("channels")
+        section = channels.get("zalouser") if isinstance(channels, dict) else None
+        if not isinstance(section, dict):
+            return None
+        account_config: dict[str, object] = dict(section)
+        accounts = section.get("accounts")
+        account_section = accounts.get(account_id) if isinstance(accounts, dict) else None
+        if isinstance(account_section, dict):
+            account_config.update(account_section)
+        raw_profile = account_config.get("profile")
+        if isinstance(raw_profile, str) and raw_profile.strip():
+            return raw_profile.strip()
+        return None
+
+    def _resolve_openclaw_state_dir(self) -> Path:
+        state_dir = os.environ.get("OPENCLAW_STATE_DIR", "").strip()
+        if state_dir:
+            return Path(os.path.expandvars(os.path.expanduser(state_dir))).resolve()
+        data_dir = getattr(self.gateway_config_service, "_data_dir", None)
+        if isinstance(data_dir, Path):
+            return (data_dir / "state").resolve()
+        return (Path.home() / ".openclaw").resolve()
+
+    def _zalouser_credentials_path(self, profile: str) -> Path:
+        normalized_profile = profile.strip().lower()
+        filename = (
+            "credentials.json"
+            if not normalized_profile or normalized_profile == DEFAULT_ACCOUNT_ID
+            else f"credentials-{quote(normalized_profile, safe='')}.json"
+        )
+        return (
+            self._resolve_openclaw_state_dir()
+            / "plugin-state"
+            / "credentials"
+            / "zalouser"
+            / filename
+        ).resolve()
+
+    def _clear_zalouser_credentials(self, credentials_path: Path) -> bool:
+        if (
+            not credentials_path.exists()
+            or not credentials_path.is_file()
+            or credentials_path.is_symlink()
+        ):
+            return False
+        credentials_dir = (
+            self._resolve_openclaw_state_dir()
+            / "plugin-state"
+            / "credentials"
+            / "zalouser"
+        ).resolve()
+        if not self._is_relative_to_path(credentials_path, credentials_dir):
+            return False
+        credentials_path.unlink(missing_ok=True)
+        return True
+
+    async def _logout_secret_backed_channel_account(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+        fields: tuple[str, ...],
+        env_var: str,
+        env_result_key: str = "envToken",
+        extra_result: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        await self.stop_channel_runtime_account(channel, account_id)
+        env_token = bool(os.environ.get(env_var, "").strip())
+        cleared = self._clear_channel_secret_config(
+            channel=channel,
+            account_id=account_id,
+            fields=fields,
+        )
+        logged_out = not env_token and not self._channel_secret_configured(
+            channel=channel,
+            account_id=account_id,
+            fields=fields,
+        )
+        result: dict[str, object] = {
+            "channel": channel,
+            "accountId": account_id,
+            "cleared": cleared,
+            env_result_key: env_token,
+            "loggedOut": logged_out,
+        }
+        if extra_result:
+            result.update(extra_result)
+        return result
+
+    async def _queue_tlon_approval_request(
+        self,
+        request: GatewayTlonApprovalQueueRequest,
+    ) -> object:
+        if self.tlon_approval_queue_service is not None:
+            return await self.tlon_approval_queue_service(request)
+        return self._persist_tlon_pending_approval(request)
+
+    def _persist_tlon_pending_approval(
+        self,
+        request: GatewayTlonApprovalQueueRequest,
+    ) -> dict[str, object]:
+        if self.gateway_config_service is None:
+            return {"approvalId": None, "notified": False, "persisted": False}
+        snapshot = self.gateway_config_service.build_snapshot()
+        channel_config = _tlon_channel_config_from_snapshot(
+            snapshot,
+            account_id=request.account_id,
+        )
+        pending = list(_msteams_inbound_mapping(channel_config).get("pendingApprovals") or [])
+        approval_id = (
+            f"{request.approval_type}-{int(time.time() * 1000)}-{secrets.token_hex(3)}"
+        )
+        approval: dict[str, object] = {
+            "id": approval_id,
+            "type": request.approval_type,
+            "requestingShip": request.requesting_ship,
+            "messagePreview": request.message_preview,
+            "timestamp": int(time.time() * 1000),
+            "originalMessage": {
+                "messageId": request.message_id,
+                "messageText": request.message_text,
+                "messageContent": request.message_content,
+                "timestamp": request.timestamp or int(time.time() * 1000),
+            },
+        }
+        if request.channel_nest is not None:
+            approval["channelNest"] = request.channel_nest
+        if request.parent_id is not None:
+            cast(dict[str, object], approval["originalMessage"])["parentId"] = (
+                request.parent_id
+            )
+            cast(dict[str, object], approval["originalMessage"])["isThreadReply"] = (
+                request.is_thread_reply
+            )
+        next_pending = [
+            item
+            for item in pending
+            if not (
+                isinstance(item, Mapping)
+                and item.get("type") == request.approval_type
+                and item.get("requestingShip") == request.requesting_ship
+                and item.get("channelNest") == request.channel_nest
+            )
+        ]
+        next_pending.append(approval)
+        account_id = normalize_optional_account_id(request.account_id)
+        patch: dict[str, Any]
+        if account_id and account_id != DEFAULT_ACCOUNT_ID:
+            patch = {
+                "channels": {
+                    "tlon": {
+                        "accounts": {
+                            account_id: {
+                                "pendingApprovals": next_pending,
+                            }
+                        }
+                    }
+                }
+            }
+        else:
+            patch = {"channels": {"tlon": {"pendingApprovals": next_pending}}}
+        self.gateway_config_service.patch_object(patch)
+        return {"approvalId": approval_id, "notified": False, "persisted": True}
+
+    def _patch_tlon_approval_state(
+        self,
+        *,
+        account_id: str | None,
+        pending_approvals: list[object],
+        dm_allowlist: list[str] | None = None,
+        channel_rules: Mapping[str, object] | None = None,
+        blocked_ships: list[str] | None = None,
+    ) -> None:
+        if self.gateway_config_service is None:
+            return
+        account = normalize_optional_account_id(account_id)
+        tlon_patch: dict[str, Any] = {"pendingApprovals": pending_approvals}
+        if dm_allowlist is not None:
+            tlon_patch["dmAllowlist"] = dm_allowlist
+        if channel_rules is not None:
+            tlon_patch["authorization"] = {"channelRules": dict(channel_rules)}
+        if blocked_ships is not None:
+            tlon_patch["blockedShips"] = blocked_ships
+        if account and account != DEFAULT_ACCOUNT_ID:
+            patch: dict[str, Any] = {
+                "channels": {"tlon": {"accounts": {account: tlon_patch}}}
+            }
+        else:
+            patch = {"channels": {"tlon": tlon_patch}}
+        self.gateway_config_service.patch_object(patch)
+
+    async def _deliver_tlon_inbound_message(
+        self,
+        message: _TlonInboundMessage,
+        *,
+        account_id: str | None,
+    ) -> dict[str, object]:
+        if self.session_delivery_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Tlon inbound session delivery is unavailable."
+            )
+        context = _tlon_inbound_session_context(message, account_id=account_id)
+        staged_media = await self._stage_tlon_inbound_media(
+            message,
+            account_id=account_id,
+        )
+        delivery_text = message.text
+        if staged_media:
+            media_lines = "\n".join(
+                (
+                    "[media attached: "
+                    f"{media.path} ({media.content_type or 'application/octet-stream'}) "
+                    f"| {media.path}]"
+                )
+                for media in staged_media
+            )
+            delivery_text = f"{media_lines}\n{message.text}"
+        delivery_result = await self.session_delivery_service(
+            context.session_key,
+            delivery_text,
+        )
+        delivery_message_id = _session_delivery_message_id(delivery_result)
+        delivery: dict[str, object] = {"runtime": "session-backed"}
+        if staged_media:
+            delivery["media"] = {"staged": len(staged_media)}
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "tlon",
+            "eventType": message.event_type,
+            "inboundMessageId": message.message_id,
+            "sessionKey": context.session_key,
+            "text": message.text,
+            "senderId": context.sender_id,
+            "conversationId": context.conversation_id,
+            "conversationType": context.conversation_type,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "delivery": delivery,
+        }
+        if delivery_message_id is not None:
+            result["messageId"] = delivery_message_id
+        if staged_media:
+            result["mediaUrls"] = [media.source_url for media in staged_media]
+            result.update(_msteams_media_payload(staged_media))
+            result["stagedMedia"] = _msteams_staged_media_metadata(staged_media)
+        if message.timestamp is not None:
+            result["timestamp"] = message.timestamp
+        if context.thread_id is not None:
+            result["threadId"] = context.thread_id
+        return result
+
+    async def _handle_tlon_approval_response(
+        self,
+        message: _TlonInboundMessage,
+        *,
+        channel_config: Mapping[str, Any],
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        sender_ship = _tlon_normalize_target_ship(message.sender_ship)
+        owner_ship = _tlon_owner_ship(channel_config)
+        if sender_ship is None or owner_ship is None or sender_ship != owner_ship:
+            return None
+        parsed = _tlon_parse_approval_response(message.text)
+        if parsed is None:
+            return None
+        action, approval_id = parsed
+        pending_raw = channel_config.get("pendingApprovals")
+        pending = list(pending_raw) if isinstance(pending_raw, list) else []
+        pending_records = [
+            item for item in pending if isinstance(item, Mapping)
+        ]
+        if not pending_records:
+            return None
+        selected = None
+        if approval_id is None:
+            selected = pending_records[-1]
+        else:
+            for item in pending_records:
+                if _tlon_pending_approval_matches(item, approval_id=approval_id):
+                    selected = item
+                    break
+        if selected is None:
+            return None
+        selected_id = _msteams_inbound_optional_string(selected.get("id")) or ""
+        approval_type = _msteams_inbound_optional_string(selected.get("type")) or "dm"
+        requesting_ship = _tlon_normalize_target_ship(
+            _msteams_inbound_optional_string(selected.get("requestingShip"))
+        )
+        if requesting_ship is None:
+            return None
+        remaining = [
+            item
+            for item in pending
+            if not (
+                isinstance(item, Mapping)
+                and _msteams_inbound_optional_string(item.get("id")) == selected_id
+            )
+        ]
+        processed_original = False
+        delivery_result: dict[str, object] | None = None
+        if action == "approve":
+            dm_allowlist = _tlon_ship_list(channel_config.get("dmAllowlist"))
+            channel_rules = _msteams_inbound_mapping(
+                _msteams_inbound_mapping(channel_config.get("authorization")).get(
+                    "channelRules"
+                )
+            )
+            if approval_type == "channel":
+                channel_nest = _msteams_inbound_optional_string(selected.get("channelNest"))
+                if channel_nest is not None:
+                    next_rules = dict(channel_rules)
+                    rule = dict(_msteams_inbound_mapping(next_rules.get(channel_nest)))
+                    allowed = _tlon_ship_list(rule.get("allowedShips"))
+                    if requesting_ship not in allowed:
+                        allowed.append(requesting_ship)
+                    rule["mode"] = _msteams_inbound_optional_string(
+                        rule.get("mode")
+                    ) or "restricted"
+                    rule["allowedShips"] = allowed
+                    next_rules[channel_nest] = rule
+                    self._patch_tlon_approval_state(
+                        account_id=account_id,
+                        pending_approvals=remaining,
+                        channel_rules=next_rules,
+                    )
+            else:
+                if requesting_ship not in dm_allowlist:
+                    dm_allowlist.append(requesting_ship)
+                self._patch_tlon_approval_state(
+                    account_id=account_id,
+                    pending_approvals=remaining,
+                    dm_allowlist=dm_allowlist,
+                )
+            original = _msteams_inbound_mapping(selected.get("originalMessage"))
+            original_text = _msteams_inbound_optional_string(original.get("messageText"))
+            if original_text is not None:
+                replay_message = _TlonInboundMessage(
+                    event_type="channels" if approval_type == "channel" else "chat",
+                    message_id=(
+                        _msteams_inbound_optional_string(original.get("messageId"))
+                        or selected_id
+                    ),
+                    sender_ship=requesting_ship,
+                    text=original_text,
+                    content=original.get("messageContent"),
+                    timestamp=_tlon_read_int(original, "timestamp"),
+                    channel_nest=_msteams_inbound_optional_string(
+                        selected.get("channelNest")
+                    ),
+                    thread_id=_msteams_inbound_optional_string(original.get("parentId")),
+                )
+                delivery_result = await self._deliver_tlon_inbound_message(
+                    replay_message,
+                    account_id=account_id,
+                )
+                processed_original = True
+        else:
+            if action == "block":
+                blocked = _tlon_ship_list(channel_config.get("blockedShips"))
+                if requesting_ship not in blocked:
+                    blocked.append(requesting_ship)
+                self._patch_tlon_approval_state(
+                    account_id=account_id,
+                    pending_approvals=remaining,
+                    blocked_ships=blocked,
+                )
+            else:
+                self._patch_tlon_approval_state(
+                    account_id=account_id,
+                    pending_approvals=remaining,
+                )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "tlon",
+            "eventType": message.event_type,
+            "status": "approval_resolved",
+            "approvalAction": action,
+            "approvalId": selected_id,
+            "approval": {
+                "type": approval_type,
+                "requestingShip": requesting_ship,
+                "ownerShip": owner_ship,
+                "processedOriginalMessage": processed_original,
+            },
+            "inboundMessageId": message.message_id,
+        }
+        if delivery_result is not None:
+            if "messageId" in delivery_result:
+                result["messageId"] = delivery_result["messageId"]
+            if "sessionKey" in delivery_result:
+                result["sessionKey"] = delivery_result["sessionKey"]
+        return result
+
+    async def _handle_tlon_admin_command(
+        self,
+        message: _TlonInboundMessage,
+        *,
+        channel_config: Mapping[str, Any],
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        sender_ship = _tlon_normalize_target_ship(message.sender_ship)
+        owner_ship = _tlon_owner_ship(channel_config)
+        if sender_ship is None or owner_ship is None or sender_ship != owner_ship:
+            return None
+        parsed = _tlon_parse_admin_command(message.text)
+        if parsed is None:
+            return None
+        command, ship = parsed
+        blocked = _tlon_ship_list(channel_config.get("blockedShips"))
+        pending_raw = channel_config.get("pendingApprovals")
+        pending = list(pending_raw) if isinstance(pending_raw, list) else []
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "tlon",
+            "eventType": message.event_type,
+            "status": "admin_command",
+            "adminCommand": command,
+            "inboundMessageId": message.message_id,
+        }
+        if command == "pending":
+            result["pendingApprovals"] = pending
+            result["pendingCount"] = len(pending)
+            return result
+        if command == "blocked":
+            result["blockedShips"] = blocked
+            result["blockedCount"] = len(blocked)
+            return result
+        if command == "unblock" and ship is not None:
+            next_blocked = [entry for entry in blocked if entry != ship]
+            self._patch_tlon_approval_state(
+                account_id=account_id,
+                pending_approvals=pending,
+                blocked_ships=next_blocked,
+            )
+            result["ship"] = ship
+            result["unblocked"] = len(next_blocked) != len(blocked)
+            result["blockedShips"] = next_blocked
+            return result
+        return None
 
     def _msteams_sso_config(
         self,
@@ -13285,6 +15244,185 @@ class OpsMeshService:
         if context.sender_name is not None:
             result["senderName"] = context.sender_name
         return result
+
+    async def handle_tlon_inbound_event(
+        self,
+        event: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        message = _tlon_inbound_chat_message(event) or _tlon_inbound_channels_message(event)
+        if message is None:
+            return {
+                "ok": False,
+                "channel": "tlon",
+                "skipped": True,
+                "reason": "tlon_inbound_event_without_message_text",
+            }
+        channel_config = self._tlon_channel_config(account_id=account_id)
+        approval_response = await self._handle_tlon_approval_response(
+            message,
+            channel_config=channel_config,
+            account_id=account_id,
+        )
+        if approval_response is not None:
+            return approval_response
+        admin_response = await self._handle_tlon_admin_command(
+            message,
+            channel_config=channel_config,
+            account_id=account_id,
+        )
+        if admin_response is not None:
+            return admin_response
+        blocked_sender = _tlon_inbound_blocked_sender_metadata(
+            message,
+            channel_config=channel_config,
+            account_id=account_id,
+        )
+        if blocked_sender is not None:
+            return blocked_sender
+        approval_request = _tlon_inbound_pending_approval_request(
+            message,
+            channel_config=channel_config,
+            account_id=account_id,
+        )
+        if approval_request is not None:
+            queue_result = await self._queue_tlon_approval_request(approval_request)
+            return _tlon_pending_approval_metadata(approval_request, queue_result)
+        authorization_block = _tlon_inbound_authorization_block_metadata(
+            message,
+            channel_config=channel_config,
+            account_id=account_id,
+        )
+        if authorization_block is not None:
+            return authorization_block
+        return await self._deliver_tlon_inbound_message(message, account_id=account_id)
+
+    async def _default_tlon_inbound_media_fetch(
+        self,
+        request: GatewayTlonInboundMediaFetchRequest,
+    ) -> object:
+        return await asyncio.to_thread(self._download_tlon_inbound_media_url, request)
+
+    def _tlon_inbound_media_fetcher(self) -> GatewayTlonInboundMediaFetchService:
+        return self.tlon_inbound_media_fetch_service or self._default_tlon_inbound_media_fetch
+
+    def _download_tlon_inbound_media_url(
+        self,
+        request: GatewayTlonInboundMediaFetchRequest,
+    ) -> dict[str, object]:
+        parsed = urlparse(request.url)
+        if parsed.scheme.lower() not in {"http", "https"}:
+            raise RuntimeError("Tlon inbound media URL must be http(s).")
+        http_request = Request(
+            request.url,
+            headers={"User-Agent": "OpenZues-TlonMedia/1.0"},
+            method="GET",
+        )
+        try:
+            with urlopen(http_request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Tlon inbound media URL returned HTTP {response.status}.")
+                media_bytes = response.read(request.max_bytes + 1)
+                if len(media_bytes) > request.max_bytes:
+                    raise RuntimeError("Tlon inbound media attachment is too large.")
+                content_type = response.headers.get("Content-Type")
+        except HTTPError as exc:
+            message = _http_error_message("Tlon inbound media URL returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Tlon inbound media URL failed: {exc.reason}") from exc
+        result: dict[str, object] = {"bytes": media_bytes}
+        if content_type:
+            result["contentType"] = content_type.strip()
+        if request.filename:
+            result["filename"] = request.filename
+        return result
+
+    def _save_tlon_inbound_media(
+        self,
+        *,
+        candidate: _MSTeamsInboundMediaCandidate,
+        response: object,
+        media_bytes: bytes,
+        index: int,
+    ) -> _MSTeamsStagedInboundMedia | None:
+        if not media_bytes:
+            return None
+        content_type = _msteams_staged_media_content_type(
+            response,
+            candidate,
+            candidate.file_hint or "",
+        )
+        filename = _msteams_staged_media_filename(response, candidate, content_type, index)
+        digest = hashlib.sha256(media_bytes).hexdigest()
+        storage_root = (
+            self.canvas_state_dir
+            if self.canvas_state_dir is not None
+            else self.database.path.parent
+        )
+        stored_path = storage_root / "gateway-attachments" / "inbound" / (
+            f"{digest[:16]}-{filename}"
+        )
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        if not stored_path.exists():
+            stored_path.write_bytes(media_bytes)
+        return _MSTeamsStagedInboundMedia(
+            source_url=candidate.source_url,
+            path=stored_path,
+            content_type=content_type,
+            filename=filename,
+            placeholder=candidate.placeholder,
+            sha256=digest,
+            byte_length=len(media_bytes),
+        )
+
+    async def _stage_tlon_inbound_media(
+        self,
+        message: _TlonInboundMessage,
+        *,
+        account_id: str | None,
+    ) -> list[_MSTeamsStagedInboundMedia]:
+        images = _tlon_extract_image_blocks(message.content)
+        if not images:
+            return []
+        fetcher = self._tlon_inbound_media_fetcher()
+        staged_media: list[_MSTeamsStagedInboundMedia] = []
+        for index, image in enumerate(images, start=1):
+            parsed_path = Path(unquote(urlparse(image.url).path))
+            file_hint = parsed_path.name.strip() or f"tlon-image-{index}"
+            candidate = _MSTeamsInboundMediaCandidate(
+                source_url=image.url,
+                url=image.url,
+                file_hint=file_hint,
+                content_type_hint=None,
+                placeholder=image.url,
+            )
+            request = GatewayTlonInboundMediaFetchRequest(
+                url=image.url,
+                source_url=image.url,
+                filename=file_hint,
+                content_type=None,
+                max_bytes=TLON_INBOUND_MAX_IMAGE_BYTES,
+                account_id=account_id,
+                message_id=message.message_id,
+            )
+            try:
+                response = await fetcher(request)
+            except Exception:
+                continue
+            media_bytes = _msteams_fetch_response_bytes(response)
+            if media_bytes is None or len(media_bytes) > TLON_INBOUND_MAX_IMAGE_BYTES:
+                continue
+            staged = self._save_tlon_inbound_media(
+                candidate=candidate,
+                response=response,
+                media_bytes=media_bytes,
+                index=index,
+            )
+            if staged is not None:
+                staged_media.append(staged)
+        return staged_media
 
     def _bluebubbles_config_snapshot(self) -> dict[str, Any]:
         if self.gateway_config_service is None:
@@ -25464,7 +27602,129 @@ class OpsMeshService:
             return trusted_hosted_url
         if not _tlon_has_custom_storage_credentials(storage_credentials):
             raise RuntimeError("No storage credentials configured")
-        raise RuntimeError("Tlon custom S3 upload storage runtime is unavailable.")
+        credentials = _tlon_storage_credentials(storage_credentials)
+        configuration = _tlon_storage_configuration(storage_config)
+        if credentials is None:
+            raise RuntimeError("No storage credentials configured")
+        bucket = str(configuration.get("currentBucket") or "").strip()
+        if not bucket:
+            raise RuntimeError("Tlon storage configuration is missing currentBucket.")
+        signed_url = self._presign_tlon_custom_s3_upload_url(
+            endpoint=str(credentials.get("endpoint") or "").strip(),
+            bucket=bucket,
+            file_key=file_key,
+            region=str(configuration.get("region") or "").strip() or "us-east-1",
+            access_key_id=str(credentials.get("accessKeyId") or "").strip(),
+            secret_access_key=str(credentials.get("secretAccessKey") or "").strip(),
+            content_type=content_type,
+        )
+        self._put_tlon_media_bytes(
+            signed_url,
+            media_bytes=media_bytes,
+            content_type=content_type,
+            timeout_seconds=timeout,
+        )
+        public_url = _tlon_public_upload_url(
+            file_key,
+            str(configuration.get("publicUrlBase") or "").strip(),
+            signed_url,
+        )
+        return _tlon_assert_safe_upload_result_url(public_url, "Upload result URL")
+
+    def _presign_tlon_custom_s3_upload_url(
+        self,
+        *,
+        endpoint: str,
+        bucket: str,
+        file_key: str,
+        region: str,
+        access_key_id: str,
+        secret_access_key: str,
+        content_type: str,
+    ) -> str:
+        del content_type
+        if not access_key_id or not secret_access_key:
+            raise RuntimeError("Tlon custom S3 credentials are incomplete.")
+        endpoint_url = urlparse(endpoint if re.match(r"^https?://", endpoint) else f"https://{endpoint}")
+        if endpoint_url.scheme.lower() not in {"http", "https"} or not endpoint_url.netloc:
+            raise RuntimeError("Tlon custom S3 endpoint must be an http(s) URL.")
+        now = datetime.now(UTC)
+        amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+        date_stamp = now.strftime("%Y%m%d")
+        credential_scope = f"{date_stamp}/{region}/s3/aws4_request"
+        canonical_uri = "/" + "/".join(
+            quote(part, safe="-_.~") for part in [bucket, *file_key.split("/")]
+        )
+        query_params = {
+            "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+            "X-Amz-Credential": f"{access_key_id}/{credential_scope}",
+            "X-Amz-Date": amz_date,
+            "X-Amz-Expires": "3600",
+            "X-Amz-SignedHeaders": "host",
+        }
+        canonical_query = "&".join(
+            f"{quote(key, safe='-_.~')}={quote(value, safe='-_.~')}"
+            for key, value in sorted(query_params.items())
+        )
+        host = endpoint_url.netloc
+        canonical_request = "\n".join(
+            (
+                "PUT",
+                canonical_uri,
+                canonical_query,
+                f"host:{host}\n",
+                "host",
+                "UNSIGNED-PAYLOAD",
+            )
+        )
+        string_to_sign = "\n".join(
+            (
+                "AWS4-HMAC-SHA256",
+                amz_date,
+                credential_scope,
+                hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+            )
+        )
+        signing_key = self._aws_sigv4_signing_key(
+            secret_access_key,
+            date_stamp=date_stamp,
+            region=region,
+            service="s3",
+        )
+        signature = hmac.new(
+            signing_key,
+            string_to_sign.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        query = f"{canonical_query}&X-Amz-Signature={signature}"
+        return urlunparse(
+            (
+                endpoint_url.scheme,
+                endpoint_url.netloc,
+                canonical_uri,
+                "",
+                query,
+                "",
+            )
+        )
+
+    def _aws_sigv4_signing_key(
+        self,
+        secret_access_key: str,
+        *,
+        date_stamp: str,
+        region: str,
+        service: str,
+    ) -> bytes:
+        del self
+        date_key = hmac.new(
+            f"AWS4{secret_access_key}".encode(),
+            date_stamp.encode(),
+            hashlib.sha256,
+        ).digest()
+        region_key = hmac.new(date_key, region.encode(), hashlib.sha256).digest()
+        service_key = hmac.new(region_key, service.encode(), hashlib.sha256).digest()
+        return hmac.new(service_key, b"aws4_request", hashlib.sha256).digest()
 
     def _request_tlon_scry_json(
         self,

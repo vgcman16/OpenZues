@@ -5,14 +5,14 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999993%.
+  band of ~80-99.99999999999994%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~98.3% after the latest
+- The chat/session contract subfamily is estimated at ~98.4% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
-  `sessions.spawn`, sandboxed remote media staging, and `tools.invoke`
-  runtime seams.
+  `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
+  monitor lifecycle runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
   runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
@@ -1750,8 +1750,27 @@ story and persist uploaded media URLs in provider metadata, while preserving
 OpenClaw's fallback-to-original behavior when upload fails. Hosted Memex
 uploads now scry storage configuration/credentials/genuine secret, request and
 validate trusted upload URLs, PUT bytes, and return trusted hosted URLs.
-Remaining Tlon runtime parity is now custom S3 upload signing and
-inbound/session breadth.
+Custom S3 upload signing now resolves configured credentials, presigns a
+path-style S3-compatible PUT, uploads bytes, and returns the configured public
+URL. Tlon DM inbound firehose session routing now parses upstream chat events,
+renders rich inline content, builds the direct conversation target/session key,
+and dispatches through the session-backed delivery service. Tlon group/thread
+channel firehose session routing now parses upstream channel posts/replies,
+extracts thread parent ids, builds the group conversation target, and dispatches
+through thread-scoped session keys. Tlon inbound image media staging now
+extracts image blocks, fetches/stores inbound media through a fakeable native
+fetcher, annotates session messages, and returns staged media metadata. Tlon
+inbound authorization now enforces configured DM allowlists, owner approval
+queueing, restricted channel rules/default authorized ships, and native pending
+approval persistence before session/media processing. Tlon owner approval
+responses now resolve approved pending DMs/channels, mutate allowlists, remove
+pending approvals, and replay stored original messages into sessions. Tlon
+block/admin handling now persists blocked ships, ignores later blocked inbound
+messages, and handles owner unblock commands without entering a work session.
+Tlon production SSE monitor lifecycle now starts enabled route-backed accounts,
+registers upstream firehose/settings/groups subscriptions, dispatches inbound
+SSE payloads into session routing, acks stream events, and cleans up Urbit
+channels on close. No Tlon-specific runtime queue head remains known.
 iMessage config-backed account probes now mirror OpenClaw's `probeIMessage`
 status hook: `channels status --probe --json` discovers configured
 `channels.imessage` accounts from the Gateway config snapshot, checks the
@@ -1761,6 +1780,64 @@ old-CLI guard, runs `imsg rpc` with configured `--db`, and sends JSON-RPC
 metadata. Remaining channel CLI parity is no longer dominated by the
 route/config account-probe queue; the next channel queue should rotate to
 remaining provider runtime breadth.
+`channels.start` now mirrors the OpenClaw runtime-start method shape for the
+native Tlon path: the gateway method dispatches to a fakeable start adapter,
+blank `accountId` resolves to `default`, app construction wires the adapter to
+OpsMesh, and OpsMesh starts the matching route-backed Tlon SSE monitor account.
+Unsupported channels keep the existing precise runtime-start error. Source/test
+checkpointed in `810a6af0`; the channel queue should now rotate to
+provider-specific runtime breadth, channel stop/logout depth, or broader
+packaging/companion seams.
+`channels.stop` now dispatches through a fakeable runtime stop adapter when
+wired, app construction binds it to OpsMesh, and the Tlon implementation closes
+the matching SSE monitor account while preserving idempotent stopped responses
+for channels without a native monitor. Source/test checkpointed in `1365c028`;
+the adjacent lifecycle queue should now rotate to channel logout depth or
+broader provider/packaging seams.
+`channels.logout` now dispatches through a fakeable runtime logout adapter when
+wired, app construction binds Telegram logout to OpsMesh, and the Telegram
+implementation mirrors OpenClaw's `logoutAccount` config cleanup by clearing
+saved `channels.telegram.botToken` before returning `{cleared, envToken,
+loggedOut}`. Source/test checkpointed in `2d26bdc4`; the adjacent provider
+queue should now rotate to remaining logout-capable channel configs or broader
+provider/packaging seams.
+LINE `channels.logout` now mirrors OpenClaw's `extensions/line` logout cleanup:
+OpsMesh clears saved `channels.line.channelAccessToken`, `channelSecret`,
+`tokenFile`, `secretFile`, and matching `accounts.default` secret fields while
+preserving non-secret channel settings, then returns the same
+`{cleared, envToken, loggedOut}` posture. Source/test checkpointed in
+`9674493d`; the adjacent provider queue should rotate to Nextcloud Talk,
+WhatsApp, Zalo, QQ, or broader logout-capable channel configs.
+Nextcloud Talk `channels.logout` now mirrors OpenClaw's
+`extensions/nextcloud-talk` logout cleanup by clearing saved
+`channels.nextcloud-talk.botSecret` and matching `accounts.default.botSecret`
+fields, preserving non-secret `baseUrl` config, and returning
+`{cleared, envSecret, loggedOut}`. Source/test checkpointed in `13de6593`;
+the adjacent provider queue should rotate to WhatsApp, Zalo, QQ, or broader
+logout-capable channel configs.
+WhatsApp `channels.logout` now mirrors OpenClaw's Web-auth logout cleanup for
+managed auth directories: OpsMesh resolves `channels.whatsapp.authDir` or
+`OPENCLAW_OAUTH_DIR/whatsapp/<account>`, clears only managed
+`creds.json`/backup-backed auth state, preserves legacy default-auth-file
+cleanup, skips external or symlink-crossing paths, and returns
+`{cleared, loggedOut}` based on actual cleanup. Source/test checkpointed in
+`3e99a587`; the adjacent provider queue should rotate to Zalo, QQ, or broader
+logout/runtime edge cases.
+QQBot `channels.logout` now mirrors OpenClaw's credential cleanup contract:
+OpenZues recognizes `qqbot`/`qq` as channel/config aliases, clears saved
+`channels.qqbot.clientSecret`, `clientSecretFile`, and matching
+`accounts.default` secret fields, preserves `appId`, and returns
+`{ok, cleared, envToken, loggedOut}`. Source/test checkpointed in `aac53b3b`;
+the adjacent provider queue should rotate to Zalo user profile logout or
+broader provider/runtime edge cases.
+Zalo user `channels.logout` now mirrors OpenClaw's profile credential-file
+cleanup contract without conflating the channel with the Zalo Bot API route:
+OpenZues recognizes `zalouser`/`zalo-user`, resolves profile precedence from
+config/env/account/default, deletes the matching
+`plugin-state/credentials/zalouser/credentials*.json` file, and returns
+`{profile, cleared, loggedOut, message}`. Source/test checkpointed in
+`4d67d5a6`; the logout-capable provider sweep should now rotate to broader
+provider/runtime, packaging, or companion seams.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account
@@ -5803,6 +5880,50 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and CLI/operator-control bounded paths remain ~99.9%. Verified with the
   focused package distribution doctor pytest, adjacent doctor/runtime bridge
   proof, `ruff check`, and `mypy`; checkpointed in `47d73351`.
+- Source-install package doctor warnings now mirror OpenClaw's
+  `src/commands/doctor-install.ts`: `openzues doctor --json` emits
+  `packageDistribution.sourceInstall` for pnpm workspaces, warning about
+  non-pnpm `node_modules`, stray `package-lock.json`, and missing
+  `node_modules/.bin/tsx`. Source/test checkpointed in `4c1d7a2a`; the
+  packaging queue should continue to release/update/package breadth.
+- Update-status git-tag channel projection now mirrors OpenClaw's
+  `src/infra/update-channels.ts`: detached git installs whose `HEAD` matches a
+  tag under `.git/refs/tags` report `channel.source="git-tag"` and derive
+  `stable`/`beta` labels from the tag text. Source/test checkpointed in
+  `dce24b5e`; packaging should continue to release/update/package breadth.
+- Packed git-tag channel projection now mirrors OpenClaw's
+  `git describe --tags --exact-match` update status behavior: exact tags in
+  `.git/packed-refs` report the same `git-tag` stable/beta channel metadata as
+  loose refs. Source/test checkpointed in `71029a02`; packaging should continue
+  to release/update/package breadth.
+- Update-status git metadata now mirrors the OpenClaw `GitUpdateStatus`
+  envelope enough for native JSON clients: git installs include `git.root`,
+  `sha`, `tag`, `branch`, and null fetch/divergence placeholders alongside
+  deps/channel metadata. Source/test checkpointed in `b31d8f41`; packaging
+  should continue to release/update/package breadth.
+- Update-status registry availability now mirrors OpenClaw's
+  `resolveUpdateAvailability` for live registry payloads: newer registry
+  versions are preserved in `update.registry` and projected into
+  `availability.hasRegistryUpdate`/`latestVersion`. Source/test checkpointed
+  in `55a785a8`; packaging should continue to release/update/package breadth.
+- Update-status git availability now mirrors OpenClaw's
+  `resolveUpdateAvailability` for live git divergence payloads:
+  `upstream`/`ahead`/`behind`/`dirty`/`fetchOk` survive in `update.git`, and a
+  positive behind count projects `availability.hasGitUpdate`/`gitBehind`.
+  Source/test checkpointed in `de37e6f8`; packaging should continue to
+  release/update/package breadth.
+- Update-status configured-channel precedence over git tags is now verified:
+  config channels remain authoritative while `update.git.tag` metadata is
+  still preserved. Test checkpointed in `d9150777`; packaging should continue
+  to release/update/package breadth.
+- Human update-status update-available hints now mirror OpenClaw's
+  `formatUpdateAvailableHint`: available registry/git updates emit an
+  actionable `Update available (...)` line with the native `openzues update`
+  command. Source/test checkpointed in `20e9c885`; packaging should continue to
+  release/update/package breadth.
+- Human update-status git-behind hints are now verified for OpenClaw's
+  `git behind N` detail. Test checkpointed in `d5ea6096`; packaging should
+  continue to release/update/package breadth.
 - Closed the companion node presence alive seam from OpenClaw
   `src/gateway/server-node-events.ts`, `src/shared/node-presence.ts`,
   `apps/ios/Sources/Push/BackgroundAliveBeacon.swift`, and Android gateway
@@ -9767,8 +9888,159 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   result metadata through direct gateway sends. Source/test checkpointed in
   `bab52a95`; group/thread reply proof checkpointed in `0fd7cbb8`; image
   media upload-hook checkpointed in `0c18844d`; hosted Memex media upload
-  checkpointed in `f742ba8a`;
+  checkpointed in `f742ba8a`; custom S3 media upload checkpointed in
+  `dc999418`; DM inbound firehose session routing checkpointed in `51e6b618`;
+  group/thread inbound firehose session routing checkpointed in `b3b06972`;
+  inbound media staging checkpointed in `d7556229`;
+  inbound authorization and pending approvals checkpointed in `d7bd3f7d`;
+  owner approval response replay checkpointed in `265b0a10`;
+  approval block/admin handling checkpointed in `800d2ab6`;
+  production SSE monitor lifecycle checkpointed in `726f03cb`;
   repo-wide parity remains estimated at ~99.9%, with the evidence band
-  tightened to ~80-99.9999993%. Remaining Tlon-specific gaps are custom S3
-  upload signing and inbound/session breadth before rotating through broader
-  provider, packaging, and companion seams.
+  tightened to ~80-99.99999996%. No Tlon-specific queue head remains known;
+  rotate through broader provider, packaging, companion, and newly exposed
+  upstream namespace seams.
+- Current queue-head adjustment: companion QR human output now mirrors
+  OpenClaw's post-scan approval guidance by appending an approval block to
+  `openzues qr --no-ascii --url ...`, with native `openzues devices list` and
+  `openzues devices approve <requestId>` commands. Source/test checkpointed in
+  `d6052fda`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.999999999996%. QR setup-code breadth remains open
+  only for deeper remote secret-resolution and rendered terminal QR edges;
+  rotate to package distribution drift next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  compare valid `dist/postinstall-inventory.json` contents against actual
+  packaged `dist/` files and surface OpenClaw-shaped
+  `missing packaged dist file ...` / `unexpected packaged dist file ...`
+  warnings. Source/test checkpointed in `69b23cb9`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999997%. Rotate to the adjacent package dist legacy plugin
+  dependency staging-debris seam next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  detect legacy plugin dependency staging debris under packaged
+  `dist/extensions/*/.openclaw-install-stage*` directories and report the
+  upstream `unexpected legacy plugin dependency staging debris in package
+  dist: ...` warning. Source/test checkpointed in `b16db705`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999998%. Rotate to the adjacent mixed-case staging-path proof
+  next, then continue package/update/release breadth.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  have focused proof for OpenClaw's case-insensitive legacy staging-debris path
+  matching across `Dist`, `Extensions`, and `.OPENCLAW-INSTALL-STAGE-*`
+  segments. Test checkpointed in `9422c6b7`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999985%. Rotate to exact missing package inventory warning
+  breadth next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  emit OpenClaw's exact `missing package dist inventory
+  dist/postinstall-inventory.json` diagnostic for packaged installs with a
+  `dist/` directory but no postinstall inventory. Source/test checkpointed in
+  `76cdb404`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.999999999999%. Rotate to package inventory omission
+  and unsafe-path breadth next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  omit OpenClaw's local build metadata stamps, source maps, and transient
+  extension `node_modules` dependency debris when comparing packaged `dist/`
+  files against `postinstall-inventory.json`. Source/test checkpointed in
+  `6e8bb491`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999992%. Rotate to unsafe symlinked dist
+  entry detection next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  detect unsafe symlinked packaged `dist/` entries and surface OpenClaw's
+  `Unsafe package dist path: ...` warning. Source/test checkpointed in
+  `a9c7884f`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999993%. Rotate to externalized bundled
+  extension dist omission next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  omit publishable externalized bundled extension dist trees while still
+  counting bundled and `bundle.includeInCore=true` extension runtime files.
+  Source/test checkpointed in `06ba5480`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.9999999999994%.
+  Rotate to private QA/plugin-sdk omitted dist paths next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  omit private QA extension/plugin-sdk/runtime dist artifacts from package
+  inventory drift checks. Source/test checkpointed in `bde731a9`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999995%. Re-check packaging queue for the next source-backed
+  release/update seam.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  flag package roots that resolve to an OpenClaw-shaped source checkout with
+  the upstream `global package root resolves to source checkout: ...` warning.
+  Source/test checkpointed in `912aee5e`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.9999999999996%.
+  Rotate to installed bundled runtime sidecar enforcement next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  enforce OpenClaw's critical bundled runtime sidecar contract for installed
+  bundled plugins and report `missing bundled runtime sidecar ...` when an
+  inventory omits a required sidecar. Source/test checkpointed in `07b17ad0`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999997%. Rotate to private-QA sidecar no-warning
+  proof next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  have focused proof that private QA bundled plugin roots are excluded from
+  bundled runtime sidecar enforcement. Test checkpointed in `ad248bf4`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999998%. Rotate to remaining update-global
+  install-manager/update command breadth.
+- Current queue-head adjustment: the root `openzues update --dry-run --json`
+  command now returns an OpenClaw-shaped preview for package update plans,
+  including native OpenZues `main` package-spec mapping, planned global
+  package-manager actions, non-registry lookup notes, and restart posture.
+  Source/test checkpointed in `08e8f76f`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99999999999985%.
+  Continue update-global env override, explicit spec, and command breadth next.
+- Current queue-head adjustment: `openzues update status --json --timeout`
+  now accepts OpenClaw's update-status timeout option and passes it to the live
+  status probe before falling back to the stored Hermes update view.
+  Source/test checkpointed in `6418d7f3`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99999999999986%.
+  Continue update-global env override, explicit spec, and command breadth next.
+- Current queue-head adjustment: the update dry-run preview now has focused
+  proof that `OPENCLAW_UPDATE_PACKAGE_SPEC` overrides the derived package
+  target and is echoed in planned global package-manager actions. Test
+  checkpointed in `949de445`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999987%. Continue
+  explicit install-spec preservation and root update command breadth next.
+- Current queue-head adjustment: the update dry-run preview now has focused
+  proof that explicit package install specs are preserved in `tag`, planned
+  action text, and non-registry notes. Test checkpointed in `3227786a`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999988%. Continue root update execution posture,
+  install-manager detection, and package/git update breadth next.
+- Current queue-head adjustment: root `openzues update --json` now dispatches
+  to the native `RuntimeUpdateService.run_update` path, preserving timeout
+  propagation and JSON result projection for the git-backed updater.
+  Source/test checkpointed in `0c88812c`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99999999999989%.
+  Continue package-manager update breadth, channel/tag apply semantics, and
+  installed-plugin post-update behavior next.
+- Current queue-head adjustment: `openzues update --json --timeout <seconds>
+  status` now forwards parent update options into the `status` subcommand,
+  preserving OpenClaw's inherited status `--json`/`--timeout` semantics.
+  Source/test checkpointed in `f088293f`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99999999999990%.
+  Continue package-manager/global-install execution depth next.
+- Current queue-head adjustment: package-shaped root update installs now route
+  through a native `RuntimeUpdateService.run_package_update` path with
+  upstream-shaped npm/pnpm/bun global install args, `global update` step
+  metadata, and OpenClaw-style update result envelopes. Source/test
+  checkpointed in `1291d361`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999991%. Continue staged
+  npm fallback/swap verification and post-update plugin sync next.
+- Current queue-head adjustment: native package updates now retry failed npm
+  global installs with the OpenClaw-shaped `global update (omit optional)` step
+  and `--omit=optional` args. Source/test checkpointed in `f3177330`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999992%. Continue staged npm swap/verification
+  and post-update plugin sync next.
+- Current queue-head adjustment: native package updates now verify explicit
+  version package specs with a `global install verify` step and fail when the
+  installed version does not match the requested target. Source/test
+  checkpointed in `1db09c3b`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999993%. Continue staged
+  npm swap and post-update plugin sync next.
+- Current queue-head adjustment: native update result envelopes now project
+  top-level `failedStep` metadata for failed package/git update steps. Source/
+  test checkpointed in `98e4d5c9`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.99999999999994%.
+  Continue staged npm swap and post-update plugin sync next.

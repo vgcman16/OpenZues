@@ -607,7 +607,10 @@ hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
 )
-update_app = typer.Typer(help="Inspect self-update posture and restart-safe repo state.")
+update_app = typer.Typer(
+    help="Inspect self-update posture and restart-safe repo state.",
+    invoke_without_command=True,
+)
 setup_app = typer.Typer(
     help="Inspect, reuse, or reset the saved setup posture.",
     invoke_without_command=True,
@@ -1022,14 +1025,18 @@ async def _try_live_hermes_doctor_view(app_settings: Settings) -> HermesDoctorVi
     return cast("HermesDoctorView | None", result)
 
 
-async def _try_live_update_view(app_settings: Settings) -> HermesUpdateView | None:
+async def _try_live_update_view(
+    app_settings: Settings,
+    *,
+    timeout_seconds: float = 10.0,
+) -> HermesUpdateView | None:
     base_url = _control_plane_base_url(app_settings)
     result = await asyncio.to_thread(
         _try_live_api_model,
         base_url,
         "/api/update/status",
         HermesUpdateView,
-        timeout_seconds=10.0,
+        timeout_seconds=timeout_seconds,
     )
     return cast("HermesUpdateView | None", result)
 
@@ -8146,6 +8153,83 @@ async def _with_doctor_runtime_bridge_payload(
 
 
 _PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.json"
+_PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS = {
+    "dist/.buildstamp",
+    "dist/.runtime-postbuildstamp",
+}
+_PACKAGE_DIST_OMITTED_QA_EXTENSION_PREFIXES = (
+    "dist/extensions/qa-channel/",
+    "dist/extensions/qa-lab/",
+    "dist/extensions/qa-matrix/",
+)
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_PREFIXES = (
+    "dist/plugin-sdk/extensions/qa-channel/",
+    "dist/plugin-sdk/extensions/qa-lab/",
+)
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_FILES = {
+    "dist/plugin-sdk/qa-channel.d.ts",
+    "dist/plugin-sdk/qa-channel.js",
+    "dist/plugin-sdk/qa-channel-protocol.d.ts",
+    "dist/plugin-sdk/qa-channel-protocol.js",
+    "dist/plugin-sdk/qa-lab.d.ts",
+    "dist/plugin-sdk/qa-lab.js",
+    "dist/plugin-sdk/qa-runtime.d.ts",
+    "dist/plugin-sdk/qa-runtime.js",
+    "dist/plugin-sdk/src/plugin-sdk/qa-channel.d.ts",
+    "dist/plugin-sdk/src/plugin-sdk/qa-channel-protocol.d.ts",
+    "dist/plugin-sdk/src/plugin-sdk/qa-lab.d.ts",
+    "dist/plugin-sdk/src/plugin-sdk/qa-runtime.d.ts",
+}
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_DIST_PREFIXES = ("dist/qa-runtime-",)
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_BUNDLED_PLUGIN_ROOTS = {
+    "dist/extensions/qa-channel",
+    "dist/extensions/qa-lab",
+    "dist/extensions/qa-matrix",
+}
+_PACKAGE_DIST_BUNDLED_RUNTIME_SIDECAR_PATHS = (
+    "dist/extensions/acpx/runtime-api.js",
+    "dist/extensions/bluebubbles/runtime-api.js",
+    "dist/extensions/browser/runtime-api.js",
+    "dist/extensions/copilot-proxy/runtime-api.js",
+    "dist/extensions/diffs/runtime-api.js",
+    "dist/extensions/discord/runtime-api.js",
+    "dist/extensions/discord/runtime-setter-api.js",
+    "dist/extensions/feishu/runtime-api.js",
+    "dist/extensions/google/runtime-api.js",
+    "dist/extensions/googlechat/runtime-api.js",
+    "dist/extensions/imessage/runtime-api.js",
+    "dist/extensions/irc/runtime-api.js",
+    "dist/extensions/line/runtime-api.js",
+    "dist/extensions/lmstudio/runtime-api.js",
+    "dist/extensions/lobster/runtime-api.js",
+    "dist/extensions/matrix/helper-api.js",
+    "dist/extensions/matrix/runtime-api.js",
+    "dist/extensions/matrix/runtime-setter-api.js",
+    "dist/extensions/matrix/thread-bindings-runtime.js",
+    "dist/extensions/mattermost/runtime-api.js",
+    "dist/extensions/memory-core/runtime-api.js",
+    "dist/extensions/msteams/runtime-api.js",
+    "dist/extensions/nextcloud-talk/runtime-api.js",
+    "dist/extensions/nostr/runtime-api.js",
+    "dist/extensions/ollama/runtime-api.js",
+    "dist/extensions/open-prose/runtime-api.js",
+    "dist/extensions/qqbot/runtime-api.js",
+    "dist/extensions/signal/runtime-api.js",
+    "dist/extensions/slack/runtime-api.js",
+    "dist/extensions/slack/runtime-setter-api.js",
+    "dist/extensions/telegram/runtime-api.js",
+    "dist/extensions/telegram/runtime-setter-api.js",
+    "dist/extensions/tlon/runtime-api.js",
+    "dist/extensions/tokenjuice/runtime-api.js",
+    "dist/extensions/twitch/runtime-api.js",
+    "dist/extensions/voice-call/runtime-api.js",
+    "dist/extensions/webhooks/runtime-api.js",
+    "dist/extensions/whatsapp/light-runtime-api.js",
+    "dist/extensions/whatsapp/runtime-api.js",
+    "dist/extensions/zai/runtime-api.js",
+    "dist/extensions/zalo/runtime-api.js",
+    "dist/extensions/zalouser/runtime-api.js",
+)
 
 
 def _openzues_package_root() -> Path:
@@ -8179,9 +8263,15 @@ def _doctor_package_distribution_check(
     return payload
 
 
-def _doctor_package_dist_inventory_warning(inventory_path: Path) -> str | None:
+def _doctor_normalize_package_dist_path(path: str) -> str:
+    return path.replace("\\", "/")
+
+
+def _doctor_read_package_dist_inventory(
+    inventory_path: Path,
+) -> tuple[list[str] | None, str | None]:
     if not _doctor_path_exists(inventory_path):
-        return None
+        return None, None
     warning = (
         "Invalid package dist inventory at "
         f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
@@ -8189,10 +8279,371 @@ def _doctor_package_dist_inventory_warning(inventory_path: Path) -> str | None:
     try:
         parsed = json.loads(inventory_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return warning
+        return None, warning
     if not isinstance(parsed, list) or any(not isinstance(entry, str) for entry in parsed):
-        return warning
+        return None, warning
+    files = sorted({_doctor_normalize_package_dist_path(entry) for entry in parsed})
+    return files, None
+
+
+def _doctor_is_externalized_bundled_extension_dist_path(
+    relative_path: str,
+    externalized_extension_ids: set[str],
+) -> bool:
+    parts = relative_path.split("/")
+    return (
+        len(parts) >= 3
+        and parts[0] == "dist"
+        and parts[1] == "extensions"
+        and parts[2] in externalized_extension_ids
+    )
+
+
+def _doctor_is_publishable_externalized_manifest(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    openclaw = value.get("openclaw")
+    if not isinstance(openclaw, Mapping):
+        return False
+    bundle = openclaw.get("bundle")
+    if isinstance(bundle, Mapping) and bundle.get("includeInCore") is True:
+        return False
+    release = openclaw.get("release")
+    if not isinstance(release, Mapping):
+        return False
+    return release.get("publishToNpm") is True or release.get("publishToClawHub") is True
+
+
+def _doctor_collect_externalized_bundled_extension_ids(root: Path) -> set[str]:
+    extensions_path = root / "extensions"
+    if not _doctor_path_exists(extensions_path):
+        return set()
+    extension_ids: set[str] = set()
+    try:
+        extension_entries = list(extensions_path.iterdir())
+    except OSError:
+        return set()
+    for extension_entry in extension_entries:
+        try:
+            if not extension_entry.is_dir() or extension_entry.is_symlink():
+                continue
+            parsed = json.loads(
+                (extension_entry / "package.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            continue
+        if _doctor_is_publishable_externalized_manifest(parsed):
+            extension_ids.add(extension_entry.name)
+    return extension_ids
+
+
+def _doctor_is_packaged_dist_file(
+    relative_path: str,
+    externalized_extension_ids: set[str],
+) -> bool:
+    if relative_path == _PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix():
+        return False
+    if _doctor_is_externalized_bundled_extension_dist_path(
+        relative_path,
+        externalized_extension_ids,
+    ):
+        return False
+    if relative_path in _PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS:
+        return False
+    if relative_path.startswith(_PACKAGE_DIST_OMITTED_QA_EXTENSION_PREFIXES):
+        return False
+    if relative_path.startswith(_PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_PREFIXES):
+        return False
+    if relative_path in _PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_FILES:
+        return False
+    if relative_path.startswith(_PACKAGE_DIST_OMITTED_PRIVATE_QA_DIST_PREFIXES):
+        return False
+    if relative_path.endswith(".map"):
+        return False
+    if relative_path == "dist/plugin-sdk/.tsbuildinfo":
+        return False
+    parts = relative_path.split("/")
+    return not (
+        len(parts) >= 3
+        and parts[0] == "dist"
+        and parts[1] == "extensions"
+        and (
+            parts[2].lower() == "node_modules"
+            or (len(parts) >= 4 and parts[3].lower() == "node_modules")
+        )
+    )
+
+
+def _doctor_collect_package_dist_files(root: Path) -> list[str]:
+    dist_path = root / "dist"
+    if not _doctor_path_exists(dist_path):
+        return []
+    externalized_extension_ids = _doctor_collect_externalized_bundled_extension_ids(root)
+    files: list[str] = []
+    for path in dist_path.rglob("*"):
+        try:
+            if not path.is_file() or path.is_symlink():
+                continue
+        except OSError:
+            continue
+        relative_path = _doctor_normalize_package_dist_path(path.relative_to(root).as_posix())
+        if _doctor_is_packaged_dist_file(relative_path, externalized_extension_ids):
+            files.append(relative_path)
+    return sorted(set(files))
+
+
+def _doctor_package_dist_unsafe_path_warnings(root: Path) -> list[str]:
+    dist_path = root / "dist"
+    if not _doctor_path_exists(dist_path):
+        return []
+    warnings: list[str] = []
+    for path in dist_path.rglob("*"):
+        try:
+            if path.is_symlink():
+                relative_path = _doctor_normalize_package_dist_path(
+                    path.relative_to(root).as_posix()
+                )
+                warnings.append(f"Unsafe package dist path: {relative_path}")
+        except OSError:
+            continue
+    return sorted(set(warnings))
+
+
+def _doctor_is_install_stage_dir_name(value: str) -> bool:
+    lower = value.lower()
+    return lower == ".openclaw-install-stage" or lower.startswith(
+        ".openclaw-install-stage-"
+    )
+
+
+def _doctor_collect_legacy_package_dist_staging_debris(root: Path) -> list[str]:
+    try:
+        package_root_entries = list(root.iterdir())
+    except OSError:
+        return []
+    debris: list[str] = []
+    for dist_dir in package_root_entries:
+        try:
+            if (
+                not dist_dir.is_dir()
+                or dist_dir.is_symlink()
+                or dist_dir.name.lower() != "dist"
+            ):
+                continue
+            dist_entries = list(dist_dir.iterdir())
+        except OSError:
+            continue
+        for dist_entry in dist_entries:
+            try:
+                if (
+                    not dist_entry.is_dir()
+                    or dist_entry.is_symlink()
+                    or dist_entry.name.lower() != "extensions"
+                ):
+                    continue
+                extension_entries = list(dist_entry.iterdir())
+            except OSError:
+                continue
+            for extension_entry in extension_entries:
+                try:
+                    if not extension_entry.is_dir() or extension_entry.is_symlink():
+                        continue
+                    staging_entries = list(extension_entry.iterdir())
+                except OSError:
+                    continue
+                for staging_entry in staging_entries:
+                    try:
+                        if (
+                            staging_entry.is_dir()
+                            and not staging_entry.is_symlink()
+                            and _doctor_is_install_stage_dir_name(staging_entry.name)
+                        ):
+                            debris.append(
+                                _doctor_normalize_package_dist_path(
+                                    staging_entry.relative_to(root).as_posix()
+                                )
+                            )
+                    except OSError:
+                        continue
+    return sorted(set(debris))
+
+
+def _doctor_package_dist_staging_debris_warning(debris: Sequence[str]) -> str | None:
+    if not debris:
+        return None
+    return (
+        "unexpected legacy plugin dependency staging debris in package dist: "
+        f"{', '.join(debris)}"
+    )
+
+
+def _doctor_missing_package_dist_inventory_warning() -> str:
+    return (
+        "missing package dist inventory "
+        f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
+    )
+
+
+def _doctor_package_dist_plugin_root(relative_path: str) -> str | None:
+    parts = relative_path.split("/")
+    if len(parts) < 3 or parts[0] != "dist" or parts[1] != "extensions":
+        return None
+    return "/".join(parts[:3])
+
+
+def _doctor_collect_critical_bundled_runtime_sidecars(root: Path) -> list[str]:
+    expected: list[str] = []
+    for relative_path in _PACKAGE_DIST_BUNDLED_RUNTIME_SIDECAR_PATHS:
+        plugin_root = _doctor_package_dist_plugin_root(relative_path)
+        if plugin_root is None:
+            continue
+        if plugin_root in _PACKAGE_DIST_OMITTED_PRIVATE_QA_BUNDLED_PLUGIN_ROOTS:
+            continue
+        plugin_path = root / Path(plugin_root)
+        if _doctor_path_exists(plugin_path / "package.json") or _doctor_path_exists(
+            plugin_path / "openclaw.plugin.json"
+        ):
+            expected.append(relative_path)
+    return sorted(set(expected))
+
+
+def _doctor_missing_bundled_runtime_sidecar_warnings(
+    root: Path,
+    inventory_expected_files: Sequence[str] | None,
+) -> list[str]:
+    expected = _doctor_collect_critical_bundled_runtime_sidecars(root)
+    if inventory_expected_files is not None:
+        inventory_set = set(inventory_expected_files)
+        expected = [path for path in expected if path not in inventory_set]
+    warnings: list[str] = []
+    for relative_path in expected:
+        if not _doctor_path_exists(root / Path(relative_path)):
+            warnings.append(f"missing bundled runtime sidecar {relative_path}")
+    return warnings
+
+
+def _doctor_resolved_source_checkout_warning(root: Path) -> str | None:
+    try:
+        resolved_root = root.resolve(strict=False)
+    except OSError:
+        resolved_root = root
+    if (
+        (_doctor_path_exists(resolved_root / ".git")
+        or _doctor_path_exists(resolved_root / "pnpm-workspace.yaml"))
+        and _doctor_path_exists(resolved_root / "src")
+        and _doctor_path_exists(resolved_root / "extensions")
+    ):
+        return f"global package root resolves to source checkout: {resolved_root}"
     return None
+
+
+def _doctor_package_dist_inventory_file_warnings(
+    root: Path,
+    expected_files: Sequence[str] | None,
+) -> list[str]:
+    if expected_files is None:
+        return []
+    actual_files = _doctor_collect_package_dist_files(root)
+    actual_set = set(actual_files)
+    expected_set = set(expected_files)
+    warnings: list[str] = []
+    for relative_path in expected_files:
+        if relative_path not in actual_set:
+            warnings.append(f"missing packaged dist file {relative_path}")
+    for relative_path in actual_files:
+        if relative_path not in expected_set:
+            warnings.append(f"unexpected packaged dist file {relative_path}")
+    return warnings
+
+
+def _build_doctor_source_install_payload(root: Path) -> dict[str, object] | None:
+    workspace_path = root / "pnpm-workspace.yaml"
+    if not _doctor_path_exists(workspace_path):
+        return None
+    node_modules_path = root / "node_modules"
+    pnpm_store_path = node_modules_path / ".pnpm"
+    package_lock_path = root / "package-lock.json"
+    tsx_bin_path = root / "node_modules" / ".bin" / "tsx"
+    src_entry_path = root / "src" / "entry.ts"
+    warnings: list[str] = []
+    checks: list[dict[str, object]] = []
+
+    if _doctor_path_exists(node_modules_path) and not _doctor_path_exists(pnpm_store_path):
+        warnings.append(
+            "node_modules was not installed by pnpm (missing node_modules/.pnpm). "
+            "Run: pnpm install so bundled plugins can load package-local dependencies."
+        )
+        checks.append(
+            _doctor_package_distribution_check(
+                key="pnpm_node_modules",
+                status="warning",
+                path=node_modules_path,
+                detail="node_modules was not installed by pnpm (missing node_modules/.pnpm).",
+            )
+        )
+    else:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="pnpm_node_modules",
+                status="ok",
+                path=node_modules_path,
+                detail="pnpm node_modules layout is present or node_modules is absent.",
+            )
+        )
+
+    if _doctor_path_exists(package_lock_path):
+        warnings.append(
+            "package-lock.json present in a pnpm workspace. If you ran npm install, remove it "
+            "and reinstall with pnpm."
+        )
+        checks.append(
+            _doctor_package_distribution_check(
+                key="package_lock",
+                status="warning",
+                path=package_lock_path,
+                detail="package-lock.json is present in a pnpm workspace.",
+            )
+        )
+    else:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="package_lock",
+                status="ok",
+                path=package_lock_path,
+                detail="package-lock.json is absent.",
+            )
+        )
+
+    if _doctor_path_exists(src_entry_path) and not _doctor_path_exists(tsx_bin_path):
+        warnings.append("tsx binary is missing for source runs. Run: pnpm install.")
+        checks.append(
+            _doctor_package_distribution_check(
+                key="tsx_binary",
+                status="warning",
+                path=tsx_bin_path,
+                detail="tsx binary is missing for source runs.",
+            )
+        )
+    else:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="tsx_binary",
+                status="ok",
+                path=tsx_bin_path,
+                detail="tsx binary is present or not required.",
+            )
+        )
+
+    return {
+        "status": "warning" if warnings else "ok",
+        "workspace": True,
+        "workspacePath": str(workspace_path),
+        "nodeModulesPath": str(node_modules_path),
+        "pnpmStorePath": str(pnpm_store_path),
+        "tsxBinPath": str(tsx_bin_path),
+        "checks": checks,
+        "warnings": warnings,
+    }
 
 
 def _build_doctor_package_distribution_payload(
@@ -8209,21 +8660,67 @@ def _build_doctor_package_distribution_payload(
     inventory_path = root / _PACKAGE_DIST_INVENTORY_RELATIVE_PATH
     dist_present = _doctor_path_exists(dist_path)
     inventory_present = _doctor_path_exists(inventory_path)
-    inventory_warning = _doctor_package_dist_inventory_warning(inventory_path)
+    inventory_expected_files, inventory_warning = _doctor_read_package_dist_inventory(
+        inventory_path
+    )
     inventory_required = not source_checkout
+    source_install = _build_doctor_source_install_payload(root) if source_checkout else None
+    missing_inventory_warning = _doctor_missing_package_dist_inventory_warning()
+    resolved_source_checkout_warning = (
+        None if source_checkout else _doctor_resolved_source_checkout_warning(root)
+    )
     warnings: list[str] = []
     if not root_exists:
         warnings.append(f"Package root not found: {root}")
+    if resolved_source_checkout_warning is not None:
+        warnings.append(resolved_source_checkout_warning)
     if inventory_required and not dist_present:
         warnings.append(f"Packaged dist directory is missing: {dist_path}")
     if inventory_required and not inventory_present:
-        warnings.append(
-            "Package dist inventory is missing: "
-            f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
-        )
+        warnings.append(missing_inventory_warning)
     if inventory_required and inventory_warning is not None:
         warnings.append(inventory_warning)
-    if source_checkout:
+    staging_debris = (
+        _doctor_collect_legacy_package_dist_staging_debris(root)
+        if inventory_required and dist_present
+        else []
+    )
+    staging_debris_warning = _doctor_package_dist_staging_debris_warning(
+        staging_debris
+    )
+    if staging_debris_warning is not None:
+        warnings.append(staging_debris_warning)
+    unsafe_path_warnings = (
+        _doctor_package_dist_unsafe_path_warnings(root)
+        if inventory_required and dist_present
+        else []
+    )
+    warnings.extend(unsafe_path_warnings)
+    inventory_file_warnings: list[str] = []
+    if inventory_required and inventory_present and inventory_warning is None:
+        inventory_file_warnings = _doctor_package_dist_inventory_file_warnings(
+            root,
+            inventory_expected_files,
+        )
+        warnings.extend(inventory_file_warnings)
+    sidecar_warnings = (
+        _doctor_missing_bundled_runtime_sidecar_warnings(
+            root,
+            inventory_expected_files,
+        )
+        if inventory_required
+        else []
+    )
+    warnings.extend(sidecar_warnings)
+    if source_install is not None:
+        source_install_warnings = source_install.get("warnings")
+        if isinstance(source_install_warnings, list):
+            warnings.extend(str(warning) for warning in source_install_warnings)
+    if source_checkout and warnings:
+        status = "warning"
+        summary = "OpenZues source checkout has install issues."
+        distribution = "source-checkout"
+    elif source_checkout:
         status = "info"
         summary = "OpenZues is running from a source checkout; package inventory is informational."
         distribution = "source-checkout"
@@ -8235,7 +8732,105 @@ def _build_doctor_package_distribution_payload(
         status = "ok"
         summary = "OpenZues package distribution inventory is present."
         distribution = "packaged"
-    return {
+    checks = [
+        _doctor_package_distribution_check(
+            key="package_root",
+            status="ok" if root_exists else "warning",
+            path=root,
+            detail="Package root is readable."
+            if root_exists
+            else "Package root is missing or unreadable.",
+        ),
+        _doctor_package_distribution_check(
+            key="source_checkout",
+            status="info" if source_checkout else "ok",
+            detail="Source checkout markers are present."
+            if source_checkout
+            else "Source checkout markers are absent.",
+        ),
+        _doctor_package_distribution_check(
+            key="dist",
+            status="ok" if dist_present else ("info" if source_checkout else "warning"),
+            path=dist_path,
+            detail="Packaged dist directory is present."
+            if dist_present
+            else "Packaged dist directory is not required for source checkout runs."
+            if source_checkout
+            else "Packaged dist directory is missing.",
+        ),
+        _doctor_package_distribution_check(
+            key="postinstall_inventory",
+            status=(
+                "warning"
+                if inventory_warning is not None
+                else "ok"
+                if inventory_present
+                else "info"
+                if source_checkout
+                else "warning"
+            ),
+            path=inventory_path,
+            detail=inventory_warning
+            if inventory_warning is not None
+            else "Package dist inventory is present."
+            if inventory_present
+            else "Package dist inventory is not required for source checkout runs."
+            if source_checkout
+            else missing_inventory_warning,
+        ),
+    ]
+    if resolved_source_checkout_warning is not None:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="resolved_source_checkout",
+                status="warning",
+                path=root,
+                detail=resolved_source_checkout_warning,
+            )
+        )
+    if inventory_required and inventory_present and inventory_warning is None:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="postinstall_inventory_files",
+                status="warning" if inventory_file_warnings else "ok",
+                path=dist_path,
+                detail="; ".join(inventory_file_warnings)
+                if inventory_file_warnings
+                else "Package dist inventory matches packaged files.",
+            )
+        )
+    if inventory_required and dist_present:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="legacy_plugin_dependency_staging_debris",
+                status="warning" if staging_debris_warning is not None else "ok",
+                path=dist_path / "extensions",
+                detail=staging_debris_warning
+                if staging_debris_warning is not None
+                else "No legacy plugin dependency staging debris found.",
+            )
+        )
+        checks.append(
+            _doctor_package_distribution_check(
+                key="unsafe_package_dist_paths",
+                status="warning" if unsafe_path_warnings else "ok",
+                path=dist_path,
+                detail="; ".join(unsafe_path_warnings)
+                if unsafe_path_warnings
+                else "No unsafe package dist paths found.",
+            )
+        )
+        checks.append(
+            _doctor_package_distribution_check(
+                key="bundled_runtime_sidecars",
+                status="warning" if sidecar_warnings else "ok",
+                path=dist_path / "extensions",
+                detail="; ".join(sidecar_warnings)
+                if sidecar_warnings
+                else "Bundled runtime sidecars are present or not required.",
+            )
+        )
+    payload: dict[str, object] = {
         "status": status,
         "summary": summary,
         "source": "openzues-native",
@@ -8249,55 +8844,12 @@ def _build_doctor_package_distribution_payload(
         "inventoryPath": str(inventory_path),
         "inventoryPresent": inventory_present,
         "inventoryRequired": inventory_required,
-        "checks": [
-            _doctor_package_distribution_check(
-                key="package_root",
-                status="ok" if root_exists else "warning",
-                path=root,
-                detail="Package root is readable."
-                if root_exists
-                else "Package root is missing or unreadable.",
-            ),
-            _doctor_package_distribution_check(
-                key="source_checkout",
-                status="info" if source_checkout else "ok",
-                detail="Source checkout markers are present."
-                if source_checkout
-                else "Source checkout markers are absent.",
-            ),
-            _doctor_package_distribution_check(
-                key="dist",
-                status="ok" if dist_present else ("info" if source_checkout else "warning"),
-                path=dist_path,
-                detail="Packaged dist directory is present."
-                if dist_present
-                else "Packaged dist directory is not required for source checkout runs."
-                if source_checkout
-                else "Packaged dist directory is missing.",
-            ),
-            _doctor_package_distribution_check(
-                key="postinstall_inventory",
-                status=(
-                    "warning"
-                    if inventory_warning is not None
-                    else "ok"
-                    if inventory_present
-                    else "info"
-                    if source_checkout
-                    else "warning"
-                ),
-                path=inventory_path,
-                detail=inventory_warning
-                if inventory_warning is not None
-                else "Package dist inventory is present."
-                if inventory_present
-                else "Package dist inventory is not required for source checkout runs."
-                if source_checkout
-                else "Package dist inventory is missing.",
-            ),
-        ],
+        "checks": checks,
         "warnings": warnings,
     }
+    if source_install is not None:
+        payload["sourceInstall"] = source_install
+    return payload
 
 
 def _with_doctor_package_distribution_payload(
@@ -9494,6 +10046,9 @@ def _emit_update_status(payload: dict[str, object], *, json_output: bool) -> Non
         return
 
     _emit_payload(payload, json_output=False)
+    update_hint = _openclaw_update_available_hint(payload)
+    if update_hint is not None:
+        typer.echo(update_hint)
     repo_root = str(payload.get("repo_root") or "").strip()
     if repo_root:
         typer.echo("repo: " + repo_root)
@@ -9510,8 +10065,91 @@ def _emit_update_status(payload: dict[str, object], *, json_output: bool) -> Non
         )
 
 
+def _emit_update_dry_run_preview(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+
+    typer.echo("Update dry-run")
+    typer.echo("No changes were applied.")
+    typer.echo("")
+    typer.echo(f"  Root: {payload.get('root')}")
+    typer.echo(f"  Install kind: {payload.get('installKind')}")
+    typer.echo(f"  Mode: {payload.get('mode')}")
+    typer.echo(f"  Channel: {payload.get('effectiveChannel')}")
+    typer.echo(f"  Tag/spec: {payload.get('tag')}")
+    current_version = _optional_cli_string(payload.get("currentVersion"))
+    if current_version is not None:
+        typer.echo(f"  Current version: {current_version}")
+    target_version = _optional_cli_string(payload.get("targetVersion"))
+    if target_version is not None:
+        typer.echo(f"  Target version: {target_version}")
+    actions = payload.get("actions")
+    if isinstance(actions, list):
+        typer.echo("")
+        typer.echo("Planned actions:")
+        for action in actions:
+            typer.echo(f"  - {action}")
+    notes = payload.get("notes")
+    if isinstance(notes, list) and notes:
+        typer.echo("")
+        typer.echo("Notes:")
+        for note in notes:
+            typer.echo(f"  - {note}")
+
+
+def _emit_update_run_result(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    status = str(payload.get("status") or "unknown")
+    mode = str(payload.get("mode") or "unknown")
+    typer.echo(f"Update {status}")
+    typer.echo(f"mode: {mode}")
+    reason = _optional_cli_string(payload.get("reason"))
+    if reason is not None:
+        typer.echo(f"reason: {reason}")
+    root = _optional_cli_string(payload.get("root"))
+    if root is not None:
+        typer.echo(f"root: {root}")
+    steps = payload.get("steps")
+    if isinstance(steps, list):
+        typer.echo(f"steps: {len(steps)}")
+
+
+def _parse_openclaw_update_timeout_seconds(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        timeout_seconds = float(value)
+    except ValueError:
+        typer.echo(f'--timeout must be a positive number of seconds (got "{value}")', err=True)
+        raise typer.Exit(code=1) from None
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        typer.echo(f'--timeout must be a positive number of seconds (got "{value}")', err=True)
+        raise typer.Exit(code=1)
+    return timeout_seconds
+
+
+def _openclaw_update_available_hint(payload: Mapping[str, object]) -> str | None:
+    availability = payload.get("availability")
+    if not isinstance(availability, Mapping) or availability.get("available") is not True:
+        return None
+    details: list[str] = []
+    git_behind = availability.get("gitBehind")
+    if isinstance(git_behind, int):
+        details.append(f"git behind {git_behind}")
+    latest_version = _optional_cli_string(availability.get("latestVersion"))
+    if latest_version is not None:
+        details.append(f"npm {latest_version}")
+    suffix = f" ({', '.join(details)})" if details else ""
+    return f"Update available{suffix}. Run: openzues update"
+
+
 _OPENCLAW_UPDATE_CHANNELS = {"stable", "beta", "dev"}
 _OPENCLAW_UPDATE_PACKAGE_MANAGERS = {"pnpm", "bun", "npm"}
+_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME = "openzues"
+_OPENZUES_MAIN_PACKAGE_SPEC = "github:openzues/openzues#main"
 
 
 def _openclaw_update_config_channel(config_snapshot: object) -> str | None:
@@ -9524,12 +10162,162 @@ def _openclaw_update_config_channel(config_snapshot: object) -> str | None:
     return channel if channel in _OPENCLAW_UPDATE_CHANNELS else None
 
 
+def _openclaw_update_normalize_channel(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    channel = value.strip().lower()
+    return channel if channel in _OPENCLAW_UPDATE_CHANNELS else None
+
+
 def _openclaw_update_install_kind(root: Path) -> str:
     if _doctor_path_exists(root / ".git"):
         return "git"
     if _doctor_path_exists(root):
         return "package"
     return "unknown"
+
+
+def _openclaw_update_read_package_version(root: Path) -> str | None:
+    package_json = root / "package.json"
+    if not _doctor_path_exists(package_json):
+        return None
+    try:
+        parsed = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, Mapping):
+        return None
+    return _optional_cli_string(parsed.get("version"))
+
+
+def _openclaw_update_normalize_package_target(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _openclaw_update_is_main_package_target(value: object) -> bool:
+    return _openclaw_update_normalize_package_target(value).lower() == "main"
+
+
+def _openclaw_update_is_explicit_package_install_spec(value: object) -> bool:
+    target = _openclaw_update_normalize_package_target(value)
+    if not target:
+        return False
+    return (
+        "://" in target
+        or "#" in target
+        or re.match(r"^(?:file|github|git\+ssh|git\+https|git\+http|git\+file|npm):", target, re.I)
+        is not None
+    )
+
+
+def _openclaw_update_can_resolve_registry_version_for_target(value: object) -> bool:
+    target = _openclaw_update_normalize_package_target(value)
+    if not target:
+        return True
+    return not _openclaw_update_is_main_package_target(
+        target
+    ) and not _openclaw_update_is_explicit_package_install_spec(target)
+
+
+def _openclaw_update_resolve_global_install_spec(*, package_name: str, tag: str) -> str:
+    override = (
+        os.environ.get("OPENCLAW_UPDATE_PACKAGE_SPEC", "").strip()
+        or os.environ.get("OPENZUES_UPDATE_PACKAGE_SPEC", "").strip()
+    )
+    if override:
+        return override
+    target = _openclaw_update_normalize_package_target(tag)
+    if _openclaw_update_is_main_package_target(target):
+        return _OPENZUES_MAIN_PACKAGE_SPEC
+    if _openclaw_update_is_explicit_package_install_spec(target):
+        return target
+    return f"{package_name}@{target}"
+
+
+def _openclaw_update_channel_to_package_tag(channel: str) -> str:
+    return "latest" if channel == "stable" else channel
+
+
+def _openclaw_update_dry_run_preview(
+    *,
+    requested_channel: str | None,
+    tag_override: str | None,
+    restart: bool,
+) -> dict[str, object]:
+    root = _openzues_package_root()
+    install_kind = _openclaw_update_install_kind(root)
+    switch_to_git = requested_channel == "dev" and install_kind != "git"
+    switch_to_package = (
+        requested_channel is not None and requested_channel != "dev" and install_kind == "git"
+    )
+    update_install_kind = (
+        "git" if switch_to_git else "package" if switch_to_package else install_kind
+    )
+    default_channel = "dev" if update_install_kind == "git" else "stable"
+    effective_channel = requested_channel or default_channel
+    explicit_tag = _openclaw_update_normalize_package_target(tag_override)
+    target_tag = explicit_tag or _openclaw_update_channel_to_package_tag(effective_channel)
+    package_install_spec: str | None = None
+    current_version = None if switch_to_package else _openclaw_update_read_package_version(root)
+    mode = "unknown"
+
+    if update_install_kind == "git":
+        mode = "git"
+    elif update_install_kind == "package":
+        mode = _openclaw_update_package_manager(root)
+        package_install_spec = _openclaw_update_resolve_global_install_spec(
+            package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
+            tag=target_tag,
+        )
+
+    actions: list[str] = []
+    if requested_channel is not None:
+        actions.append(f"Persist update.channel={requested_channel} in config")
+    if switch_to_git:
+        actions.append("Switch install mode from package to git checkout (dev channel)")
+    elif switch_to_package:
+        actions.append(f"Switch install mode from git to package manager ({mode})")
+    elif update_install_kind == "git":
+        actions.append(
+            f"Run git update flow on channel {effective_channel} (fetch/rebase/build/doctor)"
+        )
+    else:
+        actions.append(
+            f"Run global package manager update with spec {package_install_spec or target_tag}"
+        )
+    actions.append("Run plugin update sync after core update")
+    actions.append("Refresh shell completion cache (if needed)")
+    actions.append(
+        "Restart gateway service and run doctor checks"
+        if restart
+        else "Skip restart (because --no-restart is set)"
+    )
+
+    notes: list[str] = []
+    if explicit_tag and update_install_kind == "git":
+        notes.append("--tag applies to npm installs only; git updates ignore it.")
+    if explicit_tag and not _openclaw_update_can_resolve_registry_version_for_target(target_tag):
+        notes.append("Non-registry package specs skip npm version lookup and downgrade previews.")
+
+    return {
+        "dryRun": True,
+        "root": str(root),
+        "installKind": install_kind,
+        "mode": mode,
+        "updateInstallKind": update_install_kind,
+        "switchToGit": switch_to_git,
+        "switchToPackage": switch_to_package,
+        "restart": restart,
+        "requestedChannel": requested_channel,
+        "storedChannel": None,
+        "effectiveChannel": effective_channel,
+        "tag": package_install_spec or target_tag,
+        "currentVersion": current_version,
+        "targetVersion": None,
+        "downgradeRisk": False,
+        "actions": actions,
+        "notes": notes,
+    }
 
 
 def _openclaw_update_package_manager(root: Path) -> str:
@@ -9615,16 +10403,171 @@ def _openclaw_update_git_branch(root: Path) -> str | None:
     return branch
 
 
+def _openclaw_update_git_head_sha(root: Path) -> str | None:
+    git_dir = root / ".git"
+    head_path = git_dir / "HEAD"
+    if not _doctor_path_exists(head_path):
+        return None
+    try:
+        head = head_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    ref_prefix = "ref: "
+    if head.startswith(ref_prefix):
+        ref_path = git_dir / head.removeprefix(ref_prefix).strip()
+        if not _doctor_path_exists(ref_path):
+            return None
+        try:
+            head = ref_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+    return head if re.fullmatch(r"[0-9a-fA-F]{40}", head) else None
+
+
+def _openclaw_update_git_tag(root: Path) -> str | None:
+    head_sha = _openclaw_update_git_head_sha(root)
+    if head_sha is None:
+        return None
+    refs_tags = root / ".git" / "refs" / "tags"
+    if _doctor_path_exists(refs_tags):
+        try:
+            tag_refs = sorted(path for path in refs_tags.rglob("*") if path.is_file())
+        except OSError:
+            tag_refs = []
+        for tag_ref in tag_refs:
+            try:
+                tag_sha = tag_ref.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if tag_sha == head_sha:
+                return tag_ref.relative_to(refs_tags).as_posix()
+    packed_tag = _openclaw_update_packed_git_tag(root, head_sha)
+    if packed_tag is not None:
+        return packed_tag
+    return None
+
+
+def _openclaw_update_packed_git_tag(root: Path, head_sha: str) -> str | None:
+    packed_refs_path = root / ".git" / "packed-refs"
+    if not _doctor_path_exists(packed_refs_path):
+        return None
+    try:
+        lines = packed_refs_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    tag_prefix = "refs/tags/"
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("^"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        sha, ref = parts[0], parts[1]
+        if sha == head_sha and ref.startswith(tag_prefix):
+            return ref.removeprefix(tag_prefix)
+    return None
+
+
+def _openclaw_update_channel_from_git_tag(tag: str) -> str:
+    return "beta" if re.search(r"(?:^|[.-])beta(?:[.-]|$)", tag, flags=re.IGNORECASE) else "stable"
+
+
+def _openclaw_update_git_payload(
+    root: Path,
+    *,
+    git_tag: str | None,
+    git_branch: str | None,
+    raw_update_payload: object,
+) -> dict[str, object]:
+    raw_git = raw_update_payload.get("git") if isinstance(raw_update_payload, Mapping) else None
+    git_payload: dict[str, object] = {
+        "root": str(root),
+        "sha": _openclaw_update_git_head_sha(root),
+        "tag": git_tag,
+        "branch": git_branch,
+        "upstream": None,
+        "dirty": None,
+        "ahead": None,
+        "behind": None,
+        "fetchOk": None,
+    }
+    if isinstance(raw_git, Mapping):
+        for key in ("upstream", "dirty", "ahead", "behind", "fetchOk"):
+            if key in raw_git:
+                git_payload[key] = raw_git[key]
+    return git_payload
+
+
+def _openclaw_update_semver_tuple(value: object) -> tuple[int, int, int] | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    match = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", text)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _openclaw_update_registry_payload(raw_update_payload: object) -> dict[str, object] | None:
+    if not isinstance(raw_update_payload, Mapping):
+        return None
+    raw_registry = raw_update_payload.get("registry")
+    if not isinstance(raw_registry, Mapping):
+        return None
+    registry: dict[str, object] = {}
+    latest_version = _optional_cli_string(raw_registry.get("latestVersion"))
+    if latest_version is not None:
+        registry["latestVersion"] = latest_version
+    error = _optional_cli_string(raw_registry.get("error"))
+    if error is not None:
+        registry["error"] = error
+    return registry if registry else None
+
+
+def _openclaw_update_availability_payload(
+    update_payload: Mapping[str, object],
+) -> dict[str, object]:
+    raw_registry = update_payload.get("registry")
+    latest_version = (
+        _optional_cli_string(raw_registry.get("latestVersion"))
+        if isinstance(raw_registry, Mapping)
+        else None
+    )
+    current_semver = _openclaw_update_semver_tuple(__version__)
+    latest_semver = _openclaw_update_semver_tuple(latest_version)
+    has_registry_update = (
+        current_semver is not None and latest_semver is not None and current_semver < latest_semver
+    )
+
+    raw_git = update_payload.get("git")
+    raw_git_behind = raw_git.get("behind") if isinstance(raw_git, Mapping) else None
+    git_behind = raw_git_behind if isinstance(raw_git_behind, int) else None
+    has_git_update = git_behind is not None and git_behind > 0
+    return {
+        "available": has_git_update or has_registry_update,
+        "hasGitUpdate": has_git_update,
+        "hasRegistryUpdate": has_registry_update,
+        "latestVersion": latest_version if has_registry_update else None,
+        "gitBehind": git_behind,
+    }
+
+
 def _openclaw_update_channel_payload(
     *,
     config_channel: str | None,
     install_kind: str,
+    git_tag: str | None,
     git_branch: str | None,
 ) -> dict[str, object]:
     if config_channel is not None:
         channel = config_channel
         source = "config"
         label = f"{channel} (config)"
+    elif install_kind == "git" and git_tag is not None:
+        channel = _openclaw_update_channel_from_git_tag(git_tag)
+        source = "git-tag"
+        label = f"{channel} ({git_tag})"
     elif install_kind == "git" and git_branch is not None:
         channel = "dev"
         source = "git-branch"
@@ -9652,8 +10595,10 @@ def _with_openclaw_update_status_projection(
 ) -> dict[str, object]:
     root = _openzues_package_root()
     install_kind = _openclaw_update_install_kind(root)
+    git_tag = _openclaw_update_git_tag(root) if install_kind == "git" else None
     git_branch = _openclaw_update_git_branch(root) if install_kind == "git" else None
     config_channel = _openclaw_update_config_channel(config_snapshot)
+    raw_update_payload = payload.get("update") if isinstance(payload, Mapping) else None
     package_manager = (
         _openclaw_update_package_manager(root) if install_kind != "unknown" else "unknown"
     )
@@ -9663,21 +10608,26 @@ def _with_openclaw_update_status_projection(
         "installKind": install_kind,
         "packageManager": package_manager,
     }
+    if install_kind == "git":
+        update_payload["git"] = _openclaw_update_git_payload(
+            root,
+            git_tag=git_tag,
+            git_branch=git_branch,
+            raw_update_payload=raw_update_payload,
+        )
+    registry_payload = _openclaw_update_registry_payload(raw_update_payload)
+    if registry_payload is not None:
+        update_payload["registry"] = registry_payload
     if install_kind != "unknown":
         update_payload["deps"] = _openclaw_update_deps_status(root, package_manager)
     next_payload["update"] = update_payload
     next_payload["channel"] = _openclaw_update_channel_payload(
         config_channel=config_channel,
         install_kind=install_kind,
+        git_tag=git_tag,
         git_branch=git_branch,
     )
-    next_payload["availability"] = {
-        "available": False,
-        "hasGitUpdate": False,
-        "hasRegistryUpdate": False,
-        "latestVersion": None,
-        "gitBehind": None,
-    }
+    next_payload["availability"] = _openclaw_update_availability_payload(update_payload)
     return next_payload
 
 
@@ -90315,6 +91265,10 @@ def qr_command(
             f"Gateway: {gateway_url}",
             f"Auth: {auth_label}",
             f"Source: {url_source}",
+            "",
+            "Approve after scan with:",
+            "  openzues devices list",
+            "  openzues devices approve <requestId>",
         ]
     )
     typer.echo("\n".join(lines))
@@ -97080,16 +98034,139 @@ def hermes_profile_set(
     _emit_payload(payload, json_output=json_output)
 
 
+@update_app.callback()
+def update_root(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output update results as JSON.",
+    ),
+    restart: bool = typer.Option(
+        True,
+        "--restart/--no-restart",
+        help="Restart the gateway service after a successful update.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview update actions without making changes.",
+    ),
+    channel: str | None = typer.Option(
+        None,
+        "--channel",
+        help="Persist update channel: stable, beta, or dev.",
+    ),
+    tag: str | None = typer.Option(
+        None,
+        "--tag",
+        help="Override the package target for this update.",
+    ),
+    timeout: str | None = typer.Option(
+        None,
+        "--timeout",
+        help="Timeout for each update step in seconds.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Skip confirmation prompts.",
+    ),
+) -> None:
+    ctx.obj = {
+        "json_output": json_output,
+        "timeout": timeout,
+    }
+    if ctx.invoked_subcommand is not None:
+        return
+    _ = yes
+    requested_channel = _openclaw_update_normalize_channel(channel)
+    if channel is not None and requested_channel is None:
+        typer.echo(f'--channel must be "stable", "beta", or "dev" (got "{channel}")', err=True)
+        raise typer.Exit(code=1)
+    timeout_seconds = _parse_openclaw_update_timeout_seconds(timeout)
+    if dry_run:
+        payload = _openclaw_update_dry_run_preview(
+            requested_channel=requested_channel,
+            tag_override=tag,
+            restart=restart,
+        )
+        _emit_update_dry_run_preview(payload, json_output=json_output)
+        return
+    timeout_ms = int(timeout_seconds * 1000) if timeout_seconds is not None else None
+    root = _openzues_package_root()
+    install_kind = _openclaw_update_install_kind(root)
+    if install_kind == "package":
+        effective_channel = requested_channel or "stable"
+        target_tag = (
+            _openclaw_update_normalize_package_target(tag)
+            or _openclaw_update_channel_to_package_tag(effective_channel)
+        )
+        package_spec = _openclaw_update_resolve_global_install_spec(
+            package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
+            tag=target_tag,
+        )
+        package_manager = _openclaw_update_package_manager(root)
+        payload = _run(
+            _run_with_services(
+                lambda services: services.runtime_updates.run_package_update(
+                    package_root=root,
+                    package_manager=package_manager,
+                    package_spec=package_spec,
+                    timeout_ms=timeout_ms,
+                )
+            )
+        )
+        _emit_update_run_result(payload, json_output=json_output)
+        if payload.get("status") == "error":
+            raise typer.Exit(code=1)
+        return
+    payload = _run(
+        _run_with_services(
+            lambda services: services.runtime_updates.run_update(timeout_ms=timeout_ms)
+        )
+    )
+    _emit_update_run_result(payload, json_output=json_output)
+    if payload.get("status") == "error":
+        raise typer.Exit(code=1)
+
+
 @update_app.command("status")
 def update_status(
+    ctx: typer.Context,
     json_output: bool = typer.Option(
         False,
         "--json",
         help="Emit the runtime update status as JSON.",
     ),
+    timeout: str | None = typer.Option(
+        None,
+        "--timeout",
+        help="Timeout for update checks in seconds.",
+    ),
 ) -> None:
+    parent_options = (
+        ctx.parent.obj
+        if ctx.parent is not None and isinstance(ctx.parent.obj, Mapping)
+        else {}
+    )
+    parent_timeout = parent_options.get("timeout")
+    effective_timeout = (
+        timeout
+        if timeout is not None
+        else parent_timeout
+        if isinstance(parent_timeout, str)
+        else None
+    )
+    effective_json_output = json_output or parent_options.get("json_output") is True
+    timeout_seconds = _parse_openclaw_update_timeout_seconds(effective_timeout)
+
     async def _action(services: CliServices) -> dict[str, object]:
-        view = await _try_live_update_view(services.settings)
+        view = (
+            await _try_live_update_view(services.settings, timeout_seconds=timeout_seconds)
+            if timeout_seconds is not None
+            else await _try_live_update_view(services.settings)
+        )
         if view is None:
             view = await services.hermes_platform.get_update_view()
         config_snapshot: object = {}
@@ -97105,7 +98182,7 @@ def update_status(
         )
 
     payload = _run(_run_with_services(_action))
-    _emit_update_status(payload, json_output=json_output)
+    _emit_update_status(payload, json_output=effective_json_output)
 
 
 @setup_app.callback()

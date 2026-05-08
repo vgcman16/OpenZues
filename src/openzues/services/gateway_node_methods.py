@@ -173,8 +173,11 @@ _KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = (
     "imessage",
     "slack",
     "telegram",
+    "tlon",
     "whatsapp",
     "zalo",
+    "qqbot",
+    "zalouser",
     "line",
     "matrix",
 )
@@ -1471,6 +1474,9 @@ class GatewayNodeMethodService:
             Callable[[], Awaitable[list[NotificationRouteView]]] | None
         ) = None,
         commands_service: GatewayCommandsService | None = None,
+        channel_start_service: Callable[[str, str], Awaitable[dict[str, object]]] | None = None,
+        channel_stop_service: Callable[[str, str], Awaitable[dict[str, object]]] | None = None,
+        channel_logout_service: Callable[[str, str], Awaitable[dict[str, object]]] | None = None,
         config_service: GatewayConfigService | None = None,
         config_schema_service: GatewayConfigSchemaService | None = None,
         cron_service: GatewayCronService | None = None,
@@ -1557,6 +1563,9 @@ class GatewayNodeMethodService:
             self._agent_files_service = GatewayAgentFilesService(database=self._database)
         self._pairing_service = pairing_service
         self._channels_service = channels_service
+        self._channel_start_service = channel_start_service
+        self._channel_stop_service = channel_stop_service
+        self._channel_logout_service = channel_logout_service
         self._list_integration_views = list_integration_views
         self._list_notification_route_views = list_notification_route_views
         self._commands_service = commands_service or GatewayCommandsService()
@@ -5903,13 +5912,33 @@ class GatewayNodeMethodService:
                     message="invalid channels.start channel",
                     status_code=400,
                 )
+            channel_start_account_id = DEFAULT_ACCOUNT_ID
             if "accountId" in payload and payload.get("accountId") is not None:
-                _require_string(payload.get("accountId"), label="accountId")
-            raise GatewayNodeMethodError(
-                code="INVALID_REQUEST",
-                message=f"channel {normalized_channel} does not support runtime start",
-                status_code=400,
-            )
+                channel_start_account_id = _require_string(
+                    payload.get("accountId"),
+                    label="accountId",
+                ).strip()
+                if not channel_start_account_id:
+                    channel_start_account_id = DEFAULT_ACCOUNT_ID
+            if self._channel_start_service is None:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=f"channel {normalized_channel} does not support runtime start",
+                    status_code=400,
+                )
+            try:
+                return await self._channel_start_service(
+                    normalized_channel,
+                    channel_start_account_id,
+                )
+            except GatewayNodeMethodError:
+                raise
+            except RuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=str(exc),
+                    status_code=400,
+                ) from exc
 
         if resolved_method == "channels.stop":
             _validate_exact_keys(
@@ -5940,6 +5969,20 @@ class GatewayNodeMethodService:
                 ).strip()
                 if not channel_stop_account_id:
                     channel_stop_account_id = DEFAULT_ACCOUNT_ID
+            if self._channel_stop_service is not None:
+                try:
+                    return await self._channel_stop_service(
+                        normalized_channel,
+                        channel_stop_account_id,
+                    )
+                except GatewayNodeMethodError:
+                    raise
+                except RuntimeError as exc:
+                    raise GatewayNodeMethodError(
+                        code="INVALID_REQUEST",
+                        message=str(exc),
+                        status_code=400,
+                    ) from exc
             return {
                 "channel": normalized_channel,
                 "accountId": channel_stop_account_id,
@@ -5968,7 +6011,28 @@ class GatewayNodeMethodService:
                     status_code=400,
                 )
             if "accountId" in payload and payload.get("accountId") is not None:
-                _require_string(payload.get("accountId"), label="accountId")
+                channel_logout_account_id = _require_string(
+                    payload.get("accountId"),
+                    label="accountId",
+                ).strip()
+                if not channel_logout_account_id:
+                    channel_logout_account_id = DEFAULT_ACCOUNT_ID
+            else:
+                channel_logout_account_id = DEFAULT_ACCOUNT_ID
+            if self._channel_logout_service is not None:
+                try:
+                    return await self._channel_logout_service(
+                        normalized_channel,
+                        channel_logout_account_id,
+                    )
+                except GatewayNodeMethodError:
+                    raise
+                except RuntimeError as exc:
+                    raise GatewayNodeMethodError(
+                        code="INVALID_REQUEST",
+                        message=str(exc),
+                        status_code=400,
+                    ) from exc
             raise GatewayNodeMethodError(
                 code="INVALID_REQUEST",
                 message=f"channel {normalized_channel} does not support logout",

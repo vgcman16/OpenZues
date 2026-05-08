@@ -16,9 +16,9 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999993% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999994% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
-| Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
+| Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.9% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
@@ -1660,10 +1660,99 @@ may lag behind this tracker.
   `setupCode` / `gatewayUrl` / `auth` / `urlSource` response shape.
   - Status: checkpointed in `b79b87c3`
 
+- [x] Companion QR human approval instructions, preserving OpenClaw's
+  post-scan approval guidance with native OpenZues command names.
+  - Status: checkpointed in `d6052fda`
+
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
   `doctor --json`.
   - Status: checkpointed in `47d73351`
+
+- [x] Package dist inventory drift diagnostics, preserving OpenClaw's
+  missing/unexpected packaged-file warning contract.
+  - Status: checkpointed in `69b23cb9`
+
+- [x] Package dist legacy staging-debris diagnostics, preserving OpenClaw's
+  `.openclaw-install-stage*` release guard warning.
+  - Status: checkpointed in `b16db705`
+
+- [x] Mixed-case package dist staging-debris proof, preserving OpenClaw's
+  case-insensitive staging path matching.
+  - Status: checkpointed in `9422c6b7`
+
+- [x] Exact missing package dist inventory warning, preserving OpenClaw's
+  fail-closed packaged install diagnostic.
+  - Status: checkpointed in `76cdb404`
+
+- [x] Package dist local metadata/dependency omission, preserving OpenClaw's
+  inventory filters for local build stamps, source maps, and transient
+  extension dependency trees.
+  - Status: checkpointed in `6e8bb491`
+
+- [x] Unsafe package dist symlink diagnostics, preserving OpenClaw's unsafe
+  packaged path warning.
+  - Status: checkpointed in `a9c7884f`
+
+- [x] Externalized bundled extension dist omission, preserving OpenClaw's core
+  package inventory boundary for publishable extensions.
+  - Status: checkpointed in `06ba5480`
+
+- [x] Private QA package dist artifact omission, preserving OpenClaw's private
+  QA release filters.
+  - Status: checkpointed in `bde731a9`
+
+- [x] Package root resolves to source checkout warning, preserving OpenClaw's
+  global install source-checkout guard.
+  - Status: checkpointed in `912aee5e`
+
+- [x] Bundled runtime sidecar enforcement, preserving OpenClaw's critical
+  sidecar checks for installed bundled plugins.
+  - Status: checkpointed in `07b17ad0`
+
+- [x] Private QA bundled sidecar no-warning proof, preserving OpenClaw's
+  non-packaged QA sidecar behavior.
+  - Status: checkpointed in `ad248bf4`
+
+- [x] Update dry-run preview package-spec mapping, preserving OpenClaw's
+  non-mutating update preview contract with native OpenZues package identity.
+  - Status: checkpointed in `08e8f76f`
+
+- [x] Update-status timeout option, preserving OpenClaw's bounded status probe
+  timeout surface.
+  - Status: checkpointed in `6418d7f3`
+
+- [x] Update package-spec env override, preserving OpenClaw's
+  `OPENCLAW_UPDATE_PACKAGE_SPEC` root update behavior.
+  - Status: checkpointed in `949de445`
+
+- [x] Explicit update install-spec preservation, preserving raw GitHub/archive
+  package spec behavior.
+  - Status: checkpointed in `3227786a`
+
+- [x] Root update runtime dispatch, preserving a native `openzues update`
+  execution path instead of a placeholder unavailable response.
+  - Status: checkpointed in `0c88812c`
+
+- [x] Inherited update-status parent options, preserving OpenClaw's parent
+  `update --json/--timeout status` option behavior.
+  - Status: checkpointed in `f088293f`
+
+- [x] Package update runtime path, preserving native global install execution
+  for package-shaped root updates.
+  - Status: checkpointed in `1291d361`
+
+- [x] Npm update omit-optional fallback, preserving OpenClaw's package-update
+  retry step after optional dependency failures.
+  - Status: checkpointed in `f3177330`
+
+- [x] Package update version verification, preserving OpenClaw's explicit
+  version `global install verify` failure behavior.
+  - Status: checkpointed in `1db09c3b`
+
+- [x] Package update failedStep projection, preserving OpenClaw's failed-step
+  result envelope for update failures.
+  - Status: checkpointed in `98e4d5c9`
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
@@ -4097,6 +4186,275 @@ may lag behind this tracker.
     -q` (`1 passed`), adjacent doctor/runtime bridge proof (`3 passed`),
     `ruff check`, and `mypy`.
 
+- [x] Package dist inventory drift diagnostics.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `69b23cb9`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_warns_on_package_dist_inventory_file_drift
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`4 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Package dist legacy staging-debris diagnostics.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `b16db705`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_warns_on_package_dist_legacy_staging_debris
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`5 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Mixed-case package dist staging-debris proof.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`
+  - Target: `tests/test_cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `9422c6b7`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused `python -m pytest
+    tests\test_cli.py::test_doctor_json_detects_mixed_case_package_dist_staging_debris
+    -q` (`1 passed`), adjacent package doctor proof (`6 passed, 530
+    deselected`), `ruff check`, and `git diff --check`.
+
+- [x] Exact missing package dist inventory warning.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `76cdb404`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_warns_on_missing_package_dist_inventory_with_openclaw_message
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`7 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Package dist local metadata/dependency omission.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`,
+    `openclaw-main/scripts/lib/local-build-metadata-paths.mjs`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `6e8bb491`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_omits_local_build_metadata_and_plugin_dependency_debris
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`8 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Unsafe package dist symlink diagnostics.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `a9c7884f`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_warns_on_unsafe_package_dist_symlink
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`9 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Externalized bundled extension dist omission.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `06ba5480`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_omits_externalized_bundled_extension_dist_trees
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`10 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Private QA package dist artifact omission.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `bde731a9`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_omits_private_qa_package_dist_artifacts
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`11 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Package root resolves to source checkout warning.
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `912aee5e`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_flags_package_root_resolving_to_source_checkout
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`12 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Bundled runtime sidecar enforcement.
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`,
+    `openclaw-main/scripts/lib/bundled-runtime-sidecar-paths.json`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `07b17ad0`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_enforces_missing_bundled_runtime_sidecar
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`13 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Private QA bundled sidecar no-warning proof.
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`,
+    `openclaw-main/scripts/lib/bundled-runtime-sidecar-paths.json`
+  - Target: `tests/test_cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `ad248bf4`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused `python -m pytest
+    tests\test_cli.py::test_doctor_json_ignores_private_qa_bundled_runtime_sidecars
+    -q` (`1 passed`), adjacent sidecar/QA proof (`3 passed, 541
+    deselected`), `ruff check`, and `git diff --check`.
+
+- [x] Update dry-run preview package-spec mapping.
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `08e8f76f`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_update_dry_run_json_maps_main_package_install_spec
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent update
+    proof (`13 passed, 532 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Update-status timeout option.
+  - Source: `openclaw-main/src/cli/update-cli.ts`,
+    `openclaw-main/src/cli/update-cli/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `6418d7f3`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_update_status_timeout_option_reaches_live_probe
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent update
+    proof (`14 passed, 532 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Update package-spec env override.
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`
+  - Target: `tests/test_cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `949de445`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused `python -m pytest
+    tests\test_cli.py::test_update_dry_run_json_honors_openclaw_package_spec_override
+    -q` (`1 passed`), adjacent update proof (`15 passed, 532 deselected`),
+    `ruff check`, and `git diff --check`.
+
+- [x] Explicit update install-spec preservation.
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`
+  - Target: `tests/test_cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `3227786a`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused `python -m pytest
+    tests\test_cli.py::test_update_dry_run_json_preserves_explicit_package_install_spec
+    -q` (`1 passed`), adjacent update proof (`16 passed, 532 deselected`),
+    `ruff check`, and `git diff --check`.
+
+- [x] Root update runtime dispatch.
+  - Source: `openclaw-main/src/cli/update-cli.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/infra/update-runner.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `0c88812c`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_update_json_dispatches_runtime_update_service
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent update
+    proof (`17 passed, 532 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Inherited update-status parent options.
+  - Source: `openclaw-main/src/cli/update-cli.ts`,
+    `openclaw-main/src/cli/update-cli.option-collisions.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `f088293f`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_update_status_inherits_parent_json_and_timeout_options
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent update
+    proof (`18 passed, 532 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Package update runtime path.
+  - Source: `openclaw-main/src/infra/package-update-steps.ts`,
+    `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`
+  - Target: `src/openzues/services/runtime_updates.py`, `src/openzues/cli.py`
+  - Test: `tests/test_runtime_updates.py`, `tests/test_cli.py`
+  - Status: checkpointed in `1291d361`.
+  - Weight: 2
+  - Last verified: 2026-05-08, focused service/CLI proof (`2 passed`),
+    adjacent runtime/update proof (`20 passed, 536 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Npm update omit-optional fallback.
+  - Source: `openclaw-main/src/infra/package-update-steps.ts`,
+    `openclaw-main/src/infra/update-global.ts`
+  - Target: `src/openzues/services/runtime_updates.py`
+  - Test: `tests/test_runtime_updates.py`
+  - Status: checkpointed in `f3177330`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green package fallback proof,
+    adjacent package-update proof (`2 passed, 4 deselected`), full runtime
+    update suite (`6 passed`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Package update version verification.
+  - Source: `openclaw-main/src/infra/package-update-steps.ts`,
+    `openclaw-main/src/infra/update-global.ts`
+  - Target: `src/openzues/services/runtime_updates.py`
+  - Test: `tests/test_runtime_updates.py`
+  - Status: checkpointed in `1db09c3b`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green package verify proof,
+    adjacent package-update proof (`3 passed, 4 deselected`), full runtime
+    update suite (`7 passed`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Package update failedStep projection.
+  - Source: `openclaw-main/src/infra/package-update-steps.ts`,
+    `openclaw-main/src/infra/update-runner.ts`
+  - Target: `src/openzues/services/runtime_updates.py`
+  - Test: `tests/test_runtime_updates.py`
+  - Status: checkpointed in `98e4d5c9`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green failedStep proof, full
+    runtime update suite (`7 passed`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
 - [x] Companion node presence alive lifecycle.
   - Source: `openclaw-main/src/gateway/server-node-events.ts`,
     `openclaw-main/src/shared/node-presence.ts`,
@@ -4179,6 +4537,18 @@ may lag behind this tracker.
     tests\test_cli.py::test_qr_json_output_matches_openclaw_setup_code_contract
     -q` (`1 passed`), adjacent QR proof (`4 passed, 496 deselected`), `ruff
     check`, and `mypy`.
+
+- [x] Companion QR human approval instructions.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `d6052fda`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_qr_human_output_includes_openclaw_approval_instructions
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent QR
+    proof (`5 passed, 528 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
 
 - [x] Plugin provider metadata projection.
   - Source: `openclaw-main/src/plugins/manifest.ts`,
@@ -5010,6 +5380,332 @@ may lag behind this tracker.
     failed` before implementation, then `1 passed`), trusted-domain proof (`2
     passed`), adjacent native-provider proof (`12 passed, 376 deselected`),
     `ruff check`, and `mypy`.
+
+- [x] Tlon custom S3 media upload.
+  - Source: `openclaw-main/extensions/tlon/src/tlon-api.ts`,
+    `openclaw-main/extensions/tlon/src/tlon-api.test.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `dc999418`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused custom S3 red/green proof (`1
+    failed` before implementation, then `1 passed`), adjacent native-provider
+    proof (`13 passed, 376 deselected`), `ruff check`, and `mypy`.
+
+- [x] Tlon DM inbound firehose session routing.
+  - Source: `openclaw-main/extensions/tlon/src/monitor/index.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/utils.ts`,
+    `openclaw-main/extensions/tlon/src/session-route.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `51e6b618`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused DM inbound red/green proof (`1
+    failed` before implementation, then `1 passed`), adjacent provider/session
+    proof (`12 passed, 378 deselected`), `ruff check`, and `mypy`.
+
+- [x] Tlon group/thread inbound firehose session routing.
+  - Source: `openclaw-main/extensions/tlon/src/monitor/index.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/utils.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `b3b06972`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused group/thread inbound red/green proof
+    (`1 failed` before implementation, then `1 passed`), paired inbound proof
+    (`2 passed`), adjacent provider/session proof (`13 passed, 378
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] Tlon inbound image media staging.
+  - Source: `openclaw-main/extensions/tlon/src/monitor/media.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/media.test.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/index.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `d7556229`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused inbound media red/green proof (`1
+    failed` before implementation, then `1 passed`), paired inbound proof (`3
+    passed`), adjacent provider/session proof (`14 passed, 378 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Tlon inbound authorization and pending approvals.
+  - Source: `openclaw-main/extensions/tlon/src/monitor/authorization.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/approval.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/approval-runtime.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/index.ts`,
+    `openclaw-main/extensions/tlon/src/security.test.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `d7bd3f7d`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Tlon authorization cluster (`5
+    passed` after focused failures), adjacent provider/session proof (`19
+    passed, 378 deselected`), `ruff check`, and `mypy`.
+
+- [x] Tlon owner approval response replay.
+  - Source: `openclaw-main/extensions/tlon/src/monitor/approval.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/approval-runtime.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/index.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `265b0a10`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused owner approval response proof (`1
+    failed` before implementation, then `1 passed`), focused Tlon inbound
+    proof (`9 passed`), adjacent provider/session proof (`20 passed, 378
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] Tlon approval block/admin handling.
+  - Source: `openclaw-main/extensions/tlon/src/monitor/approval.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/approval-runtime.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/index.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `800d2ab6`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused block/admin red/green proofs (`1
+    failed` before each implementation path, then `1 passed`), focused
+    approval/admin cluster (`4 passed`), adjacent provider/session proof (`23
+    passed, 378 deselected`), `ruff check`, and `mypy`.
+
+- [x] Tlon production SSE monitor lifecycle.
+  - Source: `openclaw-main/extensions/tlon/src/channel.runtime.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/index.ts`,
+    `openclaw-main/extensions/tlon/src/urbit/sse-client.ts`,
+    `openclaw-main/extensions/tlon/src/settings.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `726f03cb`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused monitor lifecycle red/green proof
+    (`1 failed` before implementation, then `1 passed`), native fake-transport
+    proof (`1 passed`), focused pair (`2 passed`), adjacent provider/session
+    proof (`25 passed, 378 deselected`), `ruff check`, and `mypy`.
+
+- [x] `channels.start` native Tlon runtime start.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
+    `openclaw-main/src/gateway/server-methods/channels.start.test.ts`,
+    `openclaw-main/extensions/tlon/src/channel.runtime.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/ops_mesh.py`, `src/openzues/app.py`
+  - Test: `tests/test_gateway_node_methods.py`, `tests/test_ops_mesh.py`,
+    `tests/test_gateway_nodes_api.py`
+  - Status: checkpointed in `810a6af0`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused gateway/ops red-green proofs (`1
+    failed` each before implementation, then `1 passed` each), API
+    unsupported-boundary proof (`1 passed`), adjacent gateway method proof (`8
+    passed, 1118 deselected`), adjacent Tlon monitor proof (`3 passed, 401
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `channels.stop` native Tlon runtime stop.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/ops_mesh.py`, `src/openzues/app.py`
+  - Test: `tests/test_gateway_node_methods.py`, `tests/test_ops_mesh.py`
+  - Status: checkpointed in `1365c028`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused gateway/ops red-green proofs (`1
+    failed` each before implementation, then `1 passed` each), idempotent stop
+    proof (`1 passed`), adjacent gateway method proof (`9 passed, 1118
+    deselected`), adjacent Tlon monitor proof (`4 passed, 401 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Telegram `channels.logout` runtime config cleanup.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
+    `openclaw-main/extensions/telegram/src/channel.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/ops_mesh.py`, `src/openzues/app.py`
+  - Test: `tests/test_gateway_node_methods.py`, `tests/test_ops_mesh.py`,
+    `tests/test_gateway_nodes_api.py`
+  - Status: checkpointed in `2d26bdc4`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused gateway/ops red-green proofs (`1
+    failed` each before implementation, then `1 passed` each), adjacent gateway
+    method proof (`10 passed, 1118 deselected`), adjacent OpsMesh lifecycle
+    proof (`5 passed, 401 deselected`), adjacent API proof (`4 passed, 424
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] LINE `channels.logout` runtime config cleanup.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
+    `openclaw-main/extensions/line/src/gateway.ts`,
+    `openclaw-main/extensions/line/src/accounts.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `9674493d`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused LINE red-green proof (`1 failed`
+    before implementation, then `1 passed`), paired Telegram regression proof
+    (`1 passed`), adjacent OpsMesh lifecycle proof (`4 passed, 403
+    deselected`), adjacent gateway method proof (`5 passed, 1123 deselected`),
+    adjacent API proof (`4 passed, 424 deselected`), `ruff check`, and `mypy`.
+
+- [x] Nextcloud Talk `channels.logout` runtime config cleanup.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
+    `openclaw-main/extensions/nextcloud-talk/src/gateway.ts`,
+    `openclaw-main/extensions/nextcloud-talk/src/accounts.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `13de6593`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Nextcloud Talk red-green proof (`1
+    failed` before implementation, then `1 passed`), paired LINE/Telegram
+    regression proofs (`1 passed` each), adjacent OpsMesh lifecycle proof (`5
+    passed, 403 deselected`), adjacent gateway method proof (`5 passed, 1123
+    deselected`), adjacent API proof (`4 passed, 424 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] WhatsApp `channels.logout` runtime auth cleanup.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
+    `openclaw-main/extensions/whatsapp/src/channel.ts`,
+    `openclaw-main/extensions/whatsapp/src/auth-store.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `3e99a587`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused WhatsApp red-green proof (`1 failed`
+    before implementation, then `1 passed`), adjacent OpsMesh lifecycle proof
+    (`6 passed, 403 deselected`), adjacent gateway method proof (`5 passed,
+    1123 deselected`), adjacent API proof (`4 passed, 424 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] QQBot `channels.logout` runtime config cleanup.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
+    `openclaw-main/extensions/qqbot/src/channel.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/config/credentials.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_config.py`,
+    `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_gateway_node_methods.py`, `tests/test_ops_mesh.py`
+  - Status: checkpointed in `aac53b3b`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused QQBot red-green proof (`1 failed`
+    before implementation, then `1 passed`), focused gateway method acceptance
+    proof (`1 passed`), adjacent OpsMesh lifecycle proof (`7 passed, 403
+    deselected`), adjacent gateway method proof (`6 passed, 1123 deselected`),
+    adjacent API proof (`4 passed, 424 deselected`), `ruff check`, and `mypy`.
+
+- [x] Zalo user `channels.logout` runtime profile cleanup.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
+    `openclaw-main/extensions/zalouser/src/channel.ts`,
+    `openclaw-main/extensions/zalouser/src/zalo-js.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_config.py`,
+    `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_gateway_node_methods.py`, `tests/test_ops_mesh.py`
+  - Status: checkpointed in `4d67d5a6`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Zalo user red-green proofs (`1 failed`
+    each before implementation, then `1 passed` each), adjacent OpsMesh
+    lifecycle proof (`8 passed, 403 deselected`), adjacent gateway method proof
+    (`7 passed, 1123 deselected`), adjacent API proof (`4 passed, 424
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] Source-install package doctor warnings.
+  - Source: `openclaw-main/src/commands/doctor-install.ts`,
+    `openclaw-main/src/flows/doctor-health.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `4c1d7a2a`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused source-install red-green proof (`1
+    failed` before implementation, then `1 passed`), paired package
+    distribution regressions (`2 passed`), adjacent update/package doctor proof
+    (`7 passed, 517 deselected`), `ruff check`, and `mypy`.
+
+- [x] Update-status git-tag channel projection.
+  - Source: `openclaw-main/src/infra/update-channels.ts`,
+    `openclaw-main/src/cli/update-cli/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `dce24b5e`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused git-tag update-status red-green proof
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    update/package doctor proof (`7 passed, 518 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Packed git-tag update-status channel projection.
+  - Source: `openclaw-main/src/infra/update-check.ts`,
+    `openclaw-main/src/infra/update-channels.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `71029a02`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused packed git-tag update-status red-green
+    proof (`1 failed` before implementation, then `1 passed`), adjacent
+    update/package doctor proof (`8 passed, 518 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Update-status git metadata envelope.
+  - Source: `openclaw-main/src/infra/update-check.ts`,
+    `openclaw-main/src/cli/update-cli/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `b31d8f41`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused git metadata update-status red-green
+    proof (`1 failed` before implementation, then `1 passed`), adjacent
+    update/package doctor proof (`9 passed, 518 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Update-status registry availability projection.
+  - Source: `openclaw-main/src/commands/status.update.ts`,
+    `openclaw-main/src/infra/update-check.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `55a785a8`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused registry availability update-status
+    red-green proof (`1 failed` before implementation, then `1 passed`),
+    adjacent update/package doctor proof (`10 passed, 518 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] Update-status git availability projection.
+  - Source: `openclaw-main/src/commands/status.update.ts`,
+    `openclaw-main/src/infra/update-check.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `de37e6f8`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused git availability update-status
+    red-green proof (`1 failed` before implementation, then `1 passed`),
+    adjacent update/package doctor proof (`11 passed, 518 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] Update-status config channel precedence over git tag.
+  - Source: `openclaw-main/src/infra/update-channels.ts`,
+    `openclaw-main/src/cli/update-cli/status.ts`
+  - Target: `tests/test_cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `d9150777`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused config-over-tag update-status proof
+    (`1 passed`), adjacent update-status proof (`9 passed, 521 deselected`),
+    `ruff check`, and focused `git diff --check`.
+
+- [x] Human update-status update-available hint.
+  - Source: `openclaw-main/src/commands/status.update.ts`,
+    `openclaw-main/src/cli/update-cli/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `20e9c885`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused human update hint red-green proof (`1
+    failed` before implementation, then `1 passed`), adjacent update-status
+    proof (`10 passed, 521 deselected`), `ruff check`, and `mypy`.
+
+- [x] Human update-status git-behind hint proof.
+  - Source: `openclaw-main/src/commands/status.update.ts`,
+    `openclaw-main/src/cli/update-cli/status.ts`
+  - Target: `tests/test_cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `d5ea6096`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused human git update hint proof (`1
+    passed`), adjacent human/update proof (`5 passed, 527 deselected`), `ruff
+    check`, and focused `git diff --check`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.

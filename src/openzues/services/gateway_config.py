@@ -75,6 +75,8 @@ _OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
     "msteams": "msteams",
     "nextcloud-talk": "nextcloud-talk",
     "nostr": "nostr",
+    "qq": "qqbot",
+    "qqbot": "qqbot",
     "signal": "signal",
     "slack": "slack",
     "teams": "msteams",
@@ -83,6 +85,8 @@ _OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
     "wa": "whatsapp",
     "whatsapp": "whatsapp",
     "zalo": "zalo",
+    "zalo-user": "zalouser",
+    "zalouser": "zalouser",
     "zulip": "zulip",
 }
 _MODEL_ALIAS_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")

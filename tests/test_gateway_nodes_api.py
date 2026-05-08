@@ -9461,7 +9461,9 @@ def test_gateway_node_method_call_endpoint_allows_blank_web_login_account_id(
 
 def test_gateway_node_method_call_endpoint_allows_blank_logout_account_id(
     tmp_path,
+    monkeypatch,
 ) -> None:
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
@@ -9481,8 +9483,14 @@ def test_gateway_node_method_call_endpoint_allows_blank_logout_account_id(
             },
         )
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "channel telegram does not support logout"
+    assert response.status_code == 200
+    assert response.json() == {
+        "channel": "telegram",
+        "accountId": "default",
+        "cleared": False,
+        "envToken": False,
+        "loggedOut": True,
+    }
 
 
 def test_gateway_node_method_call_endpoint_allows_blank_channels_start_account_id(
@@ -9511,9 +9519,11 @@ def test_gateway_node_method_call_endpoint_allows_blank_channels_start_account_i
     assert response.json()["detail"] == "channel telegram does not support runtime start"
 
 
-def test_gateway_node_method_call_endpoint_rejects_channels_logout_without_supported_channel(
+def test_gateway_node_method_call_endpoint_logs_out_configless_telegram_channel(
     tmp_path,
+    monkeypatch,
 ) -> None:
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
@@ -9533,8 +9543,14 @@ def test_gateway_node_method_call_endpoint_rejects_channels_logout_without_suppo
             },
         )
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "channel telegram does not support logout"
+    assert response.status_code == 200
+    assert response.json() == {
+        "channel": "telegram",
+        "accountId": "primary",
+        "cleared": False,
+        "envToken": False,
+        "loggedOut": True,
+    }
 
 
 def test_gateway_node_method_call_endpoint_rejects_invalid_channels_logout_channel(

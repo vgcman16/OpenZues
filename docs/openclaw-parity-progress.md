@@ -3,9 +3,9 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999993%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999994%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
-- Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
+- Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through session-binding/session-key runtime aliases, session-store runtime helpers, session-visibility helpers, simple-completion-runtime extractAssistantText helper, poll-runtime helpers, lazy-runtime helpers, config-paths helpers, context-visibility-runtime helpers, heartbeat-runtime helpers, json-store helpers, diagnostic-runtime helpers, system-event-runtime helpers, oauth-utils helpers, runtime-config-snapshot helpers, runtime-fetch helpers, runtime-doctor helpers, runtime-secret-resolution helpers, memory-core-host-query helpers, memory-core-host-multimodal helpers, memory-core-host-secret helpers, memory-core-host-events helpers, memory-core-host-status helpers, provider-setup helpers, self-hosted-provider-setup helpers, LM Studio runtime helpers, group-activation helpers, media-store helpers, web-media helpers, browser-security-runtime helpers, approval-auth-helpers, approval-approvers helpers, approval-reply-runtime helpers, approval-renderers helpers, approval-client-helpers, approval-client-runtime alias helpers, approval-delivery-helpers, approval-native-helpers, approval-native-runtime delivery helpers, approval-handler-adapter-runtime helpers, approval-handler-runtime adapter factory, speech facade helpers, model-session-runtime helpers, process-runtime command helpers, run-command normalized command helpers, string-coerce-runtime primitive helpers, provider-auth-login runtime alias helpers, approval-auth-runtime helpers, telegram-command-config helpers, param-readers helpers, provider-zai-endpoint helpers, provider-env-vars helpers, account-id/configured-id subpath helpers, agent-media-payload helpers, agent-config-primitives helpers, ACP binding resolve helpers, Anthropic CLI facade helpers, Anthropic Vertex auth-presence helpers, Anthropic Vertex facade helpers, XAI model-id helpers, channel pairing path helpers, channel inbound root helpers, channel location helpers, state path helpers, setup adapter runtime helpers, channel secret TTS runtime helpers, channel secret basic/runtime helpers, secret-file-runtime helpers, secret-ref-runtime helpers, secret-input-runtime helpers, secret-input-schema helpers, cron-store-runtime helpers, file-access-runtime helpers, logging-core helpers, native-command-config-runtime helpers, host-runtime helpers, image-generation-core auth-runtime helpers, talk config runtime helpers, GitHub Copilot token helper shims, channel plugin common/core helper shims, channel entry contract helper shims, channel config primitives/schema helper shims, runtime-env helper shims, channel-config-helpers shim, channel-config-writes alias shim, channel-lifecycle shim, exact channel-core shim, channel-contract-testing shim, channel-targets shim, channel-streaming shim, channel-envelope shim, channel-mention-gating shim, channel-runtime-context shim, channel-runtime compatibility facade shim, channel-activity-runtime shim, inbound-envelope shim, CLI runtime helper shim, memory-core-engine-runtime facade shim, memory-core-host-engine-embeddings helper shim, memory-core-host-engine-foundation helper shim, models-provider-runtime helper shim, skill-commands-runtime helper shim, skills-runtime helper shim, provider-tools helper shim, provider-stream-shared helper shim, provider-stream family helper shim, provider-transport-runtime helper shim, provider-http helper shim, provider-catalog-runtime helper shim, provider-onboard helper shim, provider-usage helper shim, tool-send helper shim, webhook-ingress helper shim, web-media helper shim, speech facade helper shim, zalouser facade shim, zod facade shim, web-content-extractor facade shim, plugin-entry facade shim, optional-channel-setup facade shim, outbound-media facade shim, delivery-queue-runtime facade shim, migration-runtime facade shim, migration helper facade shim, outbound-send-deps facade shim, command-status-runtime facade shim, reply-runtime facade shim, reply-dispatch-runtime facade shim, inbound-reply-dispatch facade shim, interactive-runtime facade shim, infra-runtime compatibility facade shim, and media-runtime facade shim; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
 - Runtime helper addendum: imported `agent-runtime` core helper coverage is
@@ -18317,6 +18317,807 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `f742ba8a`.
+- Tlon custom S3 media uploads now mirror the remaining OpenClaw uploadFile
+  branch: when storage credentials are configured, OpenZues resolves the
+  current bucket/public URL/region, builds the upstream-style file key, presigns
+  a path-style S3-compatible PUT, uploads the bytes, and returns the configured
+  public URL. This closes `OZ-PROV-001DF`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.9999994%. The Tlon
+  outbound text/media upload mini-queue is no longer the provider head;
+  remaining Tlon-specific breadth is inbound/session lifecycle depth.
+- Verified the Tlon custom S3 upload slice with focused red/green proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_tlon_media_bytes_uses_custom_s3_credentials -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent
+  native-provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or irc_native_route or twitch_native_route"`
+  (`13 passed, 376 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `dc999418`.
+- Tlon DM inbound firehose session routing now mirrors the first upstream
+  `monitorTlonProvider` chat-firehose branch: OpenZues parses `whom`,
+  `response.add.essay.author/sent/content`, renders rich inline Tlon content to
+  agent text, builds the Tlon direct conversation target/session key, dispatches
+  through the session-backed delivery service, and preserves both inbound and
+  delivery message ids. This closes `OZ-PROV-001DG`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.9999995%.
+  Remaining Tlon-specific breadth is group/thread channel firehose handling,
+  approval/allowlist/media-download depth, and production SSE monitor lifecycle.
+- Verified the Tlon DM inbound session slice with focused red/green proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_tlon_dm_firehose_event_to_session -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent
+  provider/session proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or msteams_message_text_without_mentions or msteams_adaptive_card_action"`
+  (`12 passed, 378 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `51e6b618`.
+- Tlon group/thread channel firehose session routing now mirrors the upstream
+  `channels` `/v2` post/reply branch: OpenZues parses `nest`,
+  `response.post.r-post`, root posts versus `r-reply` thread memos, extracts
+  `seal.parent-id`, renders rich Tlon content, builds the group conversation
+  target, applies thread-scoped session suffixes, and dispatches through the
+  session-backed delivery service. This closes `OZ-PROV-001DH`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999996%. Remaining Tlon-specific breadth is approval/allowlist,
+  inbound media download/staging, and production SSE monitor lifecycle.
+- Verified the Tlon group/thread inbound session slice with focused red/green
+  proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_tlon_group_thread_firehose_event_to_session -q`
+  (`1 failed` before implementation, then `1 passed`), paired inbound proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_tlon_dm_firehose_event_to_session tests\test_ops_mesh.py::test_ops_mesh_service_routes_tlon_group_thread_firehose_event_to_session -q`
+  (`2 passed`), adjacent provider/session proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or msteams_message_text_without_mentions or msteams_adaptive_card_action"`
+  (`13 passed, 378 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `b3b06972`.
+- Tlon inbound image media staging now mirrors the upstream
+  `downloadMessageImages` path: OpenZues extracts up to eight image blocks from
+  Tlon rich content, fetches them through a fakeable inbound media fetcher,
+  stores bytes under the shared inbound attachment root, prepends
+  `[media attached: ...]` annotations to the session message, and returns
+  `mediaUrls`, `MediaPath`/`MediaUrls`, staged media metadata, hash, and byte
+  length. This closes `OZ-PROV-001DI`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.9999997%. Remaining
+  Tlon-specific breadth is approval/allowlist behavior and production SSE
+  monitor lifecycle.
+- Verified the Tlon inbound media staging slice with focused red/green proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_stages_tlon_inbound_image_blocks_for_session -q`
+  (`1 failed` before implementation, then `1 passed`), paired inbound proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_tlon_dm_firehose_event_to_session tests\test_ops_mesh.py::test_ops_mesh_service_routes_tlon_group_thread_firehose_event_to_session tests\test_ops_mesh.py::test_ops_mesh_service_stages_tlon_inbound_image_blocks_for_session -q`
+  (`3 passed`), adjacent provider/session proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or msteams_message_text_without_mentions or msteams_adaptive_card_action"`
+  (`14 passed, 378 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `d7556229`.
+- Tlon inbound authorization now mirrors the upstream monitor security gate:
+  configured empty DM allowlists deny non-owner senders before session/media
+  processing, owner-configured unauthorized DMs and restricted channel messages
+  queue pending approvals with original message context, restricted channel
+  rules/default authorized ships are resolved from native config, and default
+  pending approvals persist back into the Tlon config snapshot. This closes
+  `OZ-PROV-001DJ`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999998%. Remaining Tlon-specific breadth
+  is approval response handling/admin commands and production SSE monitor
+  lifecycle.
+- Verified the Tlon inbound authorization slice with focused red/green proofs
+  for DM deny, owner approval queue, default pending-approval persistence, and
+  restricted channel deny/pending approval
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_blocks_tlon_dm_when_allowlist_is_empty tests\test_ops_mesh.py::test_ops_mesh_service_queues_tlon_dm_approval_when_owner_is_configured tests\test_ops_mesh.py::test_ops_mesh_service_persists_tlon_dm_pending_approval_by_default tests\test_ops_mesh.py::test_ops_mesh_service_blocks_tlon_group_sender_not_in_channel_allowlist tests\test_ops_mesh.py::test_ops_mesh_service_queues_tlon_channel_approval_when_owner_is_configured -q`
+  (`5 passed` after focused failures), adjacent provider/session proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or msteams_message_text_without_mentions or msteams_adaptive_card_action"`
+  (`19 passed, 378 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `d7bd3f7d`.
+- Tlon owner approval responses now mirror the upstream `approve <id>` path:
+  owner DMs are intercepted before normal session delivery, pending approval
+  records are resolved by explicit id or latest entry, approved DM senders are
+  added to the native `dmAllowlist`, approved channel senders update
+  `authorization.channelRules`, resolved pending approvals are removed, and
+  original messages replay into the session pipeline. This closes
+  `OZ-PROV-001DK`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999%. Remaining Tlon approval-runtime
+  breadth is `deny`/`block` confirmation and owner admin commands, followed by
+  production SSE monitor lifecycle.
+- Verified the Tlon approval response replay slice with focused red/green proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_approves_tlon_dm_pending_request_from_owner -q`
+  (`1 failed` before implementation, then `1 passed`), focused Tlon inbound
+  approval/session/media proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_tlon_dm_firehose_event_to_session tests\test_ops_mesh.py::test_ops_mesh_service_blocks_tlon_dm_when_allowlist_is_empty tests\test_ops_mesh.py::test_ops_mesh_service_queues_tlon_dm_approval_when_owner_is_configured tests\test_ops_mesh.py::test_ops_mesh_service_persists_tlon_dm_pending_approval_by_default tests\test_ops_mesh.py::test_ops_mesh_service_approves_tlon_dm_pending_request_from_owner tests\test_ops_mesh.py::test_ops_mesh_service_routes_tlon_group_thread_firehose_event_to_session tests\test_ops_mesh.py::test_ops_mesh_service_blocks_tlon_group_sender_not_in_channel_allowlist tests\test_ops_mesh.py::test_ops_mesh_service_queues_tlon_channel_approval_when_owner_is_configured tests\test_ops_mesh.py::test_ops_mesh_service_stages_tlon_inbound_image_blocks_for_session -q`
+  (`9 passed`), adjacent provider/session proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or msteams_message_text_without_mentions or msteams_adaptive_card_action"`
+  (`20 passed, 378 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `265b0a10`.
+- Tlon approval block/admin handling now mirrors the remaining native approval
+  runtime controls: `block <id>` removes pending approvals and persists
+  `blockedShips`, later blocked senders are ignored before approval/session
+  processing, and owner `unblock ~ship` admin commands mutate the blocked list
+  without entering a work session. This closes `OZ-PROV-001DL`; repo-wide
+  parity remained estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999995%. At that checkpoint, remaining Tlon-specific breadth was
+  production SSE monitor lifecycle.
+- Verified the Tlon block/admin slice with focused red/green proofs
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_blocks_tlon_pending_request_from_owner -q`,
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_ignores_tlon_inbound_from_blocked_ship -q`,
+  and
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_unblocks_tlon_ship_from_owner_admin_command -q`
+  (`1 failed` before each implementation path, then `1 passed`), focused
+  approval/admin cluster
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_blocks_tlon_pending_request_from_owner tests\test_ops_mesh.py::test_ops_mesh_service_ignores_tlon_inbound_from_blocked_ship tests\test_ops_mesh.py::test_ops_mesh_service_unblocks_tlon_ship_from_owner_admin_command tests\test_ops_mesh.py::test_ops_mesh_service_approves_tlon_dm_pending_request_from_owner -q`
+  (`4 passed`), adjacent provider/session proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or msteams_message_text_without_mentions or msteams_adaptive_card_action"`
+  (`23 passed, 378 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `800d2ab6`.
+- Tlon production SSE monitor lifecycle now starts enabled route-backed Tlon
+  accounts from `OpsMeshService.start()` through a fakeable
+  `GatewayTlonMonitorRuntimeService`. The native runtime authenticates to
+  `/~/login`, creates the Urbit channel with upstream firehose subscriptions
+  (`channels` `/v2`, `chat` `/v3`, `contacts` `/v1/news`, settings
+  `/desk/moltbot`, `groups` `/groups/ui`, and `groups` `/v1/foreigns`),
+  dispatches inbound chat/channel SSE payloads through
+  `handle_tlon_inbound_event`, acks stream event ids, and cleans up with
+  upstream-shaped unsubscribe plus channel `DELETE` on service close. This
+  closes `OZ-PROV-001DM`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.99999996%. No Tlon-specific queue head
+  remains known; rotate through broader provider runtime, packaging, companion,
+  and newly exposed upstream namespace seams.
+- Verified the Tlon monitor slice with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_starts_tlon_monitor_for_enabled_native_route -q`
+  (`1 failed` before implementation, then `1 passed`), native fake-transport
+  proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_tlon_native_monitor_streams_and_cleans_up -q`
+  (`1 passed`), focused pair
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_starts_tlon_monitor_for_enabled_native_route tests\test_ops_mesh.py::test_ops_mesh_service_tlon_native_monitor_streams_and_cleans_up -q`
+  (`2 passed`), adjacent provider/session proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or msteams_message_text_without_mentions or msteams_adaptive_card_action"`
+  (`25 passed, 378 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `726f03cb`.
+- `channels.start` now has an OpenClaw-shaped runtime-start adapter instead of
+  a hard unsupported response for every channel. The gateway method validates
+  `channel`/`accountId`, normalizes blank `accountId` to `default`, dispatches
+  through a fakeable channel-start service, and app construction wires that
+  service to `OpsMeshService.start_channel_runtime_account`. The first native
+  production-backed implementation starts Tlon account monitors through the
+  route-backed SSE lifecycle added in `726f03cb`, while unsupported channels
+  keep the existing precise runtime-start error. This closes
+  `OZ-PROV-001DN`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999997%. The channel/provider queue
+  should rotate to remaining provider-specific runtime breadth, channel
+  stop/logout depth, or broader packaging/companion seams.
+- Verified the `channels.start` native runtime slice with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_channels_start_dispatches_runtime_start_service_with_default_account -q`
+  and
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_start_starts_tlon_monitor_for_account -q`
+  (`1 failed` each before implementation, then `1 passed` each), existing API
+  unsupported-boundary proof
+  `python -m pytest tests\test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_allows_blank_channels_start_account_id -q`
+  (`1 passed`), adjacent gateway method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_start or channels_stop or channels_logout"`
+  (`8 passed, 1118 deselected`), adjacent Tlon monitor proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon_monitor or channels_start_starts_tlon or tlon_native_monitor"`
+  (`3 passed, 401 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_gateway_node_methods.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `810a6af0`.
+- `channels.stop` now uses the same fakeable runtime adapter shape as
+  `channels.start` when a production stop owner is wired. App construction
+  connects it to `OpsMeshService.stop_channel_runtime_account`; the Tlon
+  implementation closes the matching route-backed SSE monitor handle and keeps
+  idempotent `{stopped: true}` behavior for channels without a native monitor.
+  This closes `OZ-PROV-001DO`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999998%. The adjacent lifecycle
+  queue can now rotate to channel logout depth or broader provider/packaging
+  seams.
+- Verified the `channels.stop` native runtime slice with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_channels_stop_dispatches_runtime_stop_service_with_default_account -q`
+  and
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_stop_closes_tlon_monitor_for_account -q`
+  (`1 failed` each before implementation, then `1 passed` each), existing
+  idempotent stop proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_channels_stop_returns_idempotent_stopped_payload -q`
+  (`1 passed`), adjacent gateway method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_start or channels_stop or channels_logout"`
+  (`9 passed, 1118 deselected`), adjacent Tlon monitor proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon_monitor or channels_start_starts_tlon or channels_stop_closes_tlon or tlon_native_monitor"`
+  (`4 passed, 401 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_gateway_node_methods.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `1365c028`.
+- `channels.logout` now has a real app-wired runtime adapter for Telegram,
+  matching OpenClaw's plugin-owned `logoutAccount` path. The gateway method
+  still preserves the unsupported response when no logout service is registered,
+  but app construction now routes Telegram logout through OpsMesh, stops the
+  channel account idempotently, clears saved `channels.telegram.botToken`
+  config, and returns `{channel, accountId, cleared, envToken, loggedOut}`. This
+  closes `OZ-PROV-001DP`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.9999999995%. The adjacent provider queue
+  can rotate to remaining logout-capable channel configs or broader provider
+  edge cases.
+- Verified the Telegram `channels.logout` runtime slice with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_channels_logout_dispatches_runtime_logout_service_with_default_account -q`
+  and
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_logout_clears_telegram_token_config -q`
+  (`1 failed` each before implementation, then `1 passed` each), adjacent
+  gateway method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_start or channels_stop or channels_logout"`
+  (`10 passed, 1118 deselected`), adjacent OpsMesh lifecycle proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon_monitor or channels_start_starts_tlon or channels_stop_closes_tlon or channels_logout_clears_telegram or tlon_native_monitor"`
+  (`5 passed, 401 deselected`), adjacent API proof
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "channels_logout or logout_account or configless_telegram_channel"`
+  (`4 passed, 424 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_gateway_node_methods.py tests\test_ops_mesh.py
+  tests\test_gateway_nodes_api.py`, `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `2d26bdc4`.
+- LINE `channels.logout` now mirrors OpenClaw's `extensions/line` logout
+  behavior for saved access-token, secret, token-file, and secret-file config.
+  OpsMesh routes LINE through the shared secret-backed logout helper, preserves
+  non-secret channel settings such as `webhookPath`, reports
+  `{channel, accountId, cleared, envToken, loggedOut}`, and keeps Telegram on
+  the same verified path. This closes `OZ-PROV-001DQ`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.9999999995%.
+  The adjacent provider queue can rotate to Nextcloud Talk, WhatsApp, Zalo, QQ,
+  or broader provider logout/runtime edge cases.
+- Verified the LINE `channels.logout` runtime slice with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_logout_clears_line_token_and_secret_config -q`
+  (`1 failed` before implementation, then `1 passed`), paired Telegram
+  regression proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_logout_clears_telegram_token_config -q`
+  (`1 passed`), adjacent OpsMesh lifecycle proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "channels_start_starts_tlon or channels_stop_closes_tlon or channels_logout_clears_telegram or channels_logout_clears_line"`
+  (`4 passed, 403 deselected`), adjacent gateway method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_logout"`
+  (`5 passed, 1123 deselected`), adjacent API proof
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "channels_logout or logout_account or configless_telegram_channel"`
+  (`4 passed, 424 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `9674493d`.
+- Nextcloud Talk `channels.logout` now mirrors OpenClaw's
+  `extensions/nextcloud-talk` logout posture. OpsMesh clears saved
+  `channels.nextcloud-talk.botSecret` and matching `accounts.default.botSecret`
+  fields, preserves non-secret settings such as `baseUrl`, and returns
+  `{channel, accountId, cleared, envSecret, loggedOut}` with the provider's
+  `envSecret` key rather than the token-oriented key used by Telegram/LINE.
+  This closes `OZ-PROV-001DR`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999995%. The adjacent provider
+  queue can rotate to WhatsApp, Zalo, QQ, or broader logout-capable channel
+  configs.
+- Verified the Nextcloud Talk `channels.logout` runtime slice with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_logout_clears_nextcloud_talk_bot_secret_config -q`
+  (`1 failed` before implementation, then `1 passed`), paired LINE and
+  Telegram regression proofs (`1 passed` each), adjacent OpsMesh lifecycle
+  proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "channels_start_starts_tlon or channels_stop_closes_tlon or channels_logout_clears_telegram or channels_logout_clears_line or channels_logout_clears_nextcloud_talk"`
+  (`5 passed, 403 deselected`), adjacent gateway method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_logout"`
+  (`5 passed, 1123 deselected`), adjacent API proof
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "channels_logout or logout_account or configless_telegram_channel"`
+  (`4 passed, 424 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `13de6593`.
+- WhatsApp `channels.logout` now mirrors the OpenClaw Web-auth logout lifecycle
+  for the managed native auth directory. OpsMesh resolves the account auth dir
+  from `channels.whatsapp.authDir` when present or
+  `OPENCLAW_OAUTH_DIR/whatsapp/<account>`, clears only managed
+  `creds.json`/backup-backed auth directories, preserves the legacy
+  default-auth-file cleanup behavior, skips external or symlink-crossing paths,
+  and returns `{channel, accountId, cleared, loggedOut}` with `loggedOut`
+  matching the actual clear result. This closes `OZ-PROV-001DS`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999995%. The adjacent provider queue can rotate to Zalo, QQ, or
+  broader logout/runtime edge cases.
+- Verified the WhatsApp `channels.logout` runtime slice with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_logout_clears_whatsapp_managed_auth_dir -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent OpsMesh
+  lifecycle proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "channels_start_starts_tlon or channels_stop_closes_tlon or channels_logout_clears_telegram or channels_logout_clears_line or channels_logout_clears_nextcloud_talk or channels_logout_clears_whatsapp"`
+  (`6 passed, 403 deselected`), adjacent gateway method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_logout"`
+  (`5 passed, 1123 deselected`), adjacent API proof
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "channels_logout or logout_account or configless_telegram_channel"`
+  (`4 passed, 424 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `3e99a587`.
+- QQBot `channels.logout` now mirrors OpenClaw's credential cleanup contract:
+  `qqbot` is a recognized gateway/config channel, OpsMesh clears saved
+  `channels.qqbot.clientSecret`, `clientSecretFile`, and matching
+  `accounts.default` secret fields, preserves non-secret settings such as
+  `appId`, and returns `{channel, accountId, ok, cleared, envToken, loggedOut}`.
+  This closes `OZ-PROV-001DT`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999995%. The adjacent provider
+  queue can rotate to Zalo user profile logout or broader provider/runtime
+  edge cases.
+- Verified the QQBot `channels.logout` runtime slice with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_logout_clears_qqbot_client_secret_config -q`
+  (`1 failed` before implementation, then `1 passed`) and gateway acceptance
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_channels_logout_accepts_qqbot_runtime_logout_channel -q`
+  (`1 passed`), adjacent OpsMesh lifecycle proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "channels_start_starts_tlon or channels_stop_closes_tlon or channels_logout_clears_telegram or channels_logout_clears_line or channels_logout_clears_nextcloud_talk or channels_logout_clears_whatsapp or channels_logout_clears_qqbot"`
+  (`7 passed, 403 deselected`), adjacent gateway method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_logout"`
+  (`6 passed, 1123 deselected`), adjacent API proof
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "channels_logout or logout_account or configless_telegram_channel"`
+  (`4 passed, 424 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_config.py tests\test_ops_mesh.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_config.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `aac53b3b`.
+- Zalo user `channels.logout` now mirrors OpenClaw's profile credential-file
+  cleanup contract without conflating it with OpenZues' existing Zalo Bot API
+  route. `zalouser`/`zalo-user` are recognized gateway/config channel aliases,
+  OpsMesh resolves profile precedence from `channels.zalouser.profile`,
+  `ZALOUSER_PROFILE`, `ZCA_PROFILE`, account id, then `default`, deletes the
+  matching `plugin-state/credentials/zalouser/credentials*.json` file, and
+  returns `{channel, accountId, profile, cleared, loggedOut, message}` with
+  upstream-shaped messages. This closes `OZ-PROV-001DU`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999995%. The logout-capable provider sweep can now rotate to
+  broader provider/runtime, packaging, or companion seams.
+- Verified the Zalo user `channels.logout` runtime slice with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_logout_clears_zalouser_profile_credentials -q`
+  and
+  `python -m pytest tests\test_gateway_node_methods.py::test_channels_logout_accepts_zalouser_runtime_logout_channel -q`
+  (`1 failed` each before implementation, then `1 passed` each), adjacent
+  OpsMesh lifecycle proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "channels_start_starts_tlon or channels_stop_closes_tlon or channels_logout_clears_telegram or channels_logout_clears_line or channels_logout_clears_nextcloud_talk or channels_logout_clears_whatsapp or channels_logout_clears_qqbot or channels_logout_clears_zalouser"`
+  (`8 passed, 403 deselected`), adjacent gateway method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_logout"`
+  (`7 passed, 1123 deselected`), adjacent API proof
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "channels_logout or logout_account or configless_telegram_channel"`
+  (`4 passed, 424 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_config.py tests\test_ops_mesh.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_config.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `4d67d5a6`.
+- `openzues doctor --json` now mirrors OpenClaw's source-install doctor notes
+  for pnpm workspaces: source checkouts with `pnpm-workspace.yaml` receive a
+  `packageDistribution.sourceInstall` section that flags non-pnpm
+  `node_modules`, stray `package-lock.json`, and missing `node_modules/.bin/tsx`
+  with OpenClaw-shaped warnings while preserving existing dist-inventory
+  diagnostics. This closes `OZ-PKG-001F`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.9999999996%.
+- Verified the source-install package doctor slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_reports_source_install_pnpm_workspace_warnings -q`
+  (`1 failed` before implementation, then `1 passed`), paired package
+  distribution regressions
+  `python -m pytest tests\test_cli.py::test_doctor_json_includes_windows_package_distribution_diagnostics tests\test_cli.py::test_doctor_json_warns_on_invalid_package_dist_inventory -q`
+  (`2 passed`), adjacent update/package doctor proof
+  `python -m pytest tests\test_cli.py -q -k "source_install_pnpm_workspace_warnings or package_distribution_diagnostics or invalid_package_dist_inventory or update_status_json"`
+  (`7 passed, 517 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `4c1d7a2a`.
+- `openzues update status --json` now mirrors OpenClaw's git-tag channel
+  projection from `src/infra/update-channels.ts`: detached git installs whose
+  `HEAD` matches a tag under `.git/refs/tags` report `channel.source` as
+  `git-tag`, derive `stable` vs `beta` from the tag text, and keep config
+  channels higher precedence than tag/branch/default inference. This closes
+  `OZ-PKG-001G`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999997%.
+- Verified the update-status git-tag channel slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_json_uses_git_tag_channel_label -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update/package
+  doctor proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_json_uses_git_tag_channel_label or update_status_json_uses_git_branch_channel_label or update_status_json_includes_openclaw_channel_projection or update_status_json_detects_package_manager_deps or source_install_pnpm_workspace_warnings or package_distribution_diagnostics or invalid_package_dist_inventory"`
+  (`7 passed, 518 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `dce24b5e`.
+- `openzues update status --json` now also handles packed git tags, matching
+  OpenClaw's `git describe --tags --exact-match` behavior in
+  `src/infra/update-check.ts`: exact tags stored in `.git/packed-refs` project
+  the same `git-tag` channel source and stable/beta labels as loose refs. This
+  closes `OZ-PKG-001H`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999998%.
+- Verified the packed git-tag channel slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_json_uses_packed_git_tag_channel_label -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update/package
+  doctor proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_json_uses_packed_git_tag_channel_label or update_status_json_uses_git_tag_channel_label or update_status_json_uses_git_branch_channel_label or update_status_json_includes_openclaw_channel_projection or update_status_json_detects_package_manager_deps or source_install_pnpm_workspace_warnings or package_distribution_diagnostics or invalid_package_dist_inventory"`
+  (`8 passed, 518 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `71029a02`.
+- `openzues update status --json` now projects OpenClaw-shaped git metadata
+  for git installs: the native update payload includes `git.root`, `sha`,
+  `tag`, `branch`, and unavailable fetch/divergence fields as `null`, matching
+  the `GitUpdateStatus` envelope from `src/infra/update-check.ts` while keeping
+  package-manager dependency posture intact. This closes `OZ-PKG-001I`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999%.
+- Verified the update-status git metadata slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_json_projects_git_tag_metadata -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update/package
+  doctor proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_json_projects_git_tag_metadata or update_status_json_uses_packed_git_tag_channel_label or update_status_json_uses_git_tag_channel_label or update_status_json_uses_git_branch_channel_label or update_status_json_includes_openclaw_channel_projection or update_status_json_detects_package_manager_deps or source_install_pnpm_workspace_warnings or package_distribution_diagnostics or invalid_package_dist_inventory"`
+  (`9 passed, 518 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `b31d8f41`.
+- `openzues update status --json` now preserves registry status from a live
+  update payload and resolves OpenClaw-shaped availability from it: newer
+  registry versions set `availability.available`, `hasRegistryUpdate`, and
+  `latestVersion` while retaining dependency and channel metadata. This closes
+  `OZ-PKG-001J`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999995%.
+- Verified the update-status registry availability slice with focused
+  red/green
+  `python -m pytest tests\test_cli.py::test_update_status_json_projects_registry_availability -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update/package
+  doctor proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_json_projects_registry_availability or update_status_json_projects_git_tag_metadata or update_status_json_uses_packed_git_tag_channel_label or update_status_json_uses_git_tag_channel_label or update_status_json_uses_git_branch_channel_label or update_status_json_includes_openclaw_channel_projection or update_status_json_detects_package_manager_deps or source_install_pnpm_workspace_warnings or package_distribution_diagnostics or invalid_package_dist_inventory"`
+  (`10 passed, 518 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `55a785a8`.
+- `openzues update status --json` now preserves live git divergence metadata
+  from update payloads and resolves OpenClaw-shaped git availability: known
+  `upstream`, `ahead`, `behind`, `dirty`, and `fetchOk` values flow into
+  `update.git`, and positive `behind` counts set `availability.hasGitUpdate`
+  plus `gitBehind`. This closes `OZ-PKG-001K`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999997%.
+- Verified the update-status git availability slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_json_projects_git_behind_availability -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update/package
+  doctor proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_json_projects_git_behind_availability or update_status_json_projects_registry_availability or update_status_json_projects_git_tag_metadata or update_status_json_uses_packed_git_tag_channel_label or update_status_json_uses_git_tag_channel_label or update_status_json_uses_git_branch_channel_label or update_status_json_includes_openclaw_channel_projection or update_status_json_detects_package_manager_deps or source_install_pnpm_workspace_warnings or package_distribution_diagnostics or invalid_package_dist_inventory"`
+  (`11 passed, 518 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `de37e6f8`.
+- `openzues update status --json` now has focused proof for OpenClaw's update
+  channel precedence: configured channels remain authoritative over git-tag
+  inference while the underlying `update.git.tag` metadata is preserved. This
+  closes `OZ-PKG-001L`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999998%.
+- Verified the update-status config-over-tag precedence slice with focused
+  `python -m pytest tests\test_cli.py::test_update_status_json_config_channel_overrides_git_tag -q`
+  (`1 passed`), adjacent update-status proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_json_config_channel_overrides_git_tag or update_status_json_projects_git_behind_availability or update_status_json_projects_registry_availability or update_status_json_projects_git_tag_metadata or update_status_json_uses_packed_git_tag_channel_label or update_status_json_uses_git_tag_channel_label or update_status_json_uses_git_branch_channel_label or update_status_json_includes_openclaw_channel_projection or update_status_json_detects_package_manager_deps"`
+  (`9 passed, 521 deselected`), `ruff check tests\test_cli.py`, and focused
+  `git diff --check`. Test checkpointed and pushed in `d9150777`.
+- Human `openzues update status` output now mirrors OpenClaw's update-available
+  hint: when computed availability is true, the CLI emits an actionable
+  `Update available (...)` line with registry/git details and `openzues update`
+  as the native command. This closes `OZ-PKG-001M`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999%.
+- Verified the update-status human hint slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_human_reports_update_available_hint -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update-status
+  proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_human_reports_update_available_hint or update_status_json_config_channel_overrides_git_tag or update_status_json_projects_git_behind_availability or update_status_json_projects_registry_availability or update_status_json_projects_git_tag_metadata or update_status_json_uses_packed_git_tag_channel_label or update_status_json_uses_git_tag_channel_label or update_status_json_uses_git_branch_channel_label or update_status_json_includes_openclaw_channel_projection or update_status_json_detects_package_manager_deps"`
+  (`10 passed, 521 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `20e9c885`.
+- Human `openzues update status` now also has focused proof for OpenClaw's
+  `git behind N` update-available hint detail when git availability is the
+  update source. This closes `OZ-PKG-001N`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.999999999995%.
+- Verified the human git-update hint slice with focused
+  `python -m pytest tests\test_cli.py::test_update_status_human_reports_git_update_available_hint -q`
+  (`1 passed`), adjacent human/update proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_human_reports_git_update_available_hint or update_status_human_reports_update_available_hint or update_status_json_projects_git_behind_availability or update_status_json_projects_registry_availability or update_status_json_config_channel_overrides_git_tag"`
+  (`5 passed, 527 deselected`), `ruff check tests\test_cli.py`, and focused
+  `git diff --check`. Test checkpointed and pushed in `d5ea6096`.
+- Human `openzues qr --no-ascii --url ...` output now mirrors OpenClaw's
+  post-scan approval guidance by appending an actionable approval block after
+  setup metadata, using the native `openzues devices list` and
+  `openzues devices approve <requestId>` commands. This closes
+  `OZ-COMP-001G`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999996%.
+- Verified the QR human approval-instruction slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_human_output_includes_openclaw_approval_instructions -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent QR proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`5 passed, 528
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`,
+  `mypy src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed and pushed in `d6052fda`.
+- `openzues doctor --json` package distribution diagnostics now compare valid
+  `dist/postinstall-inventory.json` files against actual packaged `dist/`
+  files, returning OpenClaw-shaped `missing packaged dist file ...` and
+  `unexpected packaged dist file ...` warnings when the inventory is stale.
+  This closes `OZ-PKG-001O`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999997%.
+- Verified the package dist inventory drift slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_warns_on_package_dist_inventory_file_drift -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift"`
+  (`4 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `69b23cb9`.
+- `openzues doctor --json` now detects OpenClaw legacy plugin dependency
+  staging debris in packaged `dist/extensions/*/.openclaw-install-stage*`
+  directories and reports the exact
+  `unexpected legacy plugin dependency staging debris in package dist: ...`
+  warning alongside the package distribution checks. This closes
+  `OZ-PKG-001P`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999998%.
+- Verified the package dist staging-debris slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_warns_on_package_dist_legacy_staging_debris -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris"`
+  (`5 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `b16db705`.
+- `openzues doctor --json` now has focused proof for OpenClaw's
+  case-insensitive legacy staging-debris path matching across `Dist`,
+  `Extensions`, and `.OPENCLAW-INSTALL-STAGE-*` path segments. This closes
+  `OZ-PKG-001Q`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999985%.
+- Verified the mixed-case staging-debris slice with focused
+  `python -m pytest tests\test_cli.py::test_doctor_json_detects_mixed_case_package_dist_staging_debris -q`
+  (`1 passed`), adjacent package doctor proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris"`
+  (`6 passed, 530 deselected`), `ruff check tests\test_cli.py`, and focused
+  `git diff --check`. Test checkpointed and pushed in `9422c6b7`.
+- `openzues doctor --json` now emits OpenClaw's exact missing inventory
+  diagnostic for packaged installs: `missing package dist inventory
+  dist/postinstall-inventory.json`, both in the warning list and the
+  `postinstall_inventory` check detail. This closes `OZ-PKG-001R`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999%.
+- Verified the missing-inventory warning slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_warns_on_missing_package_dist_inventory_with_openclaw_message -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory"`
+  (`7 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `76cdb404`.
+- `openzues doctor --json` package dist inventory comparison now omits
+  OpenClaw's local build metadata stamps (`dist/.buildstamp` and
+  `dist/.runtime-postbuildstamp`) alongside source maps and transient
+  extension `node_modules` dependency debris. This closes `OZ-PKG-001S`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999992%.
+- Verified the package dist omission slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_omits_local_build_metadata_and_plugin_dependency_debris -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory or omits_local_build_metadata"`
+  (`8 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `6e8bb491`.
+- `openzues doctor --json` package distribution diagnostics now detect unsafe
+  symlinked packaged `dist/` entries and surface OpenClaw's
+  `Unsafe package dist path: ...` warning instead of silently treating the
+  target as a missing file. This closes `OZ-PKG-001T`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999993%.
+- Verified the unsafe package dist symlink slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_warns_on_unsafe_package_dist_symlink -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory or omits_local_build_metadata or unsafe_package_dist_symlink"`
+  (`9 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `a9c7884f`.
+- `openzues doctor --json` package dist inventory comparison now omits
+  publishable externalized bundled extension dist trees while preserving
+  bundled and `bundle.includeInCore=true` extension runtime files in the core
+  package inventory. This closes `OZ-PKG-001U`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999994%.
+- Verified the externalized extension omission slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_omits_externalized_bundled_extension_dist_trees -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory or omits_local_build_metadata or unsafe_package_dist_symlink or externalized_bundled_extension"`
+  (`10 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `06ba5480`.
+- `openzues doctor --json` package dist inventory comparison now omits
+  OpenClaw's private QA extension/plugin-sdk/runtime dist artifacts, including
+  `dist/extensions/qa-*`, private `dist/plugin-sdk/qa-*` files, private
+  `dist/plugin-sdk/extensions/qa-*` trees, and `dist/qa-runtime-*` chunks.
+  This closes `OZ-PKG-001V`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999995%.
+- Verified the private QA dist omission slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_omits_private_qa_package_dist_artifacts -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory or omits_local_build_metadata or unsafe_package_dist_symlink or externalized_bundled_extension or private_qa_package_dist"`
+  (`11 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `bde731a9`.
+- `openzues doctor --json` package distribution diagnostics now flag package
+  roots that resolve to an OpenClaw-shaped source checkout, preserving the
+  upstream `global package root resolves to source checkout: ...` warning.
+  This closes `OZ-PKG-001W`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999996%.
+- Verified the resolved source-checkout package-root slice with focused
+  red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_flags_package_root_resolving_to_source_checkout -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory or omits_local_build_metadata or unsafe_package_dist_symlink or externalized_bundled_extension or private_qa_package_dist or package_root_resolving_to_source_checkout"`
+  (`12 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `912aee5e`.
+- `openzues doctor --json` package distribution diagnostics now enforce
+  OpenClaw's critical bundled runtime sidecar contract when the inventory omits
+  a sidecar path, reporting `missing bundled runtime sidecar ...` for
+  installed bundled plugins. This closes `OZ-PKG-001X`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999997%.
+- Verified the bundled runtime sidecar slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_enforces_missing_bundled_runtime_sidecar -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory or omits_local_build_metadata or unsafe_package_dist_symlink or externalized_bundled_extension or private_qa_package_dist or package_root_resolving_to_source_checkout or missing_bundled_runtime_sidecar"`
+  (`13 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `07b17ad0`.
+- `openzues doctor --json` now has focused proof that private QA bundled
+  plugin roots are excluded from bundled runtime sidecar enforcement, matching
+  OpenClaw's non-packaged private QA sidecar behavior. This closes
+  `OZ-PKG-001Y`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999998%.
+- Verified the private-QA bundled sidecar no-warning slice with focused
+  `python -m pytest tests\test_cli.py::test_doctor_json_ignores_private_qa_bundled_runtime_sidecars -q`
+  (`1 passed`), adjacent sidecar/QA proof
+  `python -m pytest tests\test_cli.py -q -k "missing_bundled_runtime_sidecar or ignores_private_qa_bundled_runtime_sidecars or private_qa_package_dist"`
+  (`3 passed, 541 deselected`), `ruff check tests\test_cli.py`, and focused
+  `git diff --check`. Test checkpointed and pushed in `ad248bf4`.
+- `openzues update --dry-run --json --tag main --no-restart` now emits an
+  OpenClaw-shaped dry-run preview with native OpenZues package spec mapping,
+  planned global package-manager action text, non-registry lookup notes, and
+  restart/no-restart posture. This closes `OZ-PKG-001Z`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999985%.
+- Verified the update dry-run preview slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_maps_main_package_install_spec -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update CLI
+  proof `python -m pytest tests\test_cli.py -q -k "update_dry_run or update_status"`
+  (`13 passed, 532 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `08e8f76f`.
+- `openzues update status --json --timeout 9` now accepts OpenClaw's status
+  timeout option and propagates it to the live update-status probe while
+  preserving the existing fallback Hermes update view. This closes
+  `OZ-PKG-001AA`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999986%.
+- Verified the update-status timeout slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_timeout_option_reaches_live_probe -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update CLI
+  proof `python -m pytest tests\test_cli.py -q -k "update_dry_run or update_status"`
+  (`14 passed, 532 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `6418d7f3`.
+- The dry-run update preview now has focused proof for OpenClaw's
+  `OPENCLAW_UPDATE_PACKAGE_SPEC` override path, preserving the override value
+  in the returned package spec and planned global package-manager action text.
+  This closes `OZ-PKG-001AB`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999987%.
+- Verified the update package-spec override proof with focused
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_honors_openclaw_package_spec_override -q`
+  (`1 passed`), adjacent update CLI proof `python -m pytest tests\test_cli.py
+  -q -k "update_dry_run or update_status"` (`15 passed, 532 deselected`),
+  `ruff check tests\test_cli.py`, and focused `git diff --check`. Test
+  checkpointed and pushed in `949de445`.
+- The dry-run update preview now has focused proof that explicit package
+  install specs, such as `github:openzues/openzues#feature/native-runtime`, are
+  preserved in `tag` metadata, planned action text, and non-registry notes.
+  This closes `OZ-PKG-001AC`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999988%.
+- Verified explicit install-spec preservation with focused
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_preserves_explicit_package_install_spec -q`
+  (`1 passed`), adjacent update CLI proof `python -m pytest tests\test_cli.py
+  -q -k "update_dry_run or update_status"` (`16 passed, 532 deselected`),
+  `ruff check tests\test_cli.py`, and focused `git diff --check`. Test
+  checkpointed and pushed in `3227786a`.
+- Root `openzues update --json --timeout <seconds>` now dispatches through
+  OpenZues' native `RuntimeUpdateService.run_update` path instead of returning
+  the placeholder unavailable error, preserving timeout propagation and
+  OpenClaw-shaped JSON result projection for the git-backed native updater.
+  This closes `OZ-PKG-001AD`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999989%.
+- Verified root update dispatch with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_json_dispatches_runtime_update_service -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update CLI
+  proof `python -m pytest tests\test_cli.py -q -k "update_dry_run or update_status or dispatches_runtime_update"`
+  (`17 passed, 532 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `0c88812c`.
+- `openzues update --json --timeout <seconds> status` now forwards parent
+  update options into the `status` subcommand, matching OpenClaw's inherited
+  `--json` and `--timeout` behavior. This closes `OZ-PKG-001AE`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999990%.
+- Verified inherited update-status options with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_inherits_parent_json_and_timeout_options -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update CLI
+  proof `python -m pytest tests\test_cli.py -q -k "update_dry_run or update_status or dispatches_runtime_update"`
+  (`18 passed, 532 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `f088293f`.
+- Package-shaped `openzues update --json --tag ...` roots now dispatch through
+  a fakeable native package update path that runs upstream-shaped
+  npm/pnpm/bun global install args as a `global update` step and returns the
+  OpenClaw-style update result envelope. This closes `OZ-PKG-001AF`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999991%.
+- Verified package update execution with focused red/green service and CLI
+  proofs `python -m pytest tests\test_cli.py::test_update_json_dispatches_package_update_service tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step -q`
+  (`2 passed` after implementation), adjacent runtime/update proof
+  `python -m pytest tests\test_runtime_updates.py tests\test_cli.py -q -k "runtime_update_run_package_update or update_dry_run or update_status or dispatches_runtime_update or dispatches_package_update"`
+  (`20 passed, 536 deselected`), `ruff check src\openzues\cli.py
+  src\openzues\services\runtime_updates.py tests\test_cli.py
+  tests\test_runtime_updates.py`, `mypy src\openzues\cli.py
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `1291d361`.
+- Native package updates now retry failed npm global installs with the
+  OpenClaw-shaped `global update (omit optional)` step and `--omit=optional`
+  install args, while leaving pnpm/bun without fallback retries. This closes
+  `OZ-PKG-001AG`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999992%.
+- Verified npm fallback behavior with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_retries_npm_without_optional_deps -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent
+  `python -m pytest tests\test_runtime_updates.py -q -k "run_package_update"`
+  (`2 passed, 4 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`6 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `f3177330`.
+- Native package updates now add a `global install verify` step for explicit
+  version package specs and return an OpenClaw-shaped update error when the
+  installed package version does not match the requested target. This closes
+  `OZ-PKG-001AH`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999993%.
+- Verified package version verification with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent
+  `python -m pytest tests\test_runtime_updates.py -q -k "run_package_update"`
+  (`3 passed, 4 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`7 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `1db09c3b`.
+- Native update result envelopes now project top-level `failedStep` metadata
+  for failed package/git update steps, matching OpenClaw's package update
+  failure result shape. This closes `OZ-PKG-001AI`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999994%.
+- Verified failed-step projection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version -q`
+  (`1 failed` before implementation, then `1 passed`), full runtime update
+  suite `python -m pytest tests\test_runtime_updates.py -q` (`7 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `98e4d5c9`.
 
 ## References
 

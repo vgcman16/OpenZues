@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import subprocess
@@ -15,6 +16,11 @@ from openzues.database import Database
 
 logger = logging.getLogger(__name__)
 _UPDATE_LOG_TAIL_CHARS = 8000
+_NPM_GLOBAL_INSTALL_QUIET_FLAGS = ("--no-fund", "--no-audit", "--loglevel=error")
+_NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS = (
+    "--omit=optional",
+    *_NPM_GLOBAL_INSTALL_QUIET_FLAGS,
+)
 
 
 RuntimeUpdateCommandRunner = Callable[
@@ -84,6 +90,61 @@ def _update_step_stdout_tail(step: dict[str, object]) -> str | None:
     if not isinstance(stdout_tail, str):
         return None
     return stdout_tail.strip() or None
+
+
+def _first_failed_update_step(steps: list[dict[str, object]]) -> dict[str, object] | None:
+    for step in steps:
+        exit_code = _update_step_exit_code(step)
+        if exit_code is not None and exit_code != 0:
+            return step
+    return None
+
+
+def _read_package_version(package_root: Path) -> str | None:
+    package_json = package_root / "package.json"
+    try:
+        parsed = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    version = parsed.get("version")
+    return version.strip() if isinstance(version, str) and version.strip() else None
+
+
+def _global_package_update_args(package_manager: str, package_spec: str) -> list[str] | None:
+    manager = package_manager.strip().lower()
+    spec = package_spec.strip()
+    if not spec:
+        return None
+    if manager == "pnpm":
+        return ["pnpm", "add", "-g", spec]
+    if manager == "bun":
+        return ["bun", "add", "-g", spec]
+    if manager == "npm":
+        return ["npm", "i", "-g", spec, *_NPM_GLOBAL_INSTALL_QUIET_FLAGS]
+    return None
+
+
+def _global_package_update_fallback_args(
+    package_manager: str,
+    package_spec: str,
+) -> list[str] | None:
+    manager = package_manager.strip().lower()
+    spec = package_spec.strip()
+    if manager != "npm" or not spec:
+        return None
+    return ["npm", "i", "-g", spec, *_NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS]
+
+
+def _expected_package_version_from_spec(package_spec: str) -> str | None:
+    spec = package_spec.strip()
+    if "@" not in spec:
+        return None
+    candidate = spec.rsplit("@", maxsplit=1)[-1].strip()
+    if not candidate or not candidate[0].isdigit() or "." not in candidate:
+        return None
+    return candidate
 
 
 async def _default_update_command_runner(
@@ -278,6 +339,98 @@ class RuntimeUpdateService:
             started_at=started_at,
         )
 
+    async def run_package_update(
+        self,
+        *,
+        package_root: Path,
+        package_manager: str,
+        package_spec: str,
+        timeout_ms: int | None = None,
+    ) -> dict[str, object]:
+        started_at = time.monotonic()
+        steps: list[dict[str, object]] = []
+        before = {"sha": None, "version": _read_package_version(package_root)}
+        argv = _global_package_update_args(package_manager, package_spec)
+        if argv is None:
+            return self._build_package_update_result(
+                status="error",
+                reason="package-manager-unavailable",
+                mode=package_manager or "unknown",
+                root=package_root,
+                before=before,
+                after=None,
+                steps=steps,
+                started_at=started_at,
+            )
+
+        step = await self._run_update_command_step_at(
+            "global update",
+            argv,
+            cwd=package_root,
+            timeout_ms=timeout_ms,
+        )
+        steps.append(step)
+        if _update_step_exit_code(step) != 0:
+            fallback_argv = _global_package_update_fallback_args(package_manager, package_spec)
+            if fallback_argv is not None:
+                fallback_step = await self._run_update_command_step_at(
+                    "global update (omit optional)",
+                    fallback_argv,
+                    cwd=package_root,
+                    timeout_ms=timeout_ms,
+                )
+                steps.append(fallback_step)
+                step = fallback_step
+            if _update_step_exit_code(step) != 0:
+                return self._build_package_update_result(
+                    status="error",
+                    reason="global-update-failed",
+                    mode=package_manager,
+                    root=package_root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+
+        after_version = _read_package_version(package_root)
+        after = {"sha": None, "version": after_version}
+        expected_version = _expected_package_version_from_spec(package_spec)
+        if expected_version is not None and after_version != expected_version:
+            found = after_version or "unknown"
+            verify_step = {
+                "name": "global install verify",
+                "command": f"verify {package_root}",
+                "cwd": str(package_root),
+                "durationMs": 0,
+                "log": {
+                    "stdoutTail": None,
+                    "stderrTail": f"expected installed version {expected_version}, found {found}",
+                    "exitCode": 1,
+                },
+            }
+            steps.append(verify_step)
+            return self._build_package_update_result(
+                status="error",
+                reason="global-install-verify-failed",
+                mode=package_manager,
+                root=package_root,
+                before=before,
+                after=after,
+                steps=steps,
+                started_at=started_at,
+            )
+        return self._build_package_update_result(
+            status="ok",
+            reason=None,
+            mode=package_manager,
+            root=package_root,
+            before=before,
+            after=after,
+            steps=steps,
+            started_at=started_at,
+        )
+
     async def _run_update_command_step(
         self,
         name: str,
@@ -299,11 +452,29 @@ class RuntimeUpdateService:
                 },
             }
         started_at = time.monotonic()
-        result = await self._update_command_runner(argv, root, timeout_ms)
+        return await self._run_update_command_step_at(
+            name,
+            argv,
+            cwd=root,
+            timeout_ms=timeout_ms,
+            started_at=started_at,
+        )
+
+    async def _run_update_command_step_at(
+        self,
+        name: str,
+        argv: list[str],
+        *,
+        cwd: Path,
+        timeout_ms: int | None,
+        started_at: float | None = None,
+    ) -> dict[str, object]:
+        started_at = time.monotonic() if started_at is None else started_at
+        result = await self._update_command_runner(argv, cwd, timeout_ms)
         return {
             "name": name,
             "command": " ".join(argv),
-            "cwd": str(root),
+            "cwd": str(cwd),
             "durationMs": int((time.monotonic() - started_at) * 1000),
             "log": {
                 "stdoutTail": _trim_update_log_tail(result.get("stdout")),
@@ -334,6 +505,39 @@ class RuntimeUpdateService:
         }
         if reason is not None:
             result["reason"] = reason
+        if status == "error":
+            failed_step = _first_failed_update_step(steps)
+            if failed_step is not None:
+                result["failedStep"] = failed_step
+        return result
+
+    def _build_package_update_result(
+        self,
+        *,
+        status: str,
+        reason: str | None,
+        mode: str,
+        root: Path,
+        before: dict[str, str | None],
+        after: dict[str, str | None] | None,
+        steps: list[dict[str, object]],
+        started_at: float,
+    ) -> dict[str, object]:
+        result: dict[str, object] = {
+            "status": status,
+            "mode": mode.strip().lower() or "unknown",
+            "root": str(root),
+            "before": before,
+            "after": after,
+            "steps": steps,
+            "durationMs": int((time.monotonic() - started_at) * 1000),
+        }
+        if reason is not None:
+            result["reason"] = reason
+        if status == "error":
+            failed_step = _first_failed_update_step(steps)
+            if failed_step is not None:
+                result["failedStep"] = failed_step
         return result
 
     async def start(self) -> None:

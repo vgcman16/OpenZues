@@ -222,6 +222,27 @@ def test_qr_json_output_matches_openclaw_setup_code_contract(
     assert setup_payload["bootstrapToken"]
 
 
+def test_qr_human_output_includes_openclaw_approval_instructions(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(tmp_path / "data"))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--no-ascii",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Approve after scan with:" in result.stdout
+    assert "openzues devices list" in result.stdout
+    assert "openzues devices approve <requestId>" in result.stdout
+
+
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
     assert _is_root_value_token("work") is True
     assert _is_root_value_token("-1") is True
@@ -829,6 +850,902 @@ def test_doctor_json_warns_on_invalid_package_dist_inventory(
         "path": str(inventory_path),
         "detail": "Invalid package dist inventory at dist/postinstall-inventory.json",
     }
+
+
+def test_doctor_json_warns_on_package_dist_inventory_file_drift(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    dist_path = package_root / "dist"
+    dist_path.mkdir(parents=True)
+    (dist_path / "postinstall-inventory.json").write_text(
+        json.dumps(["dist/current.js"]),
+        encoding="utf-8",
+    )
+    (dist_path / "stale.js").write_text("export {};\n", encoding="utf-8")
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    expected_warnings = [
+        "missing packaged dist file dist/current.js",
+        "unexpected packaged dist file dist/stale.js",
+    ]
+    assert package_distribution["status"] == "warning"
+    assert package_distribution["warnings"] == expected_warnings
+    drift_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "postinstall_inventory_files"
+    )
+    assert drift_check["status"] == "warning"
+    assert drift_check["detail"] == "; ".join(expected_warnings)
+
+
+def test_doctor_json_warns_on_package_dist_legacy_staging_debris(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    dist_path = package_root / "dist"
+    bare_stage = (
+        dist_path
+        / "extensions"
+        / "evil"
+        / ".openclaw-install-stage"
+        / "package.json"
+    )
+    suffixed_stage = (
+        dist_path
+        / "extensions"
+        / "browser"
+        / ".openclaw-install-stage-AbC123"
+        / "node_modules"
+        / "playwright-core"
+        / "package.json"
+    )
+    bare_stage.parent.mkdir(parents=True)
+    suffixed_stage.parent.mkdir(parents=True)
+    bare_stage.write_text("{}", encoding="utf-8")
+    suffixed_stage.write_text("{}", encoding="utf-8")
+    (dist_path / "postinstall-inventory.json").write_text("[]", encoding="utf-8")
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    expected_warning = (
+        "unexpected legacy plugin dependency staging debris in package dist: "
+        "dist/extensions/browser/.openclaw-install-stage-AbC123, "
+        "dist/extensions/evil/.openclaw-install-stage"
+    )
+    assert package_distribution["status"] == "warning"
+    assert expected_warning in package_distribution["warnings"]
+    staging_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "legacy_plugin_dependency_staging_debris"
+    )
+    assert staging_check["status"] == "warning"
+    assert staging_check["detail"] == expected_warning
+
+
+def test_doctor_json_detects_mixed_case_package_dist_staging_debris(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    mixed_stage = (
+        package_root
+        / "Dist"
+        / "Extensions"
+        / "browser"
+        / ".OPENCLAW-INSTALL-STAGE-AbC123"
+        / "package.json"
+    )
+    mixed_stage.parent.mkdir(parents=True)
+    mixed_stage.write_text("{}", encoding="utf-8")
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    expected_warning = (
+        "unexpected legacy plugin dependency staging debris in package dist: "
+        "Dist/Extensions/browser/.OPENCLAW-INSTALL-STAGE-AbC123"
+    )
+    assert package_distribution["status"] == "warning"
+    assert expected_warning in package_distribution["warnings"]
+    staging_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "legacy_plugin_dependency_staging_debris"
+    )
+    assert staging_check["status"] == "warning"
+    assert staging_check["detail"] == expected_warning
+
+
+def test_doctor_json_warns_on_missing_package_dist_inventory_with_openclaw_message(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    (package_root / "dist").mkdir(parents=True)
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    expected_warning = "missing package dist inventory dist/postinstall-inventory.json"
+    assert package_distribution["status"] == "warning"
+    assert expected_warning in package_distribution["warnings"]
+    postinstall_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "postinstall_inventory"
+    )
+    assert postinstall_check["status"] == "warning"
+    assert postinstall_check["detail"] == expected_warning
+
+
+def test_doctor_json_omits_local_build_metadata_and_plugin_dependency_debris(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    dist_path = package_root / "dist"
+    (dist_path / "extensions" / "node_modules" / "openclaw").mkdir(parents=True)
+    (dist_path / "extensions" / "demo" / "node_modules" / "left-pad").mkdir(
+        parents=True
+    )
+    (dist_path / "index.js").write_text("export {};\n", encoding="utf-8")
+    (dist_path / "feature.runtime.js.map").write_text("{}", encoding="utf-8")
+    (dist_path / ".buildstamp").write_text("{}", encoding="utf-8")
+    (dist_path / ".runtime-postbuildstamp").write_text("{}", encoding="utf-8")
+    (
+        dist_path / "extensions" / "node_modules" / "openclaw" / "package.json"
+    ).write_text("{}", encoding="utf-8")
+    (
+        dist_path
+        / "extensions"
+        / "demo"
+        / "node_modules"
+        / "left-pad"
+        / "package.json"
+    ).write_text("{}", encoding="utf-8")
+    (dist_path / "postinstall-inventory.json").write_text(
+        json.dumps(["dist/index.js"]),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    assert package_distribution["status"] == "ok"
+    assert package_distribution["warnings"] == []
+    inventory_files_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "postinstall_inventory_files"
+    )
+    assert inventory_files_check["status"] == "ok"
+    assert inventory_files_check["detail"] == "Package dist inventory matches packaged files."
+
+
+def test_doctor_json_warns_on_unsafe_package_dist_symlink(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    dist_path = package_root / "dist"
+    dist_path.mkdir(parents=True)
+    symlink_path = dist_path / "entry.js"
+    symlink_path.write_text("export {};\n", encoding="utf-8")
+    (dist_path / "postinstall-inventory.json").write_text(
+        json.dumps(["dist/entry.js"]),
+        encoding="utf-8",
+    )
+    original_is_symlink = Path.is_symlink
+
+    def fake_is_symlink(path: Path) -> bool:
+        if path == symlink_path:
+            return True
+        return original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    expected_warning = "Unsafe package dist path: dist/entry.js"
+    assert package_distribution["status"] == "warning"
+    assert expected_warning in package_distribution["warnings"]
+    unsafe_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "unsafe_package_dist_paths"
+    )
+    assert unsafe_check["status"] == "warning"
+    assert unsafe_check["detail"] == expected_warning
+
+
+def test_doctor_json_omits_externalized_bundled_extension_dist_trees(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    external_runtime = package_root / "dist" / "extensions" / "external-chat" / "index.js"
+    bundled_runtime = package_root / "dist" / "extensions" / "bundled-chat" / "index.js"
+    core_runtime = package_root / "dist" / "extensions" / "core-chat" / "index.js"
+    external_manifest = package_root / "extensions" / "external-chat" / "package.json"
+    bundled_manifest = package_root / "extensions" / "bundled-chat" / "package.json"
+    core_manifest = package_root / "extensions" / "core-chat" / "package.json"
+    external_runtime.parent.mkdir(parents=True)
+    bundled_runtime.parent.mkdir(parents=True)
+    core_runtime.parent.mkdir(parents=True)
+    external_manifest.parent.mkdir(parents=True)
+    bundled_manifest.parent.mkdir(parents=True)
+    core_manifest.parent.mkdir(parents=True)
+    external_runtime.write_text("export {};\n", encoding="utf-8")
+    bundled_runtime.write_text("export {};\n", encoding="utf-8")
+    core_runtime.write_text("export {};\n", encoding="utf-8")
+    external_manifest.write_text(
+        json.dumps(
+            {
+                "name": "@openclaw/external-chat",
+                "openclaw": {
+                    "release": {
+                        "publishToClawHub": True,
+                        "publishToNpm": True,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    bundled_manifest.write_text(
+        json.dumps({"name": "@openclaw/bundled-chat", "openclaw": {}}),
+        encoding="utf-8",
+    )
+    core_manifest.write_text(
+        json.dumps(
+            {
+                "name": "@openclaw/core-chat",
+                "openclaw": {
+                    "bundle": {"includeInCore": True},
+                    "release": {
+                        "publishToClawHub": True,
+                        "publishToNpm": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (package_root / "dist" / "postinstall-inventory.json").write_text(
+        json.dumps(
+            [
+                "dist/extensions/bundled-chat/index.js",
+                "dist/extensions/core-chat/index.js",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    assert package_distribution["status"] == "ok"
+    assert package_distribution["warnings"] == []
+    inventory_files_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "postinstall_inventory_files"
+    )
+    assert inventory_files_check["status"] == "ok"
+    assert inventory_files_check["detail"] == "Package dist inventory matches packaged files."
+
+
+def test_doctor_json_omits_private_qa_package_dist_artifacts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    dist_path = package_root / "dist"
+    private_paths = [
+        dist_path / "extensions" / "qa-channel" / "cli.js",
+        dist_path / "extensions" / "qa-lab" / "runtime-api.js",
+        dist_path / "extensions" / "qa-matrix" / "index.js",
+        dist_path / "plugin-sdk" / "qa-channel.js",
+        dist_path / "plugin-sdk" / "qa-channel-protocol.d.ts",
+        dist_path / "plugin-sdk" / "extensions" / "qa-lab" / "cli.d.ts",
+        dist_path / "qa-runtime-B9LDtssJ.js",
+    ]
+    for private_path in private_paths:
+        private_path.parent.mkdir(parents=True, exist_ok=True)
+        private_path.write_text("export {};\n", encoding="utf-8")
+    (dist_path / "index.js").write_text("export {};\n", encoding="utf-8")
+    (dist_path / "postinstall-inventory.json").write_text(
+        json.dumps(["dist/index.js"]),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    assert package_distribution["status"] == "ok"
+    assert package_distribution["warnings"] == []
+    inventory_files_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "postinstall_inventory_files"
+    )
+    assert inventory_files_check["status"] == "ok"
+    assert inventory_files_check["detail"] == "Package dist inventory matches packaged files."
+
+
+def test_doctor_json_flags_package_root_resolving_to_source_checkout(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    (package_root / ".git").mkdir(parents=True)
+    (package_root / "src").mkdir()
+    (package_root / "extensions").mkdir()
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    expected_warning = (
+        f"global package root resolves to source checkout: {package_root.resolve()}"
+    )
+    assert package_distribution["status"] == "warning"
+    assert expected_warning in package_distribution["warnings"]
+    source_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "resolved_source_checkout"
+    )
+    assert source_check["status"] == "warning"
+    assert source_check["detail"] == expected_warning
+
+
+def test_doctor_json_enforces_missing_bundled_runtime_sidecar(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    matrix_package = package_root / "dist" / "extensions" / "matrix" / "package.json"
+    matrix_package.parent.mkdir(parents=True)
+    matrix_package.write_text("{}", encoding="utf-8")
+    matrix_sidecars = [
+        "dist/extensions/matrix/runtime-api.js",
+        "dist/extensions/matrix/runtime-setter-api.js",
+        "dist/extensions/matrix/thread-bindings-runtime.js",
+    ]
+    for sidecar in matrix_sidecars:
+        sidecar_path = package_root / Path(sidecar)
+        sidecar_path.write_text("export {};\n", encoding="utf-8")
+    (package_root / "dist" / "postinstall-inventory.json").write_text(
+        json.dumps(["dist/extensions/matrix/package.json", *matrix_sidecars]),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    expected_warning = (
+        "missing bundled runtime sidecar dist/extensions/matrix/helper-api.js"
+    )
+    assert package_distribution["status"] == "warning"
+    assert expected_warning in package_distribution["warnings"]
+    sidecar_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "bundled_runtime_sidecars"
+    )
+    assert sidecar_check["status"] == "warning"
+    assert sidecar_check["detail"] == expected_warning
+
+
+def test_doctor_json_ignores_private_qa_bundled_runtime_sidecars(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    qa_package = package_root / "dist" / "extensions" / "qa-lab" / "package.json"
+    qa_package.parent.mkdir(parents=True)
+    qa_package.write_text("{}", encoding="utf-8")
+    (package_root / "dist" / "postinstall-inventory.json").write_text(
+        "[]",
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    assert package_distribution["status"] == "ok"
+    assert package_distribution["warnings"] == []
+    sidecar_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "bundled_runtime_sidecars"
+    )
+    assert sidecar_check["status"] == "ok"
+    assert sidecar_check["detail"] == (
+        "Bundled runtime sidecars are present or not required."
+    )
+
+
+def test_doctor_json_reports_source_install_pnpm_workspace_warnings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    (package_root / "src" / "openzues").mkdir(parents=True)
+    (package_root / "src" / "entry.ts").write_text("export {};\n", encoding="utf-8")
+    (package_root / "pyproject.toml").write_text(
+        '[project]\nname = "openzues"\n',
+        encoding="utf-8",
+    )
+    (package_root / "pnpm-workspace.yaml").write_text("packages: []\n", encoding="utf-8")
+    (package_root / "node_modules").mkdir()
+    (package_root / "package-lock.json").write_text("{}", encoding="utf-8")
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    assert package_distribution["status"] == "warning"
+    assert package_distribution["sourceInstall"] == {
+        "status": "warning",
+        "workspace": True,
+        "workspacePath": str(package_root / "pnpm-workspace.yaml"),
+        "nodeModulesPath": str(package_root / "node_modules"),
+        "pnpmStorePath": str(package_root / "node_modules" / ".pnpm"),
+        "tsxBinPath": str(package_root / "node_modules" / ".bin" / "tsx"),
+        "checks": [
+            {
+                "key": "pnpm_node_modules",
+                "status": "warning",
+                "path": str(package_root / "node_modules"),
+                "detail": (
+                    "node_modules was not installed by pnpm "
+                    "(missing node_modules/.pnpm)."
+                ),
+            },
+            {
+                "key": "package_lock",
+                "status": "warning",
+                "path": str(package_root / "package-lock.json"),
+                "detail": "package-lock.json is present in a pnpm workspace.",
+            },
+            {
+                "key": "tsx_binary",
+                "status": "warning",
+                "path": str(package_root / "node_modules" / ".bin" / "tsx"),
+                "detail": "tsx binary is missing for source runs.",
+            },
+        ],
+        "warnings": [
+            (
+                "node_modules was not installed by pnpm "
+                "(missing node_modules/.pnpm). Run: pnpm install so bundled "
+                "plugins can load package-local dependencies."
+            ),
+            (
+                "package-lock.json present in a pnpm workspace. If you ran npm "
+                "install, remove it and reinstall with pnpm."
+            ),
+            "tsx binary is missing for source runs. Run: pnpm install.",
+        ],
+    }
+    assert package_distribution["warnings"] == package_distribution["sourceInstall"]["warnings"]
 
 
 def test_agents_list_json_includes_saved_workspace_inventory(tmp_path, monkeypatch) -> None:
@@ -24455,6 +25372,17 @@ def test_update_status_json_includes_openclaw_channel_projection(
         "root": str(package_root),
         "installKind": "git",
         "packageManager": "unknown",
+        "git": {
+            "root": str(package_root),
+            "sha": None,
+            "tag": None,
+            "branch": None,
+            "upstream": None,
+            "dirty": None,
+            "ahead": None,
+            "behind": None,
+            "fetchOk": None,
+        },
         "deps": {
             "manager": "unknown",
             "status": "unknown",
@@ -24470,6 +25398,191 @@ def test_update_status_json_includes_openclaw_channel_projection(
         "latestVersion": None,
         "gitBehind": None,
     }
+
+
+def test_update_dry_run_json_maps_main_package_install_spec(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "npm@10.0.0"}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+
+    result = runner.invoke(
+        app,
+        ["update", "--dry-run", "--json", "--tag", "main", "--no-restart"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["dryRun"] is True
+    assert payload["root"] == str(package_root)
+    assert payload["installKind"] == "package"
+    assert payload["mode"] == "npm"
+    assert payload["updateInstallKind"] == "package"
+    assert payload["restart"] is False
+    assert payload["requestedChannel"] is None
+    assert payload["storedChannel"] is None
+    assert payload["effectiveChannel"] == "stable"
+    assert payload["tag"] == "github:openzues/openzues#main"
+    assert "Run global package manager update with spec github:openzues/openzues#main" in payload[
+        "actions"
+    ]
+    assert (
+        "Non-registry package specs skip npm version lookup and downgrade previews."
+        in payload["notes"]
+    )
+
+
+def test_update_dry_run_json_honors_openclaw_package_spec_override(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    package_spec = "http://10.211.55.2:8138/openzues-next.tgz"
+
+    monkeypatch.setenv("OPENCLAW_UPDATE_PACKAGE_SPEC", package_spec)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+
+    result = runner.invoke(
+        app,
+        ["update", "--dry-run", "--json", "--tag", "latest"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "pnpm"
+    assert payload["tag"] == package_spec
+    assert f"Run global package manager update with spec {package_spec}" in payload["actions"]
+
+
+def test_update_dry_run_json_preserves_explicit_package_install_spec(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "npm@10.0.0"}),
+        encoding="utf-8",
+    )
+    package_spec = "github:openzues/openzues#feature/native-runtime"
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+
+    result = runner.invoke(
+        app,
+        ["update", "--dry-run", "--json", "--tag", package_spec],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["tag"] == package_spec
+    assert f"Run global package manager update with spec {package_spec}" in payload["actions"]
+    assert (
+        "Non-registry package specs skip npm version lookup and downgrade previews."
+        in payload["notes"]
+    )
+
+
+def test_update_json_dispatches_runtime_update_service(
+    monkeypatch,
+) -> None:
+    seen: dict[str, int | None] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+            seen["timeout_ms"] = timeout_ms
+            return {
+                "status": "ok",
+                "mode": "git",
+                "root": "C:/OpenZues",
+                "steps": [],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(runtime_updates=FakeRuntimeUpdates()))
+
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--json", "--timeout", "9", "--yes"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen["timeout_ms"] == 9000
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "git"
+
+
+def test_update_json_dispatches_package_update_service(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+            raise AssertionError("package-shaped update should not use git updater")
+
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.update(
+                {
+                    "package_root": package_root,
+                    "package_manager": package_manager,
+                    "package_spec": package_spec,
+                    "timeout_ms": timeout_ms,
+                }
+            )
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(runtime_updates=FakeRuntimeUpdates()))
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--json", "--tag", "latest", "--timeout", "9"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen == {
+        "package_root": package_root,
+        "package_manager": "pnpm",
+        "package_spec": "openzues@latest",
+        "timeout_ms": 9000,
+    }
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "pnpm"
 
 
 def test_update_status_json_detects_package_manager_deps(
@@ -24530,6 +25643,106 @@ def test_update_status_json_detects_package_manager_deps(
     }
 
 
+def test_update_status_timeout_option_reaches_live_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    seen: dict[str, float] = {}
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            msg = "fallback update view should not be called when live status responds"
+            raise AssertionError(msg)
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(
+        _settings: object,
+        *,
+        timeout_seconds: float = 10.0,
+    ) -> FakeUpdateView:
+        seen["timeout_seconds"] = timeout_seconds
+        return FakeUpdateView()
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json", "--timeout", "9"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen["timeout_seconds"] == 9.0
+
+
+def test_update_status_inherits_parent_json_and_timeout_options(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    seen: dict[str, float] = {}
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            msg = "fallback update view should not be called when live status responds"
+            raise AssertionError(msg)
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(
+        _settings: object,
+        *,
+        timeout_seconds: float = 10.0,
+    ) -> FakeUpdateView:
+        seen["timeout_seconds"] = timeout_seconds
+        return FakeUpdateView()
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--json", "--timeout", "9", "status"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen["timeout_seconds"] == 9.0
+    payload = json.loads(result.stdout)
+    assert payload["headline"] == "OpenZues runtime update status is steady."
+
+
 def test_update_status_json_uses_git_branch_channel_label(
     tmp_path,
     monkeypatch,
@@ -24578,6 +25791,468 @@ def test_update_status_json_uses_git_branch_channel_label(
         "label": "dev (main)",
         "config": None,
     }
+
+
+def test_update_status_json_uses_git_tag_channel_label(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    tag_sha = "0123456789abcdef0123456789abcdef01234567"
+    git_dir.mkdir(parents=True)
+    (git_dir / "HEAD").write_text(f"{tag_sha}\n", encoding="utf-8")
+    refs_tags = git_dir / "refs" / "tags"
+    refs_tags.mkdir(parents=True)
+    (refs_tags / "v1.2.3-beta.1").write_text(f"{tag_sha}\n", encoding="utf-8")
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["channel"] == {
+        "value": "beta",
+        "source": "git-tag",
+        "label": "beta (v1.2.3-beta.1)",
+        "config": None,
+    }
+
+
+def test_update_status_json_uses_packed_git_tag_channel_label(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    tag_sha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+    git_dir.mkdir(parents=True)
+    (git_dir / "HEAD").write_text(f"{tag_sha}\n", encoding="utf-8")
+    (git_dir / "packed-refs").write_text(
+        "# pack-refs with: peeled fully-peeled sorted\n"
+        f"{tag_sha} refs/tags/v1.2.3\n",
+        encoding="utf-8",
+    )
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["channel"] == {
+        "value": "stable",
+        "source": "git-tag",
+        "label": "stable (v1.2.3)",
+        "config": None,
+    }
+
+
+def test_update_status_json_projects_git_tag_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    tag_sha = "fedcbafedcbafedcbafedcbafedcbafedcbafedc"
+    git_dir.mkdir(parents=True)
+    (git_dir / "HEAD").write_text(f"{tag_sha}\n", encoding="utf-8")
+    refs_tags = git_dir / "refs" / "tags"
+    refs_tags.mkdir(parents=True)
+    (refs_tags / "v2.0.0").write_text(f"{tag_sha}\n", encoding="utf-8")
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["update"]["git"] == {
+        "root": str(package_root),
+        "sha": tag_sha,
+        "tag": "v2.0.0",
+        "branch": None,
+        "upstream": None,
+        "dirty": None,
+        "ahead": None,
+        "behind": None,
+        "fetchOk": None,
+    }
+
+
+def test_update_status_json_projects_registry_availability(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "npm@10.0.0"}),
+        encoding="utf-8",
+    )
+    (package_root / "package-lock.json").write_text("{}", encoding="utf-8")
+    (package_root / "node_modules").mkdir()
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "headline": "OpenZues runtime update status is steady.",
+                "update": {"registry": {"latestVersion": "9.0.0"}},
+            }
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["update"]["registry"] == {"latestVersion": "9.0.0"}
+    assert payload["availability"] == {
+        "available": True,
+        "hasGitUpdate": False,
+        "hasRegistryUpdate": True,
+        "latestVersion": "9.0.0",
+        "gitBehind": None,
+    }
+
+
+def test_update_status_json_projects_git_behind_availability(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    branch_sha = "1111111111111111111111111111111111111111"
+    branch_ref = git_dir / "refs" / "heads"
+    git_dir.mkdir(parents=True)
+    branch_ref.mkdir(parents=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (branch_ref / "main").write_text(f"{branch_sha}\n", encoding="utf-8")
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "headline": "OpenZues runtime update status is steady.",
+                "update": {
+                    "git": {
+                        "upstream": "origin/main",
+                        "ahead": 0,
+                        "behind": 3,
+                        "dirty": False,
+                        "fetchOk": True,
+                    }
+                },
+            }
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["update"]["git"] == {
+        "root": str(package_root),
+        "sha": branch_sha,
+        "tag": None,
+        "branch": "main",
+        "upstream": "origin/main",
+        "dirty": False,
+        "ahead": 0,
+        "behind": 3,
+        "fetchOk": True,
+    }
+    assert payload["availability"] == {
+        "available": True,
+        "hasGitUpdate": True,
+        "hasRegistryUpdate": False,
+        "latestVersion": None,
+        "gitBehind": 3,
+    }
+
+
+def test_update_status_human_reports_update_available_hint(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "npm@10.0.0"}),
+        encoding="utf-8",
+    )
+    (package_root / "package-lock.json").write_text("{}", encoding="utf-8")
+    (package_root / "node_modules").mkdir()
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "headline": "OpenZues runtime update status is steady.",
+                "update": {"registry": {"latestVersion": "9.0.0"}},
+            }
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Update available (npm 9.0.0). Run: openzues update" in result.stdout
+
+
+def test_update_status_human_reports_git_update_available_hint(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    branch_sha = "3333333333333333333333333333333333333333"
+    branch_ref = git_dir / "refs" / "heads"
+    git_dir.mkdir(parents=True)
+    branch_ref.mkdir(parents=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (branch_ref / "main").write_text(f"{branch_sha}\n", encoding="utf-8")
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "headline": "OpenZues runtime update status is steady.",
+                "update": {"git": {"behind": 3}},
+            }
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Update available (git behind 3). Run: openzues update" in result.stdout
+
+
+def test_update_status_json_config_channel_overrides_git_tag(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    tag_sha = "2222222222222222222222222222222222222222"
+    git_dir.mkdir(parents=True)
+    (git_dir / "HEAD").write_text(f"{tag_sha}\n", encoding="utf-8")
+    refs_tags = git_dir / "refs" / "tags"
+    refs_tags.mkdir(parents=True)
+    (refs_tags / "v3.0.0-beta.1").write_text(f"{tag_sha}\n", encoding="utf-8")
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"update": {"channel": "stable"}}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["channel"] == {
+        "value": "stable",
+        "source": "config",
+        "label": "stable (config)",
+        "config": "stable",
+    }
+    assert payload["update"]["git"]["tag"] == "v3.0.0-beta.1"
 
 
 def test_doctor_json_warns_when_sandbox_enabled_without_docker(monkeypatch) -> None:
