@@ -10168,3 +10168,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   with the evidence band tightened to ~80-99.99999999999999998%. Continue
   invalid package dist inventory and missing/unexpected packaged dist file
   verification next.
+- Current queue-head adjustment: native package update verification now
+  rejects invalid `dist/postinstall-inventory.json` payloads before
+  post-update doctor/swap, matching OpenClaw's package dist inventory parser
+  failure projection. Source/test checkpointed in `2f59d485`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999%. Continue missing/unexpected packaged dist file
+  verification next.
