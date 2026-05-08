@@ -25466,6 +25466,35 @@ def test_update_dry_run_json_honors_openclaw_package_spec_override(
     assert f"Run global package manager update with spec {package_spec}" in payload["actions"]
 
 
+def test_update_dry_run_json_preserves_explicit_package_install_spec(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "npm@10.0.0"}),
+        encoding="utf-8",
+    )
+    package_spec = "github:openzues/openzues#feature/native-runtime"
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+
+    result = runner.invoke(
+        app,
+        ["update", "--dry-run", "--json", "--tag", package_spec],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["tag"] == package_spec
+    assert f"Run global package manager update with spec {package_spec}" in payload["actions"]
+    assert (
+        "Non-registry package specs skip npm version lookup and downgrade previews."
+        in payload["notes"]
+    )
+
+
 def test_update_status_json_detects_package_manager_deps(
     tmp_path,
     monkeypatch,
