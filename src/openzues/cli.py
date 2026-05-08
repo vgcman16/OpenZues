@@ -8428,6 +8428,21 @@ def _doctor_missing_package_dist_inventory_warning() -> str:
     )
 
 
+def _doctor_resolved_source_checkout_warning(root: Path) -> str | None:
+    try:
+        resolved_root = root.resolve(strict=False)
+    except OSError:
+        resolved_root = root
+    if (
+        (_doctor_path_exists(resolved_root / ".git")
+        or _doctor_path_exists(resolved_root / "pnpm-workspace.yaml"))
+        and _doctor_path_exists(resolved_root / "src")
+        and _doctor_path_exists(resolved_root / "extensions")
+    ):
+        return f"global package root resolves to source checkout: {resolved_root}"
+    return None
+
+
 def _doctor_package_dist_inventory_file_warnings(
     root: Path,
     expected_files: Sequence[str] | None,
@@ -8557,9 +8572,14 @@ def _build_doctor_package_distribution_payload(
     inventory_required = not source_checkout
     source_install = _build_doctor_source_install_payload(root) if source_checkout else None
     missing_inventory_warning = _doctor_missing_package_dist_inventory_warning()
+    resolved_source_checkout_warning = (
+        None if source_checkout else _doctor_resolved_source_checkout_warning(root)
+    )
     warnings: list[str] = []
     if not root_exists:
         warnings.append(f"Package root not found: {root}")
+    if resolved_source_checkout_warning is not None:
+        warnings.append(resolved_source_checkout_warning)
     if inventory_required and not dist_present:
         warnings.append(f"Packaged dist directory is missing: {dist_path}")
     if inventory_required and not inventory_present:
@@ -8656,6 +8676,15 @@ def _build_doctor_package_distribution_payload(
             else missing_inventory_warning,
         ),
     ]
+    if resolved_source_checkout_warning is not None:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="resolved_source_checkout",
+                status="warning",
+                path=root,
+                detail=resolved_source_checkout_warning,
+            )
+        )
     if inventory_required and inventory_present and inventory_warning is None:
         checks.append(
             _doctor_package_distribution_check(
