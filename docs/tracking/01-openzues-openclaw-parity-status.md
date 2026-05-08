@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999992% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999993% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -4998,6 +4998,18 @@ may lag behind this tracker.
     before implementation, then `1 passed`), helper proof (`2 passed`),
     adjacent native-provider proof (`10 passed, 376 deselected`), `ruff
     check`, and `mypy`.
+
+- [x] Tlon hosted Memex media upload.
+  - Source: `openclaw-main/extensions/tlon/src/tlon-api.ts`,
+    `openclaw-main/extensions/tlon/src/tlon-api.test.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `f742ba8a`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused hosted Memex red/green proof (`1
+    failed` before implementation, then `1 passed`), trusted-domain proof (`2
+    passed`), adjacent native-provider proof (`12 passed, 376 deselected`),
+    `ruff check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.

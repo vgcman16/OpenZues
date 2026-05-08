@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999992%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999993%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18299,6 +18299,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `0c18844d`.
+- Tlon hosted media uploads now mirror the OpenClaw Memex-backed `uploadFile`
+  path for hosted ships: image upload helpers scry storage configuration and
+  credentials, read the genuine secret, request a trusted Memex upload URL,
+  reject untrusted upload URLs, PUT bytes with the upstream cache/content-type
+  headers, and return the trusted hosted file URL for the Tlon story. This
+  closes `OZ-PROV-001DE`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.9999993%. Remaining Tlon upload parity
+  is custom S3 signing/upload coverage.
+- Verified the Tlon hosted upload slice with focused red/green proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_tlon_media_bytes_uploads_via_hosted_memex -q`
+  (`1 failed` before implementation, then `1 passed`), security proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_tlon_media_bytes_uploads_via_hosted_memex tests\test_ops_mesh.py::test_ops_mesh_service_tlon_media_bytes_rejects_untrusted_memex_upload_url -q`
+  (`2 passed`), adjacent native-provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or irc_native_route or twitch_native_route"`
+  (`12 passed, 376 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `f742ba8a`.
 
 ## References
 
