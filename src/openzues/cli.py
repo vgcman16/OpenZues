@@ -8195,6 +8195,96 @@ def _doctor_package_dist_inventory_warning(inventory_path: Path) -> str | None:
     return None
 
 
+def _build_doctor_source_install_payload(root: Path) -> dict[str, object] | None:
+    workspace_path = root / "pnpm-workspace.yaml"
+    if not _doctor_path_exists(workspace_path):
+        return None
+    node_modules_path = root / "node_modules"
+    pnpm_store_path = node_modules_path / ".pnpm"
+    package_lock_path = root / "package-lock.json"
+    tsx_bin_path = root / "node_modules" / ".bin" / "tsx"
+    src_entry_path = root / "src" / "entry.ts"
+    warnings: list[str] = []
+    checks: list[dict[str, object]] = []
+
+    if _doctor_path_exists(node_modules_path) and not _doctor_path_exists(pnpm_store_path):
+        warnings.append(
+            "node_modules was not installed by pnpm (missing node_modules/.pnpm). "
+            "Run: pnpm install so bundled plugins can load package-local dependencies."
+        )
+        checks.append(
+            _doctor_package_distribution_check(
+                key="pnpm_node_modules",
+                status="warning",
+                path=node_modules_path,
+                detail="node_modules was not installed by pnpm (missing node_modules/.pnpm).",
+            )
+        )
+    else:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="pnpm_node_modules",
+                status="ok",
+                path=node_modules_path,
+                detail="pnpm node_modules layout is present or node_modules is absent.",
+            )
+        )
+
+    if _doctor_path_exists(package_lock_path):
+        warnings.append(
+            "package-lock.json present in a pnpm workspace. If you ran npm install, remove it "
+            "and reinstall with pnpm."
+        )
+        checks.append(
+            _doctor_package_distribution_check(
+                key="package_lock",
+                status="warning",
+                path=package_lock_path,
+                detail="package-lock.json is present in a pnpm workspace.",
+            )
+        )
+    else:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="package_lock",
+                status="ok",
+                path=package_lock_path,
+                detail="package-lock.json is absent.",
+            )
+        )
+
+    if _doctor_path_exists(src_entry_path) and not _doctor_path_exists(tsx_bin_path):
+        warnings.append("tsx binary is missing for source runs. Run: pnpm install.")
+        checks.append(
+            _doctor_package_distribution_check(
+                key="tsx_binary",
+                status="warning",
+                path=tsx_bin_path,
+                detail="tsx binary is missing for source runs.",
+            )
+        )
+    else:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="tsx_binary",
+                status="ok",
+                path=tsx_bin_path,
+                detail="tsx binary is present or not required.",
+            )
+        )
+
+    return {
+        "status": "warning" if warnings else "ok",
+        "workspace": True,
+        "workspacePath": str(workspace_path),
+        "nodeModulesPath": str(node_modules_path),
+        "pnpmStorePath": str(pnpm_store_path),
+        "tsxBinPath": str(tsx_bin_path),
+        "checks": checks,
+        "warnings": warnings,
+    }
+
+
 def _build_doctor_package_distribution_payload(
     package_root: Path | None = None,
 ) -> dict[str, object]:
@@ -8211,6 +8301,7 @@ def _build_doctor_package_distribution_payload(
     inventory_present = _doctor_path_exists(inventory_path)
     inventory_warning = _doctor_package_dist_inventory_warning(inventory_path)
     inventory_required = not source_checkout
+    source_install = _build_doctor_source_install_payload(root) if source_checkout else None
     warnings: list[str] = []
     if not root_exists:
         warnings.append(f"Package root not found: {root}")
@@ -8223,7 +8314,15 @@ def _build_doctor_package_distribution_payload(
         )
     if inventory_required and inventory_warning is not None:
         warnings.append(inventory_warning)
-    if source_checkout:
+    if source_install is not None:
+        source_install_warnings = source_install.get("warnings")
+        if isinstance(source_install_warnings, list):
+            warnings.extend(str(warning) for warning in source_install_warnings)
+    if source_checkout and warnings:
+        status = "warning"
+        summary = "OpenZues source checkout has install issues."
+        distribution = "source-checkout"
+    elif source_checkout:
         status = "info"
         summary = "OpenZues is running from a source checkout; package inventory is informational."
         distribution = "source-checkout"
@@ -8235,7 +8334,7 @@ def _build_doctor_package_distribution_payload(
         status = "ok"
         summary = "OpenZues package distribution inventory is present."
         distribution = "packaged"
-    return {
+    payload: dict[str, object] = {
         "status": status,
         "summary": summary,
         "source": "openzues-native",
@@ -8298,6 +8397,9 @@ def _build_doctor_package_distribution_payload(
         ],
         "warnings": warnings,
     }
+    if source_install is not None:
+        payload["sourceInstall"] = source_install
+    return payload
 
 
 def _with_doctor_package_distribution_payload(

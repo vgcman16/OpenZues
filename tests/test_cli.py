@@ -831,6 +831,105 @@ def test_doctor_json_warns_on_invalid_package_dist_inventory(
     }
 
 
+def test_doctor_json_reports_source_install_pnpm_workspace_warnings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    (package_root / "src" / "openzues").mkdir(parents=True)
+    (package_root / "src" / "entry.ts").write_text("export {};\n", encoding="utf-8")
+    (package_root / "pyproject.toml").write_text(
+        '[project]\nname = "openzues"\n',
+        encoding="utf-8",
+    )
+    (package_root / "pnpm-workspace.yaml").write_text("packages: []\n", encoding="utf-8")
+    (package_root / "node_modules").mkdir()
+    (package_root / "package-lock.json").write_text("{}", encoding="utf-8")
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    assert package_distribution["status"] == "warning"
+    assert package_distribution["sourceInstall"] == {
+        "status": "warning",
+        "workspace": True,
+        "workspacePath": str(package_root / "pnpm-workspace.yaml"),
+        "nodeModulesPath": str(package_root / "node_modules"),
+        "pnpmStorePath": str(package_root / "node_modules" / ".pnpm"),
+        "tsxBinPath": str(package_root / "node_modules" / ".bin" / "tsx"),
+        "checks": [
+            {
+                "key": "pnpm_node_modules",
+                "status": "warning",
+                "path": str(package_root / "node_modules"),
+                "detail": (
+                    "node_modules was not installed by pnpm "
+                    "(missing node_modules/.pnpm)."
+                ),
+            },
+            {
+                "key": "package_lock",
+                "status": "warning",
+                "path": str(package_root / "package-lock.json"),
+                "detail": "package-lock.json is present in a pnpm workspace.",
+            },
+            {
+                "key": "tsx_binary",
+                "status": "warning",
+                "path": str(package_root / "node_modules" / ".bin" / "tsx"),
+                "detail": "tsx binary is missing for source runs.",
+            },
+        ],
+        "warnings": [
+            (
+                "node_modules was not installed by pnpm "
+                "(missing node_modules/.pnpm). Run: pnpm install so bundled "
+                "plugins can load package-local dependencies."
+            ),
+            (
+                "package-lock.json present in a pnpm workspace. If you ran npm "
+                "install, remove it and reinstall with pnpm."
+            ),
+            "tsx binary is missing for source runs. Run: pnpm install.",
+        ],
+    }
+    assert package_distribution["warnings"] == package_distribution["sourceInstall"]["warnings"]
+
+
 def test_agents_list_json_includes_saved_workspace_inventory(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Agents Loop")
 
