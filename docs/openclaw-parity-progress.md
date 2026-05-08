@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999998%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18802,6 +18802,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `python -m pytest tests\test_cli.py -q -k "update_status_json_config_channel_overrides_git_tag or update_status_json_projects_git_behind_availability or update_status_json_projects_registry_availability or update_status_json_projects_git_tag_metadata or update_status_json_uses_packed_git_tag_channel_label or update_status_json_uses_git_tag_channel_label or update_status_json_uses_git_branch_channel_label or update_status_json_includes_openclaw_channel_projection or update_status_json_detects_package_manager_deps"`
   (`9 passed, 521 deselected`), `ruff check tests\test_cli.py`, and focused
   `git diff --check`. Test checkpointed and pushed in `d9150777`.
+- Human `openzues update status` output now mirrors OpenClaw's update-available
+  hint: when computed availability is true, the CLI emits an actionable
+  `Update available (...)` line with registry/git details and `openzues update`
+  as the native command. This closes `OZ-PKG-001M`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999%.
+- Verified the update-status human hint slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_human_reports_update_available_hint -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update-status
+  proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_human_reports_update_available_hint or update_status_json_config_channel_overrides_git_tag or update_status_json_projects_git_behind_availability or update_status_json_projects_registry_availability or update_status_json_projects_git_tag_metadata or update_status_json_uses_packed_git_tag_channel_label or update_status_json_uses_git_tag_channel_label or update_status_json_uses_git_branch_channel_label or update_status_json_includes_openclaw_channel_projection or update_status_json_detects_package_manager_deps"`
+  (`10 passed, 521 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `20e9c885`.
 
 ## References
 
