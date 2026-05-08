@@ -88639,6 +88639,38 @@ Object.defineProperties(feishuRootRuntime, {
   },
 });
 
+const pluginSdkRootRuntime = Object.create(genericSdk);
+Object.defineProperties(pluginSdkRootRuntime, {
+  buildMemorySystemPromptAddition: {
+    enumerable: true,
+    value: buildMemorySystemPromptAddition,
+  },
+  delegateCompactionToRuntime: {
+    enumerable: true,
+    value: delegateCompactionToRuntime,
+  },
+  emptyPluginConfigSchema: {
+    enumerable: true,
+    value: emptyPluginConfigSchema,
+  },
+  onDiagnosticEvent: {
+    enumerable: true,
+    value: onDiagnosticEvent,
+  },
+  optionalStringEnum: {
+    enumerable: true,
+    value: optionalStringEnum,
+  },
+  registerContextEngine: {
+    enumerable: true,
+    value: registerContextEngine,
+  },
+  stringEnum: {
+    enumerable: true,
+    value: stringEnum,
+  },
+});
+
 const originalLoad = Module._load;
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
@@ -91051,6 +91083,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
     request === "openclaw/plugin-sdk" ||
     request === "@openclaw/plugin-sdk" ||
+    request === "openclaw/plugin-sdk/index" ||
+    request === "@openclaw/plugin-sdk/index"
+  ) {
+    return pluginSdkRootRuntime;
+  }
+  if (
     request.startsWith("openclaw/plugin-sdk/") ||
     request.startsWith("@openclaw/plugin-sdk/")
   ) {

@@ -21163,6 +21163,153 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_plugin_sdk_root_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-sdk-root.cjs"
+    runtime_entry.write_text(
+        """
+const root = require("openclaw/plugin-sdk");
+const scopedRoot = require("@openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.plugin_sdk_root",
+      description: "Use OpenClaw plugin-sdk root shim",
+      parameters: { type: "object" },
+      async execute() {
+        const schema = root.emptyPluginConfigSchema();
+        const registration = root.registerContextEngine(
+          `root-test-${Date.now()}`,
+          () => ({ engine: "ok" })
+        );
+        const duplicate = root.registerContextEngine(
+          "root-test-duplicate",
+          () => ({ engine: "first" })
+        );
+        const duplicateAgain = root.registerContextEngine(
+          "root-test-duplicate",
+          () => ({ engine: "second" })
+        );
+        const delegated = await root.delegateCompactionToRuntime({
+          sessionId: "s1",
+          sessionFile: "session.json",
+          tokenBudget: 100,
+          runtimeContext: {
+            currentTokenCount: 250,
+            workspaceDir: "C:/work",
+            compactEmbeddedPiSessionDirect(params) {
+              return {
+                ok: true,
+                compacted: true,
+                reason: "manual",
+                result: { sessionId: params.sessionId, tokensBefore: params.currentTokenCount }
+              };
+            }
+          }
+        });
+        return {
+          keys: Object.keys(root).sort(),
+          scopedSame:
+            scopedRoot.emptyPluginConfigSchema === root.emptyPluginConfigSchema &&
+            scopedRoot.stringEnum === root.stringEnum,
+          schema: {
+            empty: schema.safeParse({}).success,
+            nonEmpty: schema.safeParse({ x: 1 }).success
+          },
+          enumSchema: root.stringEnum(["a", "b"], { default: "a" }),
+          optionalEnum: root.optionalStringEnum({ left: "left", right: "right" }).enum,
+          memory: root.buildMemorySystemPromptAddition({ lines: ["  alpha  ", "", "beta"] }),
+          registration,
+          duplicate,
+          duplicateAgain,
+          delegated,
+          diagnosticType: typeof root.onDiagnosticEvent
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-plugin-sdk-root-plugin",
+                    "name": "Runtime Plugin SDK Root Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-sdk-root.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.plugin_sdk_root"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.plugin_sdk_root"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildMemorySystemPromptAddition",
+            "delegateCompactionToRuntime",
+            "emptyPluginConfigSchema",
+            "onDiagnosticEvent",
+            "optionalStringEnum",
+            "registerContextEngine",
+            "stringEnum",
+        ],
+        "scopedSame": True,
+        "schema": {"empty": True, "nonEmpty": False},
+        "enumSchema": {"type": "string", "enum": ["a", "b"], "default": "a"},
+        "optionalEnum": ["left", "right"],
+        "memory": "alpha\nbeta",
+        "registration": {"ok": True},
+        "duplicate": {"ok": True},
+        "duplicateAgain": {"ok": False, "existingOwner": "public-sdk"},
+        "delegated": {
+            "ok": True,
+            "compacted": True,
+            "reason": "manual",
+            "result": {"sessionId": "s1", "tokensBefore": 250},
+        },
+        "diagnosticType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_feishu_root_helpers(
     tmp_path,
 ) -> None:
