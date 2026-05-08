@@ -45997,6 +45997,12 @@ const providerCatalogRuntime = {
 };
 
 const OPENCODE_ZEN_DEFAULT_MODEL = "opencode/claude-opus-4-6";
+const OPENCODE_SHARED_HINT = "Shared API key for Zen + Go catalogs";
+const OPENCODE_SHARED_WIZARD_GROUP = {
+  groupId: "opencode",
+  groupLabel: "OpenCode",
+  groupHint: OPENCODE_SHARED_HINT,
+};
 const LEGACY_OPENCODE_ZEN_DEFAULT_MODELS = new Set([
   "opencode/claude-opus-4-5",
   "opencode-zen/claude-opus-4-5",
@@ -46098,6 +46104,30 @@ function applyOpencodeZenModelDefault(cfg = {}) {
     next: applyAgentDefaultModelPrimary(cfg, OPENCODE_ZEN_DEFAULT_MODEL),
     changed: true,
   };
+}
+
+function createOpencodeCatalogApiKeyAuthMethod(params = {}) {
+  return createProviderApiKeyAuthMethod({
+    providerId: params.providerId,
+    methodId: "api-key",
+    label: params.label,
+    hint: OPENCODE_SHARED_HINT,
+    optionKey: params.optionKey,
+    flagName: params.flagName,
+    envVar: "OPENCODE_API_KEY",
+    promptMessage: "Enter OpenCode API key",
+    profileIds: ["opencode:default", "opencode-go:default"],
+    defaultModel: params.defaultModel,
+    expectedProviders: ["opencode", "opencode-go"],
+    applyConfig: params.applyConfig,
+    noteMessage: params.noteMessage,
+    noteTitle: "OpenCode",
+    wizard: {
+      choiceId: params.choiceId,
+      choiceLabel: params.choiceLabel,
+      ...OPENCODE_SHARED_WIZARD_GROUP,
+    },
+  });
 }
 
 function findNormalizedProviderKeyForOnboard(providers, providerId) {
@@ -46385,6 +46415,12 @@ const providerOnboardRuntime = {
   resolveAgentModelFallbackValues,
   resolveAgentModelPrimaryValue,
   withAgentModelAliases,
+};
+
+const opencodeRuntime = {
+  OPENCODE_ZEN_DEFAULT_MODEL,
+  applyOpencodeZenModelDefault,
+  createOpencodeCatalogApiKeyAuthMethod,
 };
 
 const PROVIDER_USAGE_DEFAULT_TIMEOUT_MS = 5000;
@@ -86661,6 +86697,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-onboard"
   ) {
     return providerOnboardRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/opencode" ||
+    request === "@openclaw/plugin-sdk/opencode"
+  ) {
+    return opencodeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-usage" ||

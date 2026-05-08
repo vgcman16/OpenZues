@@ -49047,6 +49047,143 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_opencode_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-opencode.cjs"
+    runtime_entry.write_text(
+        """
+const opencode = require("openclaw/plugin-sdk/opencode");
+const scopedOpencode = require("@openclaw/plugin-sdk/opencode");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.opencode",
+      description: "Use OpenClaw opencode SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const method = opencode.createOpencodeCatalogApiKeyAuthMethod({
+          providerId: "opencode",
+          label: "OpenCode Zen key",
+          optionKey: "opencodeApiKey",
+          flagName: "--opencode-api-key",
+          defaultModel: opencode.OPENCODE_ZEN_DEFAULT_MODEL,
+          applyConfig: opencode.applyOpencodeZenModelDefault,
+          noteMessage: "OpenCode configured",
+          choiceId: "opencode-zen",
+          choiceLabel: "OpenCode Zen"
+        });
+        const applied = scopedOpencode.applyOpencodeZenModelDefault({
+          agents: { defaults: { model: "demo/old" } }
+        });
+        return {
+          keys: Object.keys(opencode).sort(),
+          scopedTypes: [
+            typeof scopedOpencode.createOpencodeCatalogApiKeyAuthMethod,
+            typeof scopedOpencode.applyOpencodeZenModelDefault
+          ],
+          defaultModel: opencode.OPENCODE_ZEN_DEFAULT_MODEL,
+          method: {
+            id: method.id,
+            label: method.label,
+            hint: method.hint,
+            kind: method.kind,
+            wizard: method.wizard,
+            runNonInteractive: await method.runNonInteractive()
+          },
+          applied
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "opencode-plugin",
+                    "name": "OpenCode Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-opencode.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.opencode"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.opencode"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "OPENCODE_ZEN_DEFAULT_MODEL",
+            "applyOpencodeZenModelDefault",
+            "createOpencodeCatalogApiKeyAuthMethod",
+        ],
+        "scopedTypes": ["function", "function"],
+        "defaultModel": "opencode/claude-opus-4-6",
+        "method": {
+            "id": "api-key",
+            "label": "OpenCode Zen key",
+            "hint": "Shared API key for Zen + Go catalogs",
+            "kind": "api_key",
+            "wizard": {
+                "choiceId": "opencode-zen",
+                "choiceLabel": "OpenCode Zen",
+                "groupId": "opencode",
+                "groupLabel": "OpenCode",
+                "groupHint": "Shared API key for Zen + Go catalogs",
+            },
+            "runNonInteractive": None,
+        },
+        "applied": {
+            "next": {
+                "agents": {
+                    "defaults": {
+                        "model": {"primary": "opencode/claude-opus-4-6"}
+                    }
+                }
+            },
+            "changed": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_onboard_helpers(
     tmp_path,
 ) -> None:
