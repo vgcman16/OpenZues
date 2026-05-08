@@ -13804,6 +13804,155 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_vercel_ai_gateway_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-vercel-ai-gateway.cjs"
+    runtime_entry.write_text(
+        """
+const gateway = require("openclaw/plugin-sdk/vercel-ai-gateway");
+const scopedGateway = require("@openclaw/plugin-sdk/vercel-ai-gateway");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.vercel_ai_gateway",
+      description: "Use OpenClaw vercel-ai-gateway SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const staticCatalog = gateway.getStaticVercelAiGatewayModelCatalog();
+        const discovered = await gateway.discoverVercelAiGatewayModels();
+        const provider = await gateway.buildVercelAiGatewayProvider();
+        return {
+          keys: Object.keys(gateway).sort(),
+          scopedSame:
+            scopedGateway.buildVercelAiGatewayProvider ===
+            gateway.buildVercelAiGatewayProvider,
+          constants: {
+            providerId: gateway.VERCEL_AI_GATEWAY_PROVIDER_ID,
+            baseUrl: gateway.VERCEL_AI_GATEWAY_BASE_URL,
+            defaultModelId: gateway.VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID,
+            defaultModelRef: gateway.VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF,
+            contextWindow: gateway.VERCEL_AI_GATEWAY_DEFAULT_CONTEXT_WINDOW,
+            maxTokens: gateway.VERCEL_AI_GATEWAY_DEFAULT_MAX_TOKENS,
+            cost: gateway.VERCEL_AI_GATEWAY_DEFAULT_COST
+          },
+          staticIds: staticCatalog.map((model) => model.id),
+          opusCost: staticCatalog.find(
+            (model) => model.id === "anthropic/claude-opus-4.6"
+          ).cost,
+          discoveredIds: discovered.map((model) => model.id),
+          provider: {
+            baseUrl: provider.baseUrl,
+            api: provider.api,
+            modelIds: provider.models.map((model) => model.id)
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-vercel-ai-gateway-plugin",
+                    "name": "Runtime Vercel AI Gateway Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-vercel-ai-gateway.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.vercel_ai_gateway"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.vercel_ai_gateway"})
+
+    assert payload["ok"] is True
+    expected_ids = [
+        "anthropic/claude-opus-4.6",
+        "openai/gpt-5.4",
+        "openai/gpt-5.4-pro",
+        "moonshotai/kimi-k2.6",
+    ]
+    assert payload["result"] == {
+        "keys": [
+            "VERCEL_AI_GATEWAY_BASE_URL",
+            "VERCEL_AI_GATEWAY_DEFAULT_CONTEXT_WINDOW",
+            "VERCEL_AI_GATEWAY_DEFAULT_COST",
+            "VERCEL_AI_GATEWAY_DEFAULT_MAX_TOKENS",
+            "VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID",
+            "VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF",
+            "VERCEL_AI_GATEWAY_PROVIDER_ID",
+            "buildVercelAiGatewayProvider",
+            "discoverVercelAiGatewayModels",
+            "getStaticVercelAiGatewayModelCatalog",
+        ],
+        "scopedSame": True,
+        "constants": {
+            "providerId": "vercel-ai-gateway",
+            "baseUrl": "https://ai-gateway.vercel.sh",
+            "defaultModelId": "anthropic/claude-opus-4.6",
+            "defaultModelRef": "vercel-ai-gateway/anthropic/claude-opus-4.6",
+            "contextWindow": 200000,
+            "maxTokens": 128000,
+            "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+            },
+        },
+        "staticIds": expected_ids,
+        "opusCost": {
+            "input": 5,
+            "output": 25,
+            "cacheRead": 0.5,
+            "cacheWrite": 6.25,
+        },
+        "discoveredIds": expected_ids,
+        "provider": {
+            "baseUrl": "https://ai-gateway.vercel.sh",
+            "api": "anthropic-messages",
+            "modelIds": expected_ids,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_xai_model_id_helper(
     tmp_path,
 ) -> None:

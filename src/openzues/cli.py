@@ -45501,6 +45501,122 @@ const volcModelCatalogSharedRuntime = {
   buildVolcModelDefinition,
 };
 
+const VERCEL_AI_GATEWAY_PROVIDER_ID = "vercel-ai-gateway";
+const VERCEL_AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
+const VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID = "anthropic/claude-opus-4.6";
+const VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF =
+  `${VERCEL_AI_GATEWAY_PROVIDER_ID}/${VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID}`;
+const VERCEL_AI_GATEWAY_DEFAULT_CONTEXT_WINDOW = 200000;
+const VERCEL_AI_GATEWAY_DEFAULT_MAX_TOKENS = 128000;
+const VERCEL_AI_GATEWAY_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
+const STATIC_VERCEL_AI_GATEWAY_MODEL_CATALOG = [
+  {
+    id: "anthropic/claude-opus-4.6",
+    name: "Claude Opus 4.6",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    cost: {
+      input: 5,
+      output: 25,
+      cacheRead: 0.5,
+      cacheWrite: 6.25,
+    },
+  },
+  {
+    id: "openai/gpt-5.4",
+    name: "GPT 5.4",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 200000,
+    maxTokens: 128000,
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+    },
+  },
+  {
+    id: "openai/gpt-5.4-pro",
+    name: "GPT 5.4 Pro",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 200000,
+    maxTokens: 128000,
+    cost: {
+      input: 30,
+      output: 180,
+      cacheRead: 0,
+    },
+  },
+  {
+    id: "moonshotai/kimi-k2.6",
+    name: "Kimi K2.6",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 262144,
+    maxTokens: 262144,
+    cost: {
+      input: 0.95,
+      output: 4,
+      cacheRead: 0.16,
+    },
+  },
+];
+
+function buildStaticVercelAiGatewayModelDefinition(model) {
+  return {
+    id: model.id,
+    name: model.name,
+    reasoning: model.reasoning,
+    input: [...model.input],
+    contextWindow: model.contextWindow,
+    maxTokens: model.maxTokens,
+    cost: {
+      ...VERCEL_AI_GATEWAY_DEFAULT_COST,
+      ...(model.cost || {}),
+    },
+  };
+}
+
+function getStaticVercelAiGatewayModelCatalog() {
+  return STATIC_VERCEL_AI_GATEWAY_MODEL_CATALOG.map(
+    buildStaticVercelAiGatewayModelDefinition,
+  );
+}
+
+async function discoverVercelAiGatewayModels() {
+  return getStaticVercelAiGatewayModelCatalog();
+}
+
+async function buildVercelAiGatewayProvider() {
+  return {
+    baseUrl: VERCEL_AI_GATEWAY_BASE_URL,
+    api: "anthropic-messages",
+    models: await discoverVercelAiGatewayModels(),
+  };
+}
+
+const vercelAiGatewayRuntime = {
+  VERCEL_AI_GATEWAY_BASE_URL,
+  VERCEL_AI_GATEWAY_DEFAULT_CONTEXT_WINDOW,
+  VERCEL_AI_GATEWAY_DEFAULT_COST,
+  VERCEL_AI_GATEWAY_DEFAULT_MAX_TOKENS,
+  VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID,
+  VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF,
+  VERCEL_AI_GATEWAY_PROVIDER_ID,
+  buildVercelAiGatewayProvider,
+  discoverVercelAiGatewayModels,
+  getStaticVercelAiGatewayModelCatalog,
+};
+
 const providerCatalogSharedRuntime = {
   applyProviderNativeStreamingUsageCompat,
   buildManifestModelProviderConfig,
@@ -85607,6 +85723,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/volc-model-catalog-shared"
   ) {
     return volcModelCatalogSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/vercel-ai-gateway" ||
+    request === "@openclaw/plugin-sdk/vercel-ai-gateway"
+  ) {
+    return vercelAiGatewayRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-catalog-shared" ||
