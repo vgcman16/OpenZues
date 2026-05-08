@@ -10128,3 +10128,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   checkpointed in `80e49178`; repo-wide parity remains estimated at ~99.9%,
   with the evidence band tightened to ~80-99.9999999999999997%. Continue
   broader release/update packaging breadth next.
+- Current queue-head adjustment: native package-update global install commands
+  now prepend existing portable Git helper paths from
+  `LOCALAPPDATA\OpenClaw\deps\portable-git` into command `PATH` and restore the
+  parent `PATH` after dispatch. Source/test checkpointed in `e692f8b6`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999998%. Continue broader release/update
+  packaging breadth next.

@@ -19310,6 +19310,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `80e49178`.
+- Native package updates now prepend existing Windows portable Git paths from
+  `LOCALAPPDATA\OpenClaw\deps\portable-git` to the package-manager command
+  `PATH`, matching OpenClaw's bundled helper discovery while restoring the
+  parent `PATH` after dispatch. This closes `OZ-PKG-001AV`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999998%.
+- Verified portable Git path prepending with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_prepends_portable_git_paths -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent Windows env
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_windows_install_env tests\test_runtime_updates.py::test_runtime_update_run_package_update_prepends_portable_git_paths -q`
+  (`2 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`17 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e692f8b6`.
 
 ## References
 
