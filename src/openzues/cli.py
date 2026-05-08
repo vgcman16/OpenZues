@@ -45772,6 +45772,93 @@ const litellmRuntime = {
   buildLitellmModelDefinition,
 };
 
+const LLM_TASK_BASE_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"];
+
+function normalizeThinkLevel(raw) {
+  const key = normalizeLowercaseStringOrEmpty(raw);
+  if (!key) {
+    return undefined;
+  }
+  const collapsed = key.replace(/[\s_-]+/gu, "");
+  if (collapsed === "adaptive" || collapsed === "auto") {
+    return "adaptive";
+  }
+  if (collapsed === "max") {
+    return "max";
+  }
+  if (collapsed === "xhigh" || collapsed === "extrahigh") {
+    return "xhigh";
+  }
+  if (key === "off") {
+    return "off";
+  }
+  if (["on", "enable", "enabled"].includes(key)) {
+    return "low";
+  }
+  if (["min", "minimal"].includes(key)) {
+    return "minimal";
+  }
+  if (["low", "thinkhard", "think-hard", "think_hard"].includes(key)) {
+    return "low";
+  }
+  if (["mid", "med", "medium", "thinkharder", "think-harder", "harder"].includes(key)) {
+    return "medium";
+  }
+  if (["high", "ultra", "ultrathink", "think-hard", "thinkhardest", "highest"].includes(key)) {
+    return "high";
+  }
+  if (key === "think") {
+    return "minimal";
+  }
+  return undefined;
+}
+
+function formatXHighModelHint() {
+  return "provider models that advertise xhigh reasoning";
+}
+
+function llmTaskCatalogSupportsXHigh(compat) {
+  const efforts = compat && compat.supportedReasoningEfforts;
+  return (
+    Array.isArray(efforts) &&
+    efforts.some((effort) => normalizeThinkLevel(effort) === "xhigh")
+  );
+}
+
+function llmTaskThinkingLevels(provider, model, catalog) {
+  const levels = [...LLM_TASK_BASE_THINKING_LEVELS];
+  const providerKey = normalizeLowercaseStringOrEmpty(provider);
+  const modelId = normalizeOptionalString(model) || "";
+  const candidate = Array.isArray(catalog)
+    ? catalog.find(
+        (entry) =>
+          normalizeLowercaseStringOrEmpty(entry && entry.provider) === providerKey &&
+          normalizeOptionalString(entry && entry.id) === modelId,
+      )
+    : undefined;
+  if (candidate && llmTaskCatalogSupportsXHigh(candidate.compat)) {
+    levels.push("xhigh");
+  }
+  return levels;
+}
+
+function formatThinkingLevels(provider, model, separator = ", ", catalog) {
+  return llmTaskThinkingLevels(provider, model, catalog).join(separator);
+}
+
+function supportsXHighThinking(provider, model) {
+  return llmTaskThinkingLevels(provider, model).includes("xhigh");
+}
+
+const llmTaskRuntime = {
+  definePluginEntry,
+  formatThinkingLevels,
+  formatXHighModelHint,
+  normalizeThinkLevel,
+  resolvePreferredOpenClawTmpDir,
+  supportsXHighThinking,
+};
+
 const providerCatalogSharedRuntime = {
   applyProviderNativeStreamingUsageCompat,
   buildManifestModelProviderConfig,
@@ -85902,6 +85989,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/litellm"
   ) {
     return litellmRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/llm-task" ||
+    request === "@openclaw/plugin-sdk/llm-task"
+  ) {
+    return llmTaskRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-catalog-shared" ||

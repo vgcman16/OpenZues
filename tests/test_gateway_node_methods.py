@@ -14403,6 +14403,134 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_llm_task_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-llm-task.cjs"
+    runtime_entry.write_text(
+        """
+const llmTask = require("openclaw/plugin-sdk/llm-task");
+const scopedLlmTask = require("@openclaw/plugin-sdk/llm-task");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.llm_task",
+      description: "Use OpenClaw llm-task SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const entry = llmTask.definePluginEntry({
+          id: "llm-task-demo",
+          name: "LLM Task Demo",
+          register: () => undefined
+        });
+        const catalog = [
+          {
+            provider: "demo",
+            id: "model-x",
+            reasoning: true,
+            compat: { supportedReasoningEfforts: ["x-high"] }
+          }
+        ];
+        return {
+          keys: Object.keys(llmTask).sort(),
+          scopedSame:
+            scopedLlmTask.normalizeThinkLevel === llmTask.normalizeThinkLevel,
+          entry: { id: entry.id, name: entry.name, registerType: typeof entry.register },
+          tmpDirType: typeof llmTask.resolvePreferredOpenClawTmpDir(),
+          thinking: {
+            normalized: [
+              llmTask.normalizeThinkLevel("on"),
+              llmTask.normalizeThinkLevel("x-high"),
+              llmTask.normalizeThinkLevel("extra-highest") || null,
+              llmTask.normalizeThinkLevel("adaptive")
+            ],
+            levels: llmTask.formatThinkingLevels("demo", "model-x", "|", catalog),
+            xhighSupportedWithoutCatalog:
+              llmTask.supportsXHighThinking("demo", "model-x"),
+            hint: llmTask.formatXHighModelHint()
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-llm-task-plugin",
+                    "name": "Runtime LLM Task Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-llm-task.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.llm_task"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.llm_task"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "definePluginEntry",
+            "formatThinkingLevels",
+            "formatXHighModelHint",
+            "normalizeThinkLevel",
+            "resolvePreferredOpenClawTmpDir",
+            "supportsXHighThinking",
+        ],
+        "scopedSame": True,
+        "entry": {
+            "id": "llm-task-demo",
+            "name": "LLM Task Demo",
+            "registerType": "function",
+        },
+        "tmpDirType": "string",
+        "thinking": {
+            "normalized": ["low", "xhigh", None, "adaptive"],
+            "levels": "off|minimal|low|medium|high|xhigh",
+            "xhighSupportedWithoutCatalog": False,
+            "hint": "provider models that advertise xhigh reasoning",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_xai_model_id_helper(
     tmp_path,
 ) -> None:
