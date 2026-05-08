@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999995%.
+  band of ~80-99.99999999997%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -5906,6 +5906,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   versions are preserved in `update.registry` and projected into
   `availability.hasRegistryUpdate`/`latestVersion`. Source/test checkpointed
   in `55a785a8`; packaging should continue to release/update/package breadth.
+- Update-status git availability now mirrors OpenClaw's
+  `resolveUpdateAvailability` for live git divergence payloads:
+  `upstream`/`ahead`/`behind`/`dirty`/`fetchOk` survive in `update.git`, and a
+  positive behind count projects `availability.hasGitUpdate`/`gitBehind`.
+  Source/test checkpointed in `de37e6f8`; packaging should continue to
+  release/update/package breadth.
 - Closed the companion node presence alive seam from OpenClaw
   `src/gateway/server-node-events.ts`, `src/shared/node-presence.ts`,
   `apps/ios/Sources/Push/BackgroundAliveBeacon.swift`, and Android gateway
