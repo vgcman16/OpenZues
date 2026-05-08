@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999997%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18392,6 +18392,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `d7556229`.
+- Tlon inbound authorization now mirrors the upstream monitor security gate:
+  configured empty DM allowlists deny non-owner senders before session/media
+  processing, owner-configured unauthorized DMs and restricted channel messages
+  queue pending approvals with original message context, restricted channel
+  rules/default authorized ships are resolved from native config, and default
+  pending approvals persist back into the Tlon config snapshot. This closes
+  `OZ-PROV-001DJ`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999998%. Remaining Tlon-specific breadth
+  is approval response handling/admin commands and production SSE monitor
+  lifecycle.
+- Verified the Tlon inbound authorization slice with focused red/green proofs
+  for DM deny, owner approval queue, default pending-approval persistence, and
+  restricted channel deny/pending approval
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_blocks_tlon_dm_when_allowlist_is_empty tests\test_ops_mesh.py::test_ops_mesh_service_queues_tlon_dm_approval_when_owner_is_configured tests\test_ops_mesh.py::test_ops_mesh_service_persists_tlon_dm_pending_approval_by_default tests\test_ops_mesh.py::test_ops_mesh_service_blocks_tlon_group_sender_not_in_channel_allowlist tests\test_ops_mesh.py::test_ops_mesh_service_queues_tlon_channel_approval_when_owner_is_configured -q`
+  (`5 passed` after focused failures), adjacent provider/session proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or msteams_message_text_without_mentions or msteams_adaptive_card_action"`
+  (`19 passed, 378 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `d7bd3f7d`.
 
 ## References
 

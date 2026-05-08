@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999997%.
+  band of ~80-99.9999998%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1759,9 +1759,12 @@ channel firehose session routing now parses upstream channel posts/replies,
 extracts thread parent ids, builds the group conversation target, and dispatches
 through thread-scoped session keys. Tlon inbound image media staging now
 extracts image blocks, fetches/stores inbound media through a fakeable native
-fetcher, annotates session messages, and returns staged media metadata.
-Remaining Tlon runtime parity is now approval/allowlist behavior and production
-SSE monitor lifecycle.
+fetcher, annotates session messages, and returns staged media metadata. Tlon
+inbound authorization now enforces configured DM allowlists, owner approval
+queueing, restricted channel rules/default authorized ships, and native pending
+approval persistence before session/media processing.
+Remaining Tlon runtime parity is now approval response handling/admin commands
+and production SSE monitor lifecycle.
 iMessage config-backed account probes now mirror OpenClaw's `probeIMessage`
 status hook: `channels status --probe --json` discovers configured
 `channels.imessage` accounts from the Gateway config snapshot, checks the
@@ -9781,7 +9784,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `dc999418`; DM inbound firehose session routing checkpointed in `51e6b618`;
   group/thread inbound firehose session routing checkpointed in `b3b06972`;
   inbound media staging checkpointed in `d7556229`;
+  inbound authorization and pending approvals checkpointed in `d7bd3f7d`;
   repo-wide parity remains estimated at ~99.9%, with the evidence band
-  tightened to ~80-99.9999997%. Remaining Tlon-specific gaps are
-  approval/allowlist behavior and production SSE monitor lifecycle before
-  rotating through broader provider, packaging, and companion seams.
+  tightened to ~80-99.9999998%. Remaining Tlon-specific gaps are
+  approval response handling/admin commands and production SSE monitor
+  lifecycle before rotating through broader provider, packaging, and companion
+  seams.
