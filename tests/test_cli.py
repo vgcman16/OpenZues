@@ -1382,6 +1382,78 @@ def test_doctor_json_omits_externalized_bundled_extension_dist_trees(
     assert inventory_files_check["detail"] == "Package dist inventory matches packaged files."
 
 
+def test_doctor_json_omits_private_qa_package_dist_artifacts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    dist_path = package_root / "dist"
+    private_paths = [
+        dist_path / "extensions" / "qa-channel" / "cli.js",
+        dist_path / "extensions" / "qa-lab" / "runtime-api.js",
+        dist_path / "extensions" / "qa-matrix" / "index.js",
+        dist_path / "plugin-sdk" / "qa-channel.js",
+        dist_path / "plugin-sdk" / "qa-channel-protocol.d.ts",
+        dist_path / "plugin-sdk" / "extensions" / "qa-lab" / "cli.d.ts",
+        dist_path / "qa-runtime-B9LDtssJ.js",
+    ]
+    for private_path in private_paths:
+        private_path.parent.mkdir(parents=True, exist_ok=True)
+        private_path.write_text("export {};\n", encoding="utf-8")
+    (dist_path / "index.js").write_text("export {};\n", encoding="utf-8")
+    (dist_path / "postinstall-inventory.json").write_text(
+        json.dumps(["dist/index.js"]),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    assert package_distribution["status"] == "ok"
+    assert package_distribution["warnings"] == []
+    inventory_files_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "postinstall_inventory_files"
+    )
+    assert inventory_files_check["status"] == "ok"
+    assert inventory_files_check["detail"] == "Package dist inventory matches packaged files."
+
+
 def test_doctor_json_reports_source_install_pnpm_workspace_warnings(
     tmp_path,
     monkeypatch,

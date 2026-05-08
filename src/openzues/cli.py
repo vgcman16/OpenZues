@@ -8150,6 +8150,30 @@ _PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS = {
     "dist/.buildstamp",
     "dist/.runtime-postbuildstamp",
 }
+_PACKAGE_DIST_OMITTED_QA_EXTENSION_PREFIXES = (
+    "dist/extensions/qa-channel/",
+    "dist/extensions/qa-lab/",
+    "dist/extensions/qa-matrix/",
+)
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_PREFIXES = (
+    "dist/plugin-sdk/extensions/qa-channel/",
+    "dist/plugin-sdk/extensions/qa-lab/",
+)
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_FILES = {
+    "dist/plugin-sdk/qa-channel.d.ts",
+    "dist/plugin-sdk/qa-channel.js",
+    "dist/plugin-sdk/qa-channel-protocol.d.ts",
+    "dist/plugin-sdk/qa-channel-protocol.js",
+    "dist/plugin-sdk/qa-lab.d.ts",
+    "dist/plugin-sdk/qa-lab.js",
+    "dist/plugin-sdk/qa-runtime.d.ts",
+    "dist/plugin-sdk/qa-runtime.js",
+    "dist/plugin-sdk/src/plugin-sdk/qa-channel.d.ts",
+    "dist/plugin-sdk/src/plugin-sdk/qa-channel-protocol.d.ts",
+    "dist/plugin-sdk/src/plugin-sdk/qa-lab.d.ts",
+    "dist/plugin-sdk/src/plugin-sdk/qa-runtime.d.ts",
+}
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_DIST_PREFIXES = ("dist/qa-runtime-",)
 
 
 def _openzues_package_root() -> Path:
@@ -8269,6 +8293,14 @@ def _doctor_is_packaged_dist_file(
     ):
         return False
     if relative_path in _PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS:
+        return False
+    if relative_path.startswith(_PACKAGE_DIST_OMITTED_QA_EXTENSION_PREFIXES):
+        return False
+    if relative_path.startswith(_PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_PREFIXES):
+        return False
+    if relative_path in _PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_FILES:
+        return False
+    if relative_path.startswith(_PACKAGE_DIST_OMITTED_PRIVATE_QA_DIST_PREFIXES):
         return False
     if relative_path.endswith(".map"):
         return False
