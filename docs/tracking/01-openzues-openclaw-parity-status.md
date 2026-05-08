@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999997% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999998% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6582,6 +6582,24 @@ may lag behind this tracker.
     returned the generic SDK facade before implementation, then `1 passed`),
     adjacent QA proof (`4 passed, 1175 deselected`), `ruff check`, `mypy`, and
     focused `git diff --check`.
+
+- [x] Imported plugin SDK feishu-setup shim.
+  - Source: `openclaw-main/src/plugin-sdk/feishu-setup.ts`,
+    `openclaw-main/extensions/feishu/setup-api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `feishu-setup` imports expose lazy
+    `feishuSetupAdapter` and `feishuSetupWizard` facade objects backed by
+    `feishu/setup-api.js`, preserving cold loading and adapter/wizard property
+    passthrough.
+  - Evidence required: focused Feishu setup import test, adjacent Feishu/setup
+    proof, ruff, mypy
+  - Status: checkpointed in `5bd3b500`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Feishu setup red/green proof (exact
+    import returned the generic SDK facade before implementation, then `1
+    passed`), adjacent Feishu/setup proof (`4 passed, 1176 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 
