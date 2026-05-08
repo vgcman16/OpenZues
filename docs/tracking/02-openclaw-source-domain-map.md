@@ -551,6 +551,8 @@ is checkpointed in `2938b03a`.
 `test-helpers/envelope-timestamp` from
 `src/plugin-sdk/test-helpers/envelope-timestamp.ts` is checkpointed in
 `54b47a45`.
+`test-helpers/pairing-reply` from
+`src/plugin-sdk/test-helpers/pairing-reply.ts` is checkpointed in `75ac3561`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
