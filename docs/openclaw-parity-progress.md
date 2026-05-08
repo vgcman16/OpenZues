@@ -19961,6 +19961,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
   `mypy src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `e66c5082`.
+- The runtime update service now repeats OpenClaw-shaped startup update checks
+  from its long-running runner instead of only checking once before the poll
+  loop. Persisted `lastCheckedAt` still gates version lookup, so repeated
+  runner calls become real checks only after the configured interval is stale.
+  This closes `OZ-PKG-001CH`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999999998%.
+- Verified recurring startup update checks with focused proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_runner_repeats_startup_checks_after_interval -q`
+  (`1 passed`; pre-fix behavior timed out after only the first startup
+  version lookup), adjacent startup proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "startup_update_hints or startup_auto_update or runner_repeats_startup"`
+  (`9 passed, 51 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`60 passed`), `ruff
+  check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+  `mypy src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `49150d76`.
 
 ## References
 

@@ -58,6 +58,10 @@ availability hydration, and up-to-date availability clearing.
 `src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` is
 checkpointed in `e66c5082`; it covers non-package install `lastCheckedAt`
 refresh plus stale available/auto-first-seen state clearing before npm lookup.
+`OZ-PKG-001CH` recurring startup update runner checks from
+`src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` are
+checkpointed in `49150d76`; they cover repeated runner checks gated by
+persisted `lastCheckedAt`.
 
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is
