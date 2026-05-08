@@ -87338,6 +87338,10 @@ const matrixHelperRuntime = {
   resolveMatrixLegacyFlatStoragePaths,
 };
 
+const matrixRuntimeSharedRuntime = {
+  formatZonedTimestamp,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -89567,6 +89571,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/matrix-helper"
   ) {
     return matrixHelperRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-runtime-shared" ||
+    request === "@openclaw/plugin-sdk/matrix-runtime-shared"
+  ) {
+    return matrixRuntimeSharedRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/bluebubbles-policy" ||

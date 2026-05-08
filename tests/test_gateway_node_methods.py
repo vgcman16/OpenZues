@@ -20478,6 +20478,103 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_matrix_runtime_shared_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-matrix-runtime-shared.cjs"
+    runtime_entry.write_text(
+        """
+const matrixShared = require("openclaw/plugin-sdk/matrix-runtime-shared");
+const scopedMatrixShared = require("@openclaw/plugin-sdk/matrix-runtime-shared");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.matrix_runtime_shared",
+      description: "Use OpenClaw matrix-runtime-shared SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const date = new Date("2024-01-15T14:30:45.000Z");
+        return {
+          keys: Object.keys(matrixShared).sort(),
+          scopedSame:
+            scopedMatrixShared.formatZonedTimestamp ===
+              matrixShared.formatZonedTimestamp,
+          zoned: [
+            matrixShared.formatZonedTimestamp(date, { timeZone: "UTC" }),
+            matrixShared.formatZonedTimestamp(date, {
+              timeZone: "UTC",
+              displaySeconds: true
+            }),
+            matrixShared.formatZonedTimestamp(date, {
+              timeZone: "Invalid/Timezone"
+            }) ?? null
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-matrix-runtime-shared-plugin",
+                    "name": "Runtime Matrix Runtime Shared Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-matrix-runtime-shared.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.matrix_runtime_shared"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.matrix_runtime_shared"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["formatZonedTimestamp"],
+        "scopedSame": True,
+        "zoned": ["2024-01-15 14:30 UTC", "2024-01-15 14:30:45 UTC", None],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
     tmp_path,
 ) -> None:
