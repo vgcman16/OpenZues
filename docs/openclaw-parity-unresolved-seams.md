@@ -10294,3 +10294,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   repo-wide parity remains estimated at ~99.9%, with the evidence band
   tightened to ~80-99.999999999999999999997%. Continue git update preflight
   behavior or startup auto-update policy next.
+- Current queue-head adjustment: native git updates now resolve the upstream
+  SHA and require a bounded `git rev-list --max-count=10` candidate list before
+  continuing, projecting OpenClaw's `no-upstream-sha`,
+  `preflight-revlist-failed`, and `preflight-no-candidates` guards.
+  Source/test checkpointed in `254fcc9d`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999998%. Continue preflight worktree/build selection
+  or startup auto-update policy next.

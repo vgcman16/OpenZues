@@ -19705,6 +19705,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`9 passed, 550 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `93061087`.
+- Native git updates now resolve `@{upstream}` after the upstream check and
+  build an OpenClaw-style bounded `git rev-list --max-count=10` candidate list
+  before pull. Missing upstream SHA, failed rev-list, and empty candidate lists
+  now stop with `no-upstream-sha`, `preflight-revlist-failed`, or
+  `preflight-no-candidates` instead of pulling blindly. This closes
+  `OZ-PKG-001BT`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999999999999998%.
+- Verified git preflight candidate-list guarding with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_errors_when_preflight_has_no_candidates -q`
+  (`1 failed` before implementation, then covered green), focused adjacent
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_errors_when_preflight_has_no_candidates tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files -q`
+  (`3 passed`), adjacent git update sweep
+  `python -m pytest tests\test_runtime_updates.py -q -k "run_update or runtime_update_run_update"`
+  (`5 passed, 35 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`40 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `254fcc9d`.
 
 ## References
 
