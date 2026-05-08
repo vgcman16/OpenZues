@@ -21402,6 +21402,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `0802c431`.
+- `chat.history` now strips OpenClaw-injected inbound metadata prefix blocks and
+  injected weekday timestamp prefixes before exposing raw user transcript text.
+  This ports the visible-history portion of upstream `stripInboundMetadata`
+  into the native Python display projection; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999985%.
+- Verified the `chat.history` inbound metadata prefix seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_inbound_metadata_prefix -q`
+  (the metadata block and timestamp leaked before implementation, then
+  `1 passed`), envelope regression proof (`3 passed`), structured
+  internal-context regression proof (`1 passed`), adjacent transcript/read-model
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`51 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `fc562e74`.
 
 ## References
 

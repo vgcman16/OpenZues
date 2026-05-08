@@ -20,9 +20,9 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999999999999999985% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Chat/session contract subfamily | ~99.8% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Chat/session contract subfamily | ~99.85% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -14071,6 +14071,30 @@ breadth.
     regression proof (`1 passed`), adjacent
     `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
     (`50 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AT` Chat history inbound metadata prefix stripping
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` strips OpenClaw-injected inbound metadata prefix
+    blocks and weekday timestamp prefixes from raw visible transcript text.
+  - Evidence required: focused chat inbound metadata test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `fc562e74`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_inbound_metadata_prefix -q`
+    (`1 failed` before implementation, then `1 passed`), envelope regression
+    proof (`3 passed`), structured internal-context regression proof
+    (`1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`51 passed, 1175 deselected`), `ruff check
     src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
     `mypy src\openzues\services\gateway_node_methods.py`, and focused
     `git diff --check`.
