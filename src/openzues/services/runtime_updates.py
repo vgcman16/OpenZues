@@ -979,7 +979,7 @@ class RuntimeUpdateService:
             after = {"sha": None, "version": after_version}
             expected_version = _expected_package_version_from_spec(package_spec)
             if expected_version is not None and after_version != expected_version:
-                found = after_version or "unknown"
+                found = after_version or "<missing>"
                 verify_step = {
                     "name": "global install verify",
                     "command": f"verify {verification_root}",
