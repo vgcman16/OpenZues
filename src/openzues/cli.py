@@ -10180,6 +10180,37 @@ async def _openclaw_update_attach_post_update_plugins(
     return result
 
 
+def _openclaw_update_attach_requested_channel(
+    services: object,
+    payload: dict[str, object],
+    requested_channel: str | None,
+) -> dict[str, object]:
+    if payload.get("status") != "ok" or requested_channel is None:
+        return payload
+    config_service = getattr(services, "gateway_config", None)
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    patch_object = getattr(config_service, "patch_object", None)
+    if not callable(build_snapshot) or not callable(patch_object):
+        return payload
+    snapshot = build_snapshot()
+    previous_channel = _openclaw_update_config_channel(snapshot)
+    result = dict(payload)
+    if previous_channel == requested_channel:
+        result["channelUpdate"] = {
+            "changed": False,
+            "previous": previous_channel,
+            "channel": requested_channel,
+        }
+        return result
+    patch_object({"update": {"channel": requested_channel}})
+    result["channelUpdate"] = {
+        "changed": True,
+        "previous": previous_channel,
+        "channel": requested_channel,
+    }
+    return result
+
+
 def _parse_openclaw_update_timeout_seconds(value: str | None) -> float | None:
     if value is None:
         return None
@@ -98185,6 +98216,11 @@ def update_root(
                 package_spec=package_spec,
                 timeout_ms=timeout_ms,
             )
+            payload = _openclaw_update_attach_requested_channel(
+                services,
+                payload,
+                requested_channel,
+            )
             return await _openclaw_update_attach_post_update_plugins(services, payload)
 
         payload = _run(
@@ -98197,6 +98233,11 @@ def update_root(
 
     async def run_git_update_with_plugins(services: CliServices) -> dict[str, object]:
         payload = await services.runtime_updates.run_update(timeout_ms=timeout_ms)
+        payload = _openclaw_update_attach_requested_channel(
+            services,
+            payload,
+            requested_channel,
+        )
         return await _openclaw_update_attach_post_update_plugins(services, payload)
 
     payload = _run(
