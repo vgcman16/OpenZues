@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999999999999999999999999999996%.
+  band of ~80-99.9999999999999999999999999999997%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10645,3 +10645,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `8457701d`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.9999999999999999999999999999996%. Continue
   remaining exact SDK helper seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `video-generation` now
+  exposes the exact Dashscope-compatible public helper barrel, including WAN
+  model/capability constants, reference URL resolution, task input/parameter
+  builders, video URL extraction, polling, generated video download projection,
+  and task run metadata instead of generic passthrough. Source/test
+  checkpointed in `69e092b5`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999997%. Continue remaining exact SDK helper
+  seams and broader provider/runtime parity breadth.

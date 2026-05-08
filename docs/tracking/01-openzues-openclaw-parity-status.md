@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999996% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999997% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6245,6 +6245,24 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused image-generation red/green proof
     (exact import returned generic passthrough objects before implementation,
     then `1 passed`), adjacent image/media helper proof (`5 passed, 1157
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK video-generation Dashscope helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/video-generation.ts`,
+    `openclaw-main/src/video-generation/dashscope-compatible.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `video-generation` imports expose Dashscope
+    WAN model/capability constants, reference URL resolution, input/parameter
+    builders, URL extraction, task polling, generated-video download
+    projection, and task-run metadata behavior.
+  - Evidence required: focused video-generation import test, adjacent
+    generation helper proof, ruff, mypy
+  - Status: checkpointed in `69e092b5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused video-generation red/green proof
+    (exact import returned generic passthrough objects before implementation,
+    then `1 passed`), adjacent generation helper proof (`4 passed, 1159
     deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
