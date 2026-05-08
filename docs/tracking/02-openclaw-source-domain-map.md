@@ -559,6 +559,8 @@ checkpointed in `0561baa6`.
 `808c9260`.
 `private-qa-bundled-env` from `src/plugin-sdk/private-qa-bundled-env.ts` is
 checkpointed in `fc6c72d4`.
+`diagnostics-otel` from `src/plugin-sdk/diagnostics-otel.ts` is checkpointed
+in `1bc4c0f9`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
