@@ -9806,6 +9806,60 @@ def _openclaw_update_git_payload(
     }
 
 
+def _openclaw_update_semver_tuple(value: object) -> tuple[int, int, int] | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    match = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", text)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _openclaw_update_registry_payload(raw_update_payload: object) -> dict[str, object] | None:
+    if not isinstance(raw_update_payload, Mapping):
+        return None
+    raw_registry = raw_update_payload.get("registry")
+    if not isinstance(raw_registry, Mapping):
+        return None
+    registry: dict[str, object] = {}
+    latest_version = _optional_cli_string(raw_registry.get("latestVersion"))
+    if latest_version is not None:
+        registry["latestVersion"] = latest_version
+    error = _optional_cli_string(raw_registry.get("error"))
+    if error is not None:
+        registry["error"] = error
+    return registry if registry else None
+
+
+def _openclaw_update_availability_payload(
+    update_payload: Mapping[str, object],
+) -> dict[str, object]:
+    raw_registry = update_payload.get("registry")
+    latest_version = (
+        _optional_cli_string(raw_registry.get("latestVersion"))
+        if isinstance(raw_registry, Mapping)
+        else None
+    )
+    current_semver = _openclaw_update_semver_tuple(__version__)
+    latest_semver = _openclaw_update_semver_tuple(latest_version)
+    has_registry_update = (
+        current_semver is not None and latest_semver is not None and current_semver < latest_semver
+    )
+
+    raw_git = update_payload.get("git")
+    raw_git_behind = raw_git.get("behind") if isinstance(raw_git, Mapping) else None
+    git_behind = raw_git_behind if isinstance(raw_git_behind, int) else None
+    has_git_update = git_behind is not None and git_behind > 0
+    return {
+        "available": has_git_update or has_registry_update,
+        "hasGitUpdate": has_git_update,
+        "hasRegistryUpdate": has_registry_update,
+        "latestVersion": latest_version if has_registry_update else None,
+        "gitBehind": git_behind,
+    }
+
+
 def _openclaw_update_channel_payload(
     *,
     config_channel: str | None,
@@ -9851,6 +9905,7 @@ def _with_openclaw_update_status_projection(
     git_tag = _openclaw_update_git_tag(root) if install_kind == "git" else None
     git_branch = _openclaw_update_git_branch(root) if install_kind == "git" else None
     config_channel = _openclaw_update_config_channel(config_snapshot)
+    raw_update_payload = payload.get("update") if isinstance(payload, Mapping) else None
     package_manager = (
         _openclaw_update_package_manager(root) if install_kind != "unknown" else "unknown"
     )
@@ -9866,6 +9921,9 @@ def _with_openclaw_update_status_projection(
             git_tag=git_tag,
             git_branch=git_branch,
         )
+    registry_payload = _openclaw_update_registry_payload(raw_update_payload)
+    if registry_payload is not None:
+        update_payload["registry"] = registry_payload
     if install_kind != "unknown":
         update_payload["deps"] = _openclaw_update_deps_status(root, package_manager)
     next_payload["update"] = update_payload
@@ -9875,13 +9933,7 @@ def _with_openclaw_update_status_projection(
         git_tag=git_tag,
         git_branch=git_branch,
     )
-    next_payload["availability"] = {
-        "available": False,
-        "hasGitUpdate": False,
-        "hasRegistryUpdate": False,
-        "latestVersion": None,
-        "gitBehind": None,
-    }
+    next_payload["availability"] = _openclaw_update_availability_payload(update_payload)
     return next_payload
 
 
