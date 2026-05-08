@@ -790,6 +790,8 @@ def _collect_package_dist_inventory(package_root: Path) -> tuple[list[str], list
     for path in dist_root.rglob("*"):
         try:
             relative_path = path.relative_to(package_root).as_posix()
+            if _is_omitted_package_dist_subtree(relative_path, externalized_extension_ids):
+                continue
             if path.is_symlink():
                 errors.append(f"Unsafe package dist path: {relative_path}")
                 continue
@@ -860,6 +862,19 @@ def _is_externalized_bundled_extension_dist_path(
         and parts[0] == "dist"
         and parts[1] == "extensions"
         and parts[2] in externalized_extension_ids
+    )
+
+
+def _is_omitted_package_dist_subtree(
+    relative_path: str,
+    externalized_extension_ids: set[str],
+) -> bool:
+    return (
+        _is_externalized_bundled_extension_dist_path(relative_path, externalized_extension_ids)
+        or _is_legacy_plugin_dependency_dir_path(relative_path)
+        or relative_path.startswith(_PACKAGE_DIST_OMITTED_QA_EXTENSION_PREFIXES)
+        or relative_path.startswith(_PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_PREFIXES)
+        or relative_path.startswith(_PACKAGE_DIST_OMITTED_PRIVATE_QA_DIST_PREFIXES)
     )
 
 
