@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999999995%.
+  band of ~80-99.9999999996%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -5880,6 +5880,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and CLI/operator-control bounded paths remain ~99.9%. Verified with the
   focused package distribution doctor pytest, adjacent doctor/runtime bridge
   proof, `ruff check`, and `mypy`; checkpointed in `47d73351`.
+- Source-install package doctor warnings now mirror OpenClaw's
+  `src/commands/doctor-install.ts`: `openzues doctor --json` emits
+  `packageDistribution.sourceInstall` for pnpm workspaces, warning about
+  non-pnpm `node_modules`, stray `package-lock.json`, and missing
+  `node_modules/.bin/tsx`. Source/test checkpointed in `4c1d7a2a`; the
+  packaging queue should continue to release/update/package breadth.
 - Closed the companion node presence alive seam from OpenClaw
   `src/gateway/server-node-events.ts`, `src/shared/node-presence.ts`,
   `apps/ios/Sources/Push/BackgroundAliveBeacon.swift`, and Android gateway

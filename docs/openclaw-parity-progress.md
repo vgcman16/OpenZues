@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999995%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999996%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18700,6 +18700,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_config.py`, and focused `git diff --check`.
   Source/test checkpointed and pushed in `4d67d5a6`.
+- `openzues doctor --json` now mirrors OpenClaw's source-install doctor notes
+  for pnpm workspaces: source checkouts with `pnpm-workspace.yaml` receive a
+  `packageDistribution.sourceInstall` section that flags non-pnpm
+  `node_modules`, stray `package-lock.json`, and missing `node_modules/.bin/tsx`
+  with OpenClaw-shaped warnings while preserving existing dist-inventory
+  diagnostics. This closes `OZ-PKG-001F`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.9999999996%.
+- Verified the source-install package doctor slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_reports_source_install_pnpm_workspace_warnings -q`
+  (`1 failed` before implementation, then `1 passed`), paired package
+  distribution regressions
+  `python -m pytest tests\test_cli.py::test_doctor_json_includes_windows_package_distribution_diagnostics tests\test_cli.py::test_doctor_json_warns_on_invalid_package_dist_inventory -q`
+  (`2 passed`), adjacent update/package doctor proof
+  `python -m pytest tests\test_cli.py -q -k "source_install_pnpm_workspace_warnings or package_distribution_diagnostics or invalid_package_dist_inventory or update_status_json"`
+  (`7 passed, 517 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `4c1d7a2a`.
 
 ## References
 
