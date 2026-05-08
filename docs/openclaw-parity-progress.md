@@ -20337,6 +20337,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 1151 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `799fbdd4`.
+- Imported plugin SDK `test-utils` now acts as the exact scoped/unscoped
+  compatibility alias for the legacy `testing` barrel instead of exposing the
+  broad generic SDK passthrough surface. This closes `OZ-PLUGIN-00324`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999999999999998%.
+- Verified the test-utils compatibility alias with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_utils_compat_alias -q`
+  (the exact subpath returned the whole generic SDK surface before
+  implementation, then `1 passed`), adjacent testing-barrel proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "test_utils_compat or testing_compat or test_env_runtime or test_fixtures_runtime"`
+  (`2 passed, 1153 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `992457ac`.
 
 ## References
 
