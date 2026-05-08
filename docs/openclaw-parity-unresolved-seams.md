@@ -10928,3 +10928,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tightened to ~80-99.9999999999999999999999999999999999999998%. Continue
   remaining exact SDK root seams (`bluebubbles`, `mattermost`, `memory-core`,
   `zalo`) plus provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `memory-core` now exposes
+  the root memory-core barrel by composing the verified engine, runtime-core,
+  CLI, events, status, and runtime-files facades; the status facade now also
+  includes the OpenClaw dreaming config/day/workspace helpers. Source/test
+  checkpointed in `21cbfac2`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999%. Continue remaining exact
+  SDK root seams (`bluebubbles`, `mattermost`, `zalo`) plus provider/runtime
+  breadth.

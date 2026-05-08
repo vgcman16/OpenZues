@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999999998% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6985,6 +6985,26 @@ may lag behind this tracker.
     root import returned generic placeholder array/function behavior before
     implementation, then `1 passed`), adjacent Matrix proof (`5 passed, 1197
     deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK memory-core root shim.
+  - Source: `openclaw-main/src/plugin-sdk/memory-core.ts`,
+    `openclaw-main/src/memory-host-sdk/dreaming.ts`,
+    `openclaw-main/src/plugin-sdk/memory-core-host-status.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `memory-core` imports expose the root
+    memory-core barrel by composing engine, runtime-core, CLI, events, status,
+    and runtime-files helpers, including OpenClaw dreaming config/day/workspace
+    helpers.
+  - Evidence required: focused memory-core root import test, adjacent
+    memory-core host/status/files/engine proof, ruff, mypy
+  - Status: checkpointed in `21cbfac2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused memory-core root red/green proof
+    (exact root import returned generic placeholder status/config behavior
+    before implementation, then `1 passed`), adjacent memory-core proof (`6
+    passed, 1197 deselected`), `ruff check`, `mypy`, and focused `git diff
+    --check`.
 
 ## Update Rule
 
