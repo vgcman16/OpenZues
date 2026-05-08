@@ -1629,6 +1629,98 @@ def test_channels_status_json_uses_route_backed_feishu_probe(
     ]
 
 
+def test_channels_status_json_uses_route_backed_mattermost_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Mattermost Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Mattermost Native Probe Route",
+            kind="mattermost",
+            target="https://mattermost.example.com/api/v4",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "mattermost",
+                "account_id": "mattermost-bot",
+                "peer_kind": "channel",
+                "peer_id": "mattermost:channel:town-square",
+                "summary": "mattermost-bot channel town-square",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="mattermost-bot-token",
+            vault_secret_id=None,
+        )
+    )
+    mattermost_gets: list[tuple[str, str | None, str | None, float]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self
+        mattermost_gets.append((target, secret_header_name, secret_token, timeout_seconds))
+        return {
+            "id": "user1234567890123456789012",
+            "username": "openzues",
+            "nickname": "OpenZues Bot",
+            "roles": "system_user",
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["mattermost"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "mattermost",
+        "runtime": "native-provider-backed",
+        "accountId": "mattermost-bot",
+        "bot": {
+            "id": "user1234567890123456789012",
+            "username": "openzues",
+            "nickname": "OpenZues Bot",
+            "roles": "system_user",
+        },
+        "timeoutMs": 2500,
+    }
+    assert mattermost_gets == [
+        (
+            "https://mattermost.example.com/api/v4/users/me",
+            "Authorization",
+            "Bearer mattermost-bot-token",
+            2.5,
+        )
+    ]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,

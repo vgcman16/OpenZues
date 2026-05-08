@@ -391,6 +391,7 @@ PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "googlechat",
     "line",
     "matrix",
+    "mattermost",
     "msteams",
     "zalo",
 }
@@ -14620,6 +14621,24 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "mattermost":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_mattermost_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         if route_kind == "matrix":
             try:
                 return await asyncio.to_thread(
@@ -15609,6 +15628,36 @@ class OpsMeshService:
         if device_id:
             payload["deviceId"] = device_id
         return payload
+
+    def _probe_mattermost_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        result = self._get_json_provider_url(
+            _mattermost_api_endpoint(str(route.get("target") or ""), "users/me"),
+            secret_header_name="Authorization",
+            secret_token=_mattermost_bearer_token(secret_token),
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Mattermost API returned a non-JSON user response.")
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "mattermost",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "bot": result,
+            "timeoutMs": timeout_ms,
+        }
 
     def _probe_line_provider_route(
         self,
