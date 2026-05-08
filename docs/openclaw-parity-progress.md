@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999994%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999995%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18334,6 +18334,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `dc999418`.
+- Tlon DM inbound firehose session routing now mirrors the first upstream
+  `monitorTlonProvider` chat-firehose branch: OpenZues parses `whom`,
+  `response.add.essay.author/sent/content`, renders rich inline Tlon content to
+  agent text, builds the Tlon direct conversation target/session key, dispatches
+  through the session-backed delivery service, and preserves both inbound and
+  delivery message ids. This closes `OZ-PROV-001DG`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.9999995%.
+  Remaining Tlon-specific breadth is group/thread channel firehose handling,
+  approval/allowlist/media-download depth, and production SSE monitor lifecycle.
+- Verified the Tlon DM inbound session slice with focused red/green proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_tlon_dm_firehose_event_to_session -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent
+  provider/session proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or msteams_message_text_without_mentions or msteams_adaptive_card_action"`
+  (`12 passed, 378 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `51e6b618`.
 
 ## References
 
