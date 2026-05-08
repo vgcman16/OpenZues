@@ -538,6 +538,8 @@ config schema contracts, and bundled Discord public-surface delegation for
 in `9c56ff39`.
 `facade-loader` from `src/plugin-sdk/facade-loader.ts` is checkpointed in
 `29aa7956`.
+`session-transcript-hit` from `src/plugin-sdk/session-transcript-hit.ts` is
+checkpointed in `b294d317`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
