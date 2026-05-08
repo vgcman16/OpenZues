@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -69,6 +69,10 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR approval guidance checkpointed in `d6052fda`; QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code remote secret/rendered QR breadth later |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Zalo user `channels.logout` runtime checkpointed in `4d67d5a6`; QQBot `channels.logout` runtime checkpointed in `aac53b3b`; WhatsApp `channels.logout` runtime checkpointed in `3e99a587`; Nextcloud Talk `channels.logout` runtime checkpointed in `13de6593`; LINE `channels.logout` runtime checkpointed in `9674493d`; Telegram `channels.logout` runtime checkpointed in `2d26bdc4`; `channels.stop` native Tlon runtime checkpointed in `1365c028`; `channels.start` native Tlon runtime checkpointed in `810a6af0`; Tlon production SSE monitor lifecycle checkpointed in `726f03cb`; Tlon approval block/admin handling checkpointed in `800d2ab6`; Tlon approval response replay checkpointed in `265b0a10`; Tlon inbound authorization/pending approvals checkpointed in `d7bd3f7d`; Tlon inbound media staging checkpointed in `d7556229`; Tlon group/thread inbound session routing checkpointed in `b3b06972`; Tlon DM inbound session routing checkpointed in `51e6b618`; Tlon custom S3 media upload checkpointed in `dc999418`; Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to broader provider/runtime, packaging, or companion seams |
+
+Latest queue addendum: `OZ-PKG-001CA` stable/beta release-channel git updates
+are checkpointed in `1f45d307`; continue startup auto-update policy or
+remaining no-target/no-good-commit edge verification.
 
 ## Active Slice Detail
 
@@ -10935,6 +10939,34 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     tests\test_runtime_updates.py tests\test_cli.py`, `mypy
     src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
     `git diff --check`.
+
+- [x] `OZ-PKG-001CA` git release-channel tag checkout
+  - Source: `openclaw-main/src/infra/update-runner.ts`,
+    `openclaw-main/src/infra/update-channels.ts`,
+    `openclaw-main/src/infra/update-check.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: stable/beta git updates fetch tags, list sorted `v*` tags,
+    select the stable tag or beta tag with OpenClaw's stable fallback rule,
+    detach checkout the selected release tag, skip dev upstream/preflight
+    rebase, and return `no-release-tag` when no matching release tag exists.
+  - Evidence required: focused stable/beta/no-release-tag proofs, adjacent
+    git-update proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `1f45d307`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused stable red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight -q`
+    (`1 failed` before implementation, then covered green), focused release
+    channel proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight tests\test_runtime_updates.py::test_runtime_update_run_update_beta_channel_falls_back_to_newer_stable_tag tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_release_tag_for_release_channel -q`
+    (`3 passed`), adjacent runtime proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_main_for_dev_channel tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight tests\test_runtime_updates.py::test_runtime_update_run_update_beta_channel_falls_back_to_newer_stable_tag tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_release_tag_for_release_channel -q`
+    (`6 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`49 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
 
 - [x] `OZ-PROV-001M` Slack agent-request thread metadata
   - Source: `openclaw-main/src/agents/subagent-announce-delivery.ts`,

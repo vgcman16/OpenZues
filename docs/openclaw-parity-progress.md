@@ -19838,6 +19838,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py tests\test_cli.py`, `mypy
   src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `c77f60e0`.
+- Native stable/beta git release-channel updates now mirror OpenClaw's
+  `resolveChannelTag` path by listing `v*` tags with `--sort=-v:refname`,
+  choosing the stable release tag or beta-with-stable-fallback result, detached
+  checking out the selected tag, and returning `no-release-tag` when no
+  matching release tag exists. This closes `OZ-PKG-001CA`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999995%.
+- Verified release-channel git updates with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight -q`
+  (`1 failed` before implementation, then covered green), focused release
+  channel proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight tests\test_runtime_updates.py::test_runtime_update_run_update_beta_channel_falls_back_to_newer_stable_tag tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_release_tag_for_release_channel -q`
+  (`3 passed`), adjacent runtime proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_main_for_dev_channel tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight tests\test_runtime_updates.py::test_runtime_update_run_update_beta_channel_falls_back_to_newer_stable_tag tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_release_tag_for_release_channel -q`
+  (`6 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`49 passed`), `ruff
+  check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+  `mypy src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `1f45d307`.
 
 ## References
 

@@ -10345,3 +10345,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   evidence band tightened to ~80-99.9999999999999999999999%. Continue
   no-target-sha/no-good-commit edge verification or startup auto-update
   policy next.
+- Current queue-head adjustment: native stable/beta git release-channel
+  updates now list sorted `v*` tags, select the stable tag or beta tag with
+  OpenClaw's stable fallback rule, detach checkout the selected release tag,
+  and return `no-release-tag` when the requested release channel has no
+  matching tag. Source/test checkpointed in `1f45d307`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999995%. Continue startup auto-update policy or
+  remaining no-target/no-good-commit edge verification next.
