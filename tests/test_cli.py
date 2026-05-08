@@ -1928,6 +1928,98 @@ def test_channels_status_json_uses_route_backed_irc_probe(
     ]
 
 
+def test_channels_status_json_uses_route_backed_twitch_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Twitch Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Twitch Native Probe Route",
+            kind="twitch",
+            target="twitch://chat?username=openzues&clientId=twitch-client-id&channel=OpenZues",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "twitch",
+                "account_id": "twitch-bot",
+                "peer_kind": "channel",
+                "peer_id": "twitch:#OpenZues",
+                "summary": "twitch-bot channel OpenZues",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="oauth:twitch-token",
+            vault_secret_id=None,
+        )
+    )
+    twitch_probes: list[dict[str, object]] = []
+
+    def fake_probe_twitch_connection(
+        self: object,
+        config: object,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        twitch_probes.append(
+            {
+                "username": config.username,
+                "clientId": config.client_id,
+                "token": config.token,
+                "channel": config.default_channel,
+                "timeout": timeout_seconds,
+            }
+        )
+        return 37
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._probe_twitch_connection",
+        fake_probe_twitch_connection,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["twitch"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "twitch",
+        "runtime": "native-provider-backed",
+        "accountId": "twitch-bot",
+        "connected": True,
+        "username": "openzues",
+        "channel": "openzues",
+        "elapsedMs": 37,
+        "timeoutMs": 2500,
+    }
+    assert twitch_probes == [
+        {
+            "username": "openzues",
+            "clientId": "twitch-client-id",
+            "token": "oauth:twitch-token",
+            "channel": "openzues",
+            "timeout": 2.5,
+        }
+    ]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,

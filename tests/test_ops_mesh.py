@@ -65,6 +65,7 @@ from openzues.services.ops_mesh import (
     _IrcRouteConfig,
     _saved_outbound_delivery_replay_message,
     _serialize_task,
+    _TwitchRouteConfig,
     build_ops_mesh,
 )
 from openzues.services.session_keys import build_launch_session_key, resolve_thread_session_keys
@@ -27392,6 +27393,85 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_twitch_native_r
             "channel": "openzues",
             "message": "Twitch native parity. https://cdn.example.com/clip.png",
         }
+    ]
+
+
+def test_ops_mesh_service_twitch_probe_waits_for_ready_and_quits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent_lines: list[str] = []
+    connection_calls: list[tuple[tuple[str, int], float]] = []
+    wrapped_hosts: list[str] = []
+
+    class FakeTwitchSocket:
+        def __init__(self) -> None:
+            self._chunks = [
+                b"PING :tmi.twitch.tv\r\n",
+                b":tmi.twitch.tv 001 openzues :Welcome, GLHF!\r\n",
+            ]
+
+        def __enter__(self) -> FakeTwitchSocket:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def settimeout(self, timeout: float) -> None:
+            assert timeout == 2.5
+
+        def sendall(self, data: bytes) -> None:
+            sent_lines.append(data.decode("utf-8").strip())
+
+        def recv(self, size: int) -> bytes:
+            assert size == 4096
+            return self._chunks.pop(0)
+
+    class FakeSslContext:
+        def wrap_socket(
+            self,
+            raw_socket: FakeTwitchSocket,
+            *,
+            server_hostname: str,
+        ) -> FakeTwitchSocket:
+            wrapped_hosts.append(server_hostname)
+            return raw_socket
+
+    def fake_create_connection(
+        address: tuple[str, int],
+        *,
+        timeout: float,
+    ) -> FakeTwitchSocket:
+        connection_calls.append((address, timeout))
+        return FakeTwitchSocket()
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.socket.create_connection",
+        fake_create_connection,
+    )
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.ssl.create_default_context",
+        lambda: FakeSslContext(),
+    )
+
+    elapsed_ms = OpsMeshService.__new__(OpsMeshService)._probe_twitch_connection(
+        _TwitchRouteConfig(
+            username="openzues",
+            client_id="twitch-client-id",
+            token="raw-token",
+            default_channel="openzues",
+        ),
+        timeout_seconds=2.5,
+    )
+
+    assert elapsed_ms >= 0
+    assert connection_calls == [(("irc.chat.twitch.tv", 6697), 2.5)]
+    assert wrapped_hosts == ["irc.chat.twitch.tv"]
+    assert sent_lines == [
+        "PASS oauth:raw-token",
+        "NICK openzues",
+        "PONG :tmi.twitch.tv",
+        "QUIT :probe",
     ]
 
 

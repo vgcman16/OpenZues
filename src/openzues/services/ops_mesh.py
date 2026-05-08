@@ -396,6 +396,7 @@ PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "mattermost",
     "msteams",
     "signal",
+    "twitch",
     "zalo",
 }
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
@@ -14741,6 +14742,24 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "twitch":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_twitch_provider_route,
+                    route,
+                    secret_token_value,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         if route_kind == "zalo":
             try:
                 return await asyncio.to_thread(
@@ -15768,6 +15787,47 @@ class OpsMeshService:
             "ok": True,
             "status": "ok",
             "latencyMs": latency_ms,
+        }
+
+    def _probe_twitch_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        config = _twitch_route_config(str(route.get("target") or ""), secret_token)
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "twitch",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "username": config.username,
+            "timeoutMs": timeout_ms,
+        }
+        if config.default_channel:
+            payload["channel"] = config.default_channel
+        try:
+            elapsed_ms = self._probe_twitch_connection(
+                config,
+                timeout_seconds=max(float(timeout_ms) / 1000.0, 0.001),
+            )
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
+            "connected": True,
+            "elapsedMs": elapsed_ms,
         }
 
     def _probe_matrix_provider_route(
@@ -24441,6 +24501,72 @@ class OpsMeshService:
         except OSError as exc:
             raise RuntimeError(f"Twitch provider request failed: {exc}") from exc
         return message_id
+
+    def _probe_twitch_connection(
+        self,
+        config: _TwitchRouteConfig,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        safe_username = _irc_wire_value(config.username.lower(), "Twitch username")
+        normalized_token = _irc_wire_value(config.token, "Twitch token")
+        pass_token = (
+            normalized_token
+            if normalized_token.lower().startswith("oauth:")
+            else f"oauth:{normalized_token}"
+        )
+        timeout = max(float(timeout_seconds), 0.001)
+
+        def send_line(connection: socket.socket, line: str) -> None:
+            connection.sendall(f"{line}\r\n".encode())
+
+        def probe_session(connection: socket.socket) -> None:
+            send_line(connection, f"PASS {pass_token}")
+            send_line(connection, f"NICK {safe_username}")
+
+            buffer = ""
+            while True:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    raise RuntimeError("Twitch connection closed before ready")
+                buffer += chunk.decode("utf-8", errors="replace")
+                while "\n" in buffer:
+                    raw_line, buffer = buffer.split("\n", 1)
+                    raw_line = raw_line.rstrip("\r")
+                    if not raw_line:
+                        continue
+                    command = _irc_command_from_line(raw_line)
+                    if command == "PING":
+                        send_line(connection, f"PONG :{_irc_ping_payload(raw_line)}")
+                        continue
+                    if command == "001":
+                        send_line(connection, "QUIT :probe")
+                        return
+                    if command == "ERROR":
+                        raise RuntimeError(_irc_error_detail(raw_line))
+                    if command == "NOTICE":
+                        detail = _irc_error_detail(raw_line)
+                        detail_lower = detail.lower()
+                        if "auth" in detail_lower or "login" in detail_lower:
+                            raise RuntimeError(detail)
+
+        started = time.monotonic()
+        try:
+            with socket.create_connection(
+                ("irc.chat.twitch.tv", 6697),
+                timeout=timeout,
+            ) as raw_socket:
+                raw_socket.settimeout(timeout)
+                context = ssl.create_default_context()
+                with context.wrap_socket(
+                    raw_socket,
+                    server_hostname="irc.chat.twitch.tv",
+                ) as tls_socket:
+                    probe_session(tls_socket)
+        except OSError as exc:
+            raise RuntimeError(f"Twitch provider request failed: {exc}") from exc
+        return max(int((time.monotonic() - started) * 1000), 0)
 
     def _request_json_provider_url(
         self,
