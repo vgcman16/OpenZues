@@ -17912,6 +17912,99 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-telegram-command-ui.cjs"
+    runtime_entry.write_text(
+        """
+const ui = require("openclaw/plugin-sdk/telegram-command-ui");
+const scopedUi = require("@openclaw/plugin-sdk/telegram-command-ui");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.telegram_command_ui",
+      description: "Use OpenClaw telegram-command-ui SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(ui).sort(),
+          scopedSame:
+            scopedUi.buildCommandsPaginationKeyboard ===
+            ui.buildCommandsPaginationKeyboard,
+          middle: ui.buildCommandsPaginationKeyboard(2, 4, "ops"),
+          first: ui.buildCommandsPaginationKeyboard(1, 1)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-telegram-command-ui-plugin",
+                    "name": "Runtime Telegram Command UI Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-telegram-command-ui.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.telegram_command_ui"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.telegram_command_ui"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["buildCommandsPaginationKeyboard"],
+        "scopedSame": True,
+        "middle": [
+            [
+                {"text": "\u25c0 Prev", "callback_data": "commands_page_1:ops"},
+                {"text": "2/4", "callback_data": "commands_page_noop:ops"},
+                {"text": "Next \u25b6", "callback_data": "commands_page_3:ops"},
+            ]
+        ],
+        "first": [[{"text": "1/1", "callback_data": "commands_page_noop"}]],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
     tmp_path,
 ) -> None:

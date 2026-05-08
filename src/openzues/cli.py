@@ -65760,6 +65760,10 @@ const telegramCommandConfigRuntime = {
   resolveTelegramCustomCommands,
 };
 
+const telegramCommandUiRuntime = {
+  buildCommandsPaginationKeyboard,
+};
+
 const commandAuthRuntime = {
   ...accessGroupsRuntime,
   createPreCryptoDirectDmAuthorizer,
@@ -85867,6 +85871,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/telegram-command-config"
   ) {
     return telegramCommandConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/telegram-command-ui" ||
+    request === "@openclaw/plugin-sdk/telegram-command-ui"
+  ) {
+    return telegramCommandUiRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-status" ||
