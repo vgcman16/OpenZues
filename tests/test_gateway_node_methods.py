@@ -18140,6 +18140,201 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_irc_surface_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    password_path = tmp_path / "irc-password.txt"
+    password_path.write_text(" file-secret \n", encoding="utf-8")
+    runtime_entry = tmp_path / "runtime-plugin-irc-surface.cjs"
+    runtime_entry.write_text(
+        f"""
+const irc = require("openclaw/plugin-sdk/irc-surface");
+const scopedIrc = require("@openclaw/plugin-sdk/irc-surface");
+const passwordFile = {json.dumps(str(password_path))};
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.irc_surface",
+      description: "Use OpenClaw irc-surface SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        const cfg = {{
+          channels: {{
+            irc: {{
+              enabled: false,
+              host: "irc.root.test",
+              port: 6667,
+              tls: false,
+              nick: "rootbot",
+              username: "rootuser",
+              realname: "Root Bot",
+              password: "root-secret",
+              defaultAccount: "work",
+              accounts: {{
+                default: {{
+                  enabled: true,
+                  host: "irc.default.test",
+                  nick: "defaultbot",
+                  username: "defaultuser",
+                  realname: "Default Bot",
+                  password: "default-secret"
+                }},
+                work: {{
+                  enabled: true,
+                  name: "Work IRC",
+                  host: "irc.work.test",
+                  port: 6697,
+                  tls: true,
+                  nick: "workbot",
+                  username: "workuser",
+                  realname: "Work Bot",
+                  passwordFile,
+                  channels: ["#ops"],
+                  keep: "yes"
+                }}
+              }}
+            }}
+          }}
+        }};
+        const work = irc.resolveIrcAccount({{ cfg, accountId: "work" }});
+        const defaultAccount = scopedIrc.resolveIrcAccount({{ cfg }});
+        return {{
+          keys: Object.keys(irc).sort(),
+          scopedSame: scopedIrc.resolveIrcAccount === irc.resolveIrcAccount,
+          setupTypes: {{
+            adapter: typeof irc.ircSetupAdapter,
+            wizard: typeof irc.ircSetupWizard
+          }},
+          ids: irc.listIrcAccountIds(cfg),
+          defaultId: irc.resolveDefaultIrcAccountId(cfg),
+          work: {{
+            accountId: work.accountId,
+            enabled: work.enabled,
+            configured: work.configured,
+            name: work.name,
+            host: work.host,
+            port: work.port,
+            tls: work.tls,
+            nick: work.nick,
+            username: work.username,
+            realname: work.realname,
+            password: work.password,
+            passwordSource: work.passwordSource,
+            keep: work.config && work.config.keep
+          }},
+          defaultAccount: {{
+            accountId: defaultAccount.accountId,
+            enabled: defaultAccount.enabled,
+            configured: defaultAccount.configured,
+            host: defaultAccount.host,
+            port: defaultAccount.port,
+            tls: defaultAccount.tls,
+            nick: defaultAccount.nick,
+            username: defaultAccount.username,
+            realname: defaultAccount.realname,
+            password: defaultAccount.password,
+            passwordSource: defaultAccount.passwordSource
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-irc-surface-plugin",
+                    "name": "Runtime IRC Surface Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-irc-surface.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.irc_surface"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.irc_surface"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "ircSetupAdapter",
+            "ircSetupWizard",
+            "listIrcAccountIds",
+            "resolveDefaultIrcAccountId",
+            "resolveIrcAccount",
+        ],
+        "scopedSame": True,
+        "setupTypes": {"adapter": "object", "wizard": "object"},
+        "ids": ["default", "work"],
+        "defaultId": "work",
+        "work": {
+            "accountId": "work",
+            "enabled": True,
+            "configured": True,
+            "name": "Work IRC",
+            "host": "irc.work.test",
+            "port": 6697,
+            "tls": True,
+            "nick": "workbot",
+            "username": "workuser",
+            "realname": "Work Bot",
+            "password": "file-secret",
+            "passwordSource": "passwordFile",
+            "keep": "yes",
+        },
+        "defaultAccount": {
+            "accountId": "work",
+            "enabled": True,
+            "configured": True,
+            "host": "irc.work.test",
+            "port": 6697,
+            "tls": True,
+            "nick": "workbot",
+            "username": "workuser",
+            "realname": "Work Bot",
+            "password": "file-secret",
+            "passwordSource": "passwordFile",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
     tmp_path,
 ) -> None:

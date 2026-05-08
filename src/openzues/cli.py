@@ -65839,6 +65839,136 @@ const telegramAccountRuntime = {
   resolveTelegramAccount,
 };
 
+function listIrcAccountIds(cfg = {}) {
+  const channelConfig = (cfg.channels && cfg.channels.irc) || {};
+  const accounts =
+    channelConfig.accounts && typeof channelConfig.accounts === "object"
+      ? channelConfig.accounts
+      : {};
+  return Object.keys(accounts).map(normalizeAccountId).sort();
+}
+
+function resolveDefaultIrcAccountId(cfg = {}) {
+  const channelConfig = (cfg.channels && cfg.channels.irc) || {};
+  const accounts =
+    channelConfig.accounts && typeof channelConfig.accounts === "object"
+      ? channelConfig.accounts
+      : {};
+  const configuredDefault = normalizeOptionalString(channelConfig.defaultAccount);
+  if (configuredDefault) {
+    const normalizedDefault = normalizeAccountId(configuredDefault);
+    if (accounts[normalizedDefault]) {
+      return normalizedDefault;
+    }
+  }
+  if (accounts[DEFAULT_ACCOUNT_ID]) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  return listIrcAccountIds(cfg)[0] || DEFAULT_ACCOUNT_ID;
+}
+
+function readIrcPasswordFile(filePath) {
+  const resolved = normalizeOptionalString(filePath);
+  if (!resolved) {
+    return "";
+  }
+  try {
+    return fs.readFileSync(resolved, "utf8").trim();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function resolveIrcPassword(params = {}) {
+  const accountConfig = params.accountConfig || {};
+  const channelConfig = params.channelConfig || {};
+  const accountPassword = asString(accountConfig.password);
+  if (accountPassword) {
+    return { password: accountPassword, passwordSource: "config" };
+  }
+  const accountPasswordFile = normalizeOptionalString(accountConfig.passwordFile);
+  if (accountPasswordFile) {
+    return {
+      password: readIrcPasswordFile(accountPasswordFile),
+      passwordSource: "passwordFile",
+    };
+  }
+  const channelPassword = asString(channelConfig.password);
+  if (channelPassword) {
+    return { password: channelPassword, passwordSource: "config" };
+  }
+  const channelPasswordFile = normalizeOptionalString(channelConfig.passwordFile);
+  if (channelPasswordFile) {
+    return {
+      password: readIrcPasswordFile(channelPasswordFile),
+      passwordSource: "passwordFile",
+    };
+  }
+  const envPassword = asString(process.env.IRC_PASSWORD);
+  if (envPassword) {
+    return { password: envPassword, passwordSource: "env" };
+  }
+  return { password: "", passwordSource: "none" };
+}
+
+function resolveIrcAccount(params = {}) {
+  const cfg = params.cfg || {};
+  const channelConfig = (cfg.channels && cfg.channels.irc) || {};
+  const accounts =
+    channelConfig.accounts && typeof channelConfig.accounts === "object"
+      ? channelConfig.accounts
+      : {};
+  const requestedAccountId = normalizeAccountId(
+    params.accountId || resolveDefaultIrcAccountId(cfg),
+  );
+  const accountConfig =
+    accounts[requestedAccountId] ||
+    (requestedAccountId === DEFAULT_ACCOUNT_ID ? accounts[DEFAULT_ACCOUNT_ID] : undefined) ||
+    {};
+  const hasAccountConfig = Object.keys(accountConfig).length > 0;
+  const mergedConfig = hasAccountConfig
+    ? { ...channelConfig, ...accountConfig, accounts: channelConfig.accounts }
+    : channelConfig;
+  const password = resolveIrcPassword({
+    accountConfig: hasAccountConfig ? accountConfig : {},
+    channelConfig,
+  });
+  const accountId = hasAccountConfig ? requestedAccountId : DEFAULT_ACCOUNT_ID;
+  const tls = Boolean(mergedConfig.tls);
+  const host = asString(mergedConfig.host) || "";
+  const nick = asString(mergedConfig.nick) || accountId;
+  const username = asString(mergedConfig.username) || nick;
+  const realname = asString(mergedConfig.realname) || username;
+  const name = normalizeOptionalString(mergedConfig.name);
+  return {
+    accountId,
+    enabled: mergedConfig.enabled !== false,
+    ...(name ? { name } : {}),
+    configured: Boolean(host && nick),
+    host,
+    port: Number.isFinite(Number(mergedConfig.port))
+      ? Number(mergedConfig.port)
+      : tls
+        ? 6697
+        : 6667,
+    tls,
+    nick,
+    username,
+    realname,
+    password: password.password,
+    passwordSource: password.passwordSource,
+    config: mergedConfig,
+  };
+}
+
+const ircSurfaceRuntime = {
+  ircSetupAdapter: {},
+  ircSetupWizard: {},
+  listIrcAccountIds,
+  resolveDefaultIrcAccountId,
+  resolveIrcAccount,
+};
+
 const commandAuthRuntime = {
   ...accessGroupsRuntime,
   createPreCryptoDirectDmAuthorizer,
@@ -85958,6 +86088,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/telegram-account"
   ) {
     return telegramAccountRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/irc-surface" ||
+    request === "@openclaw/plugin-sdk/irc-surface"
+  ) {
+    return ircSurfaceRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-status" ||
