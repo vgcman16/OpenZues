@@ -19524,6 +19524,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `603cdb2a`.
+- Native package update inventory collection now applies omitted-subtree checks
+  before symlink safety checks, so externalized extension and dependency
+  subtrees do not produce false `Unsafe package dist path` verifier failures.
+  This closes `OZ-PKG-001BI`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999999999996%.
+- Verified omitted-subtree safety ordering with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent externalized
+  and unsafe-path proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`30 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `2830b5ef`.
 
 ## References
 

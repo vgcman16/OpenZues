@@ -10218,3 +10218,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.9999999999999999995%. Continue omitted-subtree safety ordering for
   externalized extensions and plugin dependency folders next.
+- Current queue-head adjustment: native package update inventory collection now
+  applies omitted-subtree checks before symlink safety checks, preventing
+  externalized extension and dependency subtree files from producing false
+  unsafe-path verifier failures. Source/test checkpointed in `2830b5ef`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999996%. Continue package update
+  externalized `includeInCore` guard and private QA omission proof next.
