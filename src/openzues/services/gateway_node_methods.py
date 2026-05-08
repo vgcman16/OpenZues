@@ -16910,7 +16910,7 @@ def _project_sessions_history_messages(
             continue
         raw_text = str(row.get("content") or "")
         sender_label = (
-            _extract_chat_history_inbound_sender_label(raw_text)
+            _extract_chat_history_message_sender_label(raw_text)
             if role == "user"
             else None
         )
