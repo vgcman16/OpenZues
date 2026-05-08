@@ -744,6 +744,160 @@ async def test_runtime_update_run_update_checks_out_main_for_dev_channel(
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+    revision_probe = RevisionProbe("rev-a", "release-sha")
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        command_calls.append((argv, cwd, timeout_ms))
+        if argv == ["git", "tag", "--list", "v*", "--sort=-v:refname"]:
+            return {
+                "stdout": "v2.0.0-beta.1\nv1.9.0\nv1.8.5\n",
+                "stderr": "",
+                "exitCode": 0,
+            }
+        if argv[:2] in (["git", "rev-list"], ["git", "rebase"]):
+            raise AssertionError("stable release updates should not run dev preflight/rebase")
+        if argv == [
+            "git",
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ]:
+            raise AssertionError("stable release updates should not inspect branch upstream")
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("run_update should report restart posture, not exec immediately")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=revision_probe,
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000, channel="stable")
+
+    assert result["status"] == "ok"
+    assert result["after"] == {"sha": "release-sha", "version": None}
+    assert [step["name"] for step in result["steps"]] == [
+        "git status",
+        "git fetch",
+        "git checkout v1.9.0",
+        "deps install",
+        "build",
+    ]
+    assert command_calls[:4] == [
+        (["git", "status", "--porcelain", "--", ":!dist/control-ui/"], tmp_path, 1000),
+        (["git", "fetch", "--all", "--prune", "--tags"], tmp_path, 1000),
+        (["git", "tag", "--list", "v*", "--sort=-v:refname"], tmp_path, 1000),
+        (["git", "checkout", "--detach", "v1.9.0"], tmp_path, 1000),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_beta_channel_falls_back_to_newer_stable_tag(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[list[str]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        command_calls.append(argv)
+        if argv == ["git", "tag", "--list", "v*", "--sort=-v:refname"]:
+            return {"stdout": "v2.0.0\nv1.9.0-beta.4\n", "stderr": "", "exitCode": 0}
+        if argv[:2] in (["git", "rev-list"], ["git", "rebase"]):
+            raise AssertionError("release channel updates should not run dev preflight/rebase")
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("run_update should report restart posture, not exec immediately")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a", "stable-sha"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000, channel="beta")
+
+    assert result["status"] == "ok"
+    assert [step["name"] for step in result["steps"]] == [
+        "git status",
+        "git fetch",
+        "git checkout v2.0.0",
+        "deps install",
+        "build",
+    ]
+    assert ["git", "checkout", "--detach", "v2.0.0"] in command_calls
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_reports_no_release_tag_for_release_channel(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        if argv == ["git", "tag", "--list", "v*", "--sort=-v:refname"]:
+            return {"stdout": "v2.0.0-beta.1\n", "stderr": "", "exitCode": 0}
+        if argv[:2] in (["git", "rev-list"], ["git", "rebase"]):
+            raise AssertionError("release channel updates should not run dev preflight/rebase")
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("missing release tag should not schedule restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000, channel="stable")
+
+    assert result["status"] == "error"
+    assert result["reason"] == "no-release-tag"
+    assert [step["name"] for step in result["steps"]] == [
+        "git status",
+        "git fetch",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_package_update_executes_global_install_step(
     tmp_path,
 ) -> None:

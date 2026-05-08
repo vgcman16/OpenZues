@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -33,6 +34,13 @@ _FIRST_PACKAGED_DIST_INVENTORY_VERSION = (2026, 4, 15)
 _UPDATE_PREFLIGHT_MAX_COMMITS = 10
 _UPDATE_CHANNELS = {"stable", "beta", "dev"}
 _UPDATE_DEV_BRANCH = "main"
+_UPDATE_BETA_TAG_PATTERN = re.compile(r"(?:^|[.-])beta(?:[.-]|$)", re.IGNORECASE)
+_UPDATE_LEGACY_DOT_BETA_PATTERN = re.compile(
+    r"^([vV]?[0-9]+\.[0-9]+\.[0-9]+)\.beta(?:\.([0-9A-Za-z.-]+))?$"
+)
+_UPDATE_SEMVER_PATTERN = re.compile(
+    r"^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$"
+)
 _PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS = {
     "dist/.buildstamp",
     "dist/.runtime-postbuildstamp",
@@ -215,6 +223,100 @@ def _normalize_update_channel(value: str | None) -> str | None:
         return None
     channel = value.strip().lower()
     return channel if channel in _UPDATE_CHANNELS else None
+
+
+def _is_update_beta_tag(value: str) -> bool:
+    return _UPDATE_BETA_TAG_PATTERN.search(value) is not None
+
+
+def _is_update_stable_tag(value: str) -> bool:
+    return not _is_update_beta_tag(value)
+
+
+def _normalize_legacy_dot_beta_version(value: str) -> str:
+    match = _UPDATE_LEGACY_DOT_BETA_PATTERN.match(value.strip())
+    if match is None:
+        return value.strip()
+    base = match.group(1)
+    suffix = match.group(2)
+    return f"{base}-beta.{suffix}" if suffix else f"{base}-beta"
+
+
+def _parse_update_comparable_semver(
+    value: str | None,
+) -> tuple[int, int, int, tuple[str, ...] | None] | None:
+    if not value:
+        return None
+    normalized = _normalize_legacy_dot_beta_version(value)
+    match = _UPDATE_SEMVER_PATTERN.match(normalized)
+    if match is None:
+        return None
+    major, minor, patch, prerelease_raw = match.groups()
+    prerelease = (
+        tuple(part for part in prerelease_raw.split(".") if part)
+        if prerelease_raw
+        else None
+    )
+    return int(major), int(minor), int(patch), prerelease
+
+
+def _compare_update_prerelease_identifiers(
+    left: tuple[str, ...] | None,
+    right: tuple[str, ...] | None,
+) -> int:
+    if not left and not right:
+        return 0
+    if not left:
+        return 1
+    if not right:
+        return -1
+    for index in range(max(len(left), len(right))):
+        left_item = left[index] if index < len(left) else None
+        right_item = right[index] if index < len(right) else None
+        if left_item is None and right_item is None:
+            return 0
+        if left_item is None:
+            return -1
+        if right_item is None:
+            return 1
+        if left_item == right_item:
+            continue
+        left_numeric = left_item.isdigit()
+        right_numeric = right_item.isdigit()
+        if left_numeric and right_numeric:
+            return -1 if int(left_item) < int(right_item) else 1
+        if left_numeric and not right_numeric:
+            return -1
+        if not left_numeric and right_numeric:
+            return 1
+        return -1 if left_item < right_item else 1
+    return 0
+
+
+def _compare_update_semver_strings(left: str | None, right: str | None) -> int | None:
+    left_semver = _parse_update_comparable_semver(left)
+    right_semver = _parse_update_comparable_semver(right)
+    if left_semver is None or right_semver is None:
+        return None
+    for left_part, right_part in zip(left_semver[:3], right_semver[:3], strict=True):
+        if left_part != right_part:
+            return -1 if left_part < right_part else 1
+    return _compare_update_prerelease_identifiers(left_semver[3], right_semver[3])
+
+
+def _resolve_update_channel_tag(tags: Sequence[str], channel: str) -> str | None:
+    if channel == "beta":
+        beta_tag = next((tag for tag in tags if _is_update_beta_tag(tag)), None)
+        stable_tag = next((tag for tag in tags if _is_update_stable_tag(tag)), None)
+        if beta_tag is None:
+            return stable_tag
+        if stable_tag is None:
+            return beta_tag
+        comparison = _compare_update_semver_strings(beta_tag, stable_tag)
+        if comparison is not None and comparison < 0:
+            return stable_tag
+        return beta_tag
+    return next((tag for tag in tags if _is_update_stable_tag(tag)), None)
 
 
 def _looks_like_full_commit_sha(value: str) -> bool:
@@ -1268,6 +1370,43 @@ class RuntimeUpdateService:
                 started_at=started_at,
             )
 
+        if normalized_channel in {"stable", "beta"}:
+            release_tags = await self._read_update_tags(root=root, timeout_ms=timeout_ms)
+            release_tag = _resolve_update_channel_tag(release_tags, normalized_channel)
+            if release_tag is None:
+                return self._build_update_command_result(
+                    status="error",
+                    reason="no-release-tag",
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+            checkout_step = await self._run_update_command_step(
+                f"git checkout {release_tag}",
+                ["git", "checkout", "--detach", release_tag],
+                timeout_ms=timeout_ms,
+            )
+            steps.append(checkout_step)
+            if _update_step_exit_code(checkout_step) != 0:
+                return self._build_update_command_result(
+                    status="error",
+                    reason="checkout-failed",
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+            return await self._complete_git_update_after_checkout(
+                root=root,
+                before=before,
+                steps=steps,
+                timeout_ms=timeout_ms,
+                started_at=started_at,
+            )
+
         preflight_base_sha: str | None = None
         candidates: list[str]
         if normalized_dev_target_ref is not None:
@@ -1523,6 +1662,23 @@ class RuntimeUpdateService:
                     started_at=started_at,
                 )
 
+        return await self._complete_git_update_after_checkout(
+            root=root,
+            before=before,
+            steps=steps,
+            timeout_ms=timeout_ms,
+            started_at=started_at,
+        )
+
+    async def _complete_git_update_after_checkout(
+        self,
+        *,
+        root: Path,
+        before: dict[str, str | None],
+        steps: list[dict[str, object]],
+        timeout_ms: int | None,
+        started_at: float,
+    ) -> dict[str, object]:
         for name, argv, reason in (
             (
                 "deps install",
@@ -1832,6 +1988,29 @@ class RuntimeUpdateService:
             return None
         branch = stdout.strip()
         return branch or None
+
+    async def _read_update_tags(
+        self,
+        *,
+        root: Path,
+        timeout_ms: int | None,
+        pattern: str = "v*",
+    ) -> list[str]:
+        try:
+            result = await self._update_command_runner(
+                ["git", "tag", "--list", pattern, "--sort=-v:refname"],
+                root,
+                timeout_ms,
+            )
+        except Exception:
+            logger.debug("Could not read update tags.", exc_info=True)
+            return []
+        if _update_command_exit_code(result.get("exitCode")) != 0:
+            return []
+        stdout = result.get("stdout")
+        if not isinstance(stdout, str):
+            return []
+        return [line.strip() for line in stdout.splitlines() if line.strip()]
 
     async def _run_update_command_step_at(
         self,
