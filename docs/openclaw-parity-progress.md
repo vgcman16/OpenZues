@@ -18907,6 +18907,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`8 passed, 530 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `6e8bb491`.
+- `openzues doctor --json` package distribution diagnostics now detect unsafe
+  symlinked packaged `dist/` entries and surface OpenClaw's
+  `Unsafe package dist path: ...` warning instead of silently treating the
+  target as a missing file. This closes `OZ-PKG-001T`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999993%.
+- Verified the unsafe package dist symlink slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_warns_on_unsafe_package_dist_symlink -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory or omits_local_build_metadata or unsafe_package_dist_symlink"`
+  (`9 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `a9c7884f`.
 
 ## References
 

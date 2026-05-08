@@ -9945,3 +9945,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `6e8bb491`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.9999999999992%. Rotate to unsafe symlinked dist
   entry detection next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  detect unsafe symlinked packaged `dist/` entries and surface OpenClaw's
+  `Unsafe package dist path: ...` warning. Source/test checkpointed in
+  `a9c7884f`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999993%. Rotate to externalized bundled
+  extension dist omission next.
