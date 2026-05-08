@@ -12996,24 +12996,45 @@ class OpsMeshService:
             normalize_optional_account_id(str(account_id or "").strip())
             or DEFAULT_ACCOUNT_ID
         )
-        if normalized_channel != "telegram":
-            raise RuntimeError(f"channel {normalized_channel} does not support logout")
-        await self.stop_channel_runtime_account(normalized_channel, normalized_account_id)
-        fields = ("botToken",)
-        env_token = bool(os.environ.get("TELEGRAM_BOT_TOKEN", "").strip())
+        if normalized_channel == "telegram":
+            return await self._logout_secret_backed_channel_account(
+                channel="telegram",
+                account_id=normalized_account_id,
+                fields=("botToken",),
+                env_var="TELEGRAM_BOT_TOKEN",
+            )
+        if normalized_channel == "line":
+            return await self._logout_secret_backed_channel_account(
+                channel="line",
+                account_id=normalized_account_id,
+                fields=("channelAccessToken", "channelSecret", "tokenFile", "secretFile"),
+                env_var="LINE_CHANNEL_ACCESS_TOKEN",
+            )
+        raise RuntimeError(f"channel {normalized_channel} does not support logout")
+
+    async def _logout_secret_backed_channel_account(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+        fields: tuple[str, ...],
+        env_var: str,
+    ) -> dict[str, object]:
+        await self.stop_channel_runtime_account(channel, account_id)
+        env_token = bool(os.environ.get(env_var, "").strip())
         cleared = self._clear_channel_secret_config(
-            channel="telegram",
-            account_id=normalized_account_id,
+            channel=channel,
+            account_id=account_id,
             fields=fields,
         )
         logged_out = not env_token and not self._channel_secret_configured(
-            channel="telegram",
-            account_id=normalized_account_id,
+            channel=channel,
+            account_id=account_id,
             fields=fields,
         )
         return {
-            "channel": normalized_channel,
-            "accountId": normalized_account_id,
+            "channel": channel,
+            "accountId": account_id,
             "cleared": cleared,
             "envToken": env_token,
             "loggedOut": logged_out,

@@ -8996,6 +8996,66 @@ async def test_ops_mesh_service_channels_logout_clears_telegram_token_config(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_channels_logout_clears_line_token_and_secret_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LINE_CHANNEL_ACCESS_TOKEN", raising=False)
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-line-channel-logout"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.patch_object(
+        {
+            "channels": {
+                "line": {
+                    "channelAccessToken": "line-token",
+                    "channelSecret": "line-secret",
+                    "tokenFile": "line-token.txt",
+                    "secretFile": "line-secret.txt",
+                    "webhookPath": "/line/webhook",
+                    "accounts": {
+                        "default": {
+                            "channelAccessToken": "account-token",
+                            "secretFile": "account-secret.txt",
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=config_service,
+    )
+
+    logout_result = await service.logout_channel_runtime_account("line", "default")
+
+    assert logout_result == {
+        "channel": "line",
+        "accountId": "default",
+        "cleared": True,
+        "envToken": False,
+        "loggedOut": True,
+    }
+    line_config = config_service.build_snapshot()["channels"]["line"]
+    assert line_config == {"webhookPath": "/line/webhook"}
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_tlon_native_monitor_streams_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
