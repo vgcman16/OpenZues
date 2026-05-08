@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -106,7 +106,8 @@ checkpointed in `61ade86a`, `OZ-PLUGIN-00322` matrix-surface is checkpointed
 in `20eb2b27`, and `OZ-PLUGIN-00323` volc-model-catalog-shared is
 checkpointed in `799fbdd4`. `OZ-PLUGIN-00324` test-utils is checkpointed in
 `992457ac`, and `OZ-PLUGIN-00325` facade-activation-check.runtime is
-checkpointed in `1f2ec91c`; continue remaining exact SDK helper seams,
+checkpointed in `1f2ec91c`. `OZ-PLUGIN-00326` vercel-ai-gateway is
+checkpointed in `c298b482`; continue remaining exact SDK helper seams,
 provider/runtime breadth, and broader repo parity.
 
 ## Active Slice Detail

@@ -20365,6 +20365,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 1153 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `1f2ec91c`.
+- Imported plugin SDK `vercel-ai-gateway` now exposes the exact scoped/unscoped
+  Vercel AI Gateway provider facade, including OpenClaw's current base URL,
+  provider/model constants, default cost object, static model catalog, offline
+  discovery fallback, and Anthropic Messages provider envelope. This closes
+  `OZ-PLUGIN-00326`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999999999999999999999995%.
+- Verified the vercel-ai-gateway helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_vercel_ai_gateway_helper -q`
+  (the exact subpath returned generic passthrough data and no provider model
+  array before implementation, then `1 passed`), adjacent provider catalog
+  proof `python -m pytest tests\test_gateway_node_methods.py -q -k "vercel_ai_gateway or volc_model_catalog_shared or provider_model_catalog or xai_model_id"`
+  (`4 passed, 1153 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `c298b482`.
 
 ## References
 
