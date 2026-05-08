@@ -24995,6 +24995,57 @@ def test_update_status_json_projects_git_behind_availability(
     }
 
 
+def test_update_status_human_reports_update_available_hint(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "npm@10.0.0"}),
+        encoding="utf-8",
+    )
+    (package_root / "package-lock.json").write_text("{}", encoding="utf-8")
+    (package_root / "node_modules").mkdir()
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "headline": "OpenZues runtime update status is steady.",
+                "update": {"registry": {"latestVersion": "9.0.0"}},
+            }
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Update available (npm 9.0.0). Run: openzues update" in result.stdout
+
+
 def test_update_status_json_config_channel_overrides_git_tag(
     tmp_path,
     monkeypatch,

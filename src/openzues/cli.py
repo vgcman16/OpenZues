@@ -9596,6 +9596,9 @@ def _emit_update_status(payload: dict[str, object], *, json_output: bool) -> Non
         return
 
     _emit_payload(payload, json_output=False)
+    update_hint = _openclaw_update_available_hint(payload)
+    if update_hint is not None:
+        typer.echo(update_hint)
     repo_root = str(payload.get("repo_root") or "").strip()
     if repo_root:
         typer.echo("repo: " + repo_root)
@@ -9610,6 +9613,21 @@ def _emit_update_status(payload: dict[str, object], *, json_output: bool) -> Non
             "restart posture: "
             + ("safe now" if payload.get("safe_to_restart") else "waiting for a safe boundary")
         )
+
+
+def _openclaw_update_available_hint(payload: Mapping[str, object]) -> str | None:
+    availability = payload.get("availability")
+    if not isinstance(availability, Mapping) or availability.get("available") is not True:
+        return None
+    details: list[str] = []
+    git_behind = availability.get("gitBehind")
+    if isinstance(git_behind, int):
+        details.append(f"git behind {git_behind}")
+    latest_version = _optional_cli_string(availability.get("latestVersion"))
+    if latest_version is not None:
+        details.append(f"npm {latest_version}")
+    suffix = f" ({', '.join(details)})" if details else ""
+    return f"Update available{suffix}. Run: openzues update"
 
 
 _OPENCLAW_UPDATE_CHANNELS = {"stable", "beta", "dev"}
