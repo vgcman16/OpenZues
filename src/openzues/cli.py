@@ -10268,7 +10268,7 @@ def _openclaw_update_available_hint(payload: Mapping[str, object]) -> str | None
     latest_version = _optional_cli_string(availability.get("latestVersion"))
     if latest_version is not None:
         details.append(f"npm {latest_version}")
-    suffix = f" ({', '.join(details)})" if details else ""
+    suffix = f" ({' · '.join(details)})" if details else ""
     return f"Update available{suffix}. Run: openzues update"
 
 
