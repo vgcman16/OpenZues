@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999999999999999999999999999999999%.
+  band of ~80-99.999999999999999999999999999999999999999995%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -2720,6 +2720,19 @@ read-model lookup. Verified on 2026-05-08 with focused red/green
 src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
 `mypy src\openzues\services\gateway_node_methods.py`, and focused
 `git diff --check`. Source/test checkpointed in `6a964896`.
+
+Current queue-head adjustment: `chat.history` now redacts structured base64
+audio content blocks like OpenClaw's `sanitizeChatHistoryMessages`: the
+embedded `source.data` string is removed, `source.omitted=true` is surfaced,
+and `source.bytes` records the encoded payload length. Verified on 2026-05-08
+with focused red/green
+`python -m pytest tests\test_gateway_node_methods.py::test_chat_history_redacts_base64_audio_content_blocks -q`
+(`1 passed`), adjacent transcript/read-model proof
+`python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+(`33 passed, 1175 deselected`), `ruff check
+src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+`mypy src\openzues\services\gateway_node_methods.py`, and focused
+`git diff --check`. Source/test checkpointed in `d8fe12d3`.
 
 Current queue-head adjustment: `chat.history` now replaces single oversized
 projected messages with `[chat.history omitted: message too large]` and

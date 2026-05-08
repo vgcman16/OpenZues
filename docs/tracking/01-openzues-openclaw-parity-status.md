@@ -7081,6 +7081,29 @@ may lag behind this tracker.
     `mypy src\openzues\services\gateway_node_methods.py`, and focused
     `git diff --check`.
 
+- [x] `chat.history` base64 audio redaction.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`,
+    `openclaw-main/src/gateway/server-methods/server-methods.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: structured chat-history audio blocks with
+    `source.type="base64"` remove the embedded `source.data`, surface
+    `source.omitted=true`, and retain encoded byte length under
+    `source.bytes`.
+  - Evidence required: focused `chat.history` audio-redaction test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `d8fe12d3`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_redacts_base64_audio_content_blocks -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`33 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
 ## Update Rule
 
 Only move a row to `[x]` when implementation, focused proof, adjacent proof,
