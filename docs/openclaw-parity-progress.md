@@ -18879,6 +18879,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris"`
   (`6 passed, 530 deselected`), `ruff check tests\test_cli.py`, and focused
   `git diff --check`. Test checkpointed and pushed in `9422c6b7`.
+- `openzues doctor --json` now emits OpenClaw's exact missing inventory
+  diagnostic for packaged installs: `missing package dist inventory
+  dist/postinstall-inventory.json`, both in the warning list and the
+  `postinstall_inventory` check detail. This closes `OZ-PKG-001R`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999%.
+- Verified the missing-inventory warning slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_warns_on_missing_package_dist_inventory_with_openclaw_message -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory"`
+  (`7 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `76cdb404`.
 
 ## References
 

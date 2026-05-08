@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999985% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1680,6 +1680,10 @@ may lag behind this tracker.
 - [x] Mixed-case package dist staging-debris proof, preserving OpenClaw's
   case-insensitive staging path matching.
   - Status: checkpointed in `9422c6b7`
+
+- [x] Exact missing package dist inventory warning, preserving OpenClaw's
+  fail-closed packaged install diagnostic.
+  - Status: checkpointed in `76cdb404`
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
@@ -4150,6 +4154,19 @@ may lag behind this tracker.
     tests\test_cli.py::test_doctor_json_detects_mixed_case_package_dist_staging_debris
     -q` (`1 passed`), adjacent package doctor proof (`6 passed, 530
     deselected`), `ruff check`, and `git diff --check`.
+
+- [x] Exact missing package dist inventory warning.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `76cdb404`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_warns_on_missing_package_dist_inventory_with_openclaw_message
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`7 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
 
 - [x] Companion node presence alive lifecycle.
   - Source: `openclaw-main/src/gateway/server-node-events.ts`,

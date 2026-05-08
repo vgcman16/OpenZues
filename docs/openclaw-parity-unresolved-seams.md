@@ -9931,3 +9931,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, with the evidence band tightened to
   ~80-99.9999999999985%. Rotate to exact missing package inventory warning
   breadth next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  emit OpenClaw's exact `missing package dist inventory
+  dist/postinstall-inventory.json` diagnostic for packaged installs with a
+  `dist/` directory but no postinstall inventory. Source/test checkpointed in
+  `76cdb404`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.999999999999%. Rotate to package inventory omission
+  and unsafe-path breadth next.
