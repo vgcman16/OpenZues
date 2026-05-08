@@ -57028,6 +57028,144 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_diagnostics_otel_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-diagnostics-otel.cjs"
+    runtime_entry.write_text(
+        """
+const otel = require("openclaw/plugin-sdk/diagnostics-otel");
+const scopedOtel = require("@openclaw/plugin-sdk/diagnostics-otel");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.diagnostics_otel",
+      description: "Use OpenClaw diagnostics-otel SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const keys = Object.keys(otel).sort();
+        const eventTypes = [];
+        const offEvent =
+          typeof otel.onDiagnosticEvent === "function"
+            ? otel.onDiagnosticEvent((event) => eventTypes.push(event.type))
+            : undefined;
+        if (typeof otel.emitDiagnosticEvent === "function") {
+          otel.emitDiagnosticEvent({ type: "diagnostics.otel.test" });
+        }
+        if (typeof offEvent === "function") {
+          offEvent();
+        }
+        let transportCalls = 0;
+        let unregisterType = null;
+        if (typeof otel.registerLogTransport === "function") {
+          const unregister = otel.registerLogTransport(() => {
+            transportCalls += 1;
+          });
+          unregisterType = typeof unregister;
+          if (typeof unregister === "function") {
+            unregister();
+          }
+        }
+        const redacted =
+          typeof otel.redactSensitiveText === "function"
+            ? otel.redactSensitiveText("Authorization: Bearer 12345678901234567890")
+            : "";
+        const empty =
+          typeof otel.emptyPluginConfigSchema === "function"
+            ? otel.emptyPluginConfigSchema()
+            : null;
+        return {
+          keys,
+          scopedSame:
+            scopedOtel.emitDiagnosticEvent === otel.emitDiagnosticEvent &&
+            scopedOtel.registerLogTransport === otel.registerLogTransport,
+          eventTypes,
+          registerType: typeof otel.registerLogTransport,
+          unregisterType,
+          transportCalls,
+          redacted,
+          emptyKeys: empty ? Object.keys(empty).sort() : [],
+          emptySchema: empty && empty.jsonSchema
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-diagnostics-otel-plugin",
+                    "name": "Runtime Diagnostics OTel Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-diagnostics-otel.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.diagnostics_otel"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.diagnostics_otel"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "emitDiagnosticEvent",
+            "emptyPluginConfigSchema",
+            "onDiagnosticEvent",
+            "redactSensitiveText",
+            "registerLogTransport",
+        ],
+        "scopedSame": True,
+        "eventTypes": ["diagnostics.otel.test"],
+        "registerType": "function",
+        "unregisterType": "function",
+        "transportCalls": 0,
+        "redacted": "Authorization: Bearer 123456...7890",
+        "emptyKeys": ["jsonSchema", "safeParse"],
+        "emptySchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {},
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_system_event_runtime_helpers(
     tmp_path,
 ) -> None:

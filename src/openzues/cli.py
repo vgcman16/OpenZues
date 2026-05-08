@@ -41123,6 +41123,14 @@ const diagnosticRuntime = {
   resetDiagnosticEventsForTest,
 };
 
+const diagnosticsOtelRuntime = {
+  emitDiagnosticEvent,
+  emptyPluginConfigSchema,
+  onDiagnosticEvent,
+  redactSensitiveText,
+  registerLogTransport,
+};
+
 const systemEventRuntime = {
   enqueueSystemEvent,
   peekSystemEventEntries,
@@ -47018,6 +47026,18 @@ function redactSensitiveText(text) {
       `Bearer ${maskSensitiveToken(token)}`,
     )
     .replace(/\b(sk-[A-Za-z0-9_-]{8,})\b/g, (_m, token) => maskSensitiveToken(token));
+}
+
+const registeredLogTransports = new Set();
+
+function registerLogTransport(transport) {
+  if (typeof transport !== "function" && (!transport || typeof transport !== "object")) {
+    throw new TypeError("registerLogTransport requires a transport function or object");
+  }
+  registeredLogTransports.add(transport);
+  return () => {
+    registeredLogTransports.delete(transport);
+  };
 }
 
 function runtimeForLogger(logger) {
@@ -84602,6 +84622,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/diagnostic-runtime"
   ) {
     return diagnosticRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/diagnostics-otel" ||
+    request === "@openclaw/plugin-sdk/diagnostics-otel"
+  ) {
+    return diagnosticsOtelRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/system-event-runtime" ||
