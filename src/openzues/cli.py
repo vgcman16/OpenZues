@@ -45617,6 +45617,19 @@ const vercelAiGatewayRuntime = {
   getStaticVercelAiGatewayModelCatalog,
 };
 
+const MINIMAX_DEFAULT_MODEL_ID = "MiniMax-M2.7";
+const MINIMAX_DEFAULT_MODEL_REF = `minimax/${MINIMAX_DEFAULT_MODEL_ID}`;
+const MINIMAX_TEXT_MODEL_REFS = [
+  "minimax/MiniMax-M2.7",
+  "minimax/MiniMax-M2.7-highspeed",
+];
+
+const minimaxRuntime = {
+  MINIMAX_DEFAULT_MODEL_ID,
+  MINIMAX_DEFAULT_MODEL_REF,
+  MINIMAX_TEXT_MODEL_REFS,
+};
+
 const providerCatalogSharedRuntime = {
   applyProviderNativeStreamingUsageCompat,
   buildManifestModelProviderConfig,
@@ -85729,6 +85742,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/vercel-ai-gateway"
   ) {
     return vercelAiGatewayRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/minimax" ||
+    request === "@openclaw/plugin-sdk/minimax"
+  ) {
+    return minimaxRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-catalog-shared" ||

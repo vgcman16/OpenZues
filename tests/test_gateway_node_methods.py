@@ -13953,6 +13953,99 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_minimax_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-minimax.cjs"
+    runtime_entry.write_text(
+        """
+const minimax = require("openclaw/plugin-sdk/minimax");
+const scopedMinimax = require("@openclaw/plugin-sdk/minimax");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.minimax",
+      description: "Use OpenClaw minimax SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(minimax).sort(),
+          scopedSame:
+            scopedMinimax.MINIMAX_TEXT_MODEL_REFS ===
+            minimax.MINIMAX_TEXT_MODEL_REFS,
+          defaultModelId: minimax.MINIMAX_DEFAULT_MODEL_ID,
+          defaultModelRef: minimax.MINIMAX_DEFAULT_MODEL_REF,
+          modelRefs: minimax.MINIMAX_TEXT_MODEL_REFS
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-minimax-plugin",
+                    "name": "Runtime Minimax Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-minimax.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.minimax"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.minimax"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "MINIMAX_DEFAULT_MODEL_ID",
+            "MINIMAX_DEFAULT_MODEL_REF",
+            "MINIMAX_TEXT_MODEL_REFS",
+        ],
+        "scopedSame": True,
+        "defaultModelId": "MiniMax-M2.7",
+        "defaultModelRef": "minimax/MiniMax-M2.7",
+        "modelRefs": ["minimax/MiniMax-M2.7", "minimax/MiniMax-M2.7-highspeed"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_xai_model_id_helper(
     tmp_path,
 ) -> None:
