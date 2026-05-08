@@ -87692,6 +87692,37 @@ const slackRuntime = {
   compileSlackInteractiveReplies,
 };
 
+function loadXiaomiFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "xiaomi",
+    artifactBasename: "api.js",
+  });
+}
+
+function applyXiaomiConfig(...args) {
+  return loadXiaomiFacadeModule().applyXiaomiConfig(...args);
+}
+
+function applyXiaomiProviderConfig(...args) {
+  return loadXiaomiFacadeModule().applyXiaomiProviderConfig(...args);
+}
+
+function buildXiaomiProvider(...args) {
+  return loadXiaomiFacadeModule().buildXiaomiProvider(...args);
+}
+
+const xiaomiRuntime = {
+  get XIAOMI_DEFAULT_MODEL_ID() {
+    return loadXiaomiFacadeModule().XIAOMI_DEFAULT_MODEL_ID;
+  },
+  get XIAOMI_DEFAULT_MODEL_REF() {
+    return loadXiaomiFacadeModule().XIAOMI_DEFAULT_MODEL_REF;
+  },
+  applyXiaomiConfig,
+  applyXiaomiProviderConfig,
+  buildXiaomiProvider,
+};
+
 function collectSynologyChatSecurityAuditFindings(params = {}) {
   const account = isRecord(params.account) ? params.account : {};
   if (!account.dangerouslyAllowNameMatching) {
@@ -90017,6 +90048,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/zalo-setup"
   ) {
     return zaloSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/xiaomi" ||
+    request === "@openclaw/plugin-sdk/xiaomi"
+  ) {
+    return xiaomiRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/slack" ||

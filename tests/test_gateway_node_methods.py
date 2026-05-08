@@ -21163,6 +21163,149 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_xiaomi_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-xiaomi.cjs"
+    runtime_entry.write_text(
+        """
+globalThis.__openzuesQaRunnerRuntime = {
+  calls: [],
+  loadBundledPluginPublicSurfaceModuleSync(params) {
+    this.calls.push(params);
+    return {
+      XIAOMI_DEFAULT_MODEL_ID: "mi-llm-1",
+      XIAOMI_DEFAULT_MODEL_REF: "xiaomi/mi-llm-1",
+      applyXiaomiConfig: (cfg) => ({
+        ...cfg,
+        xiaomiApplied: true
+      }),
+      applyXiaomiProviderConfig: (cfg) => ({
+        ...cfg,
+        providers: [...(cfg.providers || []), "xiaomi"]
+      }),
+      buildXiaomiProvider: () => ({
+        id: "xiaomi",
+        models: ["mi-llm-1"]
+      })
+    };
+  }
+};
+
+const xiaomi = require("openclaw/plugin-sdk/xiaomi");
+const scopedXiaomi = require("@openclaw/plugin-sdk/xiaomi");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.xiaomi",
+      description: "Use OpenClaw xiaomi SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const keys = Object.keys(xiaomi).sort();
+        const beforeCalls = globalThis.__openzuesQaRunnerRuntime.calls.length;
+        const modelId = xiaomi.XIAOMI_DEFAULT_MODEL_ID;
+        const modelRef = scopedXiaomi.XIAOMI_DEFAULT_MODEL_REF;
+        const config = xiaomi.applyXiaomiConfig({ name: "base" });
+        const providerConfig = scopedXiaomi.applyXiaomiProviderConfig({
+          providers: ["openai"]
+        });
+        const provider = xiaomi.buildXiaomiProvider();
+        return {
+          keys,
+          scopedSame:
+            scopedXiaomi.buildXiaomiProvider === xiaomi.buildXiaomiProvider,
+          beforeCalls,
+          modelId,
+          modelRef,
+          config,
+          providerConfig,
+          provider,
+          callSummary: globalThis.__openzuesQaRunnerRuntime.calls.map((call) => ({
+            dirName: call.dirName,
+            artifact: call.artifactBasename
+          }))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-xiaomi-plugin",
+                    "name": "Runtime Xiaomi Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-xiaomi.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.xiaomi"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.xiaomi"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "XIAOMI_DEFAULT_MODEL_ID",
+            "XIAOMI_DEFAULT_MODEL_REF",
+            "applyXiaomiConfig",
+            "applyXiaomiProviderConfig",
+            "buildXiaomiProvider",
+        ],
+        "scopedSame": True,
+        "beforeCalls": 0,
+        "modelId": "mi-llm-1",
+        "modelRef": "xiaomi/mi-llm-1",
+        "config": {"name": "base", "xiaomiApplied": True},
+        "providerConfig": {"providers": ["openai", "xiaomi"]},
+        "provider": {"id": "xiaomi", "models": ["mi-llm-1"]},
+        "callSummary": [
+            {"dirName": "xiaomi", "artifact": "api.js"},
+            {"dirName": "xiaomi", "artifact": "api.js"},
+            {"dirName": "xiaomi", "artifact": "api.js"},
+            {"dirName": "xiaomi", "artifact": "api.js"},
+            {"dirName": "xiaomi", "artifact": "api.js"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_slack_helpers(
     tmp_path,
 ) -> None:
