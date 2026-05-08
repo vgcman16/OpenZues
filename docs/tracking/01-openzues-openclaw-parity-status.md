@@ -1996,6 +1996,11 @@ may lag behind this tracker.
   `QUIT :probe` cleanup.
   - Status: checkpointed in `5772e6a9`
 
+- [x] BlueBubbles route-backed account probe support, preserving OpenClaw's
+  `probeBlueBubbles` status hook over `/api/v1/ping`, provider HTTP status
+  projection, and non-2xx error probe preservation.
+  - Status: checkpointed in `7c9ffdcb`
+
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
   flags in the body while omitting `thread_id` from the body.
@@ -4942,6 +4947,19 @@ may lag behind this tracker.
     (`2 passed`), adjacent channel-probe proof (`14 passed, 506 deselected`),
     adjacent Twitch ops proof (`3 passed, 375 deselected`), `ruff check`, and
     `mypy`.
+
+- [x] BlueBubbles route-backed account probe.
+  - Source: `openclaw-main/extensions/bluebubbles/src/probe.ts`,
+    `openclaw-main/extensions/bluebubbles/src/channel.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`, `tests/test_ops_mesh.py`
+  - Status: checkpointed in `7c9ffdcb`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_bluebubbles_probe tests\test_ops_mesh.py::test_ops_mesh_service_bluebubbles_probe_preserves_http_status -q`
+    (`2 passed`), adjacent channel-probe proof (`15 passed, 506 deselected`),
+    adjacent BlueBubbles ops proof (`6 passed, 373 deselected`), `ruff
+    check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.
