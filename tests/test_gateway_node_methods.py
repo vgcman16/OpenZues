@@ -13673,6 +13673,137 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_volc_model_catalog_shared_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-volc-model-catalog-shared.cjs"
+    runtime_entry.write_text(
+        """
+const volc = require("openclaw/plugin-sdk/volc-model-catalog-shared");
+const scopedVolc = require("@openclaw/plugin-sdk/volc-model-catalog-shared");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.volc_model_catalog_shared",
+      description: "Use OpenClaw volc-model-catalog-shared SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const built = volc.buildVolcModelDefinition(
+          volc.VOLC_MODEL_KIMI_K2_5,
+          { input: 0.15, output: 0.6 }
+        );
+        return {
+          keys: Object.keys(volc).sort(),
+          scopedSame:
+            scopedVolc.buildVolcModelDefinition === volc.buildVolcModelDefinition,
+          kimi: volc.VOLC_MODEL_KIMI_K2_5,
+          glm: volc.VOLC_MODEL_GLM_4_7,
+          catalogIds: volc.VOLC_SHARED_CODING_MODEL_CATALOG.map((entry) => entry.id),
+          built
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-volc-model-catalog-shared-plugin",
+                    "name": "Runtime Volc Model Catalog Shared Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-volc-model-catalog.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.volc_model_catalog_shared"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.volc_model_catalog_shared"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "VOLC_MODEL_GLM_4_7",
+            "VOLC_MODEL_KIMI_K2_5",
+            "VOLC_SHARED_CODING_MODEL_CATALOG",
+            "buildVolcModelDefinition",
+        ],
+        "scopedSame": True,
+        "kimi": {
+            "id": "kimi-k2-5-260127",
+            "name": "Kimi K2.5",
+            "reasoning": False,
+            "input": ["text", "image"],
+            "contextWindow": 256000,
+            "maxTokens": 4096,
+        },
+        "glm": {
+            "id": "glm-4-7-251222",
+            "name": "GLM 4.7",
+            "reasoning": False,
+            "input": ["text", "image"],
+            "contextWindow": 200000,
+            "maxTokens": 4096,
+        },
+        "catalogIds": [
+            "ark-code-latest",
+            "doubao-seed-code",
+            "glm-4.7",
+            "kimi-k2-thinking",
+            "kimi-k2.5",
+        ],
+        "built": {
+            "id": "kimi-k2-5-260127",
+            "name": "Kimi K2.5",
+            "reasoning": False,
+            "input": ["text", "image"],
+            "cost": {"input": 0.15, "output": 0.6},
+            "contextWindow": 256000,
+            "maxTokens": 4096,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_xai_model_id_helper(
     tmp_path,
 ) -> None:

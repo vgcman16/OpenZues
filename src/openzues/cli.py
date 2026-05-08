@@ -45421,6 +45421,86 @@ const providerModelSharedRuntime = {
   sanitizeGoogleGeminiReplayHistory,
 };
 
+const VOLC_MODEL_KIMI_K2_5 = {
+  id: "kimi-k2-5-260127",
+  name: "Kimi K2.5",
+  reasoning: false,
+  input: ["text", "image"],
+  contextWindow: 256000,
+  maxTokens: 4096,
+};
+
+const VOLC_MODEL_GLM_4_7 = {
+  id: "glm-4-7-251222",
+  name: "GLM 4.7",
+  reasoning: false,
+  input: ["text", "image"],
+  contextWindow: 200000,
+  maxTokens: 4096,
+};
+
+const VOLC_SHARED_CODING_MODEL_CATALOG = [
+  {
+    id: "ark-code-latest",
+    name: "Ark Coding Plan",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 256000,
+    maxTokens: 4096,
+  },
+  {
+    id: "doubao-seed-code",
+    name: "Doubao Seed Code",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 256000,
+    maxTokens: 4096,
+  },
+  {
+    id: "glm-4.7",
+    name: "GLM 4.7 Coding",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 200000,
+    maxTokens: 4096,
+  },
+  {
+    id: "kimi-k2-thinking",
+    name: "Kimi K2 Thinking",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 256000,
+    maxTokens: 4096,
+  },
+  {
+    id: "kimi-k2.5",
+    name: "Kimi K2.5 Coding",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 256000,
+    maxTokens: 4096,
+  },
+];
+
+function buildVolcModelDefinition(entry, cost) {
+  return {
+    id: entry.id,
+    name: entry.name,
+    reasoning: entry.reasoning,
+    input: [...entry.input],
+    cost,
+    contextWindow: entry.contextWindow,
+    maxTokens: entry.maxTokens,
+  };
+}
+
+const volcModelCatalogSharedRuntime = {
+  VOLC_MODEL_GLM_4_7,
+  VOLC_MODEL_KIMI_K2_5,
+  VOLC_SHARED_CODING_MODEL_CATALOG,
+  buildVolcModelDefinition,
+};
+
 const providerCatalogSharedRuntime = {
   applyProviderNativeStreamingUsageCompat,
   buildManifestModelProviderConfig,
@@ -85499,6 +85579,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-model-shared"
   ) {
     return providerModelSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/volc-model-catalog-shared" ||
+    request === "@openclaw/plugin-sdk/volc-model-catalog-shared"
+  ) {
+    return volcModelCatalogSharedRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-catalog-shared" ||
