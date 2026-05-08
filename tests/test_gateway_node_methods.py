@@ -66679,6 +66679,155 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_pairing_access_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-pairing-access.cjs"
+    runtime_entry.write_text(
+        """
+const pairingAccess = require("openclaw/plugin-sdk/pairing-access");
+const scopedPairingAccess = require("@openclaw/plugin-sdk/pairing-access");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.pairing_access",
+      description: "Use OpenClaw pairing-access SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const calls = [];
+        const core = {
+          channel: {
+            pairing: {
+              readAllowFromStore(input) {
+                calls.push({ method: "read", input });
+                return { allowed: true, input };
+              },
+              upsertPairingRequest(input) {
+                calls.push({ method: "upsert", input });
+                return { created: true, input };
+              }
+            }
+          }
+        };
+        const access = pairingAccess.createScopedPairingAccess({
+          core,
+          channel: "telegram",
+          accountId: " Acct_Main "
+        });
+        return {
+          keys: Object.keys(pairingAccess).sort(),
+          scopedType: typeof scopedPairingAccess.createScopedPairingAccess,
+          accountId: access.accountId,
+          allow: access.readAllowFromStore(),
+          dmAllow: access.readStoreForDmPolicy("discord", " Dm_One "),
+          upsert: access.upsertPairingRequest({
+            peerId: "user-1",
+            code: "ABC234",
+            expiresAt: 123
+          }),
+          calls
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-pairing-access-plugin",
+                    "name": "Runtime Pairing Access Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-pairing-access-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.pairing_access"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.pairing_access"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["createScopedPairingAccess"],
+        "scopedType": "function",
+        "accountId": "acct_main",
+        "allow": {
+            "allowed": True,
+            "input": {"channel": "telegram", "accountId": "acct_main"},
+        },
+        "dmAllow": {
+            "allowed": True,
+            "input": {"channel": "discord", "accountId": "dm_one"},
+        },
+        "upsert": {
+            "created": True,
+            "input": {
+                "channel": "telegram",
+                "accountId": "acct_main",
+                "peerId": "user-1",
+                "code": "ABC234",
+                "expiresAt": 123,
+            },
+        },
+        "calls": [
+            {
+                "method": "read",
+                "input": {"channel": "telegram", "accountId": "acct_main"},
+            },
+            {
+                "method": "read",
+                "input": {"channel": "discord", "accountId": "dm_one"},
+            },
+            {
+                "method": "upsert",
+                "input": {
+                    "channel": "telegram",
+                    "accountId": "acct_main",
+                    "peerId": "user-1",
+                    "code": "ABC234",
+                    "expiresAt": 123,
+                },
+            },
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_web_media_helpers(
     tmp_path,
 ) -> None:

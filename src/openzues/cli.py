@@ -65008,6 +65008,10 @@ const channelSendResultRuntime = {
   createRawChannelSendResultAdapter,
 };
 
+const pairingAccessRuntime = {
+  createScopedPairingAccess,
+};
+
 const channelPairingRuntime = {
   createChannelPairingChallengeIssuer,
   createChannelPairingController,
@@ -85220,6 +85224,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-send-result"
   ) {
     return channelSendResultRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/pairing-access" ||
+    request === "@openclaw/plugin-sdk/pairing-access"
+  ) {
+    return pairingAccessRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-pairing" ||
