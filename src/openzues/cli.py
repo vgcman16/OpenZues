@@ -61770,6 +61770,14 @@ function resolveTrackedFacadePluginId(params = {}) {
   return String(params.dirName || "");
 }
 
+function resolveRegistryPluginModuleLocationForFacadeRuntime(params = {}) {
+  return resolveRegistryPluginModuleLocationFromRecords({
+    registry: Array.isArray(params.registry) ? params.registry : [],
+    dirName: params.dirName,
+    artifactBasename: params.artifactBasename,
+  });
+}
+
 function evaluateBundledPluginPublicSurfaceAccessForFacadeRuntime(params = {}) {
   const manifestRecord = params.manifestRecord || {};
   if (manifestRecord.enabledByDefault === true) {
@@ -61878,6 +61886,20 @@ const facadeRuntimeTesting = {
   resolveBundledPluginPublicSurfaceAccess:
     resolveBundledPluginPublicSurfaceAccessForFacadeRuntime,
   resolveTrackedFacadePluginId,
+};
+
+const facadeActivationCheckRuntime = {
+  evaluateBundledPluginPublicSurfaceAccess:
+    evaluateBundledPluginPublicSurfaceAccessForFacadeRuntime,
+  resolveActivatedBundledPluginPublicSurfaceAccessOrThrow:
+    resolveActivatedBundledPluginPublicSurfaceAccessOrThrowForFacadeRuntime,
+  resolveBundledPluginPublicSurfaceAccess:
+    resolveBundledPluginPublicSurfaceAccessForFacadeRuntime,
+  resolveRegistryPluginModuleLocation:
+    resolveRegistryPluginModuleLocationForFacadeRuntime,
+  resolveTrackedFacadePluginId,
+  throwForBundledPluginPublicSurfaceAccess:
+    throwForBundledPluginPublicSurfaceAccessForFacadeRuntime,
 };
 
 const facadeRuntime = {
@@ -87067,6 +87089,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/facade-runtime"
   ) {
     return facadeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/facade-activation-check.runtime" ||
+    request === "@openclaw/plugin-sdk/facade-activation-check.runtime"
+  ) {
+    return facadeActivationCheckRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/facade-resolution-shared" ||

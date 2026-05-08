@@ -69227,6 +69227,185 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_facade_activation_check_runtime(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-facade-activation-check.cjs"
+    runtime_entry.write_text(
+        """
+const activation = require("openclaw/plugin-sdk/facade-activation-check.runtime");
+const scopedActivation = require("@openclaw/plugin-sdk/facade-activation-check.runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.facade_activation_check",
+      description: "Use OpenClaw facade-activation-check.runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const enabledAccess = activation.evaluateBundledPluginPublicSurfaceAccess({
+          params: { dirName: "demo-plugin", artifactBasename: "api.js" },
+          manifestRecord: {
+            id: "demo-plugin",
+            origin: "bundled",
+            enabledByDefault: true,
+            rootDir: "demo",
+            channels: []
+          },
+          config: {},
+          normalizedPluginsConfig: {},
+          activationSource: {},
+          autoEnabledReasons: {}
+        });
+        const disabledAccess = activation.evaluateBundledPluginPublicSurfaceAccess({
+          params: { dirName: "off-plugin", artifactBasename: "api.js" },
+          manifestRecord: {
+            id: "off-plugin",
+            origin: "bundled",
+            enabledByDefault: false,
+            rootDir: "off",
+            channels: []
+          },
+          config: {},
+          normalizedPluginsConfig: {},
+          activationSource: {},
+          autoEnabledReasons: {}
+        });
+        const alwaysAccess = activation.resolveBundledPluginPublicSurfaceAccess({
+          dirName: "image-generation-core",
+          artifactBasename: "runtime-api.js",
+          env: {}
+        });
+        const alwaysActivated =
+          activation.resolveActivatedBundledPluginPublicSurfaceAccessOrThrow({
+            dirName: "image-generation-core",
+            artifactBasename: "runtime-api.js",
+            env: {}
+          });
+        let blockedError = "";
+        try {
+          activation.throwForBundledPluginPublicSurfaceAccess({
+            access: {
+              allowed: false,
+              pluginId: "blocked-plugin",
+              reason: "not enabled"
+            },
+            request: { dirName: "blocked", artifactBasename: "api.js" }
+          });
+        } catch (error) {
+          blockedError = error.message;
+        }
+
+        return {
+          keys: Object.keys(activation).sort(),
+          scopedSame:
+            scopedActivation.resolveBundledPluginPublicSurfaceAccess ===
+            activation.resolveBundledPluginPublicSurfaceAccess,
+          enabledAccess,
+          disabledAccess,
+          alwaysAccess,
+          alwaysActivated,
+          trackedFallback: activation.resolveTrackedFacadePluginId({
+            dirName: "fallback-plugin",
+            artifactBasename: "api.js",
+            location: null,
+            sourceExtensionsRoot: "extensions",
+            resolutionKey: "fallback"
+          }),
+          missingRegistry:
+            activation.resolveRegistryPluginModuleLocation({
+              dirName: "missing-plugin",
+              artifactBasename: "api.js",
+              env: {}
+            }) === null,
+          blockedError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-facade-activation-check-plugin",
+                    "name": "Runtime Facade Activation Check Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-facade-activation-check-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.facade_activation_check"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.facade_activation_check"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "evaluateBundledPluginPublicSurfaceAccess",
+            "resolveActivatedBundledPluginPublicSurfaceAccessOrThrow",
+            "resolveBundledPluginPublicSurfaceAccess",
+            "resolveRegistryPluginModuleLocation",
+            "resolveTrackedFacadePluginId",
+            "throwForBundledPluginPublicSurfaceAccess",
+        ],
+        "scopedSame": True,
+        "enabledAccess": {"allowed": True, "pluginId": "demo-plugin"},
+        "disabledAccess": {
+            "allowed": False,
+            "pluginId": "off-plugin",
+            "reason": "plugin runtime is not activated",
+        },
+        "alwaysAccess": {"allowed": True, "pluginId": "image-generation-core"},
+        "alwaysActivated": {"allowed": True, "pluginId": "image-generation-core"},
+        "trackedFallback": "fallback-plugin",
+        "missingRegistry": True,
+        "blockedError": (
+            'Bundled plugin public surface access blocked for "blocked-plugin" '
+            "via blocked/api.js: not enabled"
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_test_helpers_string_utils(
     tmp_path,
 ) -> None:
