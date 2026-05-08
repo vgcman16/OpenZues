@@ -87591,6 +87591,39 @@ const feishuSetupRuntime = {
   ),
 };
 
+function loadZaloSetupFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "zalo",
+    artifactBasename: "setup-api.js",
+  });
+}
+
+function loadZaloContractFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "zalo",
+    artifactBasename: "contract-api.js",
+  });
+}
+
+function evaluateZaloGroupAccess(...args) {
+  return loadZaloContractFacadeModule().evaluateZaloGroupAccess(...args);
+}
+
+function resolveZaloRuntimeGroupPolicy(...args) {
+  return loadZaloContractFacadeModule().resolveZaloRuntimeGroupPolicy(...args);
+}
+
+const zaloSetupRuntime = {
+  evaluateZaloGroupAccess,
+  resolveZaloRuntimeGroupPolicy,
+  zaloSetupAdapter: createLazyFacadeObjectValue(
+    () => loadZaloSetupFacadeModule().zaloSetupAdapter || {},
+  ),
+  zaloSetupWizard: createLazyFacadeObjectValue(
+    () => loadZaloSetupFacadeModule().zaloSetupWizard || {},
+  ),
+};
+
 function collectSynologyChatSecurityAuditFindings(params = {}) {
   const account = isRecord(params.account) ? params.account : {};
   if (!account.dangerouslyAllowNameMatching) {
@@ -89904,6 +89937,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/feishu-setup"
   ) {
     return feishuSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/zalo-setup" ||
+    request === "@openclaw/plugin-sdk/zalo-setup"
+  ) {
+    return zaloSetupRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/synology-chat" ||

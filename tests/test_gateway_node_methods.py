@@ -21163,6 +21163,173 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_zalo_setup_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-zalo-setup.cjs"
+    runtime_entry.write_text(
+        """
+const zaloSetup = require("openclaw/plugin-sdk/zalo-setup");
+const scopedZaloSetup = require("@openclaw/plugin-sdk/zalo-setup");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.zalo_setup",
+      description: "Use OpenClaw zalo-setup SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const calls = [];
+        globalThis.__openzuesQaRunnerRuntime = {
+          loadBundledPluginPublicSurfaceModuleSync(params) {
+            calls.push(params);
+            if (params.artifactBasename === "contract-api.js") {
+              return {
+                evaluateZaloGroupAccess: ({ groupAllowFrom, senderId }) => ({
+                  allowed: groupAllowFrom.includes(senderId),
+                  reason: groupAllowFrom.includes(senderId) ? "allowed" : "not_allowed"
+                }),
+                resolveZaloRuntimeGroupPolicy: ({ providerConfigPresent, groupPolicy }) => ({
+                  groupPolicy: groupPolicy || "default",
+                  providerMissingFallbackApplied: !providerConfigPresent
+                })
+              };
+            }
+            return {
+              zaloSetupAdapter: {
+                channel: "zalo",
+                resolveAccountId: ({ cfg }) => cfg.accountId || "default"
+              },
+              zaloSetupWizard: {
+                channel: "zalo",
+                status: { unconfiguredHint: "Connect Zalo" }
+              }
+            };
+          }
+        };
+
+        const keys = Object.keys(zaloSetup).sort();
+        const beforeCalls = calls.length;
+        const allow = zaloSetup.evaluateZaloGroupAccess({
+          providerConfigPresent: true,
+          groupAllowFrom: ["u1"],
+          senderId: "u1"
+        });
+        const deny = scopedZaloSetup.evaluateZaloGroupAccess({
+          providerConfigPresent: true,
+          groupAllowFrom: ["u1"],
+          senderId: "u2"
+        });
+        const policy = zaloSetup.resolveZaloRuntimeGroupPolicy({
+          providerConfigPresent: false,
+          groupPolicy: "private"
+        });
+        const adapter = zaloSetup.zaloSetupAdapter;
+        const wizard = scopedZaloSetup.zaloSetupWizard;
+        return {
+          keys,
+          scopedSame:
+            scopedZaloSetup.resolveZaloRuntimeGroupPolicy ===
+              zaloSetup.resolveZaloRuntimeGroupPolicy,
+          beforeCalls,
+          allow,
+          deny,
+          policy,
+          adapter: {
+            channel: adapter.channel,
+            account: adapter.resolveAccountId({ cfg: { accountId: "ops" } })
+          },
+          wizard: {
+            channel: wizard.channel,
+            hint: wizard.status.unconfiguredHint
+          },
+          callSummary: calls.map((call) => ({
+            dirName: call.dirName,
+            artifact: call.artifactBasename
+          }))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-zalo-setup-plugin",
+                    "name": "Runtime Zalo Setup Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-zalo-setup.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.zalo_setup"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.zalo_setup"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "evaluateZaloGroupAccess",
+            "resolveZaloRuntimeGroupPolicy",
+            "zaloSetupAdapter",
+            "zaloSetupWizard",
+        ],
+        "scopedSame": True,
+        "beforeCalls": 0,
+        "allow": {"allowed": True, "reason": "allowed"},
+        "deny": {"allowed": False, "reason": "not_allowed"},
+        "policy": {
+            "groupPolicy": "private",
+            "providerMissingFallbackApplied": True,
+        },
+        "adapter": {"channel": "zalo", "account": "ops"},
+        "wizard": {"channel": "zalo", "hint": "Connect Zalo"},
+        "callSummary": [
+            {"dirName": "zalo", "artifact": "contract-api.js"},
+            {"dirName": "zalo", "artifact": "contract-api.js"},
+            {"dirName": "zalo", "artifact": "contract-api.js"},
+            {"dirName": "zalo", "artifact": "setup-api.js"},
+            {"dirName": "zalo", "artifact": "setup-api.js"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_feishu_setup_helpers(
     tmp_path,
 ) -> None:
