@@ -98094,6 +98094,33 @@ def update_root(
         _emit_update_dry_run_preview(payload, json_output=json_output)
         return
     timeout_ms = int(timeout_seconds * 1000) if timeout_seconds is not None else None
+    root = _openzues_package_root()
+    install_kind = _openclaw_update_install_kind(root)
+    if install_kind == "package":
+        effective_channel = requested_channel or "stable"
+        target_tag = (
+            _openclaw_update_normalize_package_target(tag)
+            or _openclaw_update_channel_to_package_tag(effective_channel)
+        )
+        package_spec = _openclaw_update_resolve_global_install_spec(
+            package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
+            tag=target_tag,
+        )
+        package_manager = _openclaw_update_package_manager(root)
+        payload = _run(
+            _run_with_services(
+                lambda services: services.runtime_updates.run_package_update(
+                    package_root=root,
+                    package_manager=package_manager,
+                    package_spec=package_spec,
+                    timeout_ms=timeout_ms,
+                )
+            )
+        )
+        _emit_update_run_result(payload, json_output=json_output)
+        if payload.get("status") == "error":
+            raise typer.Exit(code=1)
+        return
     payload = _run(
         _run_with_services(
             lambda services: services.runtime_updates.run_update(timeout_ms=timeout_ms)
