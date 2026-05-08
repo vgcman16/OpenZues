@@ -1451,6 +1451,63 @@ async def test_runtime_update_run_package_update_enforces_omitted_runtime_sideca
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_package_update_ignores_dist_inventory_omissions(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "package-root"
+    plugin_root = package_root / "dist" / "extensions" / "alpha"
+    plugin_dependency = plugin_root / "node_modules" / "typebox" / "index.js"
+    plugin_dependency.parent.mkdir(parents=True)
+    (package_root / "package.json").write_text('{"version":"2026.4.15"}', encoding="utf-8")
+    (package_root / "dist" / ".buildstamp").write_text("local\n", encoding="utf-8")
+    (package_root / "dist" / "index.js.map").write_text("{}", encoding="utf-8")
+    (plugin_root / "package.json").write_text('{"name":"@openzues/alpha"}', encoding="utf-8")
+    plugin_dependency.write_text("export {};\n", encoding="utf-8")
+    _write_package_dist_inventory(package_root, ["dist/extensions/alpha/package.json"])
+    command_calls: list[list[str]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        command_calls.append(argv)
+        if argv == _post_update_doctor_args():
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@latest",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "ok"
+    assert [step["name"] for step in result["steps"]] == ["global update", "openzues doctor"]
+    assert command_calls == [
+        ["pnpm", "add", "-g", "openzues@latest"],
+        _post_update_doctor_args(),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_update_skips_dirty_worktree_before_fetch(
     tmp_path,
 ) -> None:

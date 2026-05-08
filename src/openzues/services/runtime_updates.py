@@ -30,6 +30,34 @@ _NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS = (
 )
 _PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.json"
 _FIRST_PACKAGED_DIST_INVENTORY_VERSION = (2026, 4, 15)
+_PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS = {
+    "dist/.buildstamp",
+    "dist/.runtime-postbuildstamp",
+}
+_PACKAGE_DIST_OMITTED_QA_EXTENSION_PREFIXES = (
+    "dist/extensions/qa-channel/",
+    "dist/extensions/qa-lab/",
+    "dist/extensions/qa-matrix/",
+)
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_PREFIXES = (
+    "dist/plugin-sdk/extensions/qa-channel/",
+    "dist/plugin-sdk/extensions/qa-lab/",
+)
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_FILES = {
+    "dist/plugin-sdk/qa-channel.d.ts",
+    "dist/plugin-sdk/qa-channel.js",
+    "dist/plugin-sdk/qa-channel-protocol.d.ts",
+    "dist/plugin-sdk/qa-channel-protocol.js",
+    "dist/plugin-sdk/qa-lab.d.ts",
+    "dist/plugin-sdk/qa-lab.js",
+    "dist/plugin-sdk/qa-runtime.d.ts",
+    "dist/plugin-sdk/qa-runtime.js",
+    "dist/plugin-sdk/src/plugin-sdk/qa-channel.d.ts",
+    "dist/plugin-sdk/src/plugin-sdk/qa-channel-protocol.d.ts",
+    "dist/plugin-sdk/src/plugin-sdk/qa-lab.d.ts",
+    "dist/plugin-sdk/src/plugin-sdk/qa-runtime.d.ts",
+}
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_DIST_PREFIXES = ("dist/qa-runtime-",)
 _PACKAGE_DIST_OMITTED_PRIVATE_QA_BUNDLED_PLUGIN_ROOTS = {
     "dist/extensions/qa-channel",
     "dist/extensions/qa-lab",
@@ -764,10 +792,41 @@ def _collect_package_dist_inventory(package_root: Path) -> list[str]:
         except OSError:
             continue
         relative_path = path.relative_to(package_root).as_posix()
-        if relative_path == _PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix():
+        if not _is_packaged_dist_file(relative_path):
             continue
         files.append(relative_path)
     return sorted(set(files))
+
+
+def _is_legacy_plugin_dependency_dir_path(relative_path: str) -> bool:
+    parts = relative_path.split("/")
+    if len(parts) < 3 or parts[0].lower() != "dist" or parts[1].lower() != "extensions":
+        return False
+    if parts[2].lower() == "node_modules":
+        return True
+    return len(parts) >= 4 and parts[3].lower() == "node_modules"
+
+
+def _is_packaged_dist_file(relative_path: str) -> bool:
+    if not relative_path.startswith("dist/"):
+        return False
+    if relative_path == _PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix():
+        return False
+    if relative_path in _PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS:
+        return False
+    if relative_path.endswith(".map"):
+        return False
+    if relative_path == "dist/plugin-sdk/.tsbuildinfo":
+        return False
+    if _is_legacy_plugin_dependency_dir_path(relative_path):
+        return False
+    if relative_path.startswith(_PACKAGE_DIST_OMITTED_QA_EXTENSION_PREFIXES):
+        return False
+    if relative_path.startswith(_PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_PREFIXES):
+        return False
+    if relative_path in _PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_FILES:
+        return False
+    return not relative_path.startswith(_PACKAGE_DIST_OMITTED_PRIVATE_QA_DIST_PREFIXES)
 
 
 def _collect_package_dist_inventory_file_errors(
