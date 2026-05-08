@@ -21163,6 +21163,120 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_tlon_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-tlon.cjs"
+    runtime_entry.write_text(
+        """
+const tlon = require("openclaw/plugin-sdk/tlon");
+const scopedTlon = require("@openclaw/plugin-sdk/tlon");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.tlon",
+      description: "Use OpenClaw tlon SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const setupKeys = Object.keys(tlon)
+          .filter((key) => key.startsWith("tlonSetup"))
+          .sort();
+        const adapter = tlon.tlonSetupAdapter;
+        const wizard = scopedTlon.tlonSetupWizard;
+        let finalizeError = "";
+        return Promise.resolve()
+          .then(() => wizard.finalize({}))
+          .catch((error) => {
+            finalizeError = error.message;
+          })
+          .then(() => ({
+            setupKeys,
+            scopedSame: scopedTlon.tlonSetupAdapter === tlon.tlonSetupAdapter,
+            inheritedGenericType: typeof tlon.createDedupeCache,
+            account: adapter.resolveAccountId({}),
+            validation: adapter.validateInput({}),
+            wizard: {
+              channel: wizard.channel,
+              hint: wizard.status.unconfiguredHint,
+              selection: wizard.status.resolveSelectionHint(),
+              finalizeError
+            }
+          }));
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-tlon-plugin",
+                    "name": "Runtime Tlon Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-tlon.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.tlon"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.tlon"})
+
+    message = (
+        "Tlon setup requires @openclaw/tlon to be installed. "
+        "Docs: channels/tlon (https://docs.openclaw.ai/channels/tlon)"
+    )
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "setupKeys": ["tlonSetupAdapter", "tlonSetupWizard"],
+        "scopedSame": True,
+        "inheritedGenericType": "function",
+        "account": "default",
+        "validation": message,
+        "wizard": {
+            "channel": "tlon",
+            "hint": message,
+            "selection": message,
+            "finalizeError": message,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_twitch_helpers(
     tmp_path,
 ) -> None:
