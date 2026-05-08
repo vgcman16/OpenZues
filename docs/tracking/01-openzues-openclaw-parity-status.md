@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999998% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999985% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6510,6 +6510,23 @@ may lag behind this tracker.
     import returned generic SDK keys before implementation, then `1 passed`),
     adjacent Matrix helper proof (`4 passed, 1171 deselected`), `ruff check`,
     `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK feishu-security shim.
+  - Source: `openclaw-main/src/plugin-sdk/feishu-security.ts`,
+    `openclaw-main/extensions/feishu/src/security-audit-shared.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `feishu-security` imports expose
+    `collectFeishuSecurityAuditFindings`, including the Feishu doc tool
+    document-owner permission warning and disabled/no-finding paths.
+  - Evidence required: focused Feishu security import test, adjacent security
+    and secret proof, ruff, mypy
+  - Status: checkpointed in `a7ea60d4`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Feishu security red/green proof (exact
+    import returned generic passthrough values before implementation, then `1
+    passed`), adjacent security/secret proof (`6 passed, 1170 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 
