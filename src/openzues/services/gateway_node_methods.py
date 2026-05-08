@@ -16916,15 +16916,22 @@ def _sanitize_chat_history_content_block(
     max_chars: int | None,
 ) -> dict[str, Any]:
     sanitized = dict(block)
-    for key in ("text", "content", "thinking"):
+    preserve_exact_tool_payload = _chat_history_is_tool_block_type(sanitized.get("type"))
+    for key in ("text", "content"):
         value = sanitized.get(key)
         if not isinstance(value, str):
             continue
         value = _chat_history_display_text(value)
-        if max_chars is not None:
+        if max_chars is not None and not preserve_exact_tool_payload:
             value = _chat_history_truncated_text(value, max_chars)
         sanitized[key] = value
-    if not _chat_history_is_tool_block_type(sanitized.get("type")):
+    value = sanitized.get("thinking")
+    if isinstance(value, str):
+        value = _chat_history_display_text(value)
+        if max_chars is not None:
+            value = _chat_history_truncated_text(value, max_chars)
+        sanitized["thinking"] = value
+    if not preserve_exact_tool_payload:
         for key in ("partialJson", "arguments"):
             value = sanitized.get(key)
             if isinstance(value, str) and max_chars is not None:

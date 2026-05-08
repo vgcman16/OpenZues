@@ -82992,6 +82992,53 @@ async def test_chat_history_truncates_structured_partial_json_fields(tmp_path) -
 
 
 @pytest.mark.asyncio
+async def test_chat_history_preserves_exact_tool_block_payloads(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-chat-history-tool-block-exact.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="assistant",
+        content=json.dumps(
+            [
+                {
+                    "type": "tool_use",
+                    "text": "abcdef [[reply_to_current]] ghij",
+                    "content": "klmnopqrst",
+                    "partialJson": "uvwxyz",
+                    "arguments": "0123456789",
+                }
+            ]
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "chat.history",
+        {"sessionKey": session_key, "maxChars": 4},
+    )
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "text": "abcdef  ghij",
+                    "content": "klmnopqrst",
+                    "partialJson": "uvwxyz",
+                    "arguments": "0123456789",
+                }
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_history_floors_numeric_openclaw_limit(tmp_path) -> None:
     database = Database(tmp_path / "gateway-chat-history-numeric-limit.db")
     await database.initialize()
