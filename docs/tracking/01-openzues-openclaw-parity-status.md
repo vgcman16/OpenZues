@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999995% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6545,6 +6545,25 @@ may lag behind this tracker.
     import returned the generic SDK facade before implementation, then `1
     passed`), adjacent provider/security proof (`3 passed, 1174 deselected`),
     `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK qa-runtime shim.
+  - Source: `openclaw-main/src/plugin-sdk/qa-runtime.ts`,
+    `openclaw-main/src/plugin-sdk/private-qa-bundled-env.ts`,
+    `openclaw-main/src/plugin-sdk/facade-runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `qa-runtime` imports expose only
+    `loadQaRuntimeModule` and `isQaRuntimeAvailable`, preserving cold loading,
+    private-QA env propagation, qa-lab `runtime-api.js` loading, and
+    missing-artifact unavailable projection.
+  - Evidence required: focused QA runtime import test, adjacent QA/facade
+    proof, ruff, mypy
+  - Status: checkpointed in `a20434e1`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused QA runtime red/green proof (exact
+    import returned the generic SDK facade before implementation, then `1
+    passed`), adjacent QA/facade proof (`4 passed, 1174 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 
