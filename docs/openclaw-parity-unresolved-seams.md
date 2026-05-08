@@ -10281,3 +10281,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, with the evidence band tightened to
   ~80-99.999999999999999999995%. Continue git update no-upstream/preflight
   behavior next.
+- Current queue-head adjustment: native git updates now check the current
+  branch upstream after fetch and return `skipped/no-upstream` before pull when
+  no upstream is configured, matching OpenClaw's git update guard. Source/test
+  checkpointed in `2603380f`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999996%. Continue
+  package beta-channel fallback or git preflight behavior next.

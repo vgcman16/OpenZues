@@ -19673,6 +19673,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `5171f2f2`.
+- Native git updates now run an explicit upstream check after fetch and return
+  `skipped/no-upstream` before attempting `git pull` when the current branch
+  has no upstream, matching OpenClaw's `runGatewayUpdate` guard. This closes
+  `OZ-PKG-001BR`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999999999999996%.
+- Verified no-upstream git update handling with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_upstream_without_pull -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent git update
+  proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "run_update or runtime_update_run_update"`
+  (`4 passed, 35 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`39 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `2603380f`.
 
 ## References
 
