@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import openzues.services.runtime_updates as runtime_updates_module
 from openzues.database import Database
 from openzues.services.runtime_updates import RuntimeUpdateService
 
@@ -562,6 +563,85 @@ async def test_runtime_update_run_package_update_stages_npm_install_before_swap(
     )
     assert not stale_runtime.exists()
     assert target_shim.read_text(encoding="utf-8") == "new shim\n"
+    assert stage_prefixes
+    assert all(not stage_prefix.exists() for stage_prefix in stage_prefixes)
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_package_update_restores_bin_shim_when_swap_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    prefix = tmp_path / "prefix"
+    global_root = prefix / "lib" / "node_modules"
+    package_root = global_root / "openzues"
+    _write_package_root(package_root, "2026.5.1")
+    target_shim = prefix / "bin" / "openzues"
+    target_shim.parent.mkdir(parents=True)
+    target_shim.write_text("old shim\n", encoding="utf-8")
+    stage_prefixes: list[Path] = []
+    staged_shims: list[Path] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        prefix_index = argv.index("--prefix")
+        stage_prefix = Path(argv[prefix_index + 1])
+        stage_prefixes.append(stage_prefix)
+        _write_package_root(_staged_global_root(stage_prefix) / "openzues", "2026.5.2")
+        staged_shim = _staged_bin_dir(stage_prefix) / "openzues"
+        staged_shim.parent.mkdir(parents=True, exist_ok=True)
+        staged_shim.write_text("new shim\n", encoding="utf-8")
+        staged_shims.append(staged_shim)
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    original_copy_path_entry = runtime_updates_module._copy_path_entry
+
+    def fake_copy_path_entry(source: Path, destination: Path) -> None:
+        if source in staged_shims and destination == target_shim:
+            raise OSError("shim copy blocked")
+        original_copy_path_entry(source, destination)
+
+    monkeypatch.setattr(runtime_updates_module, "_copy_path_entry", fake_copy_path_entry)
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="npm",
+        package_spec="openzues@2026.5.2",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "error"
+    assert result["reason"] == "global-install-swap-failed"
+    assert result["failedStep"]["name"] == "global install swap"
+    assert result["after"] == {"sha": None, "version": "2026.5.1"}
+    assert [step["name"] for step in result["steps"]] == [
+        "global update",
+        "global install swap",
+    ]
+    assert result["failedStep"]["log"]["stderrTail"] == "shim copy blocked"
+    assert (package_root / "package.json").read_text(encoding="utf-8") == (
+        '{"name":"openzues","version":"2026.5.1"}'
+    )
+    assert target_shim.read_text(encoding="utf-8") == "old shim\n"
     assert stage_prefixes
     assert all(not stage_prefix.exists() for stage_prefix in stage_prefixes)
 
