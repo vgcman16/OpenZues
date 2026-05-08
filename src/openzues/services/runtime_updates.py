@@ -30,6 +30,7 @@ _NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS = (
 )
 _PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.json"
 _FIRST_PACKAGED_DIST_INVENTORY_VERSION = (2026, 4, 15)
+_UPDATE_PREFLIGHT_MAX_COMMITS = 10
 _PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS = {
     "dist/.buildstamp",
     "dist/.runtime-postbuildstamp",
@@ -1206,6 +1207,61 @@ class RuntimeUpdateService:
                 root=root,
                 before=before,
                 after=before,
+                steps=steps,
+                started_at=started_at,
+            )
+
+        upstream_sha_step = await self._run_update_command_step(
+            "git rev-parse @{upstream}",
+            ["git", "rev-parse", "@{upstream}"],
+            timeout_ms=timeout_ms,
+        )
+        steps.append(upstream_sha_step)
+        upstream_sha = (_update_step_stdout_tail(upstream_sha_step) or "").strip()
+        if _update_step_exit_code(upstream_sha_step) != 0 or not upstream_sha:
+            return self._build_update_command_result(
+                status="error",
+                reason="no-upstream-sha",
+                root=root,
+                before=before,
+                after=None,
+                steps=steps,
+                started_at=started_at,
+            )
+
+        rev_list_step = await self._run_update_command_step(
+            "git rev-list",
+            [
+                "git",
+                "rev-list",
+                f"--max-count={_UPDATE_PREFLIGHT_MAX_COMMITS}",
+                upstream_sha,
+            ],
+            timeout_ms=timeout_ms,
+        )
+        steps.append(rev_list_step)
+        if _update_step_exit_code(rev_list_step) != 0:
+            return self._build_update_command_result(
+                status="error",
+                reason="preflight-revlist-failed",
+                root=root,
+                before=before,
+                after=None,
+                steps=steps,
+                started_at=started_at,
+            )
+        candidates = [
+            line.strip()
+            for line in (_update_step_stdout_tail(rev_list_step) or "").splitlines()
+            if line.strip()
+        ]
+        if not candidates:
+            return self._build_update_command_result(
+                status="error",
+                reason="preflight-no-candidates",
+                root=root,
+                before=before,
+                after=None,
                 steps=steps,
                 started_at=started_at,
             )

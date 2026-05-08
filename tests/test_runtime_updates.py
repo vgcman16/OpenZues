@@ -184,6 +184,10 @@ async def test_runtime_update_run_update_executes_native_git_install_build_steps
         timeout_ms: int | None,
     ) -> dict[str, object]:
         command_calls.append((argv, cwd, timeout_ms))
+        if argv == ["git", "rev-parse", "@{upstream}"]:
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        if argv[:2] == ["git", "rev-list"]:
+            return {"stdout": "rev-b\nrev-a\n", "stderr": "", "exitCode": 0}
         return {"stdout": "", "stderr": "", "exitCode": 0}
 
     async def restart_callback() -> None:
@@ -210,6 +214,8 @@ async def test_runtime_update_run_update_executes_native_git_install_build_steps
         "git status",
         "git fetch",
         "upstream check",
+        "git rev-parse @{upstream}",
+        "git rev-list",
         "git pull",
         "deps install",
         "build",
@@ -228,6 +234,8 @@ async def test_runtime_update_run_update_executes_native_git_install_build_steps
             tmp_path,
             1000,
         ),
+        (["git", "rev-parse", "@{upstream}"], tmp_path, 1000),
+        (["git", "rev-list", "--max-count=10", "rev-b"], tmp_path, 1000),
         (["git", "pull", "--ff-only"], tmp_path, 1000),
         ([sys.executable, "-m", "pip", "install", "-e", "."], tmp_path, 1000),
         ([sys.executable, "-m", "compileall", "-q", "src"], tmp_path, 1000),
@@ -253,6 +261,10 @@ async def test_runtime_update_run_update_ignores_control_ui_dist_dirty_files(
             return {"stdout": "", "stderr": "", "exitCode": 0}
         if argv[:3] == ["git", "status", "--porcelain"]:
             return {"stdout": " M dist/control-ui/app.js\n", "stderr": "", "exitCode": 0}
+        if argv == ["git", "rev-parse", "@{upstream}"]:
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        if argv[:2] == ["git", "rev-list"]:
+            return {"stdout": "rev-b\nrev-a\n", "stderr": "", "exitCode": 0}
         return {"stdout": "", "stderr": "", "exitCode": 0}
 
     async def restart_callback() -> None:
@@ -275,6 +287,8 @@ async def test_runtime_update_run_update_ignores_control_ui_dist_dirty_files(
         "git status",
         "git fetch",
         "upstream check",
+        "git rev-parse @{upstream}",
+        "git rev-list",
         "git pull",
         "deps install",
         "build",
@@ -342,6 +356,54 @@ async def test_runtime_update_run_update_reports_no_upstream_without_pull(
             1000,
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_errors_when_preflight_has_no_candidates(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[list[str]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        command_calls.append(argv)
+        if argv[:2] == ["git", "rev-parse"] and argv[-1] == "@{upstream}":
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        if argv[:2] == ["git", "rev-list"]:
+            return {"stdout": "", "stderr": "", "exitCode": 0}
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("preflight failure should not schedule immediate restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "error"
+    assert result["reason"] == "preflight-no-candidates"
+    assert [step["name"] for step in result["steps"]] == [
+        "git status",
+        "git fetch",
+        "upstream check",
+        "git rev-parse @{upstream}",
+        "git rev-list",
+    ]
+    assert command_calls[-1] == ["git", "rev-list", "--max-count=10", "rev-b"]
 
 
 @pytest.mark.asyncio
