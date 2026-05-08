@@ -19486,6 +19486,159 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_matrix_root_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-matrix-root.cjs"
+    runtime_entry.write_text(
+        """
+const matrix = require("openclaw/plugin-sdk/matrix");
+const scopedMatrix = require("@openclaw/plugin-sdk/matrix");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.matrix_root",
+      description: "Use OpenClaw Matrix root SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(matrix).sort(),
+          scopedSame:
+            scopedMatrix.resolveSingleAccountPromotionTarget ===
+              matrix.resolveSingleAccountPromotionTarget &&
+            scopedMatrix.matrixSetupAdapter === matrix.matrixSetupAdapter,
+          setupTypes: {
+            adapter: typeof matrix.matrixSetupAdapter,
+            wizard: typeof matrix.matrixSetupWizard
+          },
+          singleAccountKeyPresence: {
+            threadBindings: matrix.singleAccountKeysToMove.includes("threadBindings"),
+            actions: matrix.singleAccountKeysToMove.includes("actions"),
+            groups: matrix.singleAccountKeysToMove.includes("groups")
+          },
+          namedAccountKeyPresence: {
+            homeserver: matrix.namedAccountPromotionKeys.includes("homeserver"),
+            encryption: matrix.namedAccountPromotionKeys.includes("encryption"),
+            groups: matrix.namedAccountPromotionKeys.includes("groups")
+          },
+          targets: {
+            matchedDefault: matrix.resolveSingleAccountPromotionTarget({
+              channel: {
+                defaultAccount: "ops team",
+                accounts: { "Ops Team": { homeserver: "https://ops.example" } }
+              }
+            }),
+            missingDefault: matrix.resolveSingleAccountPromotionTarget({
+              channel: {
+                defaultAccount: "missing",
+                accounts: { ops: { homeserver: "https://ops.example" } }
+              }
+            }),
+            singleNamed: matrix.resolveSingleAccountPromotionTarget({
+              channel: {
+                accounts: { solo: { homeserver: "https://solo.example" } }
+              }
+            }),
+            multipleWithDefault: matrix.resolveSingleAccountPromotionTarget({
+              channel: {
+                accounts: {
+                  default: { homeserver: "https://default.example" },
+                  ops: { homeserver: "https://ops.example" }
+                }
+              }
+            })
+          },
+          inherited: {
+            jsonType: typeof matrix.jsonResult,
+            accountId: matrix.normalizeAccountId(" Ops Team ")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-matrix-root-plugin",
+                    "name": "Runtime Matrix Root Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-matrix-root.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.matrix_root"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.matrix_root"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "matrixSetupAdapter",
+            "matrixSetupWizard",
+            "namedAccountPromotionKeys",
+            "resolveSingleAccountPromotionTarget",
+            "singleAccountKeysToMove",
+        ],
+        "scopedSame": True,
+        "setupTypes": {"adapter": "object", "wizard": "object"},
+        "singleAccountKeyPresence": {
+            "threadBindings": True,
+            "actions": True,
+            "groups": True,
+        },
+        "namedAccountKeyPresence": {
+            "homeserver": True,
+            "encryption": True,
+            "groups": False,
+        },
+        "targets": {
+            "matchedDefault": "Ops Team",
+            "missingDefault": "default",
+            "singleNamed": "solo",
+            "multipleWithDefault": "default",
+        },
+        "inherited": {"jsonType": "function", "accountId": "ops-team"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_matrix_runtime_surface_helper(
     tmp_path,
 ) -> None:

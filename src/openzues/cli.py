@@ -88756,6 +88756,112 @@ function getGooglechatRootRuntime() {
   return runtime;
 }
 
+const matrixSingleAccountKeysToMove = Object.freeze([
+  "deviceId",
+  "avatarUrl",
+  "initialSyncLimit",
+  "encryption",
+  "allowlistOnly",
+  "allowBots",
+  "blockStreaming",
+  "replyToMode",
+  "threadReplies",
+  "textChunkLimit",
+  "chunkMode",
+  "responsePrefix",
+  "ackReaction",
+  "ackReactionScope",
+  "reactionNotifications",
+  "threadBindings",
+  "startupVerification",
+  "startupVerificationCooldownHours",
+  "mediaMaxMb",
+  "autoJoin",
+  "autoJoinAllowlist",
+  "dm",
+  "groups",
+  "rooms",
+  "actions",
+]);
+
+const matrixNamedAccountPromotionKeys = Object.freeze([
+  "name",
+  "homeserver",
+  "userId",
+  "accessToken",
+  "password",
+  "deviceId",
+  "deviceName",
+  "avatarUrl",
+  "initialSyncLimit",
+  "encryption",
+]);
+
+function resolveSingleAccountPromotionTarget(params = {}) {
+  const channel = params.channel && typeof params.channel === "object" ? params.channel : {};
+  const accounts =
+    channel.accounts && typeof channel.accounts === "object" ? channel.accounts : {};
+  const normalizedDefaultAccount =
+    typeof channel.defaultAccount === "string" && channel.defaultAccount.trim()
+      ? normalizeAccountId(channel.defaultAccount)
+      : undefined;
+  const matchedAccountId = normalizedDefaultAccount
+    ? Object.entries(accounts).find(
+        ([accountId, value]) =>
+          accountId &&
+          value &&
+          typeof value === "object" &&
+          normalizeAccountId(accountId) === normalizedDefaultAccount,
+      )?.[0]
+    : undefined;
+  if (matchedAccountId) {
+    return matchedAccountId;
+  }
+  if (normalizedDefaultAccount) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  const namedAccounts = Object.entries(accounts).filter(
+    ([accountId, value]) => accountId && value && typeof value === "object",
+  );
+  if (namedAccounts.length === 1) {
+    return namedAccounts[0][0];
+  }
+  if (
+    namedAccounts.length > 1 &&
+    accounts[DEFAULT_ACCOUNT_ID] &&
+    typeof accounts[DEFAULT_ACCOUNT_ID] === "object"
+  ) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  return DEFAULT_ACCOUNT_ID;
+}
+
+function getMatrixRootRuntime() {
+  const runtime = getOptionalChannelRootRuntime({
+    channel: "matrix",
+    label: "Matrix",
+    npmSpec: "@openclaw/matrix",
+    docsPath: "/channels/matrix",
+  });
+  if (!Object.prototype.hasOwnProperty.call(runtime, "singleAccountKeysToMove")) {
+    Object.defineProperties(runtime, {
+      namedAccountPromotionKeys: {
+        enumerable: true,
+        value: [...matrixNamedAccountPromotionKeys],
+      },
+      resolveSingleAccountPromotionTarget: {
+        enumerable: true,
+        value: resolveSingleAccountPromotionTarget,
+      },
+      singleAccountKeysToMove: {
+        enumerable: true,
+        value: [...matrixSingleAccountKeysToMove],
+      },
+    });
+  }
+  return runtime;
+}
+
 function buildTelegramTopicConversationId(params) {
   const chatId = String((params && params.chatId) || "").trim();
   const topicId = String((params && params.topicId) || "").trim();
@@ -89372,6 +89478,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/googlechat"
   ) {
     return getGooglechatRootRuntime();
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix" ||
+    request === "@openclaw/plugin-sdk/matrix"
+  ) {
+    return getMatrixRootRuntime();
   }
   if (
     request === "openclaw/plugin-sdk/feishu" ||
