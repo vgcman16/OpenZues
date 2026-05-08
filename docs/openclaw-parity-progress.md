@@ -21236,6 +21236,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `e38d7753`.
+- `chat.history` now resolves structured user text blocks before applying
+  OpenClaw heartbeat prompt filtering, so heartbeat rows serialized as content
+  arrays are hidden the same way as raw-string heartbeat rows. This closes the
+  structured heartbeat-prompt variant of the transcript projection edge;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999999999999999999999999999995%.
+- Verified the structured heartbeat user content seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_structured_heartbeat_user_content -q`
+  (structured heartbeat prompt rows were returned before implementation, then
+  `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`41 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `0041dded`.
 
 ## References
 
