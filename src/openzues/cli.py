@@ -54726,6 +54726,10 @@ const providerAuthLoginRuntime = {
   loginOpenAICodexOAuth: providerAuthLoginUnavailable,
 };
 
+const githubCopilotLoginRuntime = {
+  githubCopilotLoginCommand: providerAuthLoginUnavailable,
+};
+
 const ZAI_CODING_GLOBAL_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
 const ZAI_CODING_CN_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4";
 const ZAI_GLOBAL_BASE_URL = "https://api.z.ai/api/paas/v4";
@@ -85441,6 +85445,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-auth-login.runtime"
   ) {
     return providerAuthLoginRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/github-copilot-login" ||
+    request === "@openclaw/plugin-sdk/github-copilot-login"
+  ) {
+    return githubCopilotLoginRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-zai-endpoint" ||

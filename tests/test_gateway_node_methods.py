@@ -17275,6 +17275,97 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_github_copilot_login_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-github-copilot-login.cjs"
+    runtime_entry.write_text(
+        """
+const login = require("openclaw/plugin-sdk/github-copilot-login");
+const scopedLogin = require("@openclaw/plugin-sdk/github-copilot-login");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.github_copilot_login",
+      description: "Use OpenClaw github-copilot-login SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let unavailable = "";
+        try {
+          await login.githubCopilotLoginCommand({ profileId: "demo" }, {});
+        } catch (error) {
+          unavailable = error && error.message;
+        }
+        return {
+          keys: Object.keys(login).sort(),
+          scopedType: typeof scopedLogin.githubCopilotLoginCommand,
+          unavailable
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-github-copilot-login-plugin",
+                    "name": "Runtime GitHub Copilot Login Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-github-copilot-login.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.github_copilot_login"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.github_copilot_login"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["githubCopilotLoginCommand"],
+        "scopedType": "function",
+        "unavailable": (
+            "Provider auth login helpers require an interactive OpenClaw login runtime."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
     tmp_path,
 ) -> None:
