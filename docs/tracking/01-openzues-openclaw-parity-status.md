@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999998% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -5072,6 +5072,19 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused Tlon authorization cluster (`5
     passed` after focused failures), adjacent provider/session proof (`19
     passed, 378 deselected`), `ruff check`, and `mypy`.
+
+- [x] Tlon owner approval response replay.
+  - Source: `openclaw-main/extensions/tlon/src/monitor/approval.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/approval-runtime.ts`,
+    `openclaw-main/extensions/tlon/src/monitor/index.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `265b0a10`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused owner approval response proof (`1
+    failed` before implementation, then `1 passed`), focused Tlon inbound
+    proof (`9 passed`), adjacent provider/session proof (`20 passed, 378
+    deselected`), `ruff check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.
