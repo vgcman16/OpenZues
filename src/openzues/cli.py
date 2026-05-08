@@ -90013,6 +90013,77 @@ const mattermostRootRuntime = Object.assign(Object.create(genericSdk), {
   warnMissingProviderGroupPolicyFallbackOnce,
 });
 
+const zaloRootRuntime = Object.assign(Object.create(genericSdk), {
+  DEFAULT_ACCOUNT_ID,
+  MarkdownConfigSchema,
+  PAIRING_APPROVED_MESSAGE,
+  WEBHOOK_ANOMALY_COUNTER_DEFAULTS,
+  WEBHOOK_RATE_LIMIT_DEFAULTS,
+  addWildcardAllowFrom,
+  applyAccountNameToChannelSection,
+  applyBasicWebhookRequestGuards,
+  applySetupAccountConfigPatch,
+  buildBaseAccountStatusSnapshot,
+  buildChannelConfigSchema,
+  buildChannelSendResult,
+  buildSecretInputSchema,
+  buildSingleChannelSecretPromptState,
+  buildTokenChannelStatusSummary,
+  chunkTextForOutbound,
+  createAccountListHelpers,
+  createChannelPairingController,
+  createChannelReplyPipeline,
+  createDedupeCache,
+  createFixedWindowRateLimiter,
+  createWebhookAnomalyTracker,
+  deleteAccountFromConfigSection,
+  deliverTextOrMediaReply,
+  emptyPluginConfigSchema,
+  evaluateSenderGroupAccess,
+  evaluateZaloGroupAccess,
+  formatAllowFromLowercase,
+  formatPairingApproveHint,
+  hasConfiguredSecretInput,
+  isNormalizedSenderAllowed,
+  isNumericTargetId,
+  jsonResult,
+  listDirectoryUserEntriesFromAllowFrom,
+  logTypingFailure,
+  mergeAllowFromEntries,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
+  normalizeResolvedSecretInputString,
+  normalizeSecretInputString,
+  promptSingleChannelSecretInput,
+  readJsonWebhookBodyOrReject,
+  readStringParam,
+  registerWebhookTarget,
+  registerWebhookTargetWithPluginRoute,
+  resolveChannelAccountConfigBasePath,
+  resolveClientIp,
+  resolveDefaultGroupPolicy,
+  resolveDirectDmAuthorizationOutcome,
+  resolveInboundRouteEnvelopeBuilderWithRuntime,
+  resolveOpenProviderRuntimeGroupPolicy,
+  resolveOutboundMediaUrls,
+  resolveSenderCommandAuthorizationWithRuntime,
+  resolveSingleWebhookTarget,
+  resolveWebhookPath,
+  resolveWebhookTargetWithAuthOrRejectSync,
+  resolveWebhookTargets,
+  resolveZaloRuntimeGroupPolicy,
+  runSingleChannelSecretStep,
+  sendMediaWithLeadingCaption,
+  sendPayloadWithChunkedTextAndMedia,
+  setAccountEnabledInConfigSection,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  waitForAbortSignal,
+  warnMissingProviderGroupPolicyFallbackOnce,
+  withResolvedWebhookRequestPipeline,
+  zaloSetupAdapter: zaloSetupRuntime.zaloSetupAdapter,
+  zaloSetupWizard: zaloSetupRuntime.zaloSetupWizard,
+});
+
 const originalLoad = Module._load;
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
@@ -91441,6 +91512,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
       resolveSenderCommandAuthorization,
       resolveSenderCommandAuthorizationWithRuntime,
     };
+  }
+  if (
+    request === "openclaw/plugin-sdk/zalo" ||
+    request === "@openclaw/plugin-sdk/zalo"
+  ) {
+    return zaloRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/zod" ||

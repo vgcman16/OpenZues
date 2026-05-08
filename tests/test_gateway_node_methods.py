@@ -23997,6 +23997,306 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_zalo_root_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-zalo-root.cjs"
+    runtime_entry.write_text(
+        """
+const zalo = require("openclaw/plugin-sdk/zalo");
+const scopedZalo = require("@openclaw/plugin-sdk/zalo");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.zalo_root",
+      description: "Use OpenClaw Zalo root SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        globalThis.__openzuesQaRunnerRuntime = {
+          loadBundledPluginPublicSurfaceModuleSync(params) {
+            calls.push(params);
+            if (params.artifactBasename === "contract-api.js") {
+              return {
+                evaluateZaloGroupAccess: ({ groupAllowFrom, senderId }) => ({
+                  allowed: groupAllowFrom.includes(senderId),
+                  reason: groupAllowFrom.includes(senderId) ? "allowed" : "not_allowed"
+                }),
+                resolveZaloRuntimeGroupPolicy: ({ providerConfigPresent, groupPolicy }) => ({
+                  groupPolicy: groupPolicy || "default",
+                  providerMissingFallbackApplied: !providerConfigPresent
+                })
+              };
+            }
+            return {
+              zaloSetupAdapter: {
+                channel: "zalo",
+                resolveAccountId: ({ cfg }) => cfg.accountId || "default"
+              },
+              zaloSetupWizard: {
+                channel: "zalo",
+                status: { unconfiguredHint: "Connect Zalo" }
+              }
+            };
+          }
+        };
+
+        const limiter = zalo.createFixedWindowRateLimiter({
+          windowMs: 1000,
+          maxRequests: 1,
+          maxTrackedKeys: 4
+        });
+        const rateFirst = limiter.isRateLimited("u1", 1000);
+        const rateSecond = limiter.isRateLimited("u1", 1001);
+        const dmCfg = zalo.setTopLevelChannelDmPolicyWithAllowFrom({
+          cfg: { channels: { zalo: { allowFrom: ["u1"] } } },
+          channel: "zalo",
+          dmPolicy: "open"
+        });
+        const sentMedia = [];
+        const delivered = await zalo.deliverTextOrMediaReply({
+          text: "hello",
+          payload: { mediaUrls: ["https://example.test/a.png"] },
+          sendMedia: async (payload) => sentMedia.push(payload),
+          sendText: async () => sentMedia.push({ textOnly: true })
+        });
+        return {
+          hasRootKeys: [
+            "jsonResult",
+            "readStringParam",
+            "listDirectoryUserEntriesFromAllowFrom",
+            "buildChannelConfigSchema",
+            "addWildcardAllowFrom",
+            "mergeAllowFromEntries",
+            "setTopLevelChannelDmPolicyWithAllowFrom",
+            "buildSecretInputSchema",
+            "normalizeSecretInputString",
+            "waitForAbortSignal",
+            "formatAllowFromLowercase",
+            "isNormalizedSenderAllowed",
+            "zaloSetupAdapter",
+            "zaloSetupWizard",
+            "evaluateZaloGroupAccess",
+            "resolveZaloRuntimeGroupPolicy",
+            "resolveDirectDmAuthorizationOutcome",
+            "resolveSenderCommandAuthorizationWithRuntime",
+            "resolveChannelAccountConfigBasePath",
+            "evaluateSenderGroupAccess",
+            "resolveInboundRouteEnvelopeBuilderWithRuntime",
+            "createChannelPairingController",
+            "buildChannelSendResult",
+            "deliverTextOrMediaReply",
+            "isNumericTargetId",
+            "resolveOutboundMediaUrls",
+            "buildBaseAccountStatusSnapshot",
+            "buildTokenChannelStatusSummary",
+            "applyBasicWebhookRequestGuards",
+            "createFixedWindowRateLimiter",
+            "createWebhookAnomalyTracker",
+            "readJsonWebhookBodyOrReject",
+            "registerWebhookTarget",
+            "registerWebhookTargetWithPluginRoute",
+            "resolveSingleWebhookTarget",
+            "resolveWebhookPath",
+            "resolveWebhookTargetWithAuthOrRejectSync",
+            "resolveWebhookTargets",
+            "withResolvedWebhookRequestPipeline",
+            "resolveClientIp"
+          ].every((key) => Object.prototype.hasOwnProperty.call(zalo, key)),
+          scopedSame:
+            scopedZalo.resolveZaloRuntimeGroupPolicy ===
+              zalo.resolveZaloRuntimeGroupPolicy &&
+            scopedZalo.resolveClientIp === zalo.resolveClientIp,
+          params: {
+            read: zalo.readStringParam({ userId: "  u1 " }, "userId", { required: true }),
+            jsonOk: zalo.jsonResult({ ok: true }).details.ok
+          },
+          directory: zalo.listDirectoryUserEntriesFromAllowFrom({
+            allowFrom: ["u1", "u2", "*"],
+            query: "u"
+          }),
+          allow: {
+            formatted: zalo.formatAllowFromLowercase({
+              allowFrom: ["ZALO:U1"],
+              stripPrefixRe: /^(zalo|zl):/i
+            }),
+            senderAllowed: zalo.isNormalizedSenderAllowed({
+              senderId: "u1",
+              allowFrom: ["ZALO:U1"],
+              stripPrefixRe: /^(zalo|zl):/i
+            }),
+            merged: zalo.mergeAllowFromEntries(["u1"], ["u2", "u1"]),
+            openDm: dmCfg.channels.zalo.allowFrom
+          },
+          setup: {
+            allow: zalo.evaluateZaloGroupAccess({
+              providerConfigPresent: true,
+              groupAllowFrom: ["u1"],
+              senderId: "u1"
+            }),
+            policy: zalo.resolveZaloRuntimeGroupPolicy({
+              providerConfigPresent: false,
+              groupPolicy: "private"
+            }),
+            adapterChannel: zalo.zaloSetupAdapter.channel,
+            wizardHint: scopedZalo.zaloSetupWizard.status.unconfiguredHint
+          },
+          auth: {
+            directOutcome: zalo.resolveDirectDmAuthorizationOutcome({
+              isGroup: false,
+              dmPolicy: "allowlist",
+              senderAllowedForCommands: false
+            }),
+            accountPath: zalo.resolveChannelAccountConfigBasePath({
+              cfg: { channels: { zalo: { accounts: { ops: {} } } } },
+              channelKey: "zalo",
+              accountId: "ops"
+            })
+          },
+          send: {
+            result: zalo.buildChannelSendResult("zalo", {
+              ok: true,
+              messageId: "msg-1"
+            }),
+            mediaUrls: zalo.resolveOutboundMediaUrls({ mediaUrl: "https://example.test/one.png" }),
+            numeric: [
+              zalo.isNumericTargetId("12345"),
+              zalo.isNumericTargetId("abc")
+            ],
+            delivered,
+            sentMedia
+          },
+          webhook: {
+            rate: [rateFirst, rateSecond],
+            defaults: zalo.WEBHOOK_RATE_LIMIT_DEFAULTS.maxRequests,
+            anomalyDefaults: zalo.WEBHOOK_ANOMALY_COUNTER_DEFAULTS.logEvery,
+            path: zalo.resolveWebhookPath({ webhookPath: "zalo/hook" })
+          },
+          network: zalo.resolveClientIp({
+            remoteAddr: "10.0.0.3",
+            forwardedFor: "198.51.100.7, 10.0.0.3",
+            trustedProxies: ["10.0.0.0/8"]
+          }),
+          callSummary: calls.map((call) => ({
+            dirName: call.dirName,
+            artifact: call.artifactBasename
+          }))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-zalo-root-plugin",
+                    "name": "Runtime Zalo Root Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-zalo-root.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.zalo_root"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.zalo_root"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "hasRootKeys": True,
+        "scopedSame": True,
+        "params": {"read": "u1", "jsonOk": True},
+        "directory": [
+            {"kind": "user", "id": "u1"},
+            {"kind": "user", "id": "u2"},
+        ],
+        "allow": {
+            "formatted": ["u1"],
+            "senderAllowed": True,
+            "merged": ["u1", "u2"],
+            "openDm": ["u1", "*"],
+        },
+        "setup": {
+            "allow": {"allowed": True, "reason": "allowed"},
+            "policy": {
+                "groupPolicy": "private",
+                "providerMissingFallbackApplied": True,
+            },
+            "adapterChannel": "zalo",
+            "wizardHint": "Connect Zalo",
+        },
+        "auth": {
+            "directOutcome": "unauthorized",
+            "accountPath": "channels.zalo.accounts.ops.",
+        },
+        "send": {
+            "result": {
+                "channel": "zalo",
+                "ok": True,
+                "messageId": "msg-1",
+            },
+            "mediaUrls": ["https://example.test/one.png"],
+            "numeric": [True, False],
+            "delivered": "media",
+            "sentMedia": [
+                {
+                    "mediaUrl": "https://example.test/a.png",
+                    "caption": "hello",
+                }
+            ],
+        },
+        "webhook": {
+            "rate": [False, True],
+            "defaults": 120,
+            "anomalyDefaults": 25,
+            "path": "/zalo/hook",
+        },
+        "network": "198.51.100.7",
+        "callSummary": [
+            {"dirName": "zalo", "artifact": "contract-api.js"},
+            {"dirName": "zalo", "artifact": "contract-api.js"},
+            {"dirName": "zalo", "artifact": "setup-api.js"},
+            {"dirName": "zalo", "artifact": "setup-api.js"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_zalo_setup_helpers(
     tmp_path,
 ) -> None:
