@@ -19260,6 +19260,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`22 passed, 533 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `c95b2810`.
+- Native package updates now run global package-manager install commands with
+  `COREPACK_ENABLE_DOWNLOAD_PROMPT=0` when the caller has not already set the
+  variable, matching OpenClaw's non-interactive `createGlobalInstallEnv`
+  default while restoring the parent environment after dispatch. This closes
+  `OZ-PKG-001AS`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999999995%.
+- Verified package-update Corepack prompt suppression with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_disables_corepack_download_prompt -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent post-update
+  doctor env proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_post_update_doctor_env -q`
+  (`1 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`14 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `0f2cb0c1`.
 
 ## References
 
