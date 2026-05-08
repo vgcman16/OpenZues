@@ -244,8 +244,15 @@ async def test_runtime_update_run_package_update_executes_global_install_step(
     assert result["root"] == str(package_root)
     assert result["before"] == {"sha": None, "version": "2026.5.1"}
     assert result["after"] == {"sha": None, "version": "2026.5.1"}
-    assert [step["name"] for step in result["steps"]] == ["global update"]
-    assert command_calls == [(["pnpm", "add", "-g", "openzues@latest"], package_root, 1000)]
+    assert [step["name"] for step in result["steps"]] == ["global update", "openzues doctor"]
+    assert command_calls == [
+        (["pnpm", "add", "-g", "openzues@latest"], package_root, 1000),
+        (
+            [sys.executable, "-m", "openzues.cli", "doctor", "--fix", "--json"],
+            package_root,
+            1000,
+        ),
+    ]
 
 
 @pytest.mark.asyncio
@@ -266,6 +273,8 @@ async def test_runtime_update_run_package_update_retries_npm_without_optional_de
         timeout_ms: int | None,
     ) -> dict[str, object]:
         command_calls.append((argv, cwd, timeout_ms))
+        if argv[:3] == [sys.executable, "-m", "openzues.cli"]:
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
         if len(command_calls) == 1:
             return {"stdout": "", "stderr": "optional native build failed", "exitCode": 1}
         prefix_index = argv.index("--prefix")
@@ -298,10 +307,12 @@ async def test_runtime_update_run_package_update_retries_npm_without_optional_de
         "global update",
         "global update (omit optional)",
         "global install swap",
+        "openzues doctor",
     ]
-    assert len(command_calls) == 2
+    assert len(command_calls) == 3
     first_argv, first_cwd, first_timeout = command_calls[0]
     second_argv, second_cwd, second_timeout = command_calls[1]
+    doctor_argv, doctor_cwd, doctor_timeout = command_calls[2]
     assert first_argv[:3] == ["npm", "i", "-g"]
     assert second_argv[:3] == ["npm", "i", "-g"]
     assert "--prefix" in first_argv
@@ -313,6 +324,9 @@ async def test_runtime_update_run_package_update_retries_npm_without_optional_de
     assert second_cwd == package_root
     assert first_timeout == 1000
     assert second_timeout == 1000
+    assert doctor_argv == [sys.executable, "-m", "openzues.cli", "doctor", "--fix", "--json"]
+    assert doctor_cwd == package_root
+    assert doctor_timeout == 1000
 
 
 @pytest.mark.asyncio
@@ -340,6 +354,8 @@ async def test_runtime_update_run_package_update_stages_npm_install_before_swap(
         timeout_ms: int | None,
     ) -> dict[str, object]:
         command_calls.append((argv, cwd, timeout_ms))
+        if argv[:3] == [sys.executable, "-m", "openzues.cli"]:
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
         prefix_index = argv.index("--prefix")
         stage_prefix = Path(argv[prefix_index + 1])
         stage_prefixes.append(stage_prefix)
@@ -378,14 +394,19 @@ async def test_runtime_update_run_package_update_stages_npm_install_before_swap(
     assert [step["name"] for step in result["steps"]] == [
         "global update",
         "global install swap",
+        "openzues doctor",
     ]
-    assert len(command_calls) == 1
+    assert len(command_calls) == 2
     argv, cwd, timeout_ms = command_calls[0]
     assert argv[:3] == ["npm", "i", "-g"]
     assert "--prefix" in argv
     assert "openzues@2026.5.2" in argv
     assert cwd == package_root
     assert timeout_ms == 1000
+    doctor_argv, doctor_cwd, doctor_timeout = command_calls[1]
+    assert doctor_argv == [sys.executable, "-m", "openzues.cli", "doctor", "--fix", "--json"]
+    assert doctor_cwd == package_root
+    assert doctor_timeout == 1000
     assert (package_root / "package.json").read_text(encoding="utf-8") == (
         '{"name":"openzues","version":"2026.5.2"}'
     )
@@ -458,6 +479,61 @@ async def test_runtime_update_run_package_update_keeps_live_root_when_staged_ver
     assert live_marker.exists()
     assert stage_prefixes
     assert all(not stage_prefix.exists() for stage_prefix in stage_prefixes)
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_package_update_fails_when_post_update_doctor_fails(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "package-root"
+    package_root.mkdir()
+    (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        command_calls.append((argv, cwd, timeout_ms))
+        if argv[:3] == [sys.executable, "-m", "openzues.cli"]:
+            return {"stdout": "", "stderr": "doctor repair failed", "exitCode": 1}
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@latest",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "error"
+    assert result["reason"] == "post-update-doctor-failed"
+    assert result["failedStep"]["name"] == "openzues doctor"
+    assert [step["name"] for step in result["steps"]] == ["global update", "openzues doctor"]
+    assert command_calls == [
+        (["pnpm", "add", "-g", "openzues@latest"], package_root, 1000),
+        (
+            [sys.executable, "-m", "openzues.cli", "doctor", "--fix", "--json"],
+            package_root,
+            1000,
+        ),
+    ]
 
 
 @pytest.mark.asyncio

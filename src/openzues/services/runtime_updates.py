@@ -438,6 +438,10 @@ def _global_package_update_fallback_args(
     return ["npm", "i", "-g", *prefix_args, spec, *_NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS]
 
 
+def _post_package_update_doctor_args() -> list[str]:
+    return [sys.executable, "-m", "openzues.cli", "doctor", "--fix", "--json"]
+
+
 def _expected_package_version_from_spec(package_spec: str) -> str | None:
     spec = package_spec.strip()
     if "@" not in spec:
@@ -798,6 +802,25 @@ class RuntimeUpdateService:
                         steps=steps,
                         started_at=started_at,
                     )
+            doctor_step = await self._run_update_command_step_at(
+                "openzues doctor",
+                _post_package_update_doctor_args(),
+                cwd=package_root,
+                timeout_ms=timeout_ms,
+            )
+            steps.append(doctor_step)
+            if _update_step_exit_code(doctor_step) != 0:
+                live_after = {"sha": None, "version": _read_package_version(package_root)}
+                return self._build_package_update_result(
+                    status="error",
+                    reason="post-update-doctor-failed",
+                    mode=package_manager,
+                    root=package_root,
+                    before=before,
+                    after=live_after,
+                    steps=steps,
+                    started_at=started_at,
+                )
             return self._build_package_update_result(
                 status="ok",
                 reason=None,
