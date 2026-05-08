@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999991%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18237,6 +18237,32 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
   src\openzues\app.py src\openzues\cli.py`, focused rerun (`2 passed`),
   and focused `git diff --check`. Source/test checkpointed in `86d0b06b`.
+- Tlon native route-backed text sends now mirror OpenClaw's
+  `tlonRuntimeOutbound.sendText` path: saved `kind="tlon"` routes participate
+  in the native provider runtime, Tlon DM/group targets normalize through the
+  upstream `tlon:`, `dm/`, raw ship, `chat/`, and `group:` forms, DM sends
+  authenticate with `/~/login`, PUT a `chat-dm-action` poke to
+  `/~/channel/<id>`, convert markdown into Tlon story inline content, persist
+  native transport/provider metadata, and return `messageId`, `chatId`, and
+  `channelId` through `send_direct_channel_message`. This closes
+  `OZ-PROV-001DB`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999991%. The next provider queue rotates
+  to remaining Tlon media upload/group-thread depth, broader provider-native
+  breadth, packaging, or companion seams.
+- Verified the Tlon native send slice with focused red/green proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route -q`
+  (`1 failed` before implementation, then `1 passed`), focused helper proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_tlon_poke_authenticates_then_puts_channel_action tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route -q`
+  (`2 passed`), focused final proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_tlon_probe_authenticates_then_requests_name tests\test_ops_mesh.py::test_ops_mesh_service_tlon_poke_authenticates_then_puts_channel_action tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route -q`
+  (`3 passed`), adjacent native-provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or irc_native_route or twitch_native_route"`
+  (`7 passed, 376 deselected`), adjacent CLI probe proof
+  `python -m pytest tests\test_cli.py -q -k "route_backed_tlon_probe or route_backed_bluebubbles_probe or route_backed_twitch_probe"`
+  (`3 passed, 520 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py tests\test_cli.py`,
+  `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `bab52a95`.
 
 ## References
 

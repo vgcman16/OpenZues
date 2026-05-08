@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.999999%.
+  band of ~80-99.9999991%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -14,7 +14,7 @@ Current percentage rollup:
   `sessions.spawn`, sandboxed remote media staging, and `tools.invoke`
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe,
+  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -1736,6 +1736,15 @@ account probe envelope, and returns non-2xx name responses as
 provider-specific credential probe breadth beyond Slack/Telegram/Discord/
 Matrix/Zalo/LINE/Google Chat/Feishu-Lark/Mattermost/Signal/IRC/Twitch/
 BlueBubbles/Tlon and production provider-backed live resolve adapters.
+Tlon native route-backed text sends now mirror OpenClaw's
+`tlonRuntimeOutbound.sendText` HTTP-poke runtime: saved `kind="tlon"` routes
+participate in native provider delivery, DM/group targets normalize through
+the upstream target forms, markdown text becomes Tlon story inline content,
+`/~/login` supplies the auth cookie, and `/~/channel/<id>` receives the
+`chat-dm-action` or `channel-action-1` poke. Direct gateway sends now persist
+native transport and provider result metadata with `messageId`, `chatId`, and
+`channelId`. Remaining Tlon runtime parity is now media upload fidelity,
+deeper group/thread reply coverage, and inbound/session breadth.
 iMessage config-backed account probes now mirror OpenClaw's `probeIMessage`
 status hook: `channels status --probe --json` discovers configured
 `channels.imessage` accounts from the Gateway config snapshot, checks the
@@ -9743,3 +9752,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   any newly exposed OpenClaw namespaces.
   `config-types` was re-verified on 2026-05-07 as an upstream type-only barrel
   through the existing empty runtime module proof.
+- Current queue-head adjustment: Tlon native route-backed text sends now
+  mirror the OpenClaw HTTP-poke outbound runtime for DM text delivery:
+  route-backed `kind="tlon"` sends resolve Tlon target aliases, authenticate
+  against `/~/login`, PUT upstream-shaped poke actions into `/~/channel/<id>`,
+  convert markdown into Tlon story content, and preserve native provider
+  result metadata through direct gateway sends. Source/test checkpointed in
+  `bab52a95`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999991%. Remaining Tlon-specific gaps are media
+  upload fidelity, deeper group/thread reply proof, and inbound/session
+  breadth before rotating through broader provider, packaging, and companion
+  seams.

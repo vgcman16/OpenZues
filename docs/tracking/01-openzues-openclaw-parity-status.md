@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999991% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -4960,6 +4960,21 @@ may lag behind this tracker.
     (`2 passed`), adjacent channel-probe proof (`15 passed, 506 deselected`),
     adjacent BlueBubbles ops proof (`6 passed, 373 deselected`), `ruff
     check`, and `mypy`.
+
+- [x] Tlon native route-backed text send.
+  - Source: `openclaw-main/extensions/tlon/src/channel.runtime.ts`,
+    `openclaw-main/extensions/tlon/src/targets.ts`,
+    `openclaw-main/extensions/tlon/src/urbit/send.ts`,
+    `openclaw-main/extensions/tlon/src/urbit/story.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `bab52a95`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green Tlon native route proof
+    (`1 failed` before implementation, then `1 passed`), helper proof (`2
+    passed`), final focused proof (`3 passed`), adjacent native-provider proof
+    (`7 passed, 376 deselected`), adjacent CLI proof (`3 passed, 520
+    deselected`), `ruff check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.
