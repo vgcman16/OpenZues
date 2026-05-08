@@ -36301,6 +36301,89 @@ function setMatrixRuntime(runtime) {
   currentMatrixRuntime = runtime || null;
 }
 
+const MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID = new Map();
+
+function resolveMatrixThreadBindingKey(record) {
+  return `${record.accountId}:${record.parentConversationId || "-"}:${record.conversationId}`;
+}
+
+function toMatrixSessionBindingTargetKind(targetKind) {
+  return targetKind === "subagent" ? "subagent" : "session";
+}
+
+function toMatrixSessionBindingRecord(record, defaults) {
+  const lifecycle = resolveThreadBindingLifecycle({
+    record,
+    defaultIdleTimeoutMs: defaults.idleTimeoutMs,
+    defaultMaxAgeMs: defaults.maxAgeMs,
+  });
+  const idleTimeoutMs =
+    typeof record.idleTimeoutMs === "number" ? record.idleTimeoutMs : defaults.idleTimeoutMs;
+  const maxAgeMs = typeof record.maxAgeMs === "number" ? record.maxAgeMs : defaults.maxAgeMs;
+  return {
+    bindingId: resolveMatrixThreadBindingKey(record),
+    targetSessionKey: record.targetSessionKey,
+    targetKind: toMatrixSessionBindingTargetKind(record.targetKind),
+    conversation: {
+      channel: "matrix",
+      accountId: record.accountId,
+      conversationId: record.conversationId,
+      ...(record.parentConversationId
+        ? { parentConversationId: record.parentConversationId }
+        : {}),
+    },
+    status: "active",
+    boundAt: record.boundAt,
+    ...(lifecycle.expiresAt !== undefined ? { expiresAt: lifecycle.expiresAt } : {}),
+    metadata: {
+      agentId: record.agentId,
+      label: record.label,
+      boundBy: record.boundBy,
+      lastActivityAt: record.lastActivityAt,
+      idleTimeoutMs,
+      maxAgeMs,
+    },
+  };
+}
+
+function setMatrixThreadBindingIdleTimeoutBySessionKey(params = {}) {
+  const accountId = normalizeAccountId(params.accountId);
+  const manager = MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.get(accountId);
+  if (!manager) {
+    return [];
+  }
+  return manager
+    .setIdleTimeoutBySessionKey({
+      targetSessionKey: params.targetSessionKey,
+      idleTimeoutMs: params.idleTimeoutMs,
+    })
+    .map((record) =>
+      toMatrixSessionBindingRecord(record, {
+        idleTimeoutMs: manager.getIdleTimeoutMs(),
+        maxAgeMs: manager.getMaxAgeMs(),
+      }),
+    );
+}
+
+function setMatrixThreadBindingMaxAgeBySessionKey(params = {}) {
+  const accountId = normalizeAccountId(params.accountId);
+  const manager = MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.get(accountId);
+  if (!manager) {
+    return [];
+  }
+  return manager
+    .setMaxAgeBySessionKey({
+      targetSessionKey: params.targetSessionKey,
+      maxAgeMs: params.maxAgeMs,
+    })
+    .map((record) =>
+      toMatrixSessionBindingRecord(record, {
+        idleTimeoutMs: manager.getIdleTimeoutMs(),
+        maxAgeMs: manager.getMaxAgeMs(),
+      }),
+    );
+}
+
 function collectBlueBubblesStatusIssues(accounts) {
   return Array.isArray(accounts) ? [] : [];
 }
@@ -84509,6 +84592,11 @@ const matrixRuntimeSurfaceRuntime = {
   setMatrixRuntime,
 };
 
+const matrixThreadBindingsRuntime = {
+  setMatrixThreadBindingIdleTimeoutBySessionKey,
+  setMatrixThreadBindingMaxAgeBySessionKey,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -86604,6 +86692,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/matrix-runtime-surface"
   ) {
     return matrixRuntimeSurfaceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-thread-bindings" ||
+    request === "@openclaw/plugin-sdk/matrix-thread-bindings"
+  ) {
+    return matrixThreadBindingsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/bluebubbles-policy" ||
