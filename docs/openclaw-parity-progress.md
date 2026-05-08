@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999995%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999985%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18988,6 +18988,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `python -m pytest tests\test_cli.py -q -k "missing_bundled_runtime_sidecar or ignores_private_qa_bundled_runtime_sidecars or private_qa_package_dist"`
   (`3 passed, 541 deselected`), `ruff check tests\test_cli.py`, and focused
   `git diff --check`. Test checkpointed and pushed in `ad248bf4`.
+- `openzues update --dry-run --json --tag main --no-restart` now emits an
+  OpenClaw-shaped dry-run preview with native OpenZues package spec mapping,
+  planned global package-manager action text, non-registry lookup notes, and
+  restart/no-restart posture. This closes `OZ-PKG-001Z`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999985%.
+- Verified the update dry-run preview slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_maps_main_package_install_spec -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update CLI
+  proof `python -m pytest tests\test_cli.py -q -k "update_dry_run or update_status"`
+  (`13 passed, 532 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `08e8f76f`.
 
 ## References
 
