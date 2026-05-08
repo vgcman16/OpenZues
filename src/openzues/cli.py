@@ -87665,6 +87665,33 @@ const zaloSetupRuntime = {
   ),
 };
 
+function loadSlackInteractiveRepliesSurface() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "slack",
+    artifactBasename: "interactive-replies-api.js",
+  });
+}
+
+function loadSlackSecuritySurface() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "slack",
+    artifactBasename: "security-contract-api.js",
+  });
+}
+
+function compileSlackInteractiveReplies(...args) {
+  return loadSlackInteractiveRepliesSurface().compileSlackInteractiveReplies(...args);
+}
+
+function collectSlackSecurityAuditFindings(...args) {
+  return loadSlackSecuritySurface().collectSlackSecurityAuditFindings(...args);
+}
+
+const slackRuntime = {
+  collectSlackSecurityAuditFindings,
+  compileSlackInteractiveReplies,
+};
+
 function collectSynologyChatSecurityAuditFindings(params = {}) {
   const account = isRecord(params.account) ? params.account : {};
   if (!account.dangerouslyAllowNameMatching) {
@@ -89990,6 +90017,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/zalo-setup"
   ) {
     return zaloSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/slack" ||
+    request === "@openclaw/plugin-sdk/slack"
+  ) {
+    return slackRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/synology-chat" ||

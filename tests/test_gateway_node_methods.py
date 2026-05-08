@@ -21163,6 +21163,137 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_slack_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-slack.cjs"
+    runtime_entry.write_text(
+        """
+const slack = require("openclaw/plugin-sdk/slack");
+const scopedSlack = require("@openclaw/plugin-sdk/slack");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.slack",
+      description: "Use OpenClaw slack SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const calls = [];
+        globalThis.__openzuesQaRunnerRuntime = {
+          loadBundledPluginPublicSurfaceModuleSync(params) {
+            calls.push(params);
+            if (params.artifactBasename === "interactive-replies-api.js") {
+              return {
+                compileSlackInteractiveReplies: (items) =>
+                  items.map((item) => `reply:${item}`).join("|")
+              };
+            }
+            return {
+              collectSlackSecurityAuditFindings: (params) =>
+                params.signingSecret ? [] : [{
+                  checkId: "slack.signing_secret_missing",
+                  severity: "warning"
+                }]
+            };
+          }
+        };
+
+        const keys = Object.keys(slack).sort();
+        const beforeCalls = calls.length;
+        const compiled = slack.compileSlackInteractiveReplies(["approve", "deny"]);
+        const findings = scopedSlack.collectSlackSecurityAuditFindings({
+          signingSecret: ""
+        });
+        return {
+          keys,
+          scopedSame:
+            scopedSlack.compileSlackInteractiveReplies ===
+              slack.compileSlackInteractiveReplies,
+          beforeCalls,
+          compiled,
+          findings,
+          callSummary: calls.map((call) => ({
+            dirName: call.dirName,
+            artifact: call.artifactBasename
+          }))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-slack-plugin",
+                    "name": "Runtime Slack Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-slack.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.slack"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.slack"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "collectSlackSecurityAuditFindings",
+            "compileSlackInteractiveReplies",
+        ],
+        "scopedSame": True,
+        "beforeCalls": 0,
+        "compiled": "reply:approve|reply:deny",
+        "findings": [
+            {
+                "checkId": "slack.signing_secret_missing",
+                "severity": "warning",
+            }
+        ],
+        "callSummary": [
+            {"dirName": "slack", "artifact": "interactive-replies-api.js"},
+            {"dirName": "slack", "artifact": "security-contract-api.js"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_feishu_conversation_helpers(
     tmp_path,
 ) -> None:
