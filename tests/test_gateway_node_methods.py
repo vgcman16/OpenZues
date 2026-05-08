@@ -66308,6 +66308,104 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_resolution_notes_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-resolution-notes.cjs"
+    runtime_entry.write_text(
+        """
+const notes = require("openclaw/plugin-sdk/resolution-notes");
+const scopedNotes = require("@openclaw/plugin-sdk/resolution-notes");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.resolution_notes",
+      description: "Use OpenClaw resolution-notes SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(notes).sort(),
+          scopedType: typeof scopedNotes.formatResolvedUnresolvedNote,
+          empty: notes.formatResolvedUnresolvedNote({ resolved: [], unresolved: [] }) ?? null,
+          resolved: notes.formatResolvedUnresolvedNote({
+            resolved: ["alice", "bob"],
+            unresolved: []
+          }),
+          unresolved: notes.formatResolvedUnresolvedNote({
+            resolved: [],
+            unresolved: ["@unknown"]
+          }),
+          both: notes.formatResolvedUnresolvedNote({
+            resolved: ["alice"],
+            unresolved: ["@unknown"]
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-resolution-notes-plugin",
+                    "name": "Runtime Resolution Notes Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-resolution-notes-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.resolution_notes"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.resolution_notes"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["formatResolvedUnresolvedNote"],
+        "scopedType": "function",
+        "empty": None,
+        "resolved": "Resolved: alice, bob",
+        "unresolved": "Unresolved (kept as typed): @unknown",
+        "both": "Resolved: alice\nUnresolved (kept as typed): @unknown",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_web_media_helpers(
     tmp_path,
 ) -> None:

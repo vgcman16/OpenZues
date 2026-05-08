@@ -46465,6 +46465,10 @@ const toolSendRuntime = {
   extractToolSend,
 };
 
+const resolutionNotesRuntime = {
+  formatResolvedUnresolvedNote,
+};
+
 const providerEntryRuntime = {
   buildSingleProviderApiKeyCatalog,
   createProviderApiKeyAuthMethod,
@@ -85769,6 +85773,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/tool-send"
   ) {
     return toolSendRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/resolution-notes" ||
+    request === "@openclaw/plugin-sdk/resolution-notes"
+  ) {
+    return resolutionNotesRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/boolean-param" ||
