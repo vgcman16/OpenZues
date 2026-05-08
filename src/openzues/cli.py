@@ -61209,6 +61209,199 @@ const facadeResolutionSharedRuntime = {
   resolveRegistryPluginModuleLocationFromRecords,
 };
 
+function createLazyFacadeValue(loadFacadeModule, key) {
+  return (...args) => {
+    const value = loadFacadeModule()[key];
+    if (typeof value !== "function") {
+      return value;
+    }
+    return value(...args);
+  };
+}
+
+const FACADE_ALWAYS_ALLOWED_RUNTIME_DIR_NAMES = new Set([
+  "image-generation-core",
+  "media-understanding-core",
+  "speech-core",
+]);
+
+function resolveFacadeRuntimeBundledPluginsDir(env = process.env) {
+  if (areBundledPluginsDisabledForFacade(env)) {
+    return undefined;
+  }
+  const configured = normalizeOptionalString(env && env.OPENCLAW_BUNDLED_PLUGINS_DIR);
+  return configured || undefined;
+}
+
+function resolveFacadeRuntimePackageRoot() {
+  return path.resolve(process.cwd());
+}
+
+function createFacadeRuntimeResolutionKey(params = {}) {
+  const env = params.env || process.env;
+  return createFacadeResolutionKey({
+    ...params,
+    bundledPluginsDir: resolveFacadeRuntimeBundledPluginsDir(env),
+    env,
+  });
+}
+
+function resolveFacadeRuntimeModuleLocation(params = {}) {
+  const env = params.env || process.env;
+  const bundledPluginsDir = resolveFacadeRuntimeBundledPluginsDir(env);
+  const packageRoot = resolveFacadeRuntimePackageRoot();
+  return resolveBundledFacadeModuleLocation({
+    ...params,
+    currentModulePath: typeof __filename === "string" ? __filename : "",
+    packageRoot,
+    bundledPluginsDir,
+    env,
+  });
+}
+
+function buildFacadeRuntimeActivationCheckParams(params = {}, location) {
+  const resolvedLocation =
+    location === undefined ? resolveFacadeRuntimeModuleLocation(params) : location;
+  const packageRoot = resolveFacadeRuntimePackageRoot();
+  return {
+    ...params,
+    location: resolvedLocation,
+    sourceExtensionsRoot: path.resolve(packageRoot, "extensions"),
+    resolutionKey: createFacadeRuntimeResolutionKey(params),
+  };
+}
+
+function resolveTrackedFacadePluginId(params = {}) {
+  return String(params.dirName || "");
+}
+
+function evaluateBundledPluginPublicSurfaceAccessForFacadeRuntime(params = {}) {
+  const manifestRecord = params.manifestRecord || {};
+  if (manifestRecord.enabledByDefault === true) {
+    return { allowed: true, pluginId: manifestRecord.id || params.params?.dirName };
+  }
+  const pluginId = manifestRecord.id || params.params?.dirName;
+  return {
+    allowed: false,
+    ...(pluginId ? { pluginId } : {}),
+    reason: "plugin runtime is not activated",
+  };
+}
+
+function resolveBundledPluginPublicSurfaceAccessForFacadeRuntime(params = {}) {
+  if (
+    params.artifactBasename === "runtime-api.js" &&
+    FACADE_ALWAYS_ALLOWED_RUNTIME_DIR_NAMES.has(params.dirName)
+  ) {
+    return {
+      allowed: true,
+      pluginId: params.dirName,
+    };
+  }
+  return {
+    allowed: false,
+    reason: `no bundled plugin manifest found for ${params.dirName}`,
+  };
+}
+
+function throwForBundledPluginPublicSurfaceAccessForFacadeRuntime(params = {}) {
+  const access = params.access || {};
+  const request = params.request || {};
+  const pluginLabel = access.pluginId || request.dirName;
+  const reason = access.reason || "plugin runtime is not activated";
+  throw new Error(
+    `Bundled plugin public surface access blocked for "${pluginLabel}" via ` +
+      `${request.dirName}/${request.artifactBasename}: ${reason}`,
+  );
+}
+
+function resolveActivatedBundledPluginPublicSurfaceAccessOrThrowForFacadeRuntime(params = {}) {
+  const access = resolveBundledPluginPublicSurfaceAccessForFacadeRuntime(params);
+  if (!access.allowed) {
+    throwForBundledPluginPublicSurfaceAccessForFacadeRuntime({
+      access,
+      request: params,
+    });
+  }
+  return access;
+}
+
+function canLoadActivatedBundledPluginPublicSurfaceForFacadeRuntime(params = {}) {
+  return resolveBundledPluginPublicSurfaceAccessForFacadeRuntime(
+    buildFacadeRuntimeActivationCheckParams(params),
+  ).allowed;
+}
+
+function loadBundledPluginPublicSurfaceModuleSyncForFacadeRuntime(params = {}) {
+  const location = resolveFacadeRuntimeModuleLocation(params);
+  const trackedPluginId = () =>
+    resolveTrackedFacadePluginId(buildFacadeRuntimeActivationCheckParams(params, location));
+  if (!location) {
+    throw new Error(
+      `Unable to open bundled plugin public surface ${params.dirName}/${params.artifactBasename}`,
+    );
+  }
+  return loadFacadeModuleAtLocationSync({
+    location,
+    trackedPluginId,
+    runtimeDeps: {
+      pluginId: params.dirName,
+      ...(params.env ? { env: params.env } : {}),
+    },
+    ...(typeof params.loadModule === "function" ? { loadModule: params.loadModule } : {}),
+  });
+}
+
+function loadActivatedBundledPluginPublicSurfaceModuleSyncForFacadeRuntime(params = {}) {
+  resolveActivatedBundledPluginPublicSurfaceAccessOrThrowForFacadeRuntime(
+    buildFacadeRuntimeActivationCheckParams(params),
+  );
+  return loadBundledPluginPublicSurfaceModuleSyncForFacadeRuntime(params);
+}
+
+function tryLoadActivatedBundledPluginPublicSurfaceModuleSyncForFacadeRuntime(params = {}) {
+  const access = resolveBundledPluginPublicSurfaceAccessForFacadeRuntime(
+    buildFacadeRuntimeActivationCheckParams(params),
+  );
+  if (!access.allowed) {
+    return null;
+  }
+  return loadBundledPluginPublicSurfaceModuleSyncForFacadeRuntime(params);
+}
+
+const facadeRuntimeTesting = {
+  loadFacadeModuleAtLocationSync,
+  resolveRegistryPluginModuleLocationFromRegistry:
+    resolveRegistryPluginModuleLocationFromRecords,
+  resolveFacadeModuleLocation: resolveFacadeRuntimeModuleLocation,
+  evaluateBundledPluginPublicSurfaceAccess:
+    evaluateBundledPluginPublicSurfaceAccessForFacadeRuntime,
+  throwForBundledPluginPublicSurfaceAccess:
+    throwForBundledPluginPublicSurfaceAccessForFacadeRuntime,
+  resolveActivatedBundledPluginPublicSurfaceAccessOrThrow:
+    resolveActivatedBundledPluginPublicSurfaceAccessOrThrowForFacadeRuntime,
+  resolveBundledPluginPublicSurfaceAccess:
+    resolveBundledPluginPublicSurfaceAccessForFacadeRuntime,
+  resolveTrackedFacadePluginId,
+};
+
+const facadeRuntime = {
+  createLazyFacadeArrayValue,
+  createLazyFacadeObjectValue,
+  createLazyFacadeValue,
+  listImportedBundledPluginFacadeIds,
+  loadBundledPluginPublicSurfaceModuleSync:
+    loadBundledPluginPublicSurfaceModuleSyncForFacadeRuntime,
+  canLoadActivatedBundledPluginPublicSurface:
+    canLoadActivatedBundledPluginPublicSurfaceForFacadeRuntime,
+  loadActivatedBundledPluginPublicSurfaceModuleSync:
+    loadActivatedBundledPluginPublicSurfaceModuleSyncForFacadeRuntime,
+  tryLoadActivatedBundledPluginPublicSurfaceModuleSync:
+    tryLoadActivatedBundledPluginPublicSurfaceModuleSyncForFacadeRuntime,
+  resetFacadeRuntimeStateForTest,
+  __testing: facadeRuntimeTesting,
+};
+
 function buildPluginApi(params = {}) {
   const handlers = params.handlers || {};
   return createTestPluginApi({
@@ -86009,6 +86202,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-test-runtime"
   ) {
     return pluginTestRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/facade-runtime" ||
+    request === "@openclaw/plugin-sdk/facade-runtime"
+  ) {
+    return facadeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/facade-resolution-shared" ||

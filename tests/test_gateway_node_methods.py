@@ -67062,6 +67062,210 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_facade_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-facade-runtime.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const runtime = require("openclaw/plugin-sdk/facade-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/facade-runtime");
+
+const root = {json.dumps(str(tmp_path))};
+function writeFile(filePath) {{
+  fs.mkdirSync(path.dirname(filePath), {{ recursive: true }});
+  fs.writeFileSync(filePath, "module.exports = {{ ok: true }};\\n");
+}}
+function rel(filePath) {{
+  return filePath ? path.relative(root, filePath).replace(/\\\\/g, "/") : null;
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.facade_runtime",
+      description: "Use OpenClaw facade-runtime SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        runtime.resetFacadeRuntimeStateForTest();
+        let callLoads = 0;
+        const greet = runtime.createLazyFacadeValue(() => {{
+          callLoads += 1;
+          return {{
+            greet(name) {{
+              return `hi:${{name}}:${{callLoads}}`;
+            }}
+          }};
+        }}, "greet");
+        let valueLoads = 0;
+        const answer = runtime.createLazyFacadeValue(() => {{
+          valueLoads += 1;
+          return {{ answer: 42 }};
+        }}, "answer");
+
+        const modulePath = path.join(root, "facade", "surface.js");
+        const location = {{ modulePath, boundaryRoot: path.join(root, "facade") }};
+        const firstLoaded = runtime.__testing.loadFacadeModuleAtLocationSync({{
+          location,
+          trackedPluginId: () => "demo-runtime",
+          loadModule(loadedPath) {{
+            return {{ modulePath: path.basename(loadedPath), value: 7 }};
+          }}
+        }});
+        const secondLoaded = runtime.__testing.loadFacadeModuleAtLocationSync({{
+          location,
+          trackedPluginId: "ignored",
+          loadModule() {{
+            return {{ value: 99 }};
+          }}
+        }});
+
+        const registryRoot = path.join(root, "registry", "facade-runtime-channel");
+        writeFile(path.join(registryRoot, "surface.mjs"));
+        const registryLocation =
+          runtime.__testing.resolveRegistryPluginModuleLocationFromRegistry({{
+            registry: [
+              {{
+                id: "other",
+                rootDir: registryRoot,
+                channels: ["facade-runtime-channel"]
+              }}
+            ],
+            dirName: "facade-runtime-channel",
+            artifactBasename: "surface.js"
+          }});
+        const canAlways = runtime.canLoadActivatedBundledPluginPublicSurface({{
+          dirName: "image-generation-core",
+          artifactBasename: "runtime-api.js",
+          env: {{}}
+        }});
+        const accessAlways = runtime.__testing.resolveBundledPluginPublicSurfaceAccess({{
+          dirName: "image-generation-core",
+          artifactBasename: "runtime-api.js",
+          env: {{}}
+        }});
+        const activatedAlways =
+          runtime.__testing.resolveActivatedBundledPluginPublicSurfaceAccessOrThrow({{
+            dirName: "image-generation-core",
+            artifactBasename: "runtime-api.js",
+            env: {{}}
+          }});
+
+        return {{
+          keys: Object.keys(runtime).sort(),
+          scopedType: typeof scopedRuntime.createLazyFacadeValue,
+          lazyCallFirst: greet("ada"),
+          lazyCallSecond: greet("bob"),
+          callLoads,
+          lazyValue: answer("ignored"),
+          valueLoads,
+          loadedSame: firstLoaded === secondLoaded,
+          loadedValue: secondLoaded.value,
+          facadeIds: runtime.listImportedBundledPluginFacadeIds(),
+          registryLocation: {{
+            modulePath: rel(registryLocation.modulePath),
+            boundaryRoot: rel(registryLocation.boundaryRoot)
+          }},
+          canAlways,
+          accessAlways,
+          activatedAlways,
+          blockedTryLoad:
+            runtime.tryLoadActivatedBundledPluginPublicSurfaceModuleSync({{
+              dirName: "missing-plugin",
+              artifactBasename: "missing.js",
+              env: {{}}
+            }}) === null
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-facade-runtime-plugin",
+                    "name": "Runtime Facade Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-facade-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.facade_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.facade_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "__testing",
+            "canLoadActivatedBundledPluginPublicSurface",
+            "createLazyFacadeArrayValue",
+            "createLazyFacadeObjectValue",
+            "createLazyFacadeValue",
+            "listImportedBundledPluginFacadeIds",
+            "loadActivatedBundledPluginPublicSurfaceModuleSync",
+            "loadBundledPluginPublicSurfaceModuleSync",
+            "resetFacadeRuntimeStateForTest",
+            "tryLoadActivatedBundledPluginPublicSurfaceModuleSync",
+        ],
+        "scopedType": "function",
+        "lazyCallFirst": "hi:ada:1",
+        "lazyCallSecond": "hi:bob:2",
+        "callLoads": 2,
+        "lazyValue": 42,
+        "valueLoads": 1,
+        "loadedSame": True,
+        "loadedValue": 7,
+        "facadeIds": ["demo-runtime"],
+        "registryLocation": {
+            "modulePath": "registry/facade-runtime-channel/surface.mjs",
+            "boundaryRoot": "registry/facade-runtime-channel",
+        },
+        "canAlways": True,
+        "accessAlways": {"allowed": True, "pluginId": "image-generation-core"},
+        "activatedAlways": {"allowed": True, "pluginId": "image-generation-core"},
+        "blockedTryLoad": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_web_media_helpers(
     tmp_path,
 ) -> None:
