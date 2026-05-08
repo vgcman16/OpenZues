@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.999998%.
+  band of ~80-99.999999%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -14,7 +14,7 @@ Current percentage rollup:
   `sessions.spawn`, sandboxed remote media staging, and `tools.invoke`
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe,
+  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -1736,6 +1736,15 @@ account probe envelope, and returns non-2xx name responses as
 provider-specific credential probe breadth beyond Slack/Telegram/Discord/
 Matrix/Zalo/LINE/Google Chat/Feishu-Lark/Mattermost/Signal/IRC/Twitch/
 BlueBubbles/Tlon and production provider-backed live resolve adapters.
+iMessage config-backed account probes now mirror OpenClaw's `probeIMessage`
+status hook: `channels status --probe --json` discovers configured
+`channels.imessage` accounts from the Gateway config snapshot, checks the
+configured `imsg` binary, probes `imsg rpc --help` with the upstream fatal
+old-CLI guard, runs `imsg rpc` with configured `--db`, and sends JSON-RPC
+`chats.list` `{limit: 1}` before returning native-CLI-backed account probe
+metadata. Remaining channel CLI parity is no longer dominated by the
+route/config account-probe queue; the next channel queue should rotate to
+remaining provider runtime breadth.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account
