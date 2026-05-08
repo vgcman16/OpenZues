@@ -46423,6 +46423,518 @@ const opencodeRuntime = {
   createOpencodeCatalogApiKeyAuthMethod,
 };
 
+const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_EMBEDDING_MODEL = "nomic-embed-text";
+
+function resolveOllamaApiBase(configuredBaseUrl) {
+  if (!configuredBaseUrl) {
+    return OLLAMA_DEFAULT_BASE_URL;
+  }
+  const trimmed = String(configuredBaseUrl).replace(/\/+$/, "");
+  return trimmed.replace(/\/v1$/i, "");
+}
+
+function uniqueOllamaModelPrefixCandidates(providerId) {
+  const candidates = [providerId, normalizeProviderId(providerId || ""), "ollama"]
+    .map((candidate) =>
+      candidate === undefined || candidate === null ? "" : String(candidate).trim(),
+    )
+    .filter(Boolean);
+  return Array.from(new Set(candidates));
+}
+
+function normalizeOllamaWireModelId(modelId, providerId) {
+  const trimmed = String(modelId || "").trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  for (const candidate of uniqueOllamaModelPrefixCandidates(providerId)) {
+    const prefix = `${candidate}/`;
+    if (trimmed.startsWith(prefix)) {
+      return trimmed.slice(prefix.length);
+    }
+  }
+  return trimmed;
+}
+
+function buildOllamaChatRequest(params = {}) {
+  const requestParams =
+    params.requestParams && typeof params.requestParams === "object" ? params.requestParams : {};
+  return {
+    model: normalizeOllamaWireModelId(params.modelId, params.providerId),
+    messages: Array.isArray(params.messages) ? params.messages : [],
+    stream: params.stream ?? true,
+    ...(Array.isArray(params.tools) && params.tools.length > 0 ? { tools: params.tools } : {}),
+    ...(params.options ? { options: params.options } : {}),
+    ...requestParams,
+  };
+}
+
+function resolveOllamaBaseUrlForRun(params = {}) {
+  const providerBaseUrl = normalizeOptionalString(params.providerBaseUrl);
+  if (providerBaseUrl) {
+    return providerBaseUrl;
+  }
+  const modelBaseUrl = normalizeOptionalString(params.modelBaseUrl);
+  if (modelBaseUrl) {
+    return modelBaseUrl;
+  }
+  return OLLAMA_DEFAULT_BASE_URL;
+}
+
+function resolveConfiguredOllamaProviderConfig(params = {}) {
+  const providerId = normalizeOptionalString(params.providerId);
+  if (!providerId) {
+    return undefined;
+  }
+  const providers =
+    params.config &&
+    params.config.models &&
+    params.config.models.providers &&
+    typeof params.config.models.providers === "object"
+      ? params.config.models.providers
+      : undefined;
+  if (!providers) {
+    return undefined;
+  }
+  if (providers[providerId]) {
+    return providers[providerId];
+  }
+  const normalized = normalizeProviderId(providerId);
+  for (const [candidateId, candidate] of Object.entries(providers)) {
+    if (normalizeProviderId(candidateId) === normalized) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function isOllamaCompatProvider(model = {}) {
+  const providerId = normalizeProviderId(model.provider || "");
+  if (providerId === "ollama") {
+    return true;
+  }
+  if (!model.baseUrl) {
+    return false;
+  }
+  try {
+    const parsed = new URL(String(model.baseUrl));
+    const hostname = normalizeLowercaseStringOrEmpty(parsed.hostname);
+    const isLocalhost =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname === "[::1]";
+    if (isLocalhost && parsed.port === "11434") {
+      return true;
+    }
+    const providerHintsOllama = providerId.includes("ollama");
+    const isOllamaPort = parsed.port === "11434";
+    const isOllamaCompatPath = parsed.pathname === "/" || /^\/v1\/?$/i.test(parsed.pathname);
+    return providerHintsOllama && isOllamaPort && isOllamaCompatPath;
+  } catch {
+    return false;
+  }
+}
+
+function resolveOllamaCompatNumCtxEnabled(params = {}) {
+  const providerConfig = resolveConfiguredOllamaProviderConfig(params);
+  return providerConfig && providerConfig.injectNumCtxForOpenAICompat !== undefined
+    ? providerConfig.injectNumCtxForOpenAICompat !== false
+    : true;
+}
+
+function shouldInjectOllamaCompatNumCtx(params = {}) {
+  if (!params.model || params.model.api !== "openai-completions") {
+    return false;
+  }
+  if (!isOllamaCompatProvider(params.model)) {
+    return false;
+  }
+  return resolveOllamaCompatNumCtxEnabled({
+    config: params.config,
+    providerId: params.providerId,
+  });
+}
+
+function parseJsonObjectPreservingUnsafeIntegers(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return {};
+  }
+  const patched = value.replace(/(:|,|\[)\s*(-?\d{16,})(?=\s*[,}\]])/g, '$1"$2"');
+  try {
+    const parsed = JSON.parse(patched);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function extractOllamaTextContent(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .filter((part) => part && part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("");
+}
+
+function extractOllamaImages(content) {
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  return content
+    .filter((part) => part && part.type === "image" && typeof part.data === "string")
+    .map((part) => part.data);
+}
+
+function normalizeOllamaToolCallName(rawName, options = {}) {
+  const trimmed = String(rawName || "").trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  const availableToolNames = options.availableToolNames;
+  if (availableToolNames && availableToolNames.has(trimmed)) {
+    return trimmed;
+  }
+  const strippedAnySeparator = trimmed.replace(/^(?:functions?|tools?)[./_-]+/iu, "").trim();
+  if (
+    availableToolNames &&
+    strippedAnySeparator !== trimmed &&
+    availableToolNames.has(strippedAnySeparator)
+  ) {
+    return strippedAnySeparator;
+  }
+  if (availableToolNames) {
+    return trimmed;
+  }
+  return trimmed.replace(/^(?:functions?|tools?)[./]+/iu, "").trim();
+}
+
+function extractOllamaToolCalls(content, options = {}) {
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  const result = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") {
+      continue;
+    }
+    if (part.type === "toolCall") {
+      result.push({
+        function: {
+          name: normalizeOllamaToolCallName(part.name, options),
+          arguments: parseJsonObjectPreservingUnsafeIntegers(part.arguments),
+        },
+      });
+    } else if (part.type === "tool_use") {
+      result.push({
+        function: {
+          name: normalizeOllamaToolCallName(part.name, options),
+          arguments: parseJsonObjectPreservingUnsafeIntegers(part.input),
+        },
+      });
+    }
+  }
+  return result;
+}
+
+function convertToOllamaMessages(messages, system, options = {}) {
+  const result = [];
+  if (system) {
+    result.push({ role: "system", content: system });
+  }
+  for (const msg of Array.isArray(messages) ? messages : []) {
+    if (msg.role === "user") {
+      const text = extractOllamaTextContent(msg.content);
+      const images = extractOllamaImages(msg.content);
+      result.push({
+        role: "user",
+        content: text,
+        ...(images.length > 0 ? { images } : {}),
+      });
+      continue;
+    }
+    if (msg.role === "assistant") {
+      const text = extractOllamaTextContent(msg.content);
+      const toolCalls = extractOllamaToolCalls(msg.content, options);
+      result.push({
+        role: "assistant",
+        content: text,
+        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+      });
+      continue;
+    }
+    if (msg.role === "tool" || msg.role === "toolResult") {
+      const text = extractOllamaTextContent(msg.content);
+      const toolName = typeof msg.toolName === "string" ? msg.toolName : undefined;
+      result.push({
+        role: "tool",
+        content: text,
+        ...(toolName ? { tool_name: toolName } : {}),
+      });
+    }
+  }
+  return result;
+}
+
+function buildOllamaUsageWithNoCost(params = {}) {
+  const input = params.input ?? 0;
+  const output = params.output ?? 0;
+  const cacheRead = params.cacheRead ?? 0;
+  const cacheWrite = params.cacheWrite ?? 0;
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    totalTokens: params.totalTokens ?? input + output,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+function resolveOllamaUsageCount(value, fallback) {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  if (typeof fallback === "number" && Number.isFinite(fallback) && fallback > 0) {
+    return fallback;
+  }
+  return 0;
+}
+
+function buildAssistantMessage(response, modelInfo, usageFallback = {}, options = {}) {
+  const content = [];
+  const message = response && response.message ? response.message : {};
+  const thinking = message.thinking || message.reasoning || "";
+  if (thinking) {
+    content.push({ type: "thinking", thinking });
+  }
+  const text = message.content || "";
+  if (text) {
+    content.push({ type: "text", text });
+  }
+  const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+  for (const toolCall of toolCalls) {
+    const fn = toolCall && toolCall.function ? toolCall.function : {};
+    const callId = crypto.randomUUID
+      ? crypto.randomUUID()
+      : crypto.randomBytes(16).toString("hex");
+    content.push({
+      type: "toolCall",
+      id: `ollama_call_${callId}`,
+      name: normalizeOllamaToolCallName(fn.name, options),
+      arguments: parseJsonObjectPreservingUnsafeIntegers(fn.arguments),
+    });
+  }
+  const model = modelInfo || {};
+  return {
+    role: "assistant",
+    content,
+    stopReason: toolCalls.length > 0 ? "toolUse" : "stop",
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: buildOllamaUsageWithNoCost({
+      input: resolveOllamaUsageCount(response && response.prompt_eval_count, usageFallback.input),
+      output: resolveOllamaUsageCount(response && response.eval_count, usageFallback.output),
+    }),
+    timestamp: Date.now(),
+  };
+}
+
+async function* parseNdjsonStream(reader) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      try {
+        yield JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+    }
+  }
+  const trailing = buffer.trim();
+  if (trailing) {
+    try {
+      yield JSON.parse(trailing);
+    } catch {
+      // Match OpenClaw's tolerant parser: malformed trailing bytes are skipped.
+    }
+  }
+}
+
+function createOllamaStreamFn() {
+  return async function* openzuesUnavailableOllamaStream() {
+    throw new Error("Ollama streaming is not available in the native shim.");
+  };
+}
+
+function patchOllamaCompatPayload(payloadRecord, numCtx) {
+  if (!payloadRecord || typeof payloadRecord !== "object" || Array.isArray(payloadRecord)) {
+    return;
+  }
+  if (!payloadRecord.options || typeof payloadRecord.options !== "object") {
+    payloadRecord.options = {};
+  }
+  payloadRecord.options.num_ctx = numCtx;
+  const messages = payloadRecord.messages;
+  if (!Array.isArray(messages)) {
+    return;
+  }
+  for (const message of messages) {
+    if (!message || typeof message !== "object" || Array.isArray(message)) {
+      continue;
+    }
+    const functionCall = message.function_call;
+    if (functionCall && typeof functionCall === "object" && "arguments" in functionCall) {
+      functionCall.arguments = parseJsonObjectPreservingUnsafeIntegers(functionCall.arguments);
+    }
+    const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+    for (const toolCall of toolCalls) {
+      const fn = toolCall && toolCall.function;
+      if (fn && typeof fn === "object" && "arguments" in fn) {
+        fn.arguments = parseJsonObjectPreservingUnsafeIntegers(fn.arguments);
+      }
+    }
+  }
+}
+
+function wrapOllamaCompatNumCtx(baseFn, numCtx) {
+  const streamFn = typeof baseFn === "function" ? baseFn : createOllamaStreamFn();
+  return (model, context, options = {}) => {
+    const originalOnPayload = options.onPayload;
+    const nextOptions = {
+      ...options,
+      onPayload(payloadRecord) {
+        patchOllamaCompatPayload(payloadRecord, numCtx);
+        if (typeof originalOnPayload === "function") {
+          originalOnPayload(payloadRecord);
+        }
+      },
+    };
+    return streamFn(model, context, nextOptions);
+  };
+}
+
+function resolveOllamaNumCtx(model = {}) {
+  const params = model.params && typeof model.params === "object" ? model.params : {};
+  const value = params.num_ctx ?? model.contextWindow;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : 128000;
+}
+
+function createConfiguredOllamaCompatStreamWrapper(params = {}) {
+  const baseFn = params.baseFn || params.streamFn;
+  const model = params.model || {};
+  if (
+    shouldInjectOllamaCompatNumCtx({
+      model,
+      config: params.config,
+      providerId: params.provider || params.providerId,
+    })
+  ) {
+    return wrapOllamaCompatNumCtx(baseFn, resolveOllamaNumCtx(model));
+  }
+  return typeof baseFn === "function" ? baseFn : createOllamaStreamFn();
+}
+
+const createConfiguredOllamaCompatNumCtxWrapper = createConfiguredOllamaCompatStreamWrapper;
+
+function createConfiguredOllamaStreamFn() {
+  return createOllamaStreamFn();
+}
+
+async function createOllamaEmbeddingProvider(options = {}) {
+  const providerId = normalizeOptionalString(options.provider) || "ollama";
+  const providerConfig =
+    options.config &&
+    options.config.models &&
+    options.config.models.providers &&
+    options.config.models.providers[providerId]
+      ? options.config.models.providers[providerId]
+      : {};
+  const baseUrl = resolveOllamaApiBase(
+    (options.remote && options.remote.baseUrl) ||
+      providerConfig.baseUrl ||
+      providerConfig.baseURL ||
+      OLLAMA_DEFAULT_BASE_URL,
+  );
+  const model = normalizeOllamaWireModelId(
+    normalizeOptionalString(options.model) || DEFAULT_OLLAMA_EMBEDDING_MODEL,
+    providerId,
+  );
+  const headers = {
+    "Content-Type": "application/json",
+    ...(providerConfig.headers || {}),
+    ...((options.remote && options.remote.headers) || {}),
+  };
+  const provider = {
+    id: "ollama",
+    model,
+    embedQuery: async () => {
+      throw new Error("Ollama embedding HTTP execution is not available in the native shim.");
+    },
+    embedBatch: async (texts) => {
+      if (Array.isArray(texts) && texts.length === 0) {
+        return [];
+      }
+      throw new Error("Ollama embedding HTTP execution is not available in the native shim.");
+    },
+  };
+  return {
+    provider,
+    client: {
+      baseUrl,
+      headers,
+      model,
+      embedBatch: provider.embedBatch,
+    },
+  };
+}
+
+const ollamaRuntime = {
+  resolveOllamaApiBase,
+};
+
+const ollamaRuntimeRuntime = {
+  DEFAULT_OLLAMA_EMBEDDING_MODEL,
+  buildAssistantMessage,
+  buildOllamaChatRequest,
+  convertToOllamaMessages,
+  createConfiguredOllamaCompatNumCtxWrapper,
+  createConfiguredOllamaCompatStreamWrapper,
+  createConfiguredOllamaStreamFn,
+  createOllamaEmbeddingProvider,
+  createOllamaStreamFn,
+  isOllamaCompatProvider,
+  parseNdjsonStream,
+  resolveOllamaBaseUrlForRun,
+  resolveOllamaCompatNumCtxEnabled,
+  shouldInjectOllamaCompatNumCtx,
+  wrapOllamaCompatNumCtx,
+};
+
 const PROVIDER_USAGE_DEFAULT_TIMEOUT_MS = 5000;
 const PROVIDER_USAGE_LABELS = {
   anthropic: "Claude",
@@ -86703,6 +87215,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/opencode"
   ) {
     return opencodeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/ollama" ||
+    request === "@openclaw/plugin-sdk/ollama"
+  ) {
+    return ollamaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/ollama-runtime" ||
+    request === "@openclaw/plugin-sdk/ollama-runtime"
+  ) {
+    return ollamaRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-usage" ||

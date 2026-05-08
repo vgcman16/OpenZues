@@ -49184,6 +49184,275 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_ollama_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-ollama.cjs"
+    runtime_entry.write_text(
+        """
+const ollama = require("openclaw/plugin-sdk/ollama");
+const runtime = require("openclaw/plugin-sdk/ollama-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/ollama-runtime");
+
+async function readNdjson() {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      const first =
+        '{"model":"qwen3","created_at":"now",' +
+        '"message":{"role":"assistant","content":"A"},"done":false}\\nnot json\\n';
+      controller.enqueue(encoder.encode(first));
+      controller.enqueue(encoder.encode(
+        '{"model":"qwen3","created_at":"now","message":{"role":"assistant","content":"B"},"done":true}'
+      ));
+      controller.close();
+    }
+  });
+  const values = [];
+  for await (const chunk of runtime.parseNdjsonStream(stream.getReader())) {
+    values.push(chunk.message.content);
+  }
+  return values;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.ollama",
+      description: "Use OpenClaw Ollama SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const converted = runtime.convertToOllamaMessages([
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "describe" },
+              { type: "image", data: "base64-image" }
+            ]
+          },
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "checking" },
+              {
+                type: "toolCall",
+                id: "call-1",
+                name: "tools_exec",
+                arguments: '{"thread":9223372036854775807}'
+              },
+              {
+                type: "tool_use",
+                id: "call-2",
+                name: "function-read",
+                input: { path: "README.md" }
+              }
+            ]
+          },
+          { role: "toolResult", toolName: "read", content: "file text" }
+        ], "system prompt", { availableToolNames: new Set(["exec", "read"]) });
+        const assistant = runtime.buildAssistantMessage({
+          model: "qwen3",
+          created_at: "now",
+          message: {
+            role: "assistant",
+            content: "done",
+            thinking: "thinking",
+            tool_calls: [
+              { function: { name: "functions.exec", arguments: '{"ok":true}' } }
+            ]
+          },
+          done: true,
+          prompt_eval_count: 0,
+          eval_count: 5
+        }, { api: "ollama", provider: "ollama", id: "ollama/qwen3" }, { input: 11, output: 4 });
+        return {
+          apiKeys: Object.keys(ollama).sort(),
+          runtimeKeys: Object.keys(runtime).sort(),
+          scopedTypes: [
+            typeof scopedRuntime.buildOllamaChatRequest,
+            typeof scopedRuntime.parseNdjsonStream
+          ],
+          bases: [
+            ollama.resolveOllamaApiBase(),
+            ollama.resolveOllamaApiBase("http://127.0.0.1:11434/v1///")
+          ],
+          chat: runtime.buildOllamaChatRequest({
+            modelId: "ollama-spark/qwen3:32b",
+            providerId: "ollama-spark",
+            messages: [{ role: "user", content: "hello" }],
+            options: { num_ctx: 8192 },
+            requestParams: { think: "medium" },
+            stream: false
+          }),
+          compat: [
+            runtime.isOllamaCompatProvider({ api: "openai-completions", provider: "ollama" }),
+            runtime.isOllamaCompatProvider({
+              api: "openai-completions",
+              provider: "my-ollama",
+              baseUrl: "http://10.0.0.5:11434/v1"
+            }),
+            runtime.shouldInjectOllamaCompatNumCtx({
+              model: { api: "openai-completions", provider: "ollama" },
+              providerId: "ollama",
+              config: { models: { providers: { ollama: { injectNumCtxForOpenAICompat: false } } } }
+            }),
+            runtime.resolveOllamaBaseUrlForRun({
+              modelBaseUrl: "http://model-host:11434",
+              providerBaseUrl: " http://provider-host:11434 "
+            })
+          ],
+          converted,
+          assistant: {
+            stopReason: assistant.stopReason,
+            api: assistant.api,
+            provider: assistant.provider,
+            model: assistant.model,
+            usage: assistant.usage,
+            content: assistant.content.map((part) => ({
+              type: part.type,
+              text: part.text,
+              thinking: part.thinking,
+              name: part.name,
+              arguments: part.arguments
+            }))
+          },
+          parsed: await readNdjson(),
+          defaultEmbeddingModel: runtime.DEFAULT_OLLAMA_EMBEDDING_MODEL,
+          embeddingProviderType: typeof runtime.createOllamaEmbeddingProvider
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "ollama-plugin",
+                    "name": "Ollama Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-ollama.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.ollama"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.ollama"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["apiKeys"] == ["resolveOllamaApiBase"]
+    assert result["runtimeKeys"] == [
+        "DEFAULT_OLLAMA_EMBEDDING_MODEL",
+        "buildAssistantMessage",
+        "buildOllamaChatRequest",
+        "convertToOllamaMessages",
+        "createConfiguredOllamaCompatNumCtxWrapper",
+        "createConfiguredOllamaCompatStreamWrapper",
+        "createConfiguredOllamaStreamFn",
+        "createOllamaEmbeddingProvider",
+        "createOllamaStreamFn",
+        "isOllamaCompatProvider",
+        "parseNdjsonStream",
+        "resolveOllamaBaseUrlForRun",
+        "resolveOllamaCompatNumCtxEnabled",
+        "shouldInjectOllamaCompatNumCtx",
+        "wrapOllamaCompatNumCtx",
+    ]
+    assert result["scopedTypes"] == ["function", "function"]
+    assert result["bases"] == [
+        "http://127.0.0.1:11434",
+        "http://127.0.0.1:11434",
+    ]
+    assert result["chat"] == {
+        "model": "qwen3:32b",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": False,
+        "options": {"num_ctx": 8192},
+        "think": "medium",
+    }
+    assert result["compat"] == [
+        True,
+        True,
+        False,
+        "http://provider-host:11434",
+    ]
+    assert result["converted"] == [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "describe", "images": ["base64-image"]},
+        {
+            "role": "assistant",
+            "content": "checking",
+            "tool_calls": [
+                {"function": {"name": "exec", "arguments": {"thread": "9223372036854775807"}}},
+                {"function": {"name": "read", "arguments": {"path": "README.md"}}},
+            ],
+        },
+        {"role": "tool", "content": "file text", "tool_name": "read"},
+    ]
+    assert result["assistant"]["stopReason"] == "toolUse"
+    assert result["assistant"]["api"] == "ollama"
+    assert result["assistant"]["provider"] == "ollama"
+    assert result["assistant"]["model"] == "ollama/qwen3"
+    assert result["assistant"]["usage"] == {
+        "input": 0,
+        "output": 5,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 5,
+        "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0,
+        },
+    }
+    assert result["assistant"]["content"] == [
+        {"type": "thinking", "thinking": "thinking"},
+        {"type": "text", "text": "done"},
+        {"type": "toolCall", "name": "exec", "arguments": {"ok": True}},
+    ]
+    assert result["parsed"] == ["A", "B"]
+    assert result["defaultEmbeddingModel"] == "nomic-embed-text"
+    assert result["embeddingProviderType"] == "function"
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_onboard_helpers(
     tmp_path,
 ) -> None:
