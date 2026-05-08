@@ -328,6 +328,17 @@ _OPENCLAW_HEARTBEAT_TASK_PROMPT_ACK = (
 _OPENCLAW_HEARTBEAT_ACK_MAX_CHARS = 300
 _OPENCLAW_INTERNAL_RUNTIME_CONTEXT_BEGIN = "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>"
 _OPENCLAW_INTERNAL_RUNTIME_CONTEXT_END = "<<<END_OPENCLAW_INTERNAL_CONTEXT>>>"
+_OPENCLAW_RUNTIME_CONTEXT_NOTICE = (
+    "This context is runtime-generated, not user-authored. Keep internal details private."
+)
+_OPENCLAW_NEXT_TURN_RUNTIME_CONTEXT_HEADER = (
+    "OpenClaw runtime context for the immediately preceding user message."
+)
+_OPENCLAW_RUNTIME_EVENT_HEADER = "OpenClaw runtime event."
+_OPENCLAW_RUNTIME_CONTEXT_PROMPT_HEADERS = {
+    _OPENCLAW_NEXT_TURN_RUNTIME_CONTEXT_HEADER,
+    _OPENCLAW_RUNTIME_EVENT_HEADER,
+}
 _CHAT_HISTORY_INLINE_DIRECTIVE_RE = re.compile(
     r"\[\[\s*(?:reply_to(?:_current|\s*:\s*[^\]]+)?|audio_as_voice)\s*\]\]",
     re.IGNORECASE,
@@ -17540,7 +17551,7 @@ def _strip_chat_history_internal_runtime_context(text: str) -> str:
             0,
         )
         if start == -1:
-            return next_text
+            return _strip_chat_history_runtime_context_prompt_preface(next_text)
         cursor = start + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_BEGIN)
         depth = 1
         finish = -1
@@ -17566,9 +17577,33 @@ def _strip_chat_history_internal_runtime_context(text: str) -> str:
             cursor = next_end + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_END)
         before = next_text[:start].rstrip()
         if finish == -1 or depth != 0:
-            return before
+            return _strip_chat_history_runtime_context_prompt_preface(before)
         after = next_text[finish + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_END) :].lstrip()
         next_text = f"{before}\n\n{after}" if before and after else f"{before}{after}"
+
+
+def _strip_chat_history_runtime_context_prompt_preface(text: str) -> str:
+    lines = text.splitlines()
+    changed = False
+    output: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index] if index < len(lines) else ""
+        next_line = lines[index + 1] if index + 1 < len(lines) else ""
+        if (
+            line.strip() in _OPENCLAW_RUNTIME_CONTEXT_PROMPT_HEADERS
+            and next_line.strip() == _OPENCLAW_RUNTIME_CONTEXT_NOTICE
+        ):
+            changed = True
+            index += 2
+            while index < len(lines) and not lines[index].strip():
+                index += 1
+            continue
+        output.append(line)
+        index += 1
+    if not changed:
+        return text
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
 
 
 def _chat_history_should_hide_user_text(text: str) -> bool:

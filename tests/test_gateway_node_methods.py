@@ -82987,6 +82987,38 @@ async def test_chat_history_strips_structured_internal_runtime_context(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_chat_history_strips_internal_runtime_context_prompt_preface(
+    tmp_path,
+) -> None:
+    database = Database(
+        tmp_path / "gateway-chat-history-internal-context-preface.db"
+    )
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content=(
+            "OpenClaw runtime context for the immediately preceding user message.\n"
+            "This context is runtime-generated, not user-authored. "
+            "Keep internal details private.\n\n"
+            "visible ask"
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "visible ask"}]}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_history_strips_user_channel_envelope_and_message_id(tmp_path) -> None:
     database = Database(tmp_path / "gateway-chat-history-channel-envelope.db")
     await database.initialize()
@@ -83293,6 +83325,41 @@ async def test_sessions_history_strips_structured_internal_runtime_context(tmp_p
 
     assert payload["messages"] == [
         {"role": "user", "content": [{"type": "text", "text": "visible ask"}]}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_history_strips_internal_runtime_context_prompt_preface(
+    tmp_path,
+) -> None:
+    database = Database(
+        tmp_path / "gateway-sessions-history-internal-context-preface.db"
+    )
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content=(
+            "OpenClaw runtime event.\n"
+            "This context is runtime-generated, not user-authored. "
+            "Keep internal details private.\n\n"
+            "visible session ask"
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "visible session ask"}],
+        }
     ]
 
 
