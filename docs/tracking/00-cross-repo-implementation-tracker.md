@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -115,8 +115,8 @@ checkpointed in `c298b482`, and `OZ-PLUGIN-00327` minimax is checkpointed in
 `OZ-PLUGIN-00332` image-generation is checkpointed in `8457701d`, and
 `OZ-PLUGIN-00333` video-generation is checkpointed in `69e092b5`.
 `OZ-PLUGIN-00334` memory-host-search.runtime is checkpointed in `96722388`;
-continue remaining exact SDK helper seams, provider/runtime breadth, and
-broader repo parity.
+`OZ-PLUGIN-00335` opencode is checkpointed in `114dc40a`; continue remaining
+exact SDK helper seams, provider/runtime breadth, and broader repo parity.
 
 ## Active Slice Detail
 

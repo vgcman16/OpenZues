@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999999999999999999999999999998%.
+  band of ~80-99.9999999999999999999999999999999%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10661,3 +10661,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `96722388`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.9999999999999999999999999999998%. Continue
   remaining exact SDK helper seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `opencode` now exposes the
+  exact OpenCode catalog API-key helper surface, including shared Zen/Go wizard
+  metadata, shared profile ids, `OPENCODE_API_KEY` auth posture, and
+  `applyOpencodeZenModelDefault`/`OPENCODE_ZEN_DEFAULT_MODEL` reexports instead
+  of generic passthrough. Source/test checkpointed in `114dc40a`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999%. Continue remaining exact SDK helper
+  seams, starting with Ollama/provider runtime breadth or channel/provider
+  facades.
