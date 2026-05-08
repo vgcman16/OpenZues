@@ -17366,6 +17366,107 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_copilot_proxy_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-copilot-proxy.cjs"
+    runtime_entry.write_text(
+        """
+const proxy = require("openclaw/plugin-sdk/copilot-proxy");
+const scopedProxy = require("@openclaw/plugin-sdk/copilot-proxy");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.copilot_proxy",
+      description: "Use OpenClaw copilot-proxy SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const entry = proxy.definePluginEntry({
+          id: "copilot-proxy-demo",
+          name: "Copilot Proxy Demo",
+          description: "Proxy description",
+          register() { return "registered"; }
+        });
+        return {
+          keys: Object.keys(proxy).sort(),
+          scopedSame: scopedProxy.definePluginEntry === proxy.definePluginEntry,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            registerType: typeof entry.register,
+            configSchemaType: typeof entry.configSchema
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-copilot-proxy-plugin",
+                    "name": "Runtime Copilot Proxy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-copilot-proxy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.copilot_proxy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.copilot_proxy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["definePluginEntry"],
+        "scopedSame": True,
+        "entry": {
+            "id": "copilot-proxy-demo",
+            "name": "Copilot Proxy Demo",
+            "description": "Proxy description",
+            "registerType": "function",
+            "configSchemaType": "object",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
     tmp_path,
 ) -> None:

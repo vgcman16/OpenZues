@@ -64975,6 +64975,10 @@ const pluginEntryRuntime = {
   emptyPluginConfigSchema,
 };
 
+const copilotProxyRuntime = {
+  definePluginEntry,
+};
+
 function filePathFromImportMetaUrl(importMetaUrl) {
   if (typeof importMetaUrl === "string" && importMetaUrl.startsWith("file:")) {
     return require("node:url").fileURLToPath(importMetaUrl);
@@ -85810,6 +85814,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-entry"
   ) {
     return pluginEntryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/copilot-proxy" ||
+    request === "@openclaw/plugin-sdk/copilot-proxy"
+  ) {
+    return copilotProxyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/config-mutation" ||
