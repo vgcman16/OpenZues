@@ -67952,6 +67952,10 @@ const memoryLancedbRuntime = {
   resolveStateDir,
 };
 
+const phoneControlRuntime = {
+  definePluginEntry,
+};
+
 const copilotProxyRuntime = {
   definePluginEntry,
 };
@@ -89204,6 +89208,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-lancedb"
   ) {
     return memoryLancedbRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/phone-control" ||
+    request === "@openclaw/plugin-sdk/phone-control"
+  ) {
+    return phoneControlRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/copilot-proxy" ||

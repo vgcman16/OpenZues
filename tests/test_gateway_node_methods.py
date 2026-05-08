@@ -20357,6 +20357,127 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_phone_control_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-phone-control.cjs"
+    runtime_entry.write_text(
+        """
+const phone = require("openclaw/plugin-sdk/phone-control");
+const scopedPhone = require("@openclaw/plugin-sdk/phone-control");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.phone_control",
+      description: "Use OpenClaw phone-control SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const entry = phone.definePluginEntry({
+          id: "phone-control-test",
+          name: "Phone Control Test",
+          description: "Phone control helper",
+          kind: "extension",
+          nodeHostCommands: {
+            dial: {
+              description: "Dial phone",
+              parameters: { type: "object" }
+            }
+          },
+          register(runtimeApi) {
+            runtimeApi.registeredByPhone = true;
+          }
+        });
+        const runtimeApi = {};
+        entry.register(runtimeApi);
+        return {
+          keys: Object.keys(phone).sort(),
+          scopedSame: scopedPhone.definePluginEntry === phone.definePluginEntry,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            kind: entry.kind,
+            nodeHostCommands: entry.nodeHostCommands,
+            registerType: typeof entry.register
+          },
+          runtimeApi
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-phone-control-plugin",
+                    "name": "Runtime Phone Control Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-phone-control.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.phone_control"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.phone_control"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["definePluginEntry"],
+        "scopedSame": True,
+        "entry": {
+            "id": "phone-control-test",
+            "name": "Phone Control Test",
+            "description": "Phone control helper",
+            "kind": "extension",
+            "nodeHostCommands": {
+                "dial": {
+                    "description": "Dial phone",
+                    "parameters": {"type": "object"},
+                }
+            },
+            "registerType": "function",
+        },
+        "runtimeApi": {"registeredByPhone": True},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
     tmp_path,
 ) -> None:
