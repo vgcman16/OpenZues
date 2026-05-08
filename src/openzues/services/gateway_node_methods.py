@@ -16912,6 +16912,16 @@ def _sanitize_chat_history_content_block(
         sanitized[key] = value
     if "thinkingSignature" in sanitized:
         sanitized.pop("thinkingSignature", None)
+    if sanitized.get("type") == "audio":
+        source = sanitized.get("source")
+        if isinstance(source, Mapping):
+            source_copy = dict(source)
+            data = source_copy.get("data")
+            if source_copy.get("type") == "base64" and isinstance(data, str):
+                source_copy.pop("data", None)
+                source_copy["omitted"] = True
+                source_copy["bytes"] = len(data.encode("utf-8"))
+                sanitized["source"] = source_copy
     return sanitized
 
 
