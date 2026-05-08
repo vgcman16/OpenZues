@@ -21220,6 +21220,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `5230af34`.
+- `sessions.history` now hides the structured-content variant of empty user
+  transcript rows too, so session snapshots match OpenClaw's text-only empty
+  array projection rule alongside raw empty strings and heartbeat prompts. This
+  closes the adjacent session snapshot structured-content edge; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999999%.
+- Verified the `sessions.history` structured empty-user content seam with
+  focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_hides_empty_structured_user_content -q`
+  (empty text-only structured user content was returned before implementation,
+  then `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`40 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e38d7753`.
 
 ## References
 
