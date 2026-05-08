@@ -389,6 +389,7 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "zalo",
     "msteams",
     "twitch",
+    "tlon",
 }
 SLACK_THREAD_TS_PATTERN = re.compile(r"^\d+\.\d+$")
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
@@ -7402,6 +7403,16 @@ def _tlon_media_story(
         else:
             story.append({"inline": [{"link": {"href": media_url, "content": media_url}}]})
     return story or [{"inline": [""]}]
+
+
+def _tlon_is_image_url(media_url: str) -> bool:
+    return bool(
+        re.search(
+            r"\.(?:jpg|jpeg|png|gif|webp|svg|bmp|ico)(?:\?.*)?$",
+            media_url,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _strip_markdown_for_twitch(markdown: str) -> str:
@@ -25263,6 +25274,52 @@ class OpsMeshService:
             raise RuntimeError(f"Tlon poke failed: {exc.reason}") from exc
         return poke_id
 
+    def _upload_tlon_image_from_url(
+        self,
+        config: _TlonRouteConfig,
+        image_url: str,
+        *,
+        timeout_seconds: float,
+    ) -> str:
+        parsed = urlparse(str(image_url or "").strip())
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            return image_url
+        timeout = max(float(timeout_seconds), 0.001)
+        try:
+            request = Request(image_url, method="GET")
+            with urlopen(request, timeout=timeout) as response:
+                status = int(getattr(response, "status", getattr(response, "code", 0)))
+                if status < 200 or status >= 300:
+                    response.read()
+                    return image_url
+                media_bytes = response.read()
+                content_type = str(response.headers.get("Content-Type") or "image/png").strip()
+        except (HTTPError, URLError, OSError, ValueError):
+            return image_url
+        filename = Path(unquote(parsed.path)).name or f"upload-{int(time.time() * 1000)}.png"
+        try:
+            return self._upload_tlon_media_bytes(
+                config,
+                media_bytes=media_bytes,
+                filename=filename,
+                content_type=content_type or "image/png",
+                timeout_seconds=timeout,
+            )
+        except Exception:
+            return image_url
+
+    def _upload_tlon_media_bytes(
+        self,
+        config: _TlonRouteConfig,
+        *,
+        media_bytes: bytes,
+        filename: str,
+        content_type: str,
+        timeout_seconds: float,
+    ) -> str:
+        del self, config, media_bytes, filename, content_type, timeout_seconds
+        raise RuntimeError("Tlon media upload storage runtime is unavailable.")
+
     def _imessage_binary_available(self, cli_path: str) -> bool:
         del self
         normalized = str(cli_path or "").strip()
@@ -30619,7 +30676,17 @@ class OpsMeshService:
         if not text and not media_urls:
             raise RuntimeError("Tlon send requires text or media.")
         sent_at = int(time.time() * 1000)
-        story = _tlon_media_story(text=text, media_urls=media_urls)
+        story_media_urls = [
+            self._upload_tlon_image_from_url(
+                config,
+                media_url,
+                timeout_seconds=15.0,
+            )
+            if _tlon_is_image_url(media_url)
+            else media_url
+            for media_url in media_urls
+        ]
+        story = _tlon_media_story(text=text, media_urls=story_media_urls)
         if target.kind == "dm":
             to_ship = str(target.ship or "")
             message_id = f"{config.ship}/{_tlon_ud(sent_at)}"
@@ -30654,8 +30721,8 @@ class OpsMeshService:
                 "chatId": to_ship,
                 "channelId": to_ship,
             }
-            if media_urls:
-                native_result["mediaUrls"] = media_urls
+            if story_media_urls:
+                native_result["mediaUrls"] = story_media_urls
             return native_result
 
         reply_to_id = str(event.get("replyToId") or event.get("threadId") or "").strip()
@@ -30711,8 +30778,8 @@ class OpsMeshService:
         }
         if formatted_reply_id:
             group_native_result["replyToId"] = formatted_reply_id
-        if media_urls:
-            group_native_result["mediaUrls"] = media_urls
+        if story_media_urls:
+            group_native_result["mediaUrls"] = story_media_urls
         return group_native_result
 
     def _post_line_provider_event(

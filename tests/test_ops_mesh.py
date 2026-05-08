@@ -7271,6 +7271,81 @@ def test_ops_mesh_service_tlon_poke_authenticates_then_puts_channel_action(
     ]
 
 
+def test_ops_mesh_service_tlon_image_upload_fetches_then_uploads_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, float]] = []
+    uploads: list[dict[str, object]] = []
+
+    class FakeImageResponse:
+        status = 200
+        headers = {"Content-Type": "image/png"}
+
+        def __enter__(self) -> FakeImageResponse:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def read(self) -> bytes:
+            return b"image-bytes"
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeImageResponse:
+        requests.append((request.full_url, request.get_method(), timeout))
+        return FakeImageResponse()
+
+    def fake_upload_tlon_media_bytes(
+        self: OpsMeshService,
+        config: _TlonRouteConfig,
+        *,
+        media_bytes: bytes,
+        filename: str,
+        content_type: str,
+        timeout_seconds: float,
+    ) -> str:
+        del self
+        uploads.append(
+            {
+                "ship": config.ship,
+                "media_bytes": media_bytes,
+                "filename": filename,
+                "content_type": content_type,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return "https://memex.tlon.network/files/photo.png"
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_tlon_media_bytes",
+        fake_upload_tlon_media_bytes,
+    )
+
+    uploaded = OpsMeshService.__new__(OpsMeshService)._upload_tlon_image_from_url(
+        _TlonRouteConfig(
+            base_url="https://zod.tlon.network",
+            ship="~zod",
+            code="tlon-code",
+        ),
+        "https://example.com/path/photo.png?sig=1",
+        timeout_seconds=2.5,
+    )
+
+    assert uploaded == "https://memex.tlon.network/files/photo.png"
+    assert requests == [("https://example.com/path/photo.png?sig=1", "GET", 2.5)]
+    assert uploads == [
+        {
+            "ship": "~zod",
+            "media_bytes": b"image-bytes",
+            "filename": "photo.png",
+            "content_type": "image/png",
+            "timeout_seconds": 2.5,
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route(
     monkeypatch: pytest.MonkeyPatch,
@@ -7565,6 +7640,119 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_group_repl
     delivery = await database.get_outbound_delivery(1)
     assert delivery is not None
     assert delivery["route_scope"]["provider_result"]["replyToId"] == "1.713.980.000.123"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uploads_tlon_image_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-tlon-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Tlon Native Media Provider",
+        kind="tlon",
+        target="https://zod.tlon.network?ship=~zod",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tlon-code",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "tlon",
+            "account_id": "ship",
+            "peer_kind": "direct",
+            "peer_id": "~sampel-palnet",
+        },
+    )
+    uploaded_urls: list[tuple[str, str]] = []
+    tlon_pokes: list[dict[str, object]] = []
+
+    def fake_upload_tlon_image_from_url(
+        self: OpsMeshService,
+        config: _TlonRouteConfig,
+        image_url: str,
+        *,
+        timeout_seconds: float,
+    ) -> str:
+        del self, timeout_seconds
+        uploaded_urls.append((config.ship, image_url))
+        return "https://memex.tlon.network/files/uploaded.png"
+
+    def fake_request_tlon_poke(
+        self: OpsMeshService,
+        config: _TlonRouteConfig,
+        *,
+        app: str,
+        mark: str,
+        json_payload: dict[str, object],
+        timeout_seconds: float,
+    ) -> int:
+        del self, config, timeout_seconds
+        tlon_pokes.append({"app": app, "mark": mark, "json": json_payload})
+        return 1713980000123
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_tlon_image_from_url",
+        fake_upload_tlon_image_from_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_tlon_poke",
+        fake_request_tlon_poke,
+        raising=False,
+    )
+    monkeypatch.setattr("openzues.services.ops_mesh.time.time", lambda: 1713980000.123)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="tlon",
+        to="~sampel-palnet",
+        message="Photo",
+        media_urls=["https://example.com/path/photo.png"],
+        account_id="ship",
+        idempotency_key="idem-native-tlon-media",
+    )
+
+    assert result["messageId"] == "~zod/1.713.980.000.123"
+    assert result["mediaUrls"] == ["https://memex.tlon.network/files/uploaded.png"]
+    assert uploaded_urls == [("~zod", "https://example.com/path/photo.png")]
+    assert tlon_pokes[0]["app"] == "chat"
+    payload = tlon_pokes[0]["json"]
+    assert isinstance(payload, dict)
+    diff = payload["diff"]
+    assert isinstance(diff, dict)
+    delta = diff["delta"]
+    assert isinstance(delta, dict)
+    add = delta["add"]
+    assert isinstance(add, dict)
+    memo = add["memo"]
+    assert isinstance(memo, dict)
+    assert memo["content"] == [
+        {"inline": ["Photo"]},
+        {
+            "block": {
+                "image": {
+                    "src": "https://memex.tlon.network/files/uploaded.png",
+                    "height": 0,
+                    "width": 0,
+                    "alt": "",
+                }
+            }
+        },
+    ]
 
 
 def test_ops_mesh_service_imessage_rpc_support_marks_unknown_subcommand_fatal(
