@@ -19327,6 +19327,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `e692f8b6`.
+- Native npm package updates now prefer an owning `npm.cmd` from the installed
+  package prefix when present, instead of always dispatching the ambient
+  `npm`, matching OpenClaw's global install command ownership guard. This
+  closes `OZ-PKG-001AW`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.9999999999999999%.
+- Verified owning npm command resolution with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_prefers_owning_npm_cmd -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent npm
+  fallback/staging proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_retries_npm_without_optional_deps tests\test_runtime_updates.py::test_runtime_update_run_package_update_stages_npm_install_before_swap tests\test_runtime_updates.py::test_runtime_update_run_package_update_prefers_owning_npm_cmd -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`18 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `de046811`.
 
 ## References
 

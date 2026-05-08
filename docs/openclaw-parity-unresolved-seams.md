@@ -10135,3 +10135,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   repo-wide parity remains estimated at ~99.9%, with the evidence band
   tightened to ~80-99.9999999999999998%. Continue broader release/update
   packaging breadth next.
+- Current queue-head adjustment: native npm package updates now prefer the
+  owning prefix `npm.cmd` when the installed package root resolves to a
+  Windows npm global prefix, instead of using ambient `npm`. Source/test
+  checkpointed in `de046811`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999999999%. Continue
+  broader release/update packaging breadth next.
