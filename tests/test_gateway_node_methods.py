@@ -15483,6 +15483,278 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_image_generation_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-image-generation.cjs"
+    runtime_entry.write_text(
+        """
+const image = require("openclaw/plugin-sdk/image-generation");
+const scopedImage = require("@openclaw/plugin-sdk/image-generation");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.image_generation",
+      description: "Use OpenClaw image-generation SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const pngBytes = Buffer.from([
+          0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
+        ]);
+        const jpegBase64 = Buffer.from([0xff, 0xd8, 0xff, 0x00]).toString("base64");
+        const dataUrl = image.toImageDataUrl({
+          buffer: Buffer.from("hello"),
+          mimeType: " image/webp "
+        });
+        const parsedDataUrl = image.parseImageDataUrl(dataUrl);
+        const parsedImageAssets = image.parseOpenAiCompatibleImageResponse(
+          {
+            data: [
+              {
+                b64_json: pngBytes.toString("base64"),
+                mime_type: " ",
+                revised_prompt: " revised "
+              },
+              { b64_json: " " },
+              { b64_json: jpegBase64 }
+            ]
+          },
+          {
+            defaultMimeType: "image/png",
+            fileNamePrefix: "gen",
+            sniffMimeType: true
+          }
+        );
+        const parsedImages = Array.isArray(parsedImageAssets)
+          ? parsedImageAssets.map((asset) => ({
+              fileName: asset.fileName,
+              mimeType: asset.mimeType,
+              revisedPrompt: asset.revisedPrompt,
+              hex: asset.buffer.toString("hex")
+            }))
+          : parsedImageAssets;
+        const dataUrlAsset = image.generatedImageAssetFromDataUrl({
+          dataUrl: `data:image/svg+xml;base64,${Buffer.from("<svg/>").toString("base64")}`,
+          index: 0,
+          fileNamePrefix: "icon"
+        });
+        const providerOptions = {
+          id: "demo-image",
+          label: "Demo Image",
+          defaultModel: "demo-1",
+          models: ["demo-1"],
+          capabilities: {
+            generate: { maxCount: 2 },
+            edit: { enabled: false, maxInputImages: 1 }
+          },
+          defaultBaseUrl: "https://example.test/v1",
+          buildGenerateRequest({ model, count }) {
+            return { kind: "json", body: { model, n: count } };
+          },
+          buildEditRequest() {
+            return { kind: "json", body: { edit: true } };
+          }
+        };
+        const provider = image.createOpenAiCompatibleImageGenerationProvider(providerOptions);
+        let providerResult = provider;
+        if (
+          provider &&
+          Array.isArray(provider.models) &&
+          typeof provider.generateImage === "function"
+        ) {
+          provider.models.push("mutated");
+          let editError = "";
+          try {
+            await provider.generateImage({
+              provider: "demo-image",
+              model: "demo-1",
+              prompt: "edit",
+              cfg: {},
+              inputImages: [{ buffer: Buffer.from("x"), mimeType: "image/png" }]
+            });
+          } catch (error) {
+            editError = error.message;
+          }
+          let missingApiKey = "";
+          try {
+            await provider.generateImage({
+              provider: "demo-image",
+              model: "demo-1",
+              prompt: "draw",
+              cfg: {},
+              count: 2
+            });
+          } catch (error) {
+            missingApiKey = error.message;
+          }
+          providerResult = {
+            id: provider.id,
+            label: provider.label,
+            defaultModel: provider.defaultModel,
+            optionsModels: providerOptions.models,
+            copiedModels: provider.models,
+            configured:
+              typeof provider.isConfigured === "function"
+                ? provider.isConfigured({ agentDir: "" })
+                : null,
+            editError,
+            missingApiKey
+          };
+        }
+        return {
+          keys: Object.keys(image).sort(),
+          scopedSame:
+            scopedImage.toImageDataUrl === image.toImageDataUrl &&
+            scopedImage.createOpenAiCompatibleImageGenerationProvider ===
+              image.createOpenAiCompatibleImageGenerationProvider,
+          extensions: [
+            image.imageFileExtensionForMimeType("IMAGE/JPEG; charset=utf-8"),
+            image.imageFileExtensionForMimeType("image/svg+xml"),
+            image.imageFileExtensionForMimeType(undefined, "bin")
+          ],
+          sniffed: {
+            png: image.sniffImageMimeType(pngBytes),
+            fallback: image.sniffImageMimeType(Buffer.from("x"), "image/gif")
+          },
+          dataUrl: { value: dataUrl, parsed: parsedDataUrl },
+          parsedImages,
+          fromDataUrl:
+            dataUrlAsset && Buffer.isBuffer(dataUrlAsset.buffer)
+              ? {
+                  fileName: dataUrlAsset.fileName,
+                  mimeType: dataUrlAsset.mimeType,
+                  text: dataUrlAsset.buffer.toString("utf8")
+                }
+              : dataUrlAsset ?? null,
+          entryBlankType: typeof image.generatedImageAssetFromBase64({
+            base64: " ",
+            index: 0
+          }),
+          sourceNames: [
+            image.imageSourceUploadFileName({
+              image: { buffer: Buffer.from("x"), mimeType: "image/png", fileName: "keep.jpg" },
+              index: 0
+            }),
+            image.imageSourceUploadFileName({
+              image: { buffer: Buffer.from("x"), mimeType: "image/webp" },
+              index: 1,
+              fileNamePrefix: "ref"
+            })
+          ],
+          provider: providerResult
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "image-generation-plugin",
+                    "name": "Image Generation Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-image-generation.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.image_generation"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.image_generation"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createOpenAiCompatibleImageGenerationProvider",
+            "generatedImageAssetFromBase64",
+            "generatedImageAssetFromDataUrl",
+            "generatedImageAssetFromOpenAiCompatibleEntry",
+            "imageFileExtensionForMimeType",
+            "imageSourceUploadFileName",
+            "parseImageDataUrl",
+            "parseOpenAiCompatibleImageResponse",
+            "sniffImageMimeType",
+            "toImageDataUrl",
+        ],
+        "scopedSame": True,
+        "extensions": ["jpg", "svg", "bin"],
+        "sniffed": {
+            "png": {"mimeType": "image/png", "extension": "png"},
+            "fallback": {"mimeType": "image/gif", "extension": "gif"},
+        },
+        "dataUrl": {
+            "value": "data:image/webp;base64,aGVsbG8=",
+            "parsed": {"mimeType": "image/webp", "base64": "aGVsbG8="},
+        },
+        "parsedImages": [
+            {
+                "fileName": "gen-1.png",
+                "mimeType": "image/png",
+                "revisedPrompt": "revised",
+                "hex": "89504e470d0a1a0a",
+            },
+            {
+                "fileName": "gen-3.jpg",
+                "mimeType": "image/jpeg",
+                "hex": "ffd8ff00",
+            },
+        ],
+        "fromDataUrl": {
+            "fileName": "icon-1.svg",
+            "mimeType": "image/svg+xml",
+            "text": "<svg/>",
+        },
+        "entryBlankType": "undefined",
+        "sourceNames": ["keep.jpg", "ref-2.webp"],
+        "provider": {
+            "id": "demo-image",
+            "label": "Demo Image",
+            "defaultModel": "demo-1",
+            "optionsModels": ["demo-1"],
+            "copiedModels": ["demo-1", "mutated"],
+            "configured": False,
+            "editError": "Demo Image image editing is not supported.",
+            "missingApiKey": "Demo Image API key missing",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_music_generation_core_helpers(
     tmp_path,
 ) -> None:

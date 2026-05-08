@@ -55342,6 +55342,354 @@ function buildNoImageGenerationModelConfiguredMessage(cfg, deps = {}) {
   });
 }
 
+const DEFAULT_IMAGE_MIME_TYPE = "image/png";
+const DEFAULT_IMAGE_FILE_PREFIX = "image";
+
+function imageFileExtensionForMimeType(mimeType, fallback = "png") {
+  const normalized = normalizeOptionalLowercaseString(mimeType)?.split(";")[0]?.trim();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized.includes("jpeg") || normalized.includes("jpg")) {
+    return "jpg";
+  }
+  if (normalized.includes("svg")) {
+    return "svg";
+  }
+  const slashIndex = normalized.indexOf("/");
+  return slashIndex >= 0 ? normalized.slice(slashIndex + 1) || fallback : fallback;
+}
+
+function coerceImageBuffer(value) {
+  return Buffer.isBuffer(value) ? value : Buffer.from(value || []);
+}
+
+function sniffImageMimeType(buffer, fallbackMimeType = DEFAULT_IMAGE_MIME_TYPE) {
+  const bytes = coerceImageBuffer(buffer);
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { mimeType: "image/jpeg", extension: "jpg" };
+  }
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return { mimeType: "image/png", extension: "png" };
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes.toString("ascii", 0, 4) === "RIFF" &&
+    bytes.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return { mimeType: "image/webp", extension: "webp" };
+  }
+  return {
+    mimeType: fallbackMimeType,
+    extension: imageFileExtensionForMimeType(fallbackMimeType),
+  };
+}
+
+function toImageDataUrl(params = {}) {
+  const mimeType =
+    normalizeOptionalString(params.mimeType) ||
+    normalizeOptionalString(params.defaultMimeType) ||
+    DEFAULT_IMAGE_MIME_TYPE;
+  return `data:${mimeType};base64,${coerceImageBuffer(params.buffer).toString("base64")}`;
+}
+
+function parseImageDataUrl(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:(image\/[^;,]+)(?:;[^,]*)?;base64,(.+)$/is);
+  if (!match) {
+    return undefined;
+  }
+  const mimeType = normalizeOptionalString(match[1]);
+  const base64 = normalizeOptionalString(match[2]);
+  if (!mimeType || !base64) {
+    return undefined;
+  }
+  return { mimeType, base64 };
+}
+
+function generatedImageAssetFromBase64(params = {}) {
+  const base64 = normalizeOptionalString(params.base64);
+  if (!base64) {
+    return undefined;
+  }
+  const buffer = Buffer.from(base64, "base64");
+  const explicitMimeType = normalizeOptionalString(params.mimeType);
+  const defaultMimeType =
+    normalizeOptionalString(params.defaultMimeType) || DEFAULT_IMAGE_MIME_TYPE;
+  const detected =
+    params.sniffMimeType && !explicitMimeType
+      ? sniffImageMimeType(buffer, defaultMimeType)
+      : undefined;
+  const mimeType = explicitMimeType || detected?.mimeType || defaultMimeType;
+  const prefix = normalizeOptionalString(params.fileNamePrefix) || DEFAULT_IMAGE_FILE_PREFIX;
+  const image = {
+    buffer,
+    mimeType,
+    fileName: `${prefix}-${params.index + 1}.${
+      detected?.extension || imageFileExtensionForMimeType(mimeType)
+    }`,
+  };
+  const revisedPrompt = normalizeOptionalString(params.revisedPrompt);
+  if (revisedPrompt) {
+    image.revisedPrompt = revisedPrompt;
+  }
+  return image;
+}
+
+function generatedImageAssetFromDataUrl(params = {}) {
+  const parsed = parseImageDataUrl(params.dataUrl);
+  if (!parsed) {
+    return undefined;
+  }
+  return generatedImageAssetFromBase64({
+    base64: parsed.base64,
+    index: params.index,
+    mimeType: parsed.mimeType,
+    fileNamePrefix: params.fileNamePrefix,
+  });
+}
+
+function generatedImageAssetFromOpenAiCompatibleEntry(entry = {}, index, options = {}) {
+  return generatedImageAssetFromBase64({
+    base64: normalizeOptionalString(entry.b64_json),
+    index,
+    mimeType: normalizeOptionalString(entry.mime_type),
+    revisedPrompt: normalizeOptionalString(entry.revised_prompt),
+    defaultMimeType: options.defaultMimeType,
+    fileNamePrefix: options.fileNamePrefix,
+    sniffMimeType: options.sniffMimeType,
+  });
+}
+
+function parseOpenAiCompatibleImageResponse(payload = {}, options = {}) {
+  return (Array.isArray(payload.data) ? payload.data : [])
+    .map((entry, index) => generatedImageAssetFromOpenAiCompatibleEntry(entry, index, options))
+    .filter((entry) => entry !== undefined);
+}
+
+function imageSourceUploadFileName(params = {}) {
+  const fileName = normalizeOptionalString(params.image && params.image.fileName);
+  if (fileName) {
+    return fileName;
+  }
+  const mimeType =
+    normalizeOptionalString(params.image && params.image.mimeType) ||
+    normalizeOptionalString(params.defaultMimeType) ||
+    DEFAULT_IMAGE_MIME_TYPE;
+  const prefix = normalizeOptionalString(params.fileNamePrefix) || DEFAULT_IMAGE_FILE_PREFIX;
+  return `${prefix}-${params.index + 1}.${imageFileExtensionForMimeType(mimeType)}`;
+}
+
+function readOpenAiCompatibleImageProviderConfig(cfg, providerConfigKey) {
+  return (
+    cfg &&
+    cfg.models &&
+    cfg.models.providers &&
+    providerConfigKey &&
+    cfg.models.providers[providerConfigKey]
+  );
+}
+
+function resolveDefaultOpenAiCompatibleImageModel(model, fallback) {
+  return normalizeOptionalString(model) || fallback;
+}
+
+function trimTrailingSlash(value) {
+  return String(value || "").replace(/\/+$/u, "");
+}
+
+function appendOpenAiCompatibleImagesPath(baseUrl, mode) {
+  return `${trimTrailingSlash(baseUrl)}/images/${mode === "edit" ? "edits" : "generations"}`;
+}
+
+function resolveOpenAiCompatibleImageRequestTimeoutMs(params = {}) {
+  if (params.options.defaultTimeoutMs === undefined) {
+    return params.req.timeoutMs;
+  }
+  const label =
+    params.mode === "edit"
+      ? params.options.failureLabels?.edit || `${params.options.label} image edit`
+      : params.options.failureLabels?.generate || `${params.options.label} image generation`;
+  const deadline = createProviderOperationDeadline({
+    timeoutMs: params.req.timeoutMs,
+    label,
+  });
+  return resolveProviderOperationTimeoutMs({
+    deadline,
+    defaultTimeoutMs: params.options.defaultTimeoutMs,
+  });
+}
+
+function createOpenAiCompatibleImageGenerationProvider(options = {}) {
+  const providerConfigKey = options.providerConfigKey || options.id;
+  const normalizeModel =
+    typeof options.normalizeModel === "function"
+      ? options.normalizeModel
+      : resolveDefaultOpenAiCompatibleImageModel;
+  const resolveCount =
+    typeof options.resolveCount === "function"
+      ? options.resolveCount
+      : ({ req }) => req.count ?? 1;
+  const capabilities = options.capabilities || {
+    generate: {},
+    edit: { enabled: false },
+  };
+  return {
+    id: options.id,
+    label: options.label,
+    defaultModel: options.defaultModel,
+    models: [...(Array.isArray(options.models) ? options.models : [])],
+    isConfigured: ({ agentDir } = {}) =>
+      isProviderApiKeyConfigured({
+        provider: options.id,
+        agentDir,
+      }),
+    capabilities,
+    async generateImage(req = {}) {
+      const inputImages = Array.isArray(req.inputImages) ? req.inputImages : [];
+      const mode = inputImages.length > 0 ? "edit" : "generate";
+      const maxInputImages = capabilities.edit && capabilities.edit.maxInputImages;
+      if (mode === "edit" && !(capabilities.edit && capabilities.edit.enabled)) {
+        throw new Error(`${options.label} image editing is not supported.`);
+      }
+      if (mode === "edit" && maxInputImages !== undefined && inputImages.length > maxInputImages) {
+        throw new Error(
+          options.tooManyInputImagesError ||
+            `${options.label} image editing supports up to ${maxInputImages} reference image${
+              maxInputImages === 1 ? "" : "s"
+            }.`,
+        );
+      }
+      if (mode === "edit" && inputImages.length === 0) {
+        throw new Error(
+          options.missingInputImageError || `${options.label} image edit missing reference image.`,
+        );
+      }
+
+      const auth = await resolveApiKeyForProvider({
+        provider: options.id,
+        cfg: req.cfg,
+        agentDir: req.agentDir,
+        store: req.authStore,
+      });
+      if (!auth || !auth.apiKey) {
+        throw new Error(options.missingApiKeyError || `${options.label} API key missing`);
+      }
+
+      const providerConfig = readOpenAiCompatibleImageProviderConfig(req.cfg, providerConfigKey);
+      const resolvedBaseUrl =
+        (typeof options.resolveBaseUrl === "function"
+          ? options.resolveBaseUrl({
+              req,
+              providerConfig,
+              defaultBaseUrl: options.defaultBaseUrl,
+            })
+          : undefined) ||
+        normalizeOptionalString(providerConfig && providerConfig.baseUrl) ||
+        options.defaultBaseUrl;
+      const allowPrivateNetwork =
+        typeof options.resolveAllowPrivateNetwork === "function"
+          ? options.resolveAllowPrivateNetwork({
+              baseUrl: resolvedBaseUrl,
+              req,
+              providerConfig,
+            })
+          : undefined;
+      const requestConfig = resolveProviderHttpRequestConfig({
+        baseUrl: resolvedBaseUrl,
+        defaultBaseUrl: options.defaultBaseUrl,
+        allowPrivateNetwork,
+        request: options.useConfiguredRequest
+          ? sanitizeConfiguredModelProviderRequest(providerConfig && providerConfig.request)
+          : undefined,
+        defaultHeaders: {
+          Authorization: `Bearer ${auth.apiKey}`,
+        },
+        provider: options.id,
+        capability: "image",
+        transport: "http",
+      });
+
+      const model = normalizeModel(req.model, options.defaultModel);
+      const count = resolveCount({ req, mode });
+      const requestParams = { req, inputImages, model, count, mode };
+      const requestBody =
+        mode === "edit"
+          ? options.buildEditRequest({ ...requestParams, mode })
+          : options.buildGenerateRequest({ ...requestParams, mode });
+      const timeoutMs = resolveOpenAiCompatibleImageRequestTimeoutMs({
+        options,
+        req,
+        mode,
+      });
+      const postResult =
+        requestBody.kind === "multipart"
+          ? await postMultipartRequest({
+              url: appendOpenAiCompatibleImagesPath(requestConfig.baseUrl, mode),
+              headers: (() => {
+                const multipartHeaders = new Headers(requestConfig.headers);
+                multipartHeaders.delete("Content-Type");
+                return multipartHeaders;
+              })(),
+              body: requestBody.form,
+              timeoutMs,
+              fetchFn: globalThis.fetch,
+              allowPrivateNetwork: requestConfig.allowPrivateNetwork,
+              dispatcherPolicy: requestConfig.dispatcherPolicy,
+            })
+          : await postJsonRequest({
+              url: appendOpenAiCompatibleImagesPath(requestConfig.baseUrl, mode),
+              headers: (() => {
+                const jsonHeaders = new Headers(requestConfig.headers);
+                jsonHeaders.set("Content-Type", "application/json");
+                return jsonHeaders;
+              })(),
+              body: requestBody.body,
+              timeoutMs,
+              fetchFn: globalThis.fetch,
+              allowPrivateNetwork: requestConfig.allowPrivateNetwork,
+              dispatcherPolicy: requestConfig.dispatcherPolicy,
+            });
+      try {
+        await assertOkOrThrowHttpError(
+          postResult.response,
+          mode === "edit"
+            ? options.failureLabels?.edit || `${options.label} image edit failed`
+            : options.failureLabels?.generate || `${options.label} image generation failed`,
+        );
+        const images = parseOpenAiCompatibleImageResponse(
+          await postResult.response.json(),
+          options.response,
+        );
+        if (options.emptyResponseError && images.length === 0) {
+          throw new Error(options.emptyResponseError);
+        }
+        return { images, model };
+      } finally {
+        await postResult.release();
+      }
+    },
+  };
+}
+
+const imageGenerationProviderRuntime = {
+  createOpenAiCompatibleImageGenerationProvider,
+  generatedImageAssetFromBase64,
+  generatedImageAssetFromDataUrl,
+  generatedImageAssetFromOpenAiCompatibleEntry,
+  imageFileExtensionForMimeType,
+  imageSourceUploadFileName,
+  parseImageDataUrl,
+  parseOpenAiCompatibleImageResponse,
+  sniffImageMimeType,
+  toImageDataUrl,
+};
+
 function listRuntimeImageGenerationProviders(params = {}, deps = {}) {
   const listProviders =
     typeof deps.listProviders === "function" ? deps.listProviders : listImageGenerationProviders;
@@ -86491,6 +86839,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
       return providerHttpTestAuthRuntime;
     }
     return providerAuthRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/image-generation" ||
+    request === "@openclaw/plugin-sdk/image-generation"
+  ) {
+    return imageGenerationProviderRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/image-generation-core.auth.runtime" ||
