@@ -18839,6 +18839,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`,
   `mypy src\openzues\cli.py`, and focused `git diff --check`. Source/test
   checkpointed and pushed in `d6052fda`.
+- `openzues doctor --json` package distribution diagnostics now compare valid
+  `dist/postinstall-inventory.json` files against actual packaged `dist/`
+  files, returning OpenClaw-shaped `missing packaged dist file ...` and
+  `unexpected packaged dist file ...` warnings when the inventory is stale.
+  This closes `OZ-PKG-001O`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999997%.
+- Verified the package dist inventory drift slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_warns_on_package_dist_inventory_file_drift -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift"`
+  (`4 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `69b23cb9`.
 
 ## References
 

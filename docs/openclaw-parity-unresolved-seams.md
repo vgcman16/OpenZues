@@ -9908,3 +9908,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   band tightened to ~80-99.999999999996%. QR setup-code breadth remains open
   only for deeper remote secret-resolution and rendered terminal QR edges;
   rotate to package distribution drift next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  compare valid `dist/postinstall-inventory.json` contents against actual
+  packaged `dist/` files and surface OpenClaw-shaped
+  `missing packaged dist file ...` / `unexpected packaged dist file ...`
+  warnings. Source/test checkpointed in `69b23cb9`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999997%. Rotate to the adjacent package dist legacy plugin
+  dependency staging-debris seam next.
