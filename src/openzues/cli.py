@@ -88318,6 +88318,287 @@ function getGooglechatRootRuntime() {
   return runtime;
 }
 
+function buildTelegramTopicConversationId(params) {
+  const chatId = String((params && params.chatId) || "").trim();
+  const topicId = String((params && params.topicId) || "").trim();
+  if (!/^-?\d+$/.test(chatId) || !/^\d+$/.test(topicId)) {
+    return null;
+  }
+  return `${chatId}:topic:${topicId}`;
+}
+
+function parseTelegramTopicConversation(params = {}) {
+  const conversation = String(params.conversationId || "").trim();
+  const directMatch = conversation.match(/^(-?\d+):topic:(\d+)$/i);
+  if (directMatch && directMatch[1] && directMatch[2]) {
+    const canonicalConversationId = buildTelegramTopicConversationId({
+      chatId: directMatch[1],
+      topicId: directMatch[2],
+    });
+    return canonicalConversationId
+      ? { chatId: directMatch[1], topicId: directMatch[2], canonicalConversationId }
+      : null;
+  }
+  if (!/^\d+$/.test(conversation)) {
+    return null;
+  }
+  const parent = String(params.parentConversationId || "").trim();
+  if (!parent || !/^-?\d+$/.test(parent)) {
+    return null;
+  }
+  const canonicalConversationId = buildTelegramTopicConversationId({
+    chatId: parent,
+    topicId: conversation,
+  });
+  return canonicalConversationId
+    ? { chatId: parent, topicId: conversation, canonicalConversationId }
+    : null;
+}
+
+function normalizeTelegramAllowFromEntry(raw) {
+  const base = typeof raw === "string" || typeof raw === "number" ? String(raw) : "";
+  return base.trim().replace(/^(telegram|tg):/i, "").trim();
+}
+
+function isNumericTelegramSenderUserId(raw) {
+  return /^\d+$/.test(raw);
+}
+
+function collectInvalidTelegramAllowFromEntries(params) {
+  if (!Array.isArray(params.entries)) {
+    return;
+  }
+  for (const entry of params.entries) {
+    const normalized = normalizeTelegramAllowFromEntry(entry);
+    if (!normalized || normalized === "*") {
+      continue;
+    }
+    if (!isNumericTelegramSenderUserId(normalized)) {
+      params.target.add(normalized);
+    }
+  }
+}
+
+function appendInvalidTelegramAllowFromFinding(findings, invalidEntries) {
+  if (invalidEntries.size === 0) {
+    return;
+  }
+  const examples = Array.from(invalidEntries).slice(0, 5);
+  const more = invalidEntries.size > examples.length
+    ? ` (+${invalidEntries.size - examples.length} more)`
+    : "";
+  findings.push({
+    checkId: "channels.telegram.allowFrom.invalid_entries",
+    severity: "warn",
+    title: "Telegram allowlist contains non-numeric entries",
+    detail:
+      "Telegram sender authorization requires numeric Telegram user IDs. " +
+      `Found non-numeric allowFrom entries: ${examples.join(", ")}${more}.`,
+    remediation:
+      "Replace @username entries with numeric Telegram user IDs (use setup to resolve), " +
+      "then re-run the audit.",
+  });
+}
+
+async function collectTelegramSecurityAuditFindings(params = {}) {
+  const findings = [];
+  const cfg = params.cfg || {};
+  const telegramCfg = (params.account && params.account.config) || {};
+  const invalidEntries = new Set();
+  collectInvalidTelegramAllowFromEntries({
+    entries: Array.isArray(telegramCfg.allowFrom) ? telegramCfg.allowFrom : [],
+    target: invalidEntries,
+  });
+  if (cfg.commands && cfg.commands.text === false) {
+    appendInvalidTelegramAllowFromFinding(findings, invalidEntries);
+    return findings;
+  }
+  const defaultGroupPolicy =
+    cfg.channels && cfg.channels.defaults && cfg.channels.defaults.groupPolicy;
+  const groupPolicy = telegramCfg.groupPolicy || defaultGroupPolicy || "allowlist";
+  const groups = telegramCfg.groups && typeof telegramCfg.groups === "object"
+    ? telegramCfg.groups
+    : undefined;
+  const groupsConfigured = Boolean(groups && Object.keys(groups).length > 0);
+  const groupAccessPossible =
+    groupPolicy === "open" || (groupPolicy === "allowlist" && groupsConfigured);
+  if (!groupAccessPossible) {
+    appendInvalidTelegramAllowFromFinding(findings, invalidEntries);
+    return findings;
+  }
+  const groupAllowFrom = Array.isArray(telegramCfg.groupAllowFrom)
+    ? telegramCfg.groupAllowFrom
+    : [];
+  const groupAllowFromHasWildcard = groupAllowFrom.some(
+    (value) => normalizeTelegramAllowFromEntry(value) === "*",
+  );
+  collectInvalidTelegramAllowFromEntries({ entries: groupAllowFrom, target: invalidEntries });
+  let anyGroupOverride = false;
+  if (groups) {
+    for (const value of Object.values(groups)) {
+      if (!value || typeof value !== "object") {
+        continue;
+      }
+      const allowFrom = Array.isArray(value.allowFrom) ? value.allowFrom : [];
+      if (allowFrom.length > 0) {
+        anyGroupOverride = true;
+      }
+      collectInvalidTelegramAllowFromEntries({ entries: allowFrom, target: invalidEntries });
+      const topics = value.topics && typeof value.topics === "object" ? value.topics : undefined;
+      if (!topics) {
+        continue;
+      }
+      for (const topic of Object.values(topics)) {
+        if (!topic || typeof topic !== "object") {
+          continue;
+        }
+        const topicAllowFrom = Array.isArray(topic.allowFrom) ? topic.allowFrom : [];
+        if (topicAllowFrom.length > 0) {
+          anyGroupOverride = true;
+        }
+        collectInvalidTelegramAllowFromEntries({
+          entries: topicAllowFrom,
+          target: invalidEntries,
+        });
+      }
+    }
+  }
+  appendInvalidTelegramAllowFromFinding(findings, invalidEntries);
+  if (groupAllowFromHasWildcard) {
+    findings.push({
+      checkId: "channels.telegram.groups.allowFrom.wildcard",
+      severity: "critical",
+      title: "Telegram group allowlist contains wildcard",
+      detail:
+        'Telegram group sender allowlist contains "*", which allows any group member ' +
+        "to run slash commands and control directives.",
+      remediation:
+        'Remove "*" from channels.telegram.groupAllowFrom and pairing store; ' +
+        "prefer explicit numeric Telegram user IDs.",
+    });
+    return findings;
+  }
+  const hasAnySenderAllowlist = groupAllowFrom.length > 0 || anyGroupOverride;
+  if (!hasAnySenderAllowlist) {
+    const nativeSkillsConfig = telegramCfg.commands && telegramCfg.commands.nativeSkills;
+    const skillsEnabled = resolveNativeSkillsEnabled({
+      providerId: "telegram",
+      providerSetting: nativeSkillsConfig,
+      globalSetting: cfg.commands && cfg.commands.nativeSkills,
+    });
+    findings.push({
+      checkId: "channels.telegram.groups.allowFrom.missing",
+      severity: "critical",
+      title: "Telegram group commands have no sender allowlist",
+      detail:
+        "Telegram group access is enabled but no sender allowlist is configured; " +
+        "this allows any group member to invoke slash commands" +
+        (skillsEnabled ? " (including skill commands)." : "."),
+      remediation:
+        "Approve yourself via pairing (recommended), or set channels.telegram.groupAllowFrom " +
+        "(or per-group groups.<id>.allowFrom).",
+    });
+  }
+  return findings;
+}
+
+function normalizeTelegramMergeAllowFromEntry(value) {
+  return String(value).trim();
+}
+
+function hasTelegramWildcardAllowFrom(value) {
+  return (
+    Array.isArray(value) &&
+    value.some((entry) => normalizeTelegramMergeAllowFromEntry(entry) === "*")
+  );
+}
+
+function hasRestrictiveTelegramAllowFrom(value) {
+  return (
+    Array.isArray(value) &&
+    value.some((entry) => {
+      const normalized = normalizeTelegramMergeAllowFromEntry(entry);
+      return normalized.length > 0 && normalized !== "*";
+    })
+  );
+}
+
+function dropTelegramWildcardAllowFrom(value) {
+  return value.filter((entry) => normalizeTelegramMergeAllowFromEntry(entry) !== "*");
+}
+
+function resolveMergedTelegramAllowFrom(params) {
+  if (
+    hasRestrictiveTelegramAllowFrom(params.baseAllowFrom) &&
+    hasTelegramWildcardAllowFrom(params.accountAllowFrom)
+  ) {
+    const accountRestrictiveEntries = Array.isArray(params.accountAllowFrom)
+      ? dropTelegramWildcardAllowFrom(params.accountAllowFrom)
+      : [];
+    return accountRestrictiveEntries.length > 0
+      ? accountRestrictiveEntries
+      : params.baseAllowFrom;
+  }
+  return params.accountAllowFrom !== undefined ? params.accountAllowFrom : params.baseAllowFrom;
+}
+
+function resolveTelegramAccountConfig(cfg, accountId) {
+  const channelConfig = cfg && cfg.channels && cfg.channels.telegram;
+  return channelConfig
+    ? resolveAccountEntry(channelConfig.accounts, normalizeAccountId(accountId))
+    : undefined;
+}
+
+function mergeTelegramAccountConfig(cfg = {}, accountId) {
+  const channelConfig = (cfg.channels && cfg.channels.telegram) || {};
+  const {
+    accounts: _accounts,
+    defaultAccount: _defaultAccount,
+    groups: channelGroups,
+    ...base
+  } = channelConfig;
+  const account = resolveTelegramAccountConfig(cfg, accountId) || {};
+  const configuredAccountIds = Object.keys(channelConfig.accounts || {});
+  const isMultiAccount = configuredAccountIds.length > 1;
+  const groups = account.groups !== undefined
+    ? account.groups
+    : isMultiAccount
+      ? undefined
+      : channelGroups;
+  const allowFrom = resolveMergedTelegramAllowFrom({
+    baseAllowFrom: base.allowFrom,
+    accountAllowFrom: account.allowFrom,
+  });
+  const merged = { ...base, ...account };
+  if (allowFrom !== undefined) {
+    merged.allowFrom = allowFrom;
+  }
+  if (groups !== undefined) {
+    merged.groups = groups;
+  }
+  return merged;
+}
+
+const telegramRootRuntime = Object.create(genericSdk);
+Object.defineProperties(telegramRootRuntime, {
+  collectTelegramSecurityAuditFindings: {
+    enumerable: true,
+    value: collectTelegramSecurityAuditFindings,
+  },
+  mergeTelegramAccountConfig: {
+    enumerable: true,
+    value: mergeTelegramAccountConfig,
+  },
+  parseTelegramTopicConversation: {
+    enumerable: true,
+    value: parseTelegramTopicConversation,
+  },
+  singleAccountKeysToMove: {
+    enumerable: true,
+    value: ["streaming"],
+  },
+});
+
 const originalLoad = Module._load;
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
@@ -88357,6 +88638,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/googlechat"
   ) {
     return getGooglechatRootRuntime();
+  }
+  if (
+    request === "openclaw/plugin-sdk/telegram" ||
+    request === "@openclaw/plugin-sdk/telegram"
+  ) {
+    return telegramRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/tlon" ||

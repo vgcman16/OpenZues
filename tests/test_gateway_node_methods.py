@@ -21163,6 +21163,164 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_telegram_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-telegram.cjs"
+    runtime_entry.write_text(
+        """
+const telegram = require("openclaw/plugin-sdk/telegram");
+const scopedTelegram = require("@openclaw/plugin-sdk/telegram");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.telegram",
+      description: "Use OpenClaw telegram SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            telegram: {
+              enabled: true,
+              streaming: true,
+              allowFrom: ["123"],
+              groups: { "-100": { requireMention: false } },
+              accounts: {
+                work: { name: "Work", allowFrom: ["*"], botToken: "secret" }
+              }
+            }
+          },
+          commands: { text: false }
+        };
+        return Promise.resolve(
+          telegram.collectTelegramSecurityAuditFindings({
+            cfg,
+            accountId: "default",
+            account: {
+              accountId: "default",
+              config: { allowFrom: ["tg:@alice", "42"] }
+            }
+          })
+        ).then((findings) => ({
+          keys: [
+            "collectTelegramSecurityAuditFindings",
+            "mergeTelegramAccountConfig",
+            "parseTelegramTopicConversation",
+            "singleAccountKeysToMove"
+          ].filter((key) => typeof telegram[key] !== "undefined").sort(),
+          scopedSame:
+            scopedTelegram.parseTelegramTopicConversation ===
+            telegram.parseTelegramTopicConversation,
+          directTopic: telegram.parseTelegramTopicConversation({
+            conversationId: "-100:topic:42"
+          }),
+          childTopic: telegram.parseTelegramTopicConversation({
+            conversationId: "42",
+            parentConversationId: "-100"
+          }),
+          invalidTopic: telegram.parseTelegramTopicConversation({
+            conversationId: "abc",
+            parentConversationId: "-100"
+          }),
+          singleAccountKeysToMove: Array.from(telegram.singleAccountKeysToMove),
+          merged: telegram.mergeTelegramAccountConfig(cfg, "work"),
+          findings
+        }));
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-telegram-plugin",
+                    "name": "Runtime Telegram Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-telegram.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.telegram"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.telegram"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "collectTelegramSecurityAuditFindings",
+        "mergeTelegramAccountConfig",
+        "parseTelegramTopicConversation",
+        "singleAccountKeysToMove",
+    ]
+    assert payload["result"]["scopedSame"] is True
+    assert payload["result"]["directTopic"] == {
+        "chatId": "-100",
+        "topicId": "42",
+        "canonicalConversationId": "-100:topic:42",
+    }
+    assert payload["result"]["childTopic"] == {
+        "chatId": "-100",
+        "topicId": "42",
+        "canonicalConversationId": "-100:topic:42",
+    }
+    assert payload["result"]["invalidTopic"] is None
+    assert payload["result"]["singleAccountKeysToMove"] == ["streaming"]
+    assert payload["result"]["merged"]["name"] == "Work"
+    assert payload["result"]["merged"]["allowFrom"] == ["123"]
+    assert payload["result"]["merged"]["groups"] == {"-100": {"requireMention": False}}
+    assert payload["result"]["findings"] == [
+        {
+            "checkId": "channels.telegram.allowFrom.invalid_entries",
+            "severity": "warn",
+            "title": "Telegram allowlist contains non-numeric entries",
+            "detail": (
+                "Telegram sender authorization requires numeric Telegram user IDs. "
+                "Found non-numeric allowFrom entries: @alice."
+            ),
+            "remediation": (
+                "Replace @username entries with numeric Telegram user IDs "
+                "(use setup to resolve), then re-run the audit."
+            ),
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_googlechat_helpers(
     tmp_path,
 ) -> None:
