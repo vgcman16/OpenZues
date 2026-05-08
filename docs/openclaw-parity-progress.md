@@ -19657,6 +19657,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Test checkpointed in `03f1ee46`.
+- Native git updates now run the clean worktree check with OpenClaw's
+  `:!dist/control-ui/` pathspec exclusion, allowing generated control-ui dist
+  dirt without skipping the update while still rejecting real dirty files.
+  This closes `OZ-PKG-001BQ`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999995%.
+- Verified control-ui dist clean-check exclusion with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent git update
+  proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "run_update or runtime_update_run_update"`
+  (`3 passed, 35 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`38 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `5171f2f2`.
 
 ## References
 

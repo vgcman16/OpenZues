@@ -10274,3 +10274,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tightened to ~80-99.99999999999999999999%. Re-scan package/update seams and
   rotate to the next repo-wide queue head if no package-update source-backed
   heads remain.
+- Current queue-head adjustment: native git updates now run the clean worktree
+  check with OpenClaw's `:!dist/control-ui/` pathspec exclusion, preserving
+  generated control-ui dist dirt while still skipping for real dirty files.
+  Source/test checkpointed in `5171f2f2`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999995%. Continue git update no-upstream/preflight
+  behavior next.
