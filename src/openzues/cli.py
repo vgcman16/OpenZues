@@ -8146,6 +8146,10 @@ async def _with_doctor_runtime_bridge_payload(
 
 
 _PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.json"
+_PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS = {
+    "dist/.buildstamp",
+    "dist/.runtime-postbuildstamp",
+}
 
 
 def _openzues_package_root() -> Path:
@@ -8204,6 +8208,8 @@ def _doctor_read_package_dist_inventory(
 
 def _doctor_is_packaged_dist_file(relative_path: str) -> bool:
     if relative_path == _PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix():
+        return False
+    if relative_path in _PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS:
         return False
     if relative_path.endswith(".map"):
         return False
