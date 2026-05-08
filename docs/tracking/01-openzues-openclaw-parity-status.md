@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999985% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -5840,6 +5840,17 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused human git update hint proof (`1
     passed`), adjacent human/update proof (`5 passed, 527 deselected`), `ruff
     check`, and focused `git diff --check`.
+
+- [x] Human update-status combined git/npm hint separator.
+  - Source: `openclaw-main/src/commands/status.update.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `1d19a46c`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused combined hint red-green proof (`1
+    failed` before implementation, then `1 passed`), adjacent update-status
+    proof (`3 passed, 559 deselected`), `ruff check`, `mypy`, and focused
+    `git diff --check`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.

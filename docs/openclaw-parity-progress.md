@@ -19993,6 +19993,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 1128 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `9c56ff39`.
+- Human `openzues update status` output now matches OpenClaw's combined
+  availability hint formatting by joining git and npm update details with
+  ` · ` instead of a comma. This closes `OZ-PKG-001CI`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999%.
+- Verified the combined update hint with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_human_reports_combined_git_and_registry_update_hint -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update-status
+  proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_human_reports_update_available_hint or update_status_human_reports_git_update_available_hint or combined_git_and_registry_update_hint"`
+  (`3 passed, 559 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `1d19a46c`.
 
 ## References
 

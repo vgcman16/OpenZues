@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999985% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -80,8 +80,9 @@ startup availability hint state is checkpointed in `087924f8`. `OZ-PKG-001CG`
 source-checkout availability clearing is checkpointed in `e66c5082`, and
 `OZ-PKG-001CH` recurring runner startup checks are checkpointed in `49150d76`;
 `OZ-PLUGIN-00300` resolution-notes subpath shim is checkpointed in
-`9c56ff39`; continue remaining exact plugin SDK subpaths or broader
-package/provider runtime parity.
+`9c56ff39`, and `OZ-PKG-001CI` combined update hint formatting is
+checkpointed in `1d19a46c`; continue remaining exact plugin SDK subpaths or
+broader package/provider runtime parity.
 
 ## Active Slice Detail
 
@@ -11181,6 +11182,25 @@ package/provider runtime parity.
     `python -m pytest tests\test_runtime_updates.py -q` (`60 passed`), `ruff
     check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
     `mypy src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001CI` combined update-status availability hint separator
+  - Source: `openclaw-main/src/commands/status.update.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: human update-status output with both git and registry
+    availability details renders `Update available (git behind N · npm
+    VERSION). Run: openzues update`, matching OpenClaw's detail separator.
+  - Evidence required: focused CLI human-output test, adjacent update-status
+    hint tests, ruff, mypy
+  - Status: checkpointed in `1d19a46c`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_status_human_reports_combined_git_and_registry_update_hint -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_cli.py -q -k "update_status_human_reports_update_available_hint or update_status_human_reports_git_update_available_hint or combined_git_and_registry_update_hint"`
+    (`3 passed, 559 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
     `git diff --check`.
 
 - [x] `OZ-PROV-001M` Slack agent-request thread metadata

@@ -62,6 +62,9 @@ refresh plus stale available/auto-first-seen state clearing before npm lookup.
 `src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` are
 checkpointed in `49150d76`; they cover repeated runner checks gated by
 persisted `lastCheckedAt`.
+`OZ-PKG-001CI` combined human update-status hint formatting from
+`src/commands/status.update.ts` is checkpointed in `1d19a46c`; it covers the
+OpenClaw ` · ` separator for combined git/npm availability details.
 
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is
