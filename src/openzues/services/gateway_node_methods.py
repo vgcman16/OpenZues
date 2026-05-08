@@ -16909,6 +16909,11 @@ def _project_sessions_history_messages(
         if not include_tools and _sessions_history_is_tool_role(raw_role_value):
             continue
         raw_text = str(row.get("content") or "")
+        sender_label = (
+            _extract_chat_history_inbound_sender_label(raw_text)
+            if role == "user"
+            else None
+        )
         text = _chat_history_display_text(
             raw_text,
             strip_user_envelope=role == "user",
@@ -16926,22 +16931,24 @@ def _project_sessions_history_messages(
             ):
                 continue
             content_redacted = content_redacted or structured_content["redacted"]
-            messages.append(
-                {
-                    "role": role,
-                    "content": structured_content["content"],
-                }
-            )
+            message = {
+                "role": role,
+                "content": structured_content["content"],
+            }
+            if sender_label is not None:
+                message["senderLabel"] = sender_label
+            messages.append(message)
             continue
         sanitized = _sessions_history_sanitized_text(text)
         content_truncated = content_truncated or sanitized["truncated"]
         content_redacted = content_redacted or sanitized["redacted"]
-        messages.append(
-            {
-                "role": role,
-                "content": [{"type": "text", "text": sanitized["text"]}],
-            }
-        )
+        message = {
+            "role": role,
+            "content": [{"type": "text", "text": sanitized["text"]}],
+        }
+        if sender_label is not None:
+            message["senderLabel"] = sender_label
+        messages.append(message)
     return {
         "messages": messages,
         "contentTruncated": content_truncated,

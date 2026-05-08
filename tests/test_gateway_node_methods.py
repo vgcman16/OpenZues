@@ -83312,6 +83312,39 @@ async def test_sessions_history_strips_structured_user_channel_envelope(
 
 
 @pytest.mark.asyncio
+async def test_sessions_history_projects_inbound_sender_label(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-history-inbound-sender-label.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content=(
+            "Conversation info (untrusted metadata):\n"
+            '```json\n{"sender":"+1555000"}\n```\n\n'
+            "Sender (untrusted metadata):\n"
+            '```json\n{"username":"alice"}\n```\n\n'
+            "Visible session ask"
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "senderLabel": "alice",
+            "content": [{"type": "text", "text": "Visible session ask"}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_and_sessions_history_strip_tool_result_xml_blocks() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-tool-result-xml"
     shutil.rmtree(tmp_path, ignore_errors=True)
