@@ -19457,6 +19457,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `9ba6843f`.
+- Native package update inventory verification now applies OpenClaw-style
+  omission filters for source maps, local build metadata, private QA artifacts,
+  plugin SDK QA files, and bundled plugin dependency directories before
+  reporting unexpected packaged file drift. This closes `OZ-PKG-001BE`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999997%.
+- Verified package dist inventory omission filters with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent inventory and
+  sidecar proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`26 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e7d960e0`.
 
 ## References
 

@@ -10190,3 +10190,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, with the evidence band tightened to
   ~80-99.999999999999999996%. Continue private-QA sidecar omission and
   package dist inventory filter exclusions next.
+- Current queue-head adjustment: native package update inventory comparison now
+  applies OpenClaw-style omission filters for source maps, local build
+  metadata, private QA artifacts, plugin SDK QA files, and bundled plugin
+  dependency directories before reporting unexpected drift. Source/test
+  checkpointed in `e7d960e0`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999997%. Continue
+  unsafe package dist path handling and externalized extension omission next.
