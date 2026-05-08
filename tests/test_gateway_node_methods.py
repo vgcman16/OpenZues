@@ -19258,6 +19258,320 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_bluebubbles_root_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-bluebubbles-root.cjs"
+    runtime_entry.write_text(
+        """
+const bluebubbles = require("openclaw/plugin-sdk/bluebubbles");
+const scopedBluebubbles = require("@openclaw/plugin-sdk/bluebubbles");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.bluebubbles_root",
+      description: "Use OpenClaw BlueBubbles root SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const calls = [];
+        globalThis.__openzuesQaRunnerRuntime = {
+          loadBundledPluginPublicSurfaceModuleSync(params) {
+            calls.push(params);
+            return {
+              createBlueBubblesConversationBindingManager: ({ accountId }) => ({
+                accountId,
+                stop: () => "stopped"
+              }),
+              normalizeBlueBubblesAcpConversationId: (conversationId) => ({
+                conversationId: String(conversationId).trim().toLowerCase()
+              }),
+              matchBlueBubblesAcpConversation: ({ bindingConversationId, conversationId }) =>
+                String(bindingConversationId).trim().toLowerCase() ===
+                  String(conversationId).trim().toLowerCase()
+                  ? {
+                      conversationId: String(conversationId).trim().toLowerCase(),
+                      matchPriority: 2
+                    }
+                  : null,
+              resolveBlueBubblesConversationIdFromTarget: (target) =>
+                String(target).trim().replace(/^imessage:/i, "") || undefined,
+              collectBlueBubblesStatusIssues: (accounts) =>
+                accounts
+                  .filter((account) => account.enabled && !account.configured)
+                  .map((account) => ({
+                    channel: "bluebubbles",
+                    accountId: account.accountId || "default",
+                    kind: "config",
+                    message: "Not configured (missing serverUrl or password)."
+                  }))
+            };
+          }
+        };
+
+        const manager = bluebubbles.createBlueBubblesConversationBindingManager({
+          cfg: {},
+          accountId: "ops"
+        });
+        const actionGate = bluebubbles.createActionGate({
+          edit: false,
+          reply: true
+        });
+        const limiter = bluebubbles.createWebhookInFlightLimiter({
+          maxInFlightPerKey: 1
+        });
+        const firstInFlight = limiter.tryAcquire("hook");
+        const secondInFlight = limiter.tryAcquire("hook");
+        limiter.release("hook");
+        return {
+          hasRootKeys: [
+            "createBlueBubblesConversationBindingManager",
+            "normalizeBlueBubblesAcpConversationId",
+            "matchBlueBubblesAcpConversation",
+            "resolveBlueBubblesConversationIdFromTarget",
+            "collectBlueBubblesStatusIssues",
+            "resolveAckReaction",
+            "createActionGate",
+            "jsonResult",
+            "readNumberParam",
+            "readReactionParams",
+            "readStringParam",
+            "evictOldHistoryKeys",
+            "recordPendingHistoryEntryIfEnabled",
+            "resolveControlCommandGate",
+            "logAckFailure",
+            "logInboundDrop",
+            "logTypingFailure",
+            "BLUEBUBBLES_ACTION_NAMES",
+            "BLUEBUBBLES_ACTIONS",
+            "buildChannelConfigSchema",
+            "resolveBlueBubblesGroupRequireMention",
+            "resolveBlueBubblesGroupToolPolicy",
+            "resolveChannelMediaMaxBytes",
+            "addWildcardAllowFrom",
+            "mergeAllowFromEntries",
+            "setTopLevelChannelDmPolicyWithAllowFrom",
+            "applyAccountNameToChannelSection",
+            "patchScopedAccountConfig",
+            "createAccountListHelpers",
+            "createChannelReplyPipeline",
+            "ToolPolicySchema",
+            "MarkdownConfigSchema",
+            "parseChatTargetPrefixesOrThrow",
+            "resolveServicePrefixedTarget",
+            "stripMarkdown",
+            "parseFiniteNumber",
+            "normalizeAccountId",
+            "readStoreAllowFromForDmPolicy",
+            "resolveDmGroupAccessWithLists",
+            "readBooleanParam",
+            "mapAllowFromEntries",
+            "createChannelPairingController",
+            "resolveRequestUrl",
+            "buildComputedAccountStatusSnapshot",
+            "buildProbeChannelStatusSummary",
+            "isAllowedBlueBubblesSender",
+            "extractToolSend",
+            "WEBHOOK_RATE_LIMIT_DEFAULTS",
+            "createFixedWindowRateLimiter",
+            "createWebhookInFlightLimiter",
+            "normalizeWebhookPath",
+            "readWebhookBodyOrReject",
+            "registerWebhookTargetWithPluginRoute",
+            "resolveRequestClientIp",
+            "resolveWebhookTargets",
+            "resolveWebhookTargetWithAuthOrRejectSync",
+            "withResolvedWebhookRequestPipeline"
+          ].every((key) => Object.prototype.hasOwnProperty.call(bluebubbles, key)),
+          scopedSame:
+            scopedBluebubbles.matchBlueBubblesAcpConversation ===
+              bluebubbles.matchBlueBubblesAcpConversation &&
+            scopedBluebubbles.BLUEBUBBLES_ACTIONS === bluebubbles.BLUEBUBBLES_ACTIONS,
+          facade: {
+            stop: manager.stop(),
+            normalized: bluebubbles.normalizeBlueBubblesAcpConversationId(" CHAT-1 "),
+            match: bluebubbles.matchBlueBubblesAcpConversation({
+              bindingConversationId: "Chat-1",
+              conversationId: " chat-1 "
+            }),
+            target: bluebubbles.resolveBlueBubblesConversationIdFromTarget(
+              "imessage:+15551234567"
+            ),
+            issues: bluebubbles.collectBlueBubblesStatusIssues([
+              { accountId: "default", enabled: true, configured: false }
+            ])
+          },
+          actions: {
+            names: bluebubbles.BLUEBUBBLES_ACTION_NAMES.slice(0, 4),
+            renameGroup: bluebubbles.BLUEBUBBLES_ACTIONS.renameGroup,
+            gate: [actionGate("edit"), actionGate("reply"), actionGate("react")]
+          },
+          params: {
+            number: bluebubbles.readNumberParam({ limit: "7" }, "limit", {
+              integer: true
+            }),
+            bool: bluebubbles.readBooleanParam({ silent: true }, "silent"),
+            reaction: bluebubbles.readReactionParams(
+              { emoji: " :thumbsup: ", remove: false },
+              { removeErrorMessage: "emoji required" }
+            ),
+            jsonOk: bluebubbles.jsonResult({ ok: true }).details.ok
+          },
+          policy: {
+            mention: bluebubbles.resolveBlueBubblesGroupRequireMention({
+              cfg: {},
+              groupId: "chat-1"
+            }),
+            allowed: bluebubbles.isAllowedBlueBubblesSender({
+              allowFrom: ["chat_guid:chat-guid-1"],
+              sender: "other",
+              chatGuid: "chat-guid-1"
+            }),
+            dmAccess: bluebubbles.resolveDmGroupAccessWithLists({
+              isGroup: false,
+              dmPolicy: "allowlist",
+              allowFrom: ["u1"],
+              storeAllowFrom: [],
+              isSenderAllowed: (allowFrom) => allowFrom.includes("u1")
+            })
+          },
+          misc: {
+            stripped: bluebubbles.stripMarkdown("**Ship** _now_"),
+            finite: bluebubbles.parseFiniteNumber("4.5"),
+            account: bluebubbles.normalizeAccountId(" Work "),
+            mappedAllow: bluebubbles.mapAllowFromEntries(["u1", 2]),
+            mediaLimit: bluebubbles.resolveChannelMediaMaxBytes({
+              cfg: { channels: { bluebubbles: { mediaMaxMb: 1 } } },
+              accountId: "default",
+              resolveChannelLimitMb: ({ cfg }) => cfg.channels.bluebubbles.mediaMaxMb
+            }),
+            webhookPath: bluebubbles.normalizeWebhookPath("bb/hook"),
+            inFlight: [firstInFlight, secondInFlight],
+            requestPath: bluebubbles.resolveRequestUrl("/bb/hook?x=1")
+          },
+          callSummary: calls.map((call) => ({
+            dirName: call.dirName,
+            artifact: call.artifactBasename
+          }))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-bluebubbles-root-plugin",
+                    "name": "Runtime BlueBubbles Root Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-bluebubbles-root.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.bluebubbles_root"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.bluebubbles_root"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "hasRootKeys": True,
+        "scopedSame": True,
+        "facade": {
+            "stop": "stopped",
+            "normalized": {"conversationId": "chat-1"},
+            "match": {"conversationId": "chat-1", "matchPriority": 2},
+            "target": "+15551234567",
+            "issues": [
+                {
+                    "channel": "bluebubbles",
+                    "accountId": "default",
+                    "kind": "config",
+                    "message": "Not configured (missing serverUrl or password).",
+                }
+            ],
+        },
+        "actions": {
+            "names": ["react", "edit", "unsend", "reply"],
+            "renameGroup": {"gate": "renameGroup", "groupOnly": True},
+            "gate": [False, True, True],
+        },
+        "params": {
+            "number": 7,
+            "bool": True,
+            "reaction": {
+                "emoji": ":thumbsup:",
+                "remove": False,
+                "isEmpty": False,
+            },
+            "jsonOk": True,
+        },
+        "policy": {
+            "mention": True,
+            "allowed": True,
+                "dmAccess": {
+                    "decision": "allow",
+                    "reasonCode": "dm_policy_allowlisted",
+                    "reason": "dmPolicy=allowlist (allowlisted)",
+                    "effectiveAllowFrom": ["u1"],
+                    "effectiveGroupAllowFrom": ["u1"],
+                },
+        },
+        "misc": {
+            "stripped": "Ship now",
+            "finite": 4.5,
+            "account": "work",
+            "mappedAllow": ["u1", "2"],
+            "mediaLimit": 1048576,
+            "webhookPath": "/bb/hook",
+            "inFlight": [True, False],
+            "requestPath": "/bb/hook?x=1",
+        },
+        "callSummary": [
+            {"dirName": "bluebubbles", "artifact": "api.js"},
+            {"dirName": "bluebubbles", "artifact": "api.js"},
+            {"dirName": "bluebubbles", "artifact": "api.js"},
+            {"dirName": "bluebubbles", "artifact": "api.js"},
+            {"dirName": "bluebubbles", "artifact": "api.js"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_bluebubbles_policy_helper(
     tmp_path,
 ) -> None:

@@ -41707,6 +41707,21 @@ function passthrough(value) {
   return value;
 }
 
+function stripMarkdown(value) {
+  return String(value || "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^>\s?/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const textRuntime = {
   hasNonEmptyString,
   isAutoLinkedFileRef,
@@ -88435,6 +88450,68 @@ const blueBubblesPolicyRuntime = {
   resolveBlueBubblesGroupToolPolicy,
 };
 
+const BLUEBUBBLES_ACTIONS = Object.freeze({
+  react: Object.freeze({ gate: "reactions" }),
+  edit: Object.freeze({ gate: "edit", unsupportedOnMacOS26: true }),
+  unsend: Object.freeze({ gate: "unsend" }),
+  reply: Object.freeze({ gate: "reply" }),
+  sendWithEffect: Object.freeze({ gate: "sendWithEffect" }),
+  renameGroup: Object.freeze({ gate: "renameGroup", groupOnly: true }),
+  setGroupIcon: Object.freeze({ gate: "setGroupIcon", groupOnly: true }),
+  addParticipant: Object.freeze({ gate: "addParticipant", groupOnly: true }),
+  removeParticipant: Object.freeze({ gate: "removeParticipant", groupOnly: true }),
+  leaveGroup: Object.freeze({ gate: "leaveGroup", groupOnly: true }),
+  sendAttachment: Object.freeze({ gate: "sendAttachment" }),
+});
+
+const BLUEBUBBLES_ACTION_NAMES = Object.freeze(Object.keys(BLUEBUBBLES_ACTIONS));
+
+function loadBlueBubblesFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "bluebubbles",
+    artifactBasename: "api.js",
+  });
+}
+
+function createBlueBubblesConversationBindingManager(params) {
+  return loadBlueBubblesFacadeModule().createBlueBubblesConversationBindingManager(params);
+}
+
+function normalizeBlueBubblesAcpConversationId(conversationId) {
+  return loadBlueBubblesFacadeModule().normalizeBlueBubblesAcpConversationId(
+    conversationId,
+  );
+}
+
+function matchBlueBubblesAcpConversation(params) {
+  return loadBlueBubblesFacadeModule().matchBlueBubblesAcpConversation(params);
+}
+
+function resolveBlueBubblesConversationIdFromTarget(target) {
+  return loadBlueBubblesFacadeModule().resolveBlueBubblesConversationIdFromTarget(target);
+}
+
+function collectBlueBubblesRootStatusIssues(accounts) {
+  return loadBlueBubblesFacadeModule().collectBlueBubblesStatusIssues(accounts);
+}
+
+function headerValue(value) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function resolveRequestClientIp(req, trustedProxies, allowRealIpFallback = false) {
+  if (!req) {
+    return undefined;
+  }
+  return resolveClientIp({
+    remoteAddr: (req.socket && req.socket.remoteAddress) || "",
+    forwardedFor: headerValue(req.headers && req.headers["x-forwarded-for"]),
+    realIp: headerValue(req.headers && req.headers["x-real-ip"]),
+    trustedProxies,
+    allowRealIpFallback,
+  });
+}
+
 const mattermostPolicyRuntime = {
   isMattermostSenderAllowed,
 };
@@ -90082,6 +90159,78 @@ const zaloRootRuntime = Object.assign(Object.create(genericSdk), {
   withResolvedWebhookRequestPipeline,
   zaloSetupAdapter: zaloSetupRuntime.zaloSetupAdapter,
   zaloSetupWizard: zaloSetupRuntime.zaloSetupWizard,
+});
+
+const blueBubblesRootRuntime = Object.assign(Object.create(genericSdk), {
+  BLUEBUBBLES_ACTION_NAMES,
+  BLUEBUBBLES_ACTIONS,
+  DEFAULT_ACCOUNT_ID,
+  DM_GROUP_ACCESS_REASON,
+  MarkdownConfigSchema,
+  PAIRING_APPROVED_MESSAGE,
+  ToolPolicySchema,
+  WEBHOOK_RATE_LIMIT_DEFAULTS,
+  addWildcardAllowFrom,
+  applyAccountNameToChannelSection,
+  buildChannelConfigSchema,
+  buildComputedAccountStatusSnapshot,
+  buildProbeChannelStatusSummary,
+  collectBlueBubblesStatusIssues: collectBlueBubblesRootStatusIssues,
+  createAccountListHelpers,
+  createActionGate,
+  createBlueBubblesConversationBindingManager,
+  createChannelPairingController,
+  createChannelReplyPipeline,
+  createFixedWindowRateLimiter,
+  createWebhookInFlightLimiter,
+  deleteAccountFromConfigSection,
+  emptyPluginConfigSchema,
+  evictOldHistoryKeys,
+  extractToolSend,
+  formatDocsLink,
+  formatPairingApproveHint,
+  isAllowedBlueBubblesSender,
+  isAllowedParsedChatSender,
+  jsonResult,
+  logAckFailure,
+  logInboundDrop,
+  logTypingFailure,
+  mapAllowFromEntries,
+  matchBlueBubblesAcpConversation,
+  mergeAllowFromEntries,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
+  normalizeBlueBubblesAcpConversationId,
+  normalizeWebhookPath,
+  parseChatAllowTargetPrefixes,
+  parseChatTargetPrefixesOrThrow,
+  parseFiniteNumber,
+  patchScopedAccountConfig,
+  readBooleanParam,
+  readNumberParam,
+  readReactionParams,
+  readStoreAllowFromForDmPolicy,
+  readStringParam,
+  readWebhookBodyOrReject,
+  recordPendingHistoryEntryIfEnabled,
+  registerWebhookTargetWithPluginRoute,
+  resolveAckReaction,
+  resolveBlueBubblesConversationIdFromTarget,
+  resolveBlueBubblesGroupRequireMention,
+  resolveBlueBubblesGroupToolPolicy,
+  resolveChannelMediaMaxBytes,
+  resolveControlCommandGate,
+  resolveDmGroupAccessWithLists,
+  resolveRequestClientIp,
+  resolveRequestUrl,
+  resolveServicePrefixedAllowTarget,
+  resolveServicePrefixedTarget,
+  resolveWebhookTargetWithAuthOrRejectSync,
+  resolveWebhookTargets,
+  setAccountEnabledInConfigSection,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  stripMarkdown,
+  withResolvedWebhookRequestPipeline,
 });
 
 const originalLoad = Module._load;
@@ -92119,6 +92268,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/synology-chat"
   ) {
     return synologyChatRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/bluebubbles" ||
+    request === "@openclaw/plugin-sdk/bluebubbles"
+  ) {
+    return blueBubblesRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/bluebubbles-policy" ||
