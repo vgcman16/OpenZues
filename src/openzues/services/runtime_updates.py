@@ -1285,16 +1285,65 @@ class RuntimeUpdateService:
                 steps=steps,
                 started_at=started_at,
             )
-        cleanup_step = await self._run_update_command_step(
-            "preflight cleanup",
-            ["git", "worktree", "remove", "--force", str(worktree_dir)],
-            timeout_ms=timeout_ms,
-        )
-        steps.append(cleanup_step)
-        shutil.rmtree(preflight_root, ignore_errors=True)
+
+        selected_sha: str | None = None
+        try:
+            for candidate_sha in candidates:
+                short_sha = candidate_sha[:8]
+                checkout_step = await self._run_update_command_step_at(
+                    f"preflight checkout ({short_sha})",
+                    ["git", "checkout", "--detach", candidate_sha],
+                    cwd=worktree_dir,
+                    timeout_ms=timeout_ms,
+                )
+                steps.append(checkout_step)
+                if _update_step_exit_code(checkout_step) != 0:
+                    continue
+
+                deps_step = await self._run_update_command_step_at(
+                    f"preflight deps install ({short_sha})",
+                    [sys.executable, "-m", "pip", "install", "-e", "."],
+                    cwd=worktree_dir,
+                    timeout_ms=timeout_ms,
+                )
+                steps.append(deps_step)
+                if _update_step_exit_code(deps_step) != 0:
+                    continue
+
+                build_step = await self._run_update_command_step_at(
+                    f"preflight build ({short_sha})",
+                    [sys.executable, "-m", "compileall", "-q", "src"],
+                    cwd=worktree_dir,
+                    timeout_ms=timeout_ms,
+                )
+                steps.append(build_step)
+                if _update_step_exit_code(build_step) != 0:
+                    continue
+
+                selected_sha = candidate_sha
+                break
+        finally:
+            cleanup_step = await self._run_update_command_step(
+                "preflight cleanup",
+                ["git", "worktree", "remove", "--force", str(worktree_dir)],
+                timeout_ms=timeout_ms,
+            )
+            steps.append(cleanup_step)
+            shutil.rmtree(preflight_root, ignore_errors=True)
+
+        if selected_sha is None:
+            return self._build_update_command_result(
+                status="error",
+                reason="preflight-no-good-commit",
+                root=root,
+                before=before,
+                after=None,
+                steps=steps,
+                started_at=started_at,
+            )
 
         for name, argv, reason in (
-            ("git pull", ["git", "pull", "--ff-only"], "pull-failed"),
+            ("git rebase", ["git", "rebase", selected_sha], "rebase-failed"),
             (
                 "deps install",
                 [sys.executable, "-m", "pip", "install", "-e", "."],

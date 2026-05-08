@@ -217,8 +217,11 @@ async def test_runtime_update_run_update_executes_native_git_install_build_steps
         "git rev-parse @{upstream}",
         "git rev-list",
         "preflight worktree",
+        "preflight checkout (rev-b)",
+        "preflight deps install (rev-b)",
+        "preflight build (rev-b)",
         "preflight cleanup",
-        "git pull",
+        "git rebase",
         "deps install",
         "build",
     ]
@@ -241,9 +244,15 @@ async def test_runtime_update_run_update_executes_native_git_install_build_steps
     ]
     assert command_calls[5][0][:4] == ["git", "worktree", "add", "--detach"]
     assert command_calls[5][0][-1] == "rev-b"
-    assert command_calls[6][0][:4] == ["git", "worktree", "remove", "--force"]
-    assert command_calls[7:] == [
-        (["git", "pull", "--ff-only"], tmp_path, 1000),
+    assert command_calls[6][0] == ["git", "checkout", "--detach", "rev-b"]
+    assert command_calls[6][1] != tmp_path
+    assert command_calls[7][0] == [sys.executable, "-m", "pip", "install", "-e", "."]
+    assert command_calls[7][1] != tmp_path
+    assert command_calls[8][0] == [sys.executable, "-m", "compileall", "-q", "src"]
+    assert command_calls[8][1] != tmp_path
+    assert command_calls[9][0][:4] == ["git", "worktree", "remove", "--force"]
+    assert command_calls[10:] == [
+        (["git", "rebase", "rev-b"], tmp_path, 1000),
         ([sys.executable, "-m", "pip", "install", "-e", "."], tmp_path, 1000),
         ([sys.executable, "-m", "compileall", "-q", "src"], tmp_path, 1000),
     ]
@@ -297,8 +306,11 @@ async def test_runtime_update_run_update_ignores_control_ui_dist_dirty_files(
         "git rev-parse @{upstream}",
         "git rev-list",
         "preflight worktree",
+        "preflight checkout (rev-b)",
+        "preflight deps install (rev-b)",
+        "preflight build (rev-b)",
         "preflight cleanup",
-        "git pull",
+        "git rebase",
         "deps install",
         "build",
     ]
@@ -465,6 +477,60 @@ async def test_runtime_update_run_update_reports_preflight_worktree_failure(
     ]
     assert command_calls[-1][:4] == ["git", "worktree", "add", "--detach"]
     assert command_calls[-1][-1] == "rev-b"
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_selects_first_good_preflight_candidate(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[tuple[list[str], Path]] = []
+    revision_probe = RevisionProbe("rev-a", "rev-good")
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del timeout_ms
+        command_calls.append((argv, cwd))
+        if argv == ["git", "rev-parse", "@{upstream}"]:
+            return {"stdout": "rev-bad\n", "stderr": "", "exitCode": 0}
+        if argv[:2] == ["git", "rev-list"]:
+            return {"stdout": "rev-bad\nrev-good\n", "stderr": "", "exitCode": 0}
+        if argv[:3] == ["git", "checkout", "--detach"] and argv[-1] == "rev-bad":
+            return {"stdout": "", "stderr": "", "exitCode": 0}
+        if argv == [sys.executable, "-m", "compileall", "-q", "src"] and cwd != tmp_path:
+            first_checkout_seen = any(call[0][-1] == "rev-bad" for call in command_calls)
+            second_checkout_seen = any(call[0][-1] == "rev-good" for call in command_calls)
+            if first_checkout_seen and not second_checkout_seen:
+                return {"stdout": "", "stderr": "bad build\n", "exitCode": 1}
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("run_update should report restart posture, not exec immediately")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=revision_probe,
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "ok"
+    step_names = [step["name"] for step in result["steps"]]
+    assert "preflight checkout (rev-bad)" in step_names
+    assert "preflight build (rev-bad)" in step_names
+    assert "preflight checkout (rev-good)" in step_names
+    assert "preflight build (rev-good)" in step_names
+    assert "git rebase" in step_names
+    assert any(call[0] == ["git", "rebase", "rev-good"] for call in command_calls)
 
 
 @pytest.mark.asyncio
