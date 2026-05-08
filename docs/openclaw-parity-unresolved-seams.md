@@ -10547,3 +10547,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `f18197d2`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.9999999999999999999999999997%. Continue remaining
   Matrix/provider/channel facade and broad repo parity seams.
+- Current queue-head adjustment: imported plugin SDK `matrix-runtime-surface`
+  now exposes exact scoped/unscoped `resolveMatrixAccountStringValues` and
+  `setMatrixRuntime` with OpenClaw's account/scoped-env/channel/global-env
+  precedence and non-default account auth fallback guard instead of generic
+  passthrough. Source/test checkpointed in `f4473e05`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999998%. Continue `matrix-thread-bindings`,
+  `matrix-surface`, or broader provider/channel facade seams.

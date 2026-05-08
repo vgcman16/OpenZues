@@ -20276,6 +20276,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1146 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `f18197d2`.
+- Imported plugin SDK `matrix-runtime-surface` now exposes the exact
+  scoped/unscoped Matrix runtime facade for `resolveMatrixAccountStringValues`
+  and `setMatrixRuntime`, including OpenClaw's account/scoped-env/channel/
+  global-env precedence and the non-default account auth fallback guard. This
+  closes `OZ-PLUGIN-00320`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999998%.
+- Verified the matrix-runtime-surface helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_matrix_runtime_surface_helper -q`
+  (the exact subpath returned generic passthrough data before implementation,
+  then `1 passed`), adjacent Matrix/provider facade proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "matrix_runtime_surface or mattermost_policy or irc_surface or bluebubbles_policy"`
+  (`4 passed, 1147 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `f4473e05`.
 
 ## References
 
