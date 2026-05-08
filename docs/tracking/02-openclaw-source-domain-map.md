@@ -561,6 +561,8 @@ checkpointed in `0561baa6`.
 checkpointed in `fc6c72d4`.
 `diagnostics-otel` from `src/plugin-sdk/diagnostics-otel.ts` is checkpointed
 in `1bc4c0f9`.
+`thread-ownership` from `src/plugin-sdk/thread-ownership.ts` is checkpointed
+in `41dad57f`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
