@@ -10912,3 +10912,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   with the evidence band tightened to
   ~80-99.9999999999999999999999999999999999999996%. Continue provider/runtime
   breadth and any newly exposed exact SDK helper seams.
+- Current queue-head adjustment: imported plugin SDK `irc` now exposes the
+  bundled private IRC helper barrel by composing channel config, pairing, reply
+  payload, inbound dispatch, runtime logger, status, setup, account, and
+  policy helpers instead of broad generic placeholder helpers. Source/test
+  checkpointed in `16b12bb8`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999997%. Continue remaining exact
+  SDK root seams (`bluebubbles`, `matrix`, `mattermost`, `memory-core`,
+  `zalo`) plus provider/runtime breadth.

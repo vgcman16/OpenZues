@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999999996% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999999997% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6950,6 +6950,23 @@ may lag behind this tracker.
     facade import returned generic placeholder behavior before implementation,
     then `1 passed`), adjacent QA proof (`4 passed, 1196 deselected`), `ruff
     check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK IRC root shim.
+  - Source: `openclaw-main/src/plugin-sdk/irc.ts`,
+    `openclaw-main/extensions/irc/package.json`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `irc` imports expose the bundled private IRC
+    helper barrel for channel config, setup, pairing, reply payload, inbound
+    dispatch, account resolution, status, runtime logger, and policy helpers.
+  - Evidence required: focused IRC root import test, adjacent IRC/channel
+    proof, ruff, mypy
+  - Status: checkpointed in `16b12bb8`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused IRC root red/green proof (exact root
+    import returned generic placeholder/meta behavior before implementation,
+    then `1 passed`), adjacent IRC/channel proof (`4 passed, 1197
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999999999999996%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999999999999997%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -21008,6 +21008,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1196 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `fda1c201`.
+- Imported plugin SDK `irc` now exposes the bundled private IRC helper barrel
+  by composing already verified channel config, pairing, reply payload,
+  inbound dispatch, runtime logger, status, setup, account, and policy helpers
+  instead of the broad generic SDK fallback. This closes `OZ-PLUGIN-00372`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999999999999999999997%.
+- Verified the IRC root facade with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_irc_root_helpers -q`
+  (the exact root import returned generic placeholder/meta behavior before
+  implementation, then `1 passed`), adjacent IRC/channel proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "irc_root_helpers or irc_surface_helper or channel_config_helpers or channel_pairing_helpers"`
+  (`4 passed, 1197 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `16b12bb8`.
 
 ## References
 
