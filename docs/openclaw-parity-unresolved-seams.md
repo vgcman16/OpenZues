@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999%.
+  band of ~80-99.999995%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1701,6 +1701,14 @@ native-provider-backed account probe envelope. Remaining channel CLI parity is
 provider-specific credential probe breadth beyond Slack/Telegram/Discord/Matrix/
 Zalo/LINE/Google Chat/Feishu-Lark/Mattermost/Signal and production
 provider-backed live resolve adapters.
+IRC route-backed account probes now mirror OpenClaw's `probeIrc` status hook:
+`channels status --probe --json` opens the saved `irc(s)://` route, sends
+PASS/NICK/USER, answers server PING, waits for the `001` ready welcome, quits
+with `QUIT :probe`, and returns account, host, port, TLS, nick, timeout, and
+latency metadata in the native-provider-backed account probe envelope.
+Remaining channel CLI parity is provider-specific credential probe breadth
+beyond Slack/Telegram/Discord/Matrix/Zalo/LINE/Google Chat/Feishu-Lark/
+Mattermost/Signal/IRC and production provider-backed live resolve adapters.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account

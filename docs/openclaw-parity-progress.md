@@ -18124,6 +18124,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_cli.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `1af31a04`.
+- IRC route-backed account probes now mirror OpenClaw's `probeIrc` status
+  hook: `channels status --probe --json` treats native IRC routes as
+  probeable, parses the saved `irc(s)://` route credentials, waits for the IRC
+  `001` ready welcome while answering `PING`, quits with `QUIT :probe`, and
+  returns the native-provider-backed probe envelope with account, host, port,
+  TLS, nick, timeout, and latency metadata. This closes `OZ-PROV-001CW`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999995%. The next channel-probe queue rotates to
+  remaining provider-specific account probes such as Twitch, BlueBubbles,
+  iMessage, and Tlon.
+- Verified the IRC probe slice with
+  `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_irc_probe tests\test_ops_mesh.py::test_ops_mesh_service_irc_probe_waits_for_ready_and_quits -q`
+  (`2 passed`), adjacent channel-probe proof
+  `python -m pytest tests\test_cli.py -q -k "route_backed_irc_probe or route_backed_signal_probe or route_backed_mattermost_probe or route_backed_feishu_probe or route_backed_googlechat_probe or route_backed_line_probe or route_backed_zalo_probe or route_backed_matrix_probe or route_backed_discord_probe or route_backed_telegram_probe or route_backed_slack_probe or keeps_whatsapp_no_hook_probe or msteams_native_probe"`
+  (`13 passed, 506 deselected`), adjacent IRC ops proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "irc_probe_waits_for_ready_and_quits or uses_irc_native_route"`
+  (`2 passed, 375 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_cli.py tests\test_ops_mesh.py`,
+  `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `fd5d246b`.
 
 ## References
 

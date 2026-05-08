@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -68,9 +68,32 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue remaining provider-specific account probes, then rotate packaging/companion breadth |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue remaining provider-specific account probes, then rotate packaging/companion breadth |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001CW` IRC route-backed account probe
+  - Source: `openclaw-main/extensions/irc/src/probe.ts`,
+    `openclaw-main/extensions/irc/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_cli.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: `channels status --probe --json` treats native `kind="irc"`
+    routes as probeable, parses saved `irc(s)://` route credentials, sends
+    PASS/NICK/USER, answers PING, waits for IRC `001`, quits with
+    `QUIT :probe`, and returns a native-provider-backed probe envelope with
+    account, host, port, TLS, nick, timeout, and latency metadata.
+  - Evidence required: focused IRC channel-probe CLI test, focused IRC
+    runtime helper test, adjacent channel-probe CLI tests, adjacent IRC ops
+    tests, ruff, mypy
+  - Status: checkpointed in `fd5d246b`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_irc_probe tests\test_ops_mesh.py::test_ops_mesh_service_irc_probe_waits_for_ready_and_quits -q`
+    (`2 passed`), adjacent channel-probe proof (`13 passed, 506
+    deselected`), adjacent IRC ops proof (`2 passed, 375 deselected`), `ruff
+    check src\openzues\services\ops_mesh.py tests\test_cli.py
+    tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 - [x] `OZ-PROV-001CV` Signal route-backed account probe
   - Source: `openclaw-main/extensions/signal/src/probe.ts`,

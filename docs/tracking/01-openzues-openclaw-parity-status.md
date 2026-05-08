@@ -1985,6 +1985,11 @@ may lag behind this tracker.
   without requiring a route secret.
   - Status: checkpointed in `1af31a04`
 
+- [x] IRC route-backed account probe support, preserving OpenClaw's `probeIrc`
+  status hook over IRC PASS/NICK/USER readiness, PING/PONG handling, `001`
+  welcome detection, and `QUIT :probe` cleanup.
+  - Status: checkpointed in `fd5d246b`
+
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
   flags in the body while omitting `thread_id` from the body.
@@ -4905,6 +4910,19 @@ may lag behind this tracker.
     `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_signal_probe -q`
     (`1 passed`), adjacent channel-probe proof (`12 passed, 506 deselected`),
     `ruff check`, and `mypy`.
+
+- [x] IRC route-backed account probe.
+  - Source: `openclaw-main/extensions/irc/src/probe.ts`,
+    `openclaw-main/extensions/irc/src/channel.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`, `tests/test_ops_mesh.py`
+  - Status: checkpointed in `fd5d246b`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_irc_probe tests\test_ops_mesh.py::test_ops_mesh_service_irc_probe_waits_for_ready_and_quits -q`
+    (`2 passed`), adjacent channel-probe proof (`13 passed, 506 deselected`),
+    adjacent IRC ops proof (`2 passed, 375 deselected`), `ruff check`, and
+    `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.
