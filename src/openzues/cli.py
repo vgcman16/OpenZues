@@ -8306,6 +8306,13 @@ def _doctor_package_dist_staging_debris_warning(debris: Sequence[str]) -> str | 
     )
 
 
+def _doctor_missing_package_dist_inventory_warning() -> str:
+    return (
+        "missing package dist inventory "
+        f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
+    )
+
+
 def _doctor_package_dist_inventory_file_warnings(
     root: Path,
     expected_files: Sequence[str] | None,
@@ -8434,16 +8441,14 @@ def _build_doctor_package_distribution_payload(
     )
     inventory_required = not source_checkout
     source_install = _build_doctor_source_install_payload(root) if source_checkout else None
+    missing_inventory_warning = _doctor_missing_package_dist_inventory_warning()
     warnings: list[str] = []
     if not root_exists:
         warnings.append(f"Package root not found: {root}")
     if inventory_required and not dist_present:
         warnings.append(f"Packaged dist directory is missing: {dist_path}")
     if inventory_required and not inventory_present:
-        warnings.append(
-            "Package dist inventory is missing: "
-            f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
-        )
+        warnings.append(missing_inventory_warning)
     if inventory_required and inventory_warning is not None:
         warnings.append(inventory_warning)
     staging_debris = (
@@ -8527,7 +8532,7 @@ def _build_doctor_package_distribution_payload(
             if inventory_present
             else "Package dist inventory is not required for source checkout runs."
             if source_checkout
-            else "Package dist inventory is missing.",
+            else missing_inventory_warning,
         ),
     ]
     if inventory_required and inventory_present and inventory_warning is None:
