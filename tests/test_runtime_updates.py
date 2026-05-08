@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -523,6 +524,77 @@ async def test_runtime_update_startup_update_hints_clear_available_state_for_sou
     assert "lastAvailableVersion" not in state
     assert "lastAvailableTag" not in state
     assert "autoFirstSeenVersion" not in state
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_runner_repeats_startup_checks_after_interval(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "prefix" / "node_modules" / "openzues"
+    package_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "openzues", "version": "1.0.0", "packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "update-check.json"
+    now_values = iter(
+        [
+            "2026-01-18T00:00:00+00:00",
+            "2026-01-20T00:00:00+00:00",
+            "2026-01-20T00:00:00+00:00",
+        ]
+    )
+    version_calls: list[tuple[str, str, int | None]] = []
+    second_check_seen = asyncio.Event()
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        raise AssertionError("hint-only startup checks should not run commands")
+
+    async def fake_version_resolver(
+        package_name: str,
+        tag: str,
+        timeout_ms: int | None,
+    ) -> str | None:
+        version_calls.append((package_name, tag, timeout_ms))
+        if len(version_calls) >= 2:
+            second_check_seen.set()
+        return "1.0.0"
+
+    async def restart_callback() -> None:
+        raise AssertionError("startup update checks should not restart inline")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=0.01,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+        config_snapshot_loader=lambda: {"update": {"channel": "stable"}},
+        package_root=package_root,
+        package_version_resolver=fake_version_resolver,
+        update_state_path=state_path,
+        now_provider=lambda: next(now_values, "2026-01-20T00:00:00+00:00"),
+    )
+    service.poll_interval_seconds = 0.01
+
+    await service.start()
+    try:
+        await asyncio.wait_for(second_check_seen.wait(), timeout=1)
+    finally:
+        await service.close()
+
+    assert version_calls[:2] == [
+        ("openzues", "latest", None),
+        ("openzues", "latest", None),
+    ]
 
 
 @pytest.mark.asyncio

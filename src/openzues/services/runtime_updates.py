@@ -2698,6 +2698,10 @@ class RuntimeUpdateService:
                     timeout=self.poll_interval_seconds,
                 )
             except TimeoutError:
+                try:
+                    await self.run_startup_auto_update_check()
+                except Exception:  # pragma: no cover - defensive guard
+                    logger.exception("Startup auto-update check failed.")
                 continue
 
     async def _is_safe_restart_boundary(self) -> bool:
