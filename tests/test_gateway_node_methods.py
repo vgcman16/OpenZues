@@ -17689,6 +17689,115 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_ssrf_dispatcher_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-ssrf-dispatcher.cjs"
+    runtime_entry.write_text(
+        """
+const dispatcher = require("openclaw/plugin-sdk/ssrf-dispatcher");
+const scopedDispatcher = require("@openclaw/plugin-sdk/ssrf-dispatcher");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.ssrf_dispatcher",
+      description: "Use OpenClaw ssrf-dispatcher SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let closed = false;
+        if (typeof dispatcher.closeDispatcher === "function") {
+          await dispatcher.closeDispatcher({
+            close: async () => {
+              closed = true;
+            }
+          });
+        }
+        const pinned =
+          typeof dispatcher.resolvePinnedHostnameWithPolicy === "function"
+            ? await dispatcher.resolvePinnedHostnameWithPolicy("example.com", {
+                lookupFn: async () => [
+                  { address: "93.184.216.34", family: 4 }
+                ]
+              })
+            : null;
+        return {
+          keys: Object.keys(dispatcher).sort(),
+          scopedSame:
+            scopedDispatcher.resolvePinnedHostnameWithPolicy ===
+            dispatcher.resolvePinnedHostnameWithPolicy,
+          createType: typeof dispatcher.createPinnedDispatcher,
+          closed,
+          pinned
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-ssrf-dispatcher-plugin",
+                    "name": "Runtime SSRF Dispatcher Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-ssrf-dispatcher.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.ssrf_dispatcher"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.ssrf_dispatcher"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "closeDispatcher",
+            "createPinnedDispatcher",
+            "resolvePinnedHostnameWithPolicy",
+        ],
+        "scopedSame": True,
+        "createType": "function",
+        "closed": True,
+        "pinned": {"hostname": "example.com", "addresses": ["93.184.216.34"]},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
     tmp_path,
 ) -> None:

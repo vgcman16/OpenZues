@@ -65064,6 +65064,12 @@ const threadOwnershipRuntime = {
   ssrfPolicyFromDangerouslyAllowPrivateNetwork,
 };
 
+const ssrfDispatcherRuntime = {
+  closeDispatcher,
+  createPinnedDispatcher: passthrough,
+  resolvePinnedHostnameWithPolicy,
+};
+
 function filePathFromImportMetaUrl(importMetaUrl) {
   if (typeof importMetaUrl === "string" && importMetaUrl.startsWith("file:")) {
     return require("node:url").fileURLToPath(importMetaUrl);
@@ -85923,6 +85929,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/thread-ownership"
   ) {
     return threadOwnershipRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/ssrf-dispatcher" ||
+    request === "@openclaw/plugin-sdk/ssrf-dispatcher"
+  ) {
+    return ssrfDispatcherRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/config-mutation" ||
