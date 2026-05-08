@@ -8179,9 +8179,15 @@ def _doctor_package_distribution_check(
     return payload
 
 
-def _doctor_package_dist_inventory_warning(inventory_path: Path) -> str | None:
+def _doctor_normalize_package_dist_path(path: str) -> str:
+    return path.replace("\\", "/")
+
+
+def _doctor_read_package_dist_inventory(
+    inventory_path: Path,
+) -> tuple[list[str] | None, str | None]:
     if not _doctor_path_exists(inventory_path):
-        return None
+        return None, None
     warning = (
         "Invalid package dist inventory at "
         f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
@@ -8189,10 +8195,66 @@ def _doctor_package_dist_inventory_warning(inventory_path: Path) -> str | None:
     try:
         parsed = json.loads(inventory_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return warning
+        return None, warning
     if not isinstance(parsed, list) or any(not isinstance(entry, str) for entry in parsed):
-        return warning
-    return None
+        return None, warning
+    files = sorted({_doctor_normalize_package_dist_path(entry) for entry in parsed})
+    return files, None
+
+
+def _doctor_is_packaged_dist_file(relative_path: str) -> bool:
+    if relative_path == _PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix():
+        return False
+    if relative_path.endswith(".map"):
+        return False
+    if relative_path == "dist/plugin-sdk/.tsbuildinfo":
+        return False
+    parts = relative_path.split("/")
+    return not (
+        len(parts) >= 3
+        and parts[0] == "dist"
+        and parts[1] == "extensions"
+        and (
+            parts[2].lower() == "node_modules"
+            or (len(parts) >= 4 and parts[3].lower() == "node_modules")
+        )
+    )
+
+
+def _doctor_collect_package_dist_files(root: Path) -> list[str]:
+    dist_path = root / "dist"
+    if not _doctor_path_exists(dist_path):
+        return []
+    files: list[str] = []
+    for path in dist_path.rglob("*"):
+        try:
+            if not path.is_file() or path.is_symlink():
+                continue
+        except OSError:
+            continue
+        relative_path = _doctor_normalize_package_dist_path(path.relative_to(root).as_posix())
+        if _doctor_is_packaged_dist_file(relative_path):
+            files.append(relative_path)
+    return sorted(set(files))
+
+
+def _doctor_package_dist_inventory_file_warnings(
+    root: Path,
+    expected_files: Sequence[str] | None,
+) -> list[str]:
+    if expected_files is None:
+        return []
+    actual_files = _doctor_collect_package_dist_files(root)
+    actual_set = set(actual_files)
+    expected_set = set(expected_files)
+    warnings: list[str] = []
+    for relative_path in expected_files:
+        if relative_path not in actual_set:
+            warnings.append(f"missing packaged dist file {relative_path}")
+    for relative_path in actual_files:
+        if relative_path not in expected_set:
+            warnings.append(f"unexpected packaged dist file {relative_path}")
+    return warnings
 
 
 def _build_doctor_source_install_payload(root: Path) -> dict[str, object] | None:
@@ -8299,7 +8361,9 @@ def _build_doctor_package_distribution_payload(
     inventory_path = root / _PACKAGE_DIST_INVENTORY_RELATIVE_PATH
     dist_present = _doctor_path_exists(dist_path)
     inventory_present = _doctor_path_exists(inventory_path)
-    inventory_warning = _doctor_package_dist_inventory_warning(inventory_path)
+    inventory_expected_files, inventory_warning = _doctor_read_package_dist_inventory(
+        inventory_path
+    )
     inventory_required = not source_checkout
     source_install = _build_doctor_source_install_payload(root) if source_checkout else None
     warnings: list[str] = []
@@ -8314,6 +8378,13 @@ def _build_doctor_package_distribution_payload(
         )
     if inventory_required and inventory_warning is not None:
         warnings.append(inventory_warning)
+    inventory_file_warnings: list[str] = []
+    if inventory_required and inventory_present and inventory_warning is None:
+        inventory_file_warnings = _doctor_package_dist_inventory_file_warnings(
+            root,
+            inventory_expected_files,
+        )
+        warnings.extend(inventory_file_warnings)
     if source_install is not None:
         source_install_warnings = source_install.get("warnings")
         if isinstance(source_install_warnings, list):
@@ -8334,6 +8405,64 @@ def _build_doctor_package_distribution_payload(
         status = "ok"
         summary = "OpenZues package distribution inventory is present."
         distribution = "packaged"
+    checks = [
+        _doctor_package_distribution_check(
+            key="package_root",
+            status="ok" if root_exists else "warning",
+            path=root,
+            detail="Package root is readable."
+            if root_exists
+            else "Package root is missing or unreadable.",
+        ),
+        _doctor_package_distribution_check(
+            key="source_checkout",
+            status="info" if source_checkout else "ok",
+            detail="Source checkout markers are present."
+            if source_checkout
+            else "Source checkout markers are absent.",
+        ),
+        _doctor_package_distribution_check(
+            key="dist",
+            status="ok" if dist_present else ("info" if source_checkout else "warning"),
+            path=dist_path,
+            detail="Packaged dist directory is present."
+            if dist_present
+            else "Packaged dist directory is not required for source checkout runs."
+            if source_checkout
+            else "Packaged dist directory is missing.",
+        ),
+        _doctor_package_distribution_check(
+            key="postinstall_inventory",
+            status=(
+                "warning"
+                if inventory_warning is not None
+                else "ok"
+                if inventory_present
+                else "info"
+                if source_checkout
+                else "warning"
+            ),
+            path=inventory_path,
+            detail=inventory_warning
+            if inventory_warning is not None
+            else "Package dist inventory is present."
+            if inventory_present
+            else "Package dist inventory is not required for source checkout runs."
+            if source_checkout
+            else "Package dist inventory is missing.",
+        ),
+    ]
+    if inventory_required and inventory_present and inventory_warning is None:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="postinstall_inventory_files",
+                status="warning" if inventory_file_warnings else "ok",
+                path=dist_path,
+                detail="; ".join(inventory_file_warnings)
+                if inventory_file_warnings
+                else "Package dist inventory matches packaged files.",
+            )
+        )
     payload: dict[str, object] = {
         "status": status,
         "summary": summary,
@@ -8348,53 +8477,7 @@ def _build_doctor_package_distribution_payload(
         "inventoryPath": str(inventory_path),
         "inventoryPresent": inventory_present,
         "inventoryRequired": inventory_required,
-        "checks": [
-            _doctor_package_distribution_check(
-                key="package_root",
-                status="ok" if root_exists else "warning",
-                path=root,
-                detail="Package root is readable."
-                if root_exists
-                else "Package root is missing or unreadable.",
-            ),
-            _doctor_package_distribution_check(
-                key="source_checkout",
-                status="info" if source_checkout else "ok",
-                detail="Source checkout markers are present."
-                if source_checkout
-                else "Source checkout markers are absent.",
-            ),
-            _doctor_package_distribution_check(
-                key="dist",
-                status="ok" if dist_present else ("info" if source_checkout else "warning"),
-                path=dist_path,
-                detail="Packaged dist directory is present."
-                if dist_present
-                else "Packaged dist directory is not required for source checkout runs."
-                if source_checkout
-                else "Packaged dist directory is missing.",
-            ),
-            _doctor_package_distribution_check(
-                key="postinstall_inventory",
-                status=(
-                    "warning"
-                    if inventory_warning is not None
-                    else "ok"
-                    if inventory_present
-                    else "info"
-                    if source_checkout
-                    else "warning"
-                ),
-                path=inventory_path,
-                detail=inventory_warning
-                if inventory_warning is not None
-                else "Package dist inventory is present."
-                if inventory_present
-                else "Package dist inventory is not required for source checkout runs."
-                if source_checkout
-                else "Package dist inventory is missing.",
-            ),
-        ],
+        "checks": checks,
         "warnings": warnings,
     }
     if source_install is not None:
