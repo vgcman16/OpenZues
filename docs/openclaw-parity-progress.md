@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999998%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18746,6 +18746,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`8 passed, 518 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `71029a02`.
+- `openzues update status --json` now projects OpenClaw-shaped git metadata
+  for git installs: the native update payload includes `git.root`, `sha`,
+  `tag`, `branch`, and unavailable fetch/divergence fields as `null`, matching
+  the `GitUpdateStatus` envelope from `src/infra/update-check.ts` while keeping
+  package-manager dependency posture intact. This closes `OZ-PKG-001I`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999%.
+- Verified the update-status git metadata slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_json_projects_git_tag_metadata -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update/package
+  doctor proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_json_projects_git_tag_metadata or update_status_json_uses_packed_git_tag_channel_label or update_status_json_uses_git_tag_channel_label or update_status_json_uses_git_branch_channel_label or update_status_json_includes_openclaw_channel_projection or update_status_json_detects_package_manager_deps or source_install_pnpm_workspace_warnings or package_distribution_diagnostics or invalid_package_dist_inventory"`
+  (`9 passed, 518 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `b31d8f41`.
 
 ## References
 
