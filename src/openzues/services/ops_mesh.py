@@ -465,6 +465,27 @@ class _TlonParsedTarget:
     channel_name: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _TlonInboundSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    sender_id: str
+    conversation_id: str
+    conversation_type: Literal["direct", "group"]
+    thread_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _TlonInboundMessage:
+    event_type: Literal["chat", "channels"]
+    message_id: str
+    sender_ship: str
+    text: str
+    timestamp: int | None = None
+    channel_nest: str | None = None
+    thread_id: str | None = None
+
+
 @dataclass(frozen=True)
 class _IMessageProbeConfig:
     cli_path: str
@@ -7134,6 +7155,215 @@ def _tlon_normalize_target_ship(raw_ship: str | None) -> str | None:
         return None
 
 
+def _tlon_as_mapping(value: object) -> Mapping[str, Any] | None:
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else None
+
+
+def _tlon_read_string(record: Mapping[str, Any] | None, key: str) -> str | None:
+    value = record.get(key) if record is not None else None
+    return value if isinstance(value, str) else None
+
+
+def _tlon_read_int(record: Mapping[str, Any] | None, key: str) -> int | None:
+    value = record.get(key) if record is not None else None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return math.trunc(float(value))
+    return None
+
+
+def _tlon_extract_dm_partner_ship(whom: object) -> str | None:
+    raw_ship = (
+        whom
+        if isinstance(whom, str)
+        else _tlon_read_string(_tlon_as_mapping(whom), "ship")
+    )
+    return _tlon_normalize_target_ship(str(raw_ship)) if raw_ship is not None else None
+
+
+def _tlon_extract_inline_text(items: object) -> str:
+    if not isinstance(items, list):
+        return ""
+    return "".join(_tlon_render_inline_item(item) for item in items)
+
+
+def _tlon_render_inline_item(
+    item: object,
+    *,
+    link_mode: Literal["content-or-href", "href"] = "content-or-href",
+    allow_break: bool = False,
+    allow_blockquote: bool = False,
+) -> str:
+    if isinstance(item, str):
+        return item
+    record = _tlon_as_mapping(item)
+    if record is None:
+        return ""
+    ship = _tlon_read_string(record, "ship")
+    if ship:
+        return ship
+    if "sect" in record:
+        sect = record.get("sect")
+        return f"@{sect}" if isinstance(sect, str) and sect else "@all"
+    if allow_break and "break" in record:
+        return "\n"
+    inline_code = _tlon_read_string(record, "inline-code") or _tlon_read_string(record, "code")
+    if inline_code:
+        return f"`{inline_code}`"
+    link = _tlon_as_mapping(record.get("link"))
+    link_href = _tlon_read_string(link, "href")
+    if link is not None and link_href:
+        link_content = _tlon_read_string(link, "content")
+        return link_href if link_mode == "href" else link_content or link_href
+    if isinstance(record.get("bold"), list):
+        return f"**{_tlon_extract_inline_text(record.get('bold'))}**"
+    if isinstance(record.get("italics"), list):
+        return f"*{_tlon_extract_inline_text(record.get('italics'))}*"
+    if isinstance(record.get("strike"), list):
+        return f"~~{_tlon_extract_inline_text(record.get('strike'))}~~"
+    if allow_blockquote and isinstance(record.get("blockquote"), list):
+        return f"> {_tlon_extract_inline_text(record.get('blockquote'))}"
+    return ""
+
+
+def _tlon_extract_message_text(content: object) -> str:
+    if not isinstance(content, list):
+        return ""
+    rendered: list[str] = []
+    for verse in content:
+        verse_record = _tlon_as_mapping(verse)
+        if verse_record is None:
+            continue
+        inline = verse_record.get("inline")
+        if isinstance(inline, list):
+            rendered.append(
+                "".join(
+                    _tlon_render_inline_item(
+                        item,
+                        link_mode="href",
+                        allow_break=True,
+                        allow_blockquote=True,
+                    )
+                    for item in inline
+                )
+            )
+            continue
+        block = _tlon_as_mapping(verse_record.get("block"))
+        if block is None:
+            continue
+        image = _tlon_as_mapping(block.get("image"))
+        image_src = _tlon_read_string(image, "src")
+        if image_src:
+            alt_text = _tlon_read_string(image, "alt")
+            alt = f" ({alt_text})" if alt_text else ""
+            rendered.append(f"\n{image_src}{alt}\n")
+            continue
+        code_block = _tlon_as_mapping(block.get("code"))
+        if code_block is not None:
+            lang = _tlon_read_string(code_block, "lang") or ""
+            code = _tlon_read_string(code_block, "code") or ""
+            rendered.append(f"\n```{lang}\n{code}\n```\n")
+            continue
+        header = _tlon_as_mapping(block.get("header"))
+        header_content = header.get("content") if header is not None else None
+        if isinstance(header_content, list):
+            header_text = "".join(item for item in header_content if isinstance(item, str))
+            rendered.append(f"\n## {header_text}\n")
+            continue
+        cite = _tlon_as_mapping(block.get("cite"))
+        if cite is not None:
+            chan_cite = _tlon_as_mapping(cite.get("chan"))
+            if chan_cite is not None:
+                nest = _tlon_read_string(chan_cite, "nest") or "unknown"
+                where = _tlon_read_string(chan_cite, "where") or ""
+                match = re.search(r"/msg/(~[a-z-]+)/(.+)", where, flags=re.IGNORECASE)
+                if match:
+                    rendered.append(f"\n> [quoted: {match.group(1)} in {nest}]\n")
+                else:
+                    rendered.append(f"\n> [quoted from {nest}]\n")
+                continue
+            group = _tlon_read_string(cite, "group")
+            if group:
+                rendered.append(f"\n> [ref: group {group}]\n")
+                continue
+            desk = _tlon_as_mapping(cite.get("desk"))
+            flag = _tlon_read_string(desk, "flag")
+            if flag:
+                rendered.append(f"\n> [ref: {flag}]\n")
+                continue
+            bait = _tlon_as_mapping(cite.get("bait"))
+            graph = _tlon_read_string(bait, "graph")
+            group_name = _tlon_read_string(bait, "group")
+            if graph and group_name:
+                rendered.append(f"\n> [ref: {graph} in {group_name}]\n")
+            else:
+                rendered.append("\n> [quoted message]\n")
+    return "\n".join(rendered).strip()
+
+
+def _tlon_inbound_chat_message(event: Mapping[str, Any]) -> _TlonInboundMessage | None:
+    response = _tlon_as_mapping(event.get("response"))
+    add = _tlon_as_mapping(response.get("add")) if response is not None else None
+    essay = _tlon_as_mapping(add.get("essay")) if add is not None else None
+    if essay is None:
+        return None
+    message_id = _tlon_read_string(event, "id")
+    if not message_id:
+        return None
+    author_ship = _tlon_normalize_target_ship(_tlon_read_string(essay, "author"))
+    partner_ship = _tlon_extract_dm_partner_ship(event.get("whom"))
+    sender_ship = partner_ship or author_ship
+    if sender_ship is None:
+        return None
+    text = _tlon_extract_message_text(essay.get("content"))
+    if not text:
+        return None
+    return _TlonInboundMessage(
+        event_type="chat",
+        message_id=message_id,
+        sender_ship=sender_ship,
+        text=text,
+        timestamp=_tlon_read_int(essay, "sent"),
+    )
+
+
+def _tlon_inbound_session_context(
+    message: _TlonInboundMessage,
+    *,
+    account_id: str | None,
+) -> _TlonInboundSessionContext:
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    is_group = message.channel_nest is not None
+    conversation_id = message.channel_nest or message.sender_ship
+    conversation_target = ConversationTargetView(
+        channel="tlon",
+        account_id=normalized_account_id,
+        peer_kind="group" if is_group else "direct",
+        peer_id=conversation_id,
+    )
+    base_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=base_session_key,
+        thread_id=message.thread_id,
+    ).session_key
+    return _TlonInboundSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        sender_id=message.sender_ship,
+        conversation_id=conversation_id,
+        conversation_type="group" if is_group else "direct",
+        thread_id=message.thread_id,
+    )
+
+
 def _tlon_parse_channel_nest(raw: str | None) -> tuple[str, str] | None:
     match = re.fullmatch(r"chat/([^/]+)/([^/]+)", str(raw or "").strip(), flags=re.IGNORECASE)
     if match is None:
@@ -13305,6 +13535,51 @@ class OpsMeshService:
             result["threadId"] = context.thread_id
         if context.sender_name is not None:
             result["senderName"] = context.sender_name
+        return result
+
+    async def handle_tlon_inbound_event(
+        self,
+        event: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        message = _tlon_inbound_chat_message(event)
+        if message is None:
+            return {
+                "ok": False,
+                "channel": "tlon",
+                "skipped": True,
+                "reason": "tlon_inbound_event_without_message_text",
+            }
+        if self.session_delivery_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Tlon inbound session delivery is unavailable."
+            )
+        context = _tlon_inbound_session_context(message, account_id=account_id)
+        delivery_result = await self.session_delivery_service(
+            context.session_key,
+            message.text,
+        )
+        delivery_message_id = _session_delivery_message_id(delivery_result)
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "tlon",
+            "eventType": message.event_type,
+            "inboundMessageId": message.message_id,
+            "sessionKey": context.session_key,
+            "text": message.text,
+            "senderId": context.sender_id,
+            "conversationId": context.conversation_id,
+            "conversationType": context.conversation_type,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "session-backed"},
+        }
+        if delivery_message_id is not None:
+            result["messageId"] = delivery_message_id
+        if message.timestamp is not None:
+            result["timestamp"] = message.timestamp
+        if context.thread_id is not None:
+            result["threadId"] = context.thread_id
         return result
 
     def _bluebubbles_config_snapshot(self) -> dict[str, Any]:

@@ -7706,6 +7706,93 @@ def test_ops_mesh_service_tlon_media_bytes_uses_custom_s3_credentials(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_tlon_dm_firehose_event_to_session() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-dm-inbound"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "tlon-inbound-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_tlon_inbound_event(
+        {
+            "id": "tlon-dm-1",
+            "whom": "~sampel-palnet",
+            "response": {
+                "add": {
+                    "essay": {
+                        "author": "~sampel-palnet",
+                        "sent": 1713980000123,
+                        "content": [
+                            {
+                                "inline": [
+                                    "Ship it, ",
+                                    {"ship": "~zod"},
+                                    ". Review ",
+                                    {"bold": ["OpenZues"]},
+                                    ".",
+                                ]
+                            }
+                        ],
+                    }
+                }
+            },
+        },
+        account_id="ship",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="tlon",
+        account_id="ship",
+        peer_kind="direct",
+        peer_id="~sampel-palnet",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [
+        (expected_session_key, "Ship it, ~zod. Review **OpenZues**.")
+    ]
+    assert result == {
+        "ok": True,
+        "channel": "tlon",
+        "eventType": "chat",
+        "inboundMessageId": "tlon-dm-1",
+        "messageId": "tlon-inbound-session-message-1",
+        "sessionKey": expected_session_key,
+        "text": "Ship it, ~zod. Review **OpenZues**.",
+        "senderId": "~sampel-palnet",
+        "conversationId": "~sampel-palnet",
+        "conversationType": "direct",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "delivery": {"runtime": "session-backed"},
+        "timestamp": 1713980000123,
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
