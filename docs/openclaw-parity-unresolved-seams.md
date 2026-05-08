@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.999999997%.
+  band of ~80-99.999999998%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -1815,6 +1815,14 @@ fields, preserving non-secret `baseUrl` config, and returning
 `{cleared, envSecret, loggedOut}`. Source/test checkpointed in `13de6593`;
 the adjacent provider queue should rotate to WhatsApp, Zalo, QQ, or broader
 logout-capable channel configs.
+WhatsApp `channels.logout` now mirrors OpenClaw's Web-auth logout cleanup for
+managed auth directories: OpsMesh resolves `channels.whatsapp.authDir` or
+`OPENCLAW_OAUTH_DIR/whatsapp/<account>`, clears only managed
+`creds.json`/backup-backed auth state, preserves legacy default-auth-file
+cleanup, skips external or symlink-crossing paths, and returns
+`{cleared, loggedOut}` based on actual cleanup. Source/test checkpointed in
+`3e99a587`; the adjacent provider queue should rotate to Zalo, QQ, or broader
+logout/runtime edge cases.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account

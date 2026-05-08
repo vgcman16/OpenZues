@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999997% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999998% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -5184,6 +5184,20 @@ may lag behind this tracker.
     regression proofs (`1 passed` each), adjacent OpsMesh lifecycle proof (`5
     passed, 403 deselected`), adjacent gateway method proof (`5 passed, 1123
     deselected`), adjacent API proof (`4 passed, 424 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] WhatsApp `channels.logout` runtime auth cleanup.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
+    `openclaw-main/extensions/whatsapp/src/channel.ts`,
+    `openclaw-main/extensions/whatsapp/src/auth-store.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `3e99a587`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused WhatsApp red-green proof (`1 failed`
+    before implementation, then `1 passed`), adjacent OpsMesh lifecycle proof
+    (`6 passed, 403 deselected`), adjacent gateway method proof (`5 passed,
+    1123 deselected`), adjacent API proof (`4 passed, 424 deselected`), `ruff
     check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999997%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18545,7 +18545,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   channel account idempotently, clears saved `channels.telegram.botToken`
   config, and returns `{channel, accountId, cleared, envToken, loggedOut}`. This
   closes `OZ-PROV-001DP`; repo-wide parity remains estimated at ~99.9%, with
-  the evidence band tightened to ~80-99.999999997%. The adjacent provider queue
+  the evidence band tightened to ~80-99.999999998%. The adjacent provider queue
   can rotate to remaining logout-capable channel configs or broader provider
   edge cases.
 - Verified the Telegram `channels.logout` runtime slice with focused red/green
@@ -18573,7 +18573,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   non-secret channel settings such as `webhookPath`, reports
   `{channel, accountId, cleared, envToken, loggedOut}`, and keeps Telegram on
   the same verified path. This closes `OZ-PROV-001DQ`; repo-wide parity remains
-  estimated at ~99.9%, with the evidence band tightened to ~80-99.999999997%.
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.999999998%.
   The adjacent provider queue can rotate to Nextcloud Talk, WhatsApp, Zalo, QQ,
   or broader provider logout/runtime edge cases.
 - Verified the LINE `channels.logout` runtime slice with focused red/green
@@ -18598,7 +18598,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `{channel, accountId, cleared, envSecret, loggedOut}` with the provider's
   `envSecret` key rather than the token-oriented key used by Telegram/LINE.
   This closes `OZ-PROV-001DR`; repo-wide parity remains estimated at ~99.9%,
-  with the evidence band tightened to ~80-99.999999997%. The adjacent provider
+  with the evidence band tightened to ~80-99.999999998%. The adjacent provider
   queue can rotate to WhatsApp, Zalo, QQ, or broader logout-capable channel
   configs.
 - Verified the Nextcloud Talk `channels.logout` runtime slice with focused
@@ -18616,6 +18616,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed and pushed in `13de6593`.
+- WhatsApp `channels.logout` now mirrors the OpenClaw Web-auth logout lifecycle
+  for the managed native auth directory. OpsMesh resolves the account auth dir
+  from `channels.whatsapp.authDir` when present or
+  `OPENCLAW_OAUTH_DIR/whatsapp/<account>`, clears only managed
+  `creds.json`/backup-backed auth directories, preserves the legacy
+  default-auth-file cleanup behavior, skips external or symlink-crossing paths,
+  and returns `{channel, accountId, cleared, loggedOut}` with `loggedOut`
+  matching the actual clear result. This closes `OZ-PROV-001DS`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999998%. The adjacent provider queue can rotate to Zalo, QQ, or
+  broader logout/runtime edge cases.
+- Verified the WhatsApp `channels.logout` runtime slice with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_logout_clears_whatsapp_managed_auth_dir -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent OpsMesh
+  lifecycle proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "channels_start_starts_tlon or channels_stop_closes_tlon or channels_logout_clears_telegram or channels_logout_clears_line or channels_logout_clears_nextcloud_talk or channels_logout_clears_whatsapp"`
+  (`6 passed, 403 deselected`), adjacent gateway method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_logout"`
+  (`5 passed, 1123 deselected`), adjacent API proof
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "channels_logout or logout_account or configless_telegram_channel"`
+  (`4 passed, 424 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `3e99a587`.
 
 ## References
 
