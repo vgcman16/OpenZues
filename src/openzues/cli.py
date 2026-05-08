@@ -65764,6 +65764,81 @@ const telegramCommandUiRuntime = {
   buildCommandsPaginationKeyboard,
 };
 
+function readTelegramTokenFile(filePath) {
+  const resolved = normalizeOptionalString(filePath);
+  if (!resolved) {
+    return "";
+  }
+  try {
+    return fs.readFileSync(resolved, "utf8").trim();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function resolveTelegramToken(params = {}) {
+  const accountConfig = params.accountConfig || {};
+  const channelConfig = params.channelConfig || {};
+  const accountToken = asString(accountConfig.token ?? accountConfig.botToken);
+  if (accountToken) {
+    return { token: accountToken, tokenSource: "config" };
+  }
+  const accountTokenFile = normalizeOptionalString(accountConfig.tokenFile);
+  if (accountTokenFile) {
+    return { token: readTelegramTokenFile(accountTokenFile), tokenSource: "tokenFile" };
+  }
+  const channelToken = asString(channelConfig.token ?? channelConfig.botToken);
+  if (channelToken) {
+    return { token: channelToken, tokenSource: "config" };
+  }
+  const channelTokenFile = normalizeOptionalString(channelConfig.tokenFile);
+  if (channelTokenFile) {
+    return { token: readTelegramTokenFile(channelTokenFile), tokenSource: "tokenFile" };
+  }
+  const envToken = asString(process.env.TELEGRAM_BOT_TOKEN);
+  if (envToken) {
+    return { token: envToken, tokenSource: "env" };
+  }
+  return { token: "", tokenSource: "none" };
+}
+
+function resolveTelegramAccount(params = {}) {
+  const cfg = params.cfg || {};
+  const channelConfig = (cfg.channels && cfg.channels.telegram) || {};
+  const accounts =
+    channelConfig.accounts && typeof channelConfig.accounts === "object"
+      ? channelConfig.accounts
+      : {};
+  const requestedAccountId = normalizeAccountId(
+    params.accountId || channelConfig.defaultAccount || DEFAULT_ACCOUNT_ID,
+  );
+  const accountConfig =
+    accounts[requestedAccountId] ||
+    (requestedAccountId === DEFAULT_ACCOUNT_ID ? accounts[DEFAULT_ACCOUNT_ID] : undefined) ||
+    {};
+  const hasAccountConfig = Object.keys(accountConfig).length > 0;
+  const mergedConfig = hasAccountConfig
+    ? { ...channelConfig, ...accountConfig, accounts: channelConfig.accounts }
+    : channelConfig;
+  const token = resolveTelegramToken({
+    accountConfig: hasAccountConfig ? accountConfig : {},
+    channelConfig,
+  });
+  const name = normalizeOptionalString(mergedConfig.name);
+  return {
+    accountId: hasAccountConfig ? requestedAccountId : DEFAULT_ACCOUNT_ID,
+    enabled: mergedConfig.enabled !== false,
+    ...(name ? { name } : {}),
+    token: token.token,
+    tokenSource: token.tokenSource,
+    config: mergedConfig,
+  };
+}
+
+const telegramAccountRuntime = {
+  resolveTelegramAccount,
+};
+
 const commandAuthRuntime = {
   ...accessGroupsRuntime,
   createPreCryptoDirectDmAuthorizer,
@@ -85877,6 +85952,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/telegram-command-ui"
   ) {
     return telegramCommandUiRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/telegram-account" ||
+    request === "@openclaw/plugin-sdk/telegram-account"
+  ) {
+    return telegramAccountRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-status" ||

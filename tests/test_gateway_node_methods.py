@@ -18005,6 +18005,141 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_telegram_account_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    token_path = tmp_path / "telegram-token.txt"
+    token_path.write_text(" file-token \n", encoding="utf-8")
+    runtime_entry = tmp_path / "runtime-plugin-telegram-account.cjs"
+    runtime_entry.write_text(
+        f"""
+const account = require("openclaw/plugin-sdk/telegram-account");
+const scopedAccount = require("@openclaw/plugin-sdk/telegram-account");
+const tokenFile = {json.dumps(str(token_path))};
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.telegram_account",
+      description: "Use OpenClaw telegram-account SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        const cfg = {{
+          channels: {{
+            telegram: {{
+              enabled: false,
+              botToken: "root-token",
+              accounts: {{
+                default: {{
+                  enabled: true,
+                  token: "default-token"
+                }},
+                work: {{
+                  enabled: true,
+                  name: "Work Telegram",
+                  tokenFile,
+                  keep: "yes"
+                }}
+              }}
+            }}
+          }}
+        }};
+        const work = account.resolveTelegramAccount({{ cfg, accountId: "work" }});
+        const defaultAccount = scopedAccount.resolveTelegramAccount({{ cfg }});
+        return {{
+          keys: Object.keys(account).sort(),
+          scopedSame:
+            scopedAccount.resolveTelegramAccount === account.resolveTelegramAccount,
+          work: {{
+            accountId: work.accountId,
+            enabled: work.enabled,
+            name: work.name,
+            token: work.token,
+            tokenSource: work.tokenSource,
+            keep: work.config && work.config.keep
+          }},
+          defaultAccount: {{
+            accountId: defaultAccount.accountId,
+            enabled: defaultAccount.enabled,
+            token: defaultAccount.token,
+            tokenSource: defaultAccount.tokenSource
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-telegram-account-plugin",
+                    "name": "Runtime Telegram Account Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-telegram-account.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.telegram_account"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.telegram_account"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolveTelegramAccount"],
+        "scopedSame": True,
+        "work": {
+            "accountId": "work",
+            "enabled": True,
+            "name": "Work Telegram",
+            "token": "file-token",
+            "tokenSource": "tokenFile",
+            "keep": "yes",
+        },
+        "defaultAccount": {
+            "accountId": "default",
+            "enabled": True,
+            "token": "default-token",
+            "tokenSource": "config",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
     tmp_path,
 ) -> None:
