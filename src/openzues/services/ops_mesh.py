@@ -372,6 +372,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "signal",
     "irc",
     "twitch",
+    "tlon",
     "line",
     "matrix",
 }
@@ -452,6 +453,15 @@ class _TlonRouteConfig:
     base_url: str
     ship: str
     code: str
+
+
+@dataclass(frozen=True)
+class _TlonParsedTarget:
+    kind: Literal["dm", "group"]
+    ship: str | None = None
+    nest: str | None = None
+    host_ship: str | None = None
+    channel_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1948,6 +1958,9 @@ def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPee
         )
     ):
         return "direct"
+    tlon_target = _tlon_parse_target(normalized)
+    if tlon_target is not None:
+        return "direct" if tlon_target.kind == "dm" else "group"
     if normalized.startswith("group:"):
         return "group"
     return "channel"
@@ -7068,6 +7081,12 @@ def _tlon_query_value(query: Mapping[str, str], *names: str) -> str | None:
     return None
 
 
+TLON_TARGET_HINT = (
+    "dm/~sampel-palnet | ~sampel-palnet | chat/~host-ship/channel | "
+    "group:~host-ship/channel"
+)
+
+
 def _tlon_normalize_ship(raw_ship: str | None) -> str | None:
     normalized = str(raw_ship or "").strip()
     if not normalized:
@@ -7104,6 +7123,285 @@ def _tlon_route_config(target: str | None, secret_token: str | None) -> _TlonRou
     if not code:
         raise RuntimeError("Tlon route is missing an access code secret.")
     return _TlonRouteConfig(base_url=base_url, ship=ship, code=code)
+
+
+def _tlon_normalize_target_ship(raw_ship: str | None) -> str | None:
+    try:
+        return _tlon_normalize_ship(raw_ship)
+    except RuntimeError:
+        return None
+
+
+def _tlon_parse_channel_nest(raw: str | None) -> tuple[str, str] | None:
+    match = re.fullmatch(r"chat/([^/]+)/([^/]+)", str(raw or "").strip(), flags=re.IGNORECASE)
+    if match is None:
+        return None
+    host_ship = _tlon_normalize_target_ship(match.group(1))
+    channel_name = match.group(2).strip()
+    if host_ship is None or not channel_name:
+        return None
+    return host_ship, channel_name
+
+
+def _tlon_make_group_target(host_ship: str, channel_name: str) -> _TlonParsedTarget:
+    return _TlonParsedTarget(
+        kind="group",
+        nest=f"chat/{host_ship}/{channel_name}",
+        host_ship=host_ship,
+        channel_name=channel_name,
+    )
+
+
+def _tlon_parse_target(raw: str | None) -> _TlonParsedTarget | None:
+    trimmed = str(raw or "").strip()
+    if not trimmed:
+        return None
+    without_prefix = re.sub(r"^tlon:", "", trimmed, count=1, flags=re.IGNORECASE)
+
+    dm_match = re.match(r"^dm[/:](.+)$", without_prefix, flags=re.IGNORECASE)
+    if dm_match is not None:
+        ship = _tlon_normalize_target_ship(dm_match.group(1))
+        return _TlonParsedTarget(kind="dm", ship=ship) if ship is not None else None
+
+    group_match = re.match(
+        r"^(group|room)[/:](.+)$",
+        without_prefix,
+        flags=re.IGNORECASE,
+    )
+    if group_match is not None:
+        group_target = group_match.group(2).strip()
+        if group_target.lower().startswith("chat/"):
+            parsed = _tlon_parse_channel_nest(group_target)
+            if parsed is None:
+                return None
+            return _tlon_make_group_target(*parsed)
+        parts = group_target.split("/")
+        if len(parts) != 2:
+            return None
+        host_ship = _tlon_normalize_target_ship(parts[0])
+        channel_name = parts[1].strip()
+        if host_ship is None or not channel_name:
+            return None
+        return _tlon_make_group_target(host_ship, channel_name)
+
+    if without_prefix.lower().startswith("chat/"):
+        parsed = _tlon_parse_channel_nest(without_prefix)
+        if parsed is None:
+            return None
+        return _tlon_make_group_target(*parsed)
+
+    ship = _tlon_normalize_target_ship(without_prefix)
+    return _TlonParsedTarget(kind="dm", ship=ship) if ship is not None else None
+
+
+def _tlon_targets_match(route_peer_id: str, event_peer_id: str) -> bool:
+    route_target = _tlon_parse_target(route_peer_id)
+    event_target = _tlon_parse_target(event_peer_id)
+    if route_target is None or event_target is None:
+        return False
+    if route_target.kind != event_target.kind:
+        return False
+    if route_target.kind == "dm":
+        return str(route_target.ship or "").lower() == str(event_target.ship or "").lower()
+    return str(route_target.nest or "").lower() == str(event_target.nest or "").lower()
+
+
+def _tlon_ud(value: int) -> str:
+    digits = str(abs(int(value)))
+    groups: list[str] = []
+    while digits:
+        groups.append(digits[-3:])
+        digits = digits[:-3]
+    formatted = ".".join(reversed(groups or ["0"]))
+    return f"-{formatted}" if value < 0 else formatted
+
+
+def _tlon_merge_adjacent_strings(items: list[object]) -> list[object]:
+    merged: list[object] = []
+    for item in items:
+        if isinstance(item, str) and merged and isinstance(merged[-1], str):
+            merged[-1] = f"{merged[-1]}{item}"
+        else:
+            merged.append(item)
+    return merged
+
+
+def _tlon_parse_inline_markdown(text: str) -> list[object]:
+    result: list[object] = []
+    remaining = str(text or "")
+    while remaining:
+        ship_match = re.match(r"^(~[a-z][-a-z0-9]*)", remaining, flags=re.IGNORECASE)
+        if ship_match is not None:
+            result.append({"ship": ship_match.group(1)})
+            remaining = remaining[len(ship_match.group(0)) :]
+            continue
+        bold_match = re.match(r"^\*\*(.+?)\*\*|^__(.+?)__", remaining)
+        if bold_match is not None:
+            content = str(bold_match.group(1) or bold_match.group(2) or "")
+            result.append({"bold": _tlon_parse_inline_markdown(content)})
+            remaining = remaining[len(bold_match.group(0)) :]
+            continue
+        italics_match = re.match(r"^\*([^*]+?)\*|^_([^_]+?)_(?![a-zA-Z0-9])", remaining)
+        if italics_match is not None:
+            content = str(italics_match.group(1) or italics_match.group(2) or "")
+            result.append({"italics": _tlon_parse_inline_markdown(content)})
+            remaining = remaining[len(italics_match.group(0)) :]
+            continue
+        strike_match = re.match(r"^~~(.+?)~~", remaining)
+        if strike_match is not None:
+            result.append({"strike": _tlon_parse_inline_markdown(strike_match.group(1))})
+            remaining = remaining[len(strike_match.group(0)) :]
+            continue
+        code_match = re.match(r"^`([^`]+)`", remaining)
+        if code_match is not None:
+            result.append({"inline-code": code_match.group(1)})
+            remaining = remaining[len(code_match.group(0)) :]
+            continue
+        image_match = re.match(r"^!\[([^\]]*)]\(([^)]+)\)", remaining)
+        if image_match is not None:
+            result.append(
+                {
+                    "__image": {
+                        "src": image_match.group(2),
+                        "alt": image_match.group(1),
+                    }
+                }
+            )
+            remaining = remaining[len(image_match.group(0)) :]
+            continue
+        link_match = re.match(r"^\[([^\]]+)]\(([^)]+)\)", remaining)
+        if link_match is not None:
+            result.append(
+                {
+                    "link": {
+                        "href": link_match.group(2),
+                        "content": link_match.group(1),
+                    }
+                }
+            )
+            remaining = remaining[len(link_match.group(0)) :]
+            continue
+        url_match = re.match(r"^(https?://[^\s<>\"\]]+)", remaining)
+        if url_match is not None:
+            result.append(
+                {
+                    "link": {
+                        "href": url_match.group(1),
+                        "content": url_match.group(1),
+                    }
+                }
+            )
+            remaining = remaining[len(url_match.group(0)) :]
+            continue
+        plain_match = re.match(r"^[^*_`~[#~\n:/]+", remaining)
+        if plain_match is not None:
+            result.append(plain_match.group(0))
+            remaining = remaining[len(plain_match.group(0)) :]
+            continue
+        if remaining[0] == "\n":
+            result.append({"break": None})
+        else:
+            result.append(remaining[0])
+        remaining = remaining[1:]
+    return _tlon_merge_adjacent_strings(result)
+
+
+def _tlon_image_block(src: str, alt: str = "") -> dict[str, object]:
+    return {"block": {"image": {"src": src, "height": 0, "width": 0, "alt": alt}}}
+
+
+def _tlon_markdown_to_story(markdown: str) -> list[dict[str, object]]:
+    story: list[dict[str, object]] = []
+    lines = str(markdown or "").split("\n")
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("```"):
+            lang = line[3:].strip() or "plaintext"
+            code_lines: list[str] = []
+            index += 1
+            while index < len(lines) and not lines[index].startswith("```"):
+                code_lines.append(lines[index])
+                index += 1
+            story.append({"block": {"code": {"code": "\n".join(code_lines), "lang": lang}}})
+            index += 1
+            continue
+        header_match = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if header_match is not None:
+            tag = f"h{len(header_match.group(1))}"
+            story.append(
+                {
+                    "block": {
+                        "header": {
+                            "tag": tag,
+                            "content": _tlon_parse_inline_markdown(header_match.group(2)),
+                        }
+                    }
+                }
+            )
+            index += 1
+            continue
+        if re.fullmatch(r"(-{3,}|\*{3,})", line.strip()):
+            story.append({"block": {"rule": None}})
+            index += 1
+            continue
+        if line.startswith("> "):
+            quote_lines: list[str] = []
+            while index < len(lines) and lines[index].startswith("> "):
+                quote_lines.append(lines[index][2:])
+                index += 1
+            story.append(
+                {
+                    "inline": [
+                        {"blockquote": _tlon_parse_inline_markdown("\n".join(quote_lines))}
+                    ]
+                }
+            )
+            continue
+        if not line.strip():
+            index += 1
+            continue
+
+        paragraph_lines: list[str] = []
+        while (
+            index < len(lines)
+            and lines[index].strip()
+            and not lines[index].startswith("#")
+            and not lines[index].startswith("```")
+            and not lines[index].startswith("> ")
+            and not re.fullmatch(r"(-{3,}|\*{3,})", lines[index].strip())
+        ):
+            paragraph_lines.append(lines[index])
+            index += 1
+        inlines = _tlon_parse_inline_markdown("\n".join(paragraph_lines))
+        clean_inlines: list[object] = []
+        image_blocks: list[dict[str, object]] = []
+        for inline in inlines:
+            if isinstance(inline, dict) and isinstance(inline.get("__image"), dict):
+                image = cast(dict[str, object], inline["__image"])
+                image_blocks.append(
+                    _tlon_image_block(str(image.get("src") or ""), str(image.get("alt") or ""))
+                )
+            else:
+                clean_inlines.append(inline)
+        if clean_inlines:
+            story.append({"inline": clean_inlines})
+        story.extend(image_blocks)
+    return story
+
+
+def _tlon_media_story(
+    *,
+    text: str,
+    media_urls: list[str],
+) -> list[dict[str, object]]:
+    story = _tlon_markdown_to_story(text.strip()) if text.strip() else []
+    for media_url in media_urls:
+        if re.search(r"\.(?:jpg|jpeg|png|gif|webp|svg|bmp|ico)(?:\?.*)?$", media_url, re.I):
+            story.append(_tlon_image_block(media_url))
+        else:
+            story.append({"inline": [{"link": {"href": media_url, "content": media_url}}]})
+    return story or [{"inline": [""]}]
 
 
 def _strip_markdown_for_twitch(markdown: str) -> str:
@@ -9223,6 +9521,8 @@ def _conversation_target_peer_id_matches(
         route_twitch_target = str(_twitch_normalize_channel(route_peer_id) or "").strip()
         event_twitch_target = str(_twitch_normalize_channel(event_peer_id) or "").strip()
         return bool(route_twitch_target and route_twitch_target == event_twitch_target)
+    if channel == "tlon":
+        return _tlon_targets_match(route_peer_id, event_peer_id)
     if channel == "msteams":
         route_msteams_user = _msteams_user_target_id(route_peer_id)
         event_msteams_user = _msteams_user_target_id(event_peer_id)
@@ -16368,6 +16668,8 @@ class OpsMeshService:
             return self._post_irc_provider_event
         if route_kind == "twitch":
             return self._post_twitch_provider_event
+        if route_kind == "tlon":
+            return self._post_tlon_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
         if route_kind == "matrix":
@@ -24860,6 +25162,33 @@ class OpsMeshService:
         *,
         timeout_seconds: float,
     ) -> int:
+        base_url = _tlon_http_base_url(config.base_url)
+        timeout = max(float(timeout_seconds), 0.001)
+        cookie = self._request_tlon_auth_cookie(config, timeout_seconds=timeout)
+
+        name_request = Request(
+            f"{base_url}/~/name",
+            headers={
+                "Accept": "text/plain",
+                "Cookie": cookie,
+            },
+            method="GET",
+        )
+        try:
+            with urlopen(name_request, timeout=timeout) as response:
+                response.read()
+                return int(getattr(response, "status", getattr(response, "code", 0)))
+        except HTTPError as exc:
+            return int(exc.code)
+        except URLError as exc:
+            raise RuntimeError(f"Tlon name request failed: {exc.reason}") from exc
+
+    def _request_tlon_auth_cookie(
+        self,
+        config: _TlonRouteConfig,
+        *,
+        timeout_seconds: float,
+    ) -> str:
         del self
         base_url = _tlon_http_base_url(config.base_url)
         timeout = max(float(timeout_seconds), 0.001)
@@ -24885,23 +25214,54 @@ class OpsMeshService:
             raise RuntimeError(f"Tlon login failed: {exc.reason}") from exc
         if not cookie:
             raise RuntimeError("No authentication cookie received")
+        return cookie
 
-        name_request = Request(
-            f"{base_url}/~/name",
+    def _request_tlon_poke(
+        self,
+        config: _TlonRouteConfig,
+        *,
+        app: str,
+        mark: str,
+        json_payload: dict[str, object],
+        timeout_seconds: float,
+    ) -> int:
+        base_url = _tlon_http_base_url(config.base_url)
+        timeout = max(float(timeout_seconds), 0.001)
+        cookie = self._request_tlon_auth_cookie(config, timeout_seconds=timeout)
+        channel_id = f"{int(time.time())}-{uuid.uuid4()}"
+        poke_id = int(time.time() * 1000)
+        body = [
+            {
+                "id": poke_id,
+                "action": "poke",
+                "ship": config.ship.lstrip("~"),
+                "app": app,
+                "mark": mark,
+                "json": json_payload,
+            }
+        ]
+        poke_request = Request(
+            f"{base_url}/~/channel/{channel_id}",
+            data=json.dumps(body).encode("utf-8"),
             headers={
-                "Accept": "text/plain",
-                "Cookie": cookie,
+                "Content-Type": "application/json",
+                "Cookie": cookie.split(";", 1)[0],
             },
-            method="GET",
+            method="PUT",
         )
         try:
-            with urlopen(name_request, timeout=timeout) as response:
+            with urlopen(poke_request, timeout=timeout) as response:
+                status = int(getattr(response, "status", getattr(response, "code", 0)))
                 response.read()
-                return int(getattr(response, "status", getattr(response, "code", 0)))
+                if status < 200 or (status >= 300 and status != 204):
+                    raise RuntimeError(f"Poke failed with status {status}")
         except HTTPError as exc:
-            return int(exc.code)
+            error_text = exc.read().decode("utf-8", "replace").strip()
+            suffix = f" - {error_text}" if error_text else ""
+            raise RuntimeError(f"Poke failed: {exc.code}{suffix}") from exc
         except URLError as exc:
-            raise RuntimeError(f"Tlon name request failed: {exc.reason}") from exc
+            raise RuntimeError(f"Tlon poke failed: {exc.reason}") from exc
+        return poke_id
 
     def _imessage_binary_available(self, cli_path: str) -> bool:
         del self
@@ -30229,6 +30589,131 @@ class OpsMeshService:
         if media_urls:
             native_result["mediaUrls"] = media_urls
         return native_result
+
+    def _post_tlon_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Tlon native provider route does not support polls.")
+        config = _tlon_route_config(str(route.get("target") or ""), secret_token)
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        target = _tlon_parse_target(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if target is None:
+            raise RuntimeError(f"Invalid Tlon target. Use {TLON_TARGET_HINT}.")
+        text = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if not text and not media_urls:
+            raise RuntimeError("Tlon send requires text or media.")
+        sent_at = int(time.time() * 1000)
+        story = _tlon_media_story(text=text, media_urls=media_urls)
+        if target.kind == "dm":
+            to_ship = str(target.ship or "")
+            message_id = f"{config.ship}/{_tlon_ud(sent_at)}"
+            action: dict[str, object] = {
+                "ship": to_ship,
+                "diff": {
+                    "id": message_id,
+                    "delta": {
+                        "add": {
+                            "memo": {
+                                "content": story,
+                                "author": config.ship,
+                                "sent": sent_at,
+                            },
+                            "kind": None,
+                            "time": None,
+                        }
+                    },
+                },
+            }
+            self._request_tlon_poke(
+                config,
+                app="chat",
+                mark="chat-dm-action",
+                json_payload=action,
+                timeout_seconds=15.0,
+            )
+            native_result: dict[str, object] = {
+                "runtime": "native-provider-backed",
+                "messageId": message_id,
+                "channel": "tlon",
+                "chatId": to_ship,
+                "channelId": to_ship,
+            }
+            if media_urls:
+                native_result["mediaUrls"] = media_urls
+            return native_result
+
+        reply_to_id = str(event.get("replyToId") or event.get("threadId") or "").strip()
+        formatted_reply_id = _tlon_ud(int(reply_to_id)) if reply_to_id.isdigit() else reply_to_id
+        host_ship = str(target.host_ship or "")
+        channel_name = str(target.channel_name or "")
+        nest = str(target.nest or f"chat/{host_ship}/{channel_name}")
+        post_action: dict[str, object]
+        if formatted_reply_id:
+            post_action = {
+                "post": {
+                    "reply": {
+                        "id": formatted_reply_id,
+                        "action": {
+                            "add": {
+                                "content": story,
+                                "author": config.ship,
+                                "sent": sent_at,
+                            }
+                        },
+                    }
+                }
+            }
+        else:
+            post_action = {
+                "post": {
+                    "add": {
+                        "content": story,
+                        "author": config.ship,
+                        "sent": sent_at,
+                        "kind": "/chat",
+                        "blob": None,
+                        "meta": None,
+                    }
+                }
+            }
+        action = {"channel": {"nest": nest, "action": post_action}}
+        self._request_tlon_poke(
+            config,
+            app="channels",
+            mark="channel-action-1",
+            json_payload=action,
+            timeout_seconds=15.0,
+        )
+        message_id = f"{config.ship}/{sent_at}"
+        group_native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "channel": "tlon",
+            "chatId": nest,
+            "channelId": nest,
+            "roomId": nest,
+        }
+        if formatted_reply_id:
+            group_native_result["replyToId"] = formatted_reply_id
+        if media_urls:
+            group_native_result["mediaUrls"] = media_urls
+        return group_native_result
 
     def _post_line_provider_event(
         self,

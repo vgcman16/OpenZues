@@ -7177,6 +7177,256 @@ def test_ops_mesh_service_tlon_probe_authenticates_then_requests_name(
     ]
 
 
+def test_ops_mesh_service_tlon_poke_authenticates_then_puts_channel_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, dict[str, str], bytes | None, float]] = []
+
+    class FakeTlonResponse:
+        def __init__(
+            self,
+            *,
+            status: int,
+            body: bytes = b"",
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.status = status
+            self._body = body
+            self.headers = headers or {}
+
+        def __enter__(self) -> FakeTlonResponse:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeTlonResponse:
+        request_body = request.data
+        requests.append(
+            (
+                request.full_url,
+                request.get_method(),
+                dict(request.header_items()),
+                request_body if isinstance(request_body, bytes) else None,
+                timeout,
+            )
+        )
+        if request.full_url.endswith("/~/login"):
+            return FakeTlonResponse(
+                status=200,
+                body=b"ok",
+                headers={"Set-Cookie": "urbauth-ship=secret; Path=/"},
+            )
+        return FakeTlonResponse(status=204)
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+    monkeypatch.setattr("openzues.services.ops_mesh.time.time", lambda: 1713980000.123)
+    monkeypatch.setattr("openzues.services.ops_mesh.uuid.uuid4", lambda: "poke-uuid")
+
+    poke_id = OpsMeshService.__new__(OpsMeshService)._request_tlon_poke(
+        _TlonRouteConfig(
+            base_url="https://zod.tlon.network",
+            ship="~zod",
+            code="tlon-code",
+        ),
+        app="chat",
+        mark="chat-dm-action",
+        json_payload={"ship": "~sampel-palnet"},
+        timeout_seconds=2.5,
+    )
+
+    assert poke_id == 1713980000123
+    assert requests[0] == (
+        "https://zod.tlon.network/~/login",
+        "POST",
+        {
+            "Accept": "text/plain",
+            "Content-type": "application/x-www-form-urlencoded",
+        },
+        b"password=tlon-code",
+        2.5,
+    )
+    target, method, headers, body, timeout = requests[1]
+    assert target == "https://zod.tlon.network/~/channel/1713980000-poke-uuid"
+    assert method == "PUT"
+    assert headers == {
+        "Content-type": "application/json",
+        "Cookie": "urbauth-ship=secret",
+    }
+    assert timeout == 2.5
+    assert body is not None
+    assert json.loads(body.decode("utf-8")) == [
+        {
+            "id": 1713980000123,
+            "action": "poke",
+            "ship": "zod",
+            "app": "chat",
+            "mark": "chat-dm-action",
+            "json": {"ship": "~sampel-palnet"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-tlon"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Tlon Native Provider",
+        kind="tlon",
+        target="https://zod.tlon.network?ship=~zod",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tlon-code",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "tlon",
+            "account_id": "ship",
+            "peer_kind": "direct",
+            "peer_id": "~sampel-palnet",
+        },
+    )
+    tlon_pokes: list[dict[str, object]] = []
+
+    def fake_request_tlon_poke(
+        self: OpsMeshService,
+        config: _TlonRouteConfig,
+        *,
+        app: str,
+        mark: str,
+        json_payload: dict[str, object],
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        tlon_pokes.append(
+            {
+                "base_url": config.base_url,
+                "ship": config.ship,
+                "code": config.code,
+                "app": app,
+                "mark": mark,
+                "json": json_payload,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return 1713980000123
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_tlon_poke",
+        fake_request_tlon_poke,
+        raising=False,
+    )
+    monkeypatch.setattr("openzues.services.ops_mesh.time.time", lambda: 1713980000.123)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="tlon",
+        to="tlon:dm/~sampel-palnet",
+        message="Tlon **native** parity from ~zod.",
+        account_id="ship",
+        idempotency_key="idem-native-tlon-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="tlon",
+            account_id="ship",
+            peer_kind="direct",
+            peer_id="tlon:dm/~sampel-palnet",
+        ),
+    )
+    message_id = str(result["messageId"])
+    assert message_id.startswith("~zod/")
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-tlon-send",
+        "channel": "tlon",
+        "messageId": message_id,
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "tlon",
+            "target": "tlon:dm/~sampel-palnet",
+            "accountId": "ship",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "~sampel-palnet",
+        "channelId": "~sampel-palnet",
+    }
+    assert tlon_pokes == [
+        {
+            "base_url": "https://zod.tlon.network",
+            "ship": "~zod",
+            "code": "tlon-code",
+            "app": "chat",
+            "mark": "chat-dm-action",
+            "json": {
+                "ship": "~sampel-palnet",
+                "diff": {
+                    "id": message_id,
+                    "delta": {
+                        "add": {
+                            "memo": {
+                                "content": [
+                                    {
+                                        "inline": [
+                                            "Tlon ",
+                                            {"bold": ["native"]},
+                                            " parity from ",
+                                            {"ship": "~zod"},
+                                            ".",
+                                        ]
+                                    }
+                                ],
+                                "author": "~zod",
+                                "sent": 1713980000123,
+                            },
+                            "kind": None,
+                            "time": None,
+                        }
+                    },
+                },
+            },
+            "timeout_seconds": 15.0,
+        }
+    ]
+    delivery = await database.get_outbound_delivery(1)
+    assert delivery is not None
+    assert delivery["delivery_message_id"] == message_id
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": message_id,
+        "channel": "tlon",
+        "chatId": "~sampel-palnet",
+        "channelId": "~sampel-palnet",
+    }
+
+
 def test_ops_mesh_service_imessage_rpc_support_marks_unknown_subcommand_fatal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
