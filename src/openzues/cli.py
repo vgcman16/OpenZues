@@ -65057,6 +65057,13 @@ const privateQaBundledEnvRuntime = {
   resolvePrivateQaBundledPluginsEnv,
 };
 
+const threadOwnershipRuntime = {
+  definePluginEntry,
+  fetchWithSsrFGuard,
+  ssrfPolicyFromAllowPrivateNetwork,
+  ssrfPolicyFromDangerouslyAllowPrivateNetwork,
+};
+
 function filePathFromImportMetaUrl(importMetaUrl) {
   if (typeof importMetaUrl === "string" && importMetaUrl.startsWith("file:")) {
     return require("node:url").fileURLToPath(importMetaUrl);
@@ -85910,6 +85917,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/private-qa-bundled-env"
   ) {
     return privateQaBundledEnvRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/thread-ownership" ||
+    request === "@openclaw/plugin-sdk/thread-ownership"
+  ) {
+    return threadOwnershipRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/config-mutation" ||

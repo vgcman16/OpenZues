@@ -17573,6 +17573,122 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_thread_ownership_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-thread-ownership.cjs"
+    runtime_entry.write_text(
+        """
+const ownership = require("openclaw/plugin-sdk/thread-ownership");
+const scopedOwnership = require("@openclaw/plugin-sdk/thread-ownership");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.thread_ownership",
+      description: "Use OpenClaw thread-ownership SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const entry = ownership.definePluginEntry({
+          id: "thread-ownership-demo",
+          name: "Thread Ownership Demo",
+          description: "Thread ownership description",
+          register() { return "registered"; }
+        });
+        return {
+          keys: Object.keys(ownership).sort(),
+          scopedSame:
+            scopedOwnership.fetchWithSsrFGuard === ownership.fetchWithSsrFGuard &&
+            scopedOwnership.definePluginEntry === ownership.definePluginEntry,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            registerType: typeof entry.register
+          },
+          fetchType: typeof ownership.fetchWithSsrFGuard,
+          policies: [
+            ownership.ssrfPolicyFromDangerouslyAllowPrivateNetwork(true),
+            ownership.ssrfPolicyFromDangerouslyAllowPrivateNetwork(false) || null,
+            ownership.ssrfPolicyFromAllowPrivateNetwork(true)
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-thread-ownership-plugin",
+                    "name": "Runtime Thread Ownership Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-thread-ownership.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.thread_ownership"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.thread_ownership"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "definePluginEntry",
+            "fetchWithSsrFGuard",
+            "ssrfPolicyFromAllowPrivateNetwork",
+            "ssrfPolicyFromDangerouslyAllowPrivateNetwork",
+        ],
+        "scopedSame": True,
+        "entry": {
+            "id": "thread-ownership-demo",
+            "name": "Thread Ownership Demo",
+            "registerType": "function",
+        },
+        "fetchType": "function",
+        "policies": [
+            {"allowPrivateNetwork": True},
+            None,
+            {"allowPrivateNetwork": True},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
     tmp_path,
 ) -> None:
