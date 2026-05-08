@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999998%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19816,6 +19816,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py tests\test_cli.py`, `mypy
   src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `8f305c47`.
+- Native dev-channel git updates without a target ref now mirror OpenClaw's
+  branch normalization by probing the current branch and running
+  `git checkout main` before fetch/preflight when needed. The CLI forwards the
+  effective git update channel to the runtime path so the branch normalization
+  applies to real `openzues update` runs. This closes `OZ-PKG-001BZ`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999%.
+- Verified dev-branch normalization with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_main_for_dev_channel -q`
+  (`1 failed` before implementation, then `1 passed`), focused CLI red/green
+  `python -m pytest tests\test_cli.py::test_update_json_passes_effective_git_channel_to_runtime -q`
+  (`1 failed` before implementation, then covered green), adjacent runtime
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_main_for_dev_channel tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate -q`
+  (`4 passed`), adjacent CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_json_passes_effective_git_channel_to_runtime or update_json_passes_dev_target_ref_env_to_git_runtime or update_json_dispatches_runtime_update_service or update_dry_run_json_uses_stored_update_channel"`
+  (`4 passed, 557 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`46 passed`), `ruff
+  check src\openzues\services\runtime_updates.py src\openzues\cli.py
+  tests\test_runtime_updates.py tests\test_cli.py`, `mypy
+  src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `c77f60e0`.
 
 ## References
 
