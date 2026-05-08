@@ -10555,3 +10555,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.9999999999999999999999999998%. Continue `matrix-thread-bindings`,
   `matrix-surface`, or broader provider/channel facade seams.
+- Current queue-head adjustment: imported plugin SDK `matrix-thread-bindings`
+  now exposes exact scoped/unscoped Matrix lifecycle setters with the upstream
+  no-manager empty-list posture and native session-binding record conversion
+  path for registered managers instead of generic passthrough. Source/test
+  checkpointed in `61ade86a`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999%. Continue `matrix-surface` or broader
+  provider/channel facade seams.

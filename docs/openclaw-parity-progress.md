@@ -20291,6 +20291,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1147 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `f4473e05`.
+- Imported plugin SDK `matrix-thread-bindings` now exposes the exact
+  scoped/unscoped Matrix thread-binding lifecycle setter facade with the
+  upstream no-manager empty-list posture and native session-binding record
+  conversion path for registered managers. This closes `OZ-PLUGIN-00321`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999999999%.
+- Verified the matrix-thread-bindings helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_matrix_thread_bindings_helper -q`
+  (the exact subpath returned generic passthrough data before implementation,
+  then `1 passed`), adjacent Matrix/thread-binding proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "matrix_thread_bindings or matrix_runtime_surface or mattermost_policy or thread_bindings_runtime"`
+  (`4 passed, 1148 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `61ade86a`.
 
 ## References
 
