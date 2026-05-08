@@ -7086,6 +7086,7 @@ TLON_TARGET_HINT = (
     "dm/~sampel-palnet | ~sampel-palnet | chat/~host-ship/channel | "
     "group:~host-ship/channel"
 )
+TLON_MEMEX_BASE_URL = "https://memex.tlon.network"
 
 
 def _tlon_normalize_ship(raw_ship: str | None) -> str | None:
@@ -7403,6 +7404,87 @@ def _tlon_media_story(
         else:
             story.append({"inline": [{"link": {"href": media_url, "content": media_url}}]})
     return story or [{"inline": [""]}]
+
+
+def _tlon_hostname_matches_domain_boundary(hostname: str, domain: str) -> bool:
+    normalized_hostname = str(hostname or "").strip().lower()
+    normalized_domain = str(domain or "").strip().lower()
+    return normalized_hostname == normalized_domain or normalized_hostname.endswith(
+        f".{normalized_domain}"
+    )
+
+
+def _tlon_is_hosted_tlon_hostname(hostname: str) -> bool:
+    return _tlon_hostname_matches_domain_boundary(
+        hostname,
+        "tlon.network",
+    ) or _tlon_hostname_matches_domain_boundary(hostname, "test.tlon.systems")
+
+
+def _tlon_is_hosted_ship_url(ship_url: str) -> bool:
+    parsed = urlparse(str(ship_url or "").strip())
+    return bool(parsed.hostname and _tlon_is_hosted_tlon_hostname(parsed.hostname))
+
+
+def _tlon_assert_trusted_memex_url(raw_url: str, label: str) -> str:
+    parsed = urlparse(str(raw_url or "").strip())
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
+        raise RuntimeError(f"{label} must use https")
+    if not parsed.hostname or not _tlon_is_hosted_tlon_hostname(parsed.hostname):
+        raise RuntimeError(f"{label} must target a trusted hosted Tlon domain")
+    if parsed.port not in {None, 443}:
+        raise RuntimeError(f"{label} must not specify a non-standard port")
+    return parsed.geturl()
+
+
+def _tlon_safe_upload_filename(filename: str, content_type: str) -> str:
+    safe_name = Path(str(filename or "").replace("\\", "/")).name.strip()
+    if safe_name:
+        return safe_name
+    extension = {
+        "image/gif": ".gif",
+        "image/heic": ".heic",
+        "image/heif": ".heif",
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }.get(str(content_type or "").strip().lower(), ".jpg")
+    return f"upload{extension}"
+
+
+def _tlon_storage_update_payload(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    update = value.get("storage-update")
+    return update if isinstance(update, dict) else value
+
+
+def _tlon_has_custom_storage_credentials(value: object) -> bool:
+    payload = _tlon_storage_update_payload(value)
+    credentials = payload.get("credentials", payload)
+    if not isinstance(credentials, dict):
+        return False
+    return all(
+        str(credentials.get(key) or "").strip()
+        for key in ("endpoint", "accessKeyId", "secretAccessKey")
+    )
+
+
+def _tlon_storage_service(value: object) -> str:
+    payload = _tlon_storage_update_payload(value)
+    configuration = payload.get("configuration", payload)
+    if not isinstance(configuration, dict):
+        return ""
+    return str(configuration.get("service") or "").strip()
+
+
+def _tlon_genuine_secret(value: object) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        return str(value.get("secret") or "").strip() or None
+    return None
 
 
 def _tlon_is_image_url(media_url: str) -> bool:
@@ -25317,8 +25399,158 @@ class OpsMeshService:
         content_type: str,
         timeout_seconds: float,
     ) -> str:
-        del self, config, media_bytes, filename, content_type, timeout_seconds
-        raise RuntimeError("Tlon media upload storage runtime is unavailable.")
+        timeout = max(float(timeout_seconds), 0.001)
+        cookie = self._request_tlon_auth_cookie(config, timeout_seconds=timeout)
+        storage_config = self._request_tlon_scry_json(
+            config,
+            cookie=cookie,
+            path="/storage/configuration.json",
+            timeout_seconds=timeout,
+        )
+        storage_credentials = self._request_tlon_scry_json(
+            config,
+            cookie=cookie,
+            path="/storage/credentials.json",
+            timeout_seconds=timeout,
+        )
+        ship_name = config.ship.lstrip("~")
+        safe_filename = _tlon_safe_upload_filename(filename, content_type)
+        file_key = f"{ship_name}/{int(time.time() * 1000)}-{uuid.uuid4()}-{safe_filename}"
+        use_memex = _tlon_is_hosted_ship_url(config.base_url) and (
+            _tlon_storage_service(storage_config) == "presigned-url"
+            or not _tlon_has_custom_storage_credentials(storage_credentials)
+        )
+        if use_memex:
+            secret_payload = self._request_tlon_scry_json(
+                config,
+                cookie=cookie,
+                path="/genuine/secret.json",
+                timeout_seconds=timeout,
+            )
+            genuine_secret = _tlon_genuine_secret(secret_payload)
+            if genuine_secret is None:
+                raise RuntimeError("Missing genuine secret")
+            memex_response = self._request_tlon_json_url(
+                f"{TLON_MEMEX_BASE_URL}/v1/{ship_name}/upload",
+                method="PUT",
+                payload={
+                    "token": genuine_secret,
+                    "contentLength": len(media_bytes),
+                    "contentType": content_type,
+                    "fileName": file_key,
+                },
+                timeout_seconds=timeout,
+            )
+            if not isinstance(memex_response, dict):
+                raise RuntimeError("Invalid response from Memex")
+            upload_url = str(memex_response.get("url") or "").strip()
+            hosted_url = str(memex_response.get("filePath") or "").strip()
+            if not upload_url or not hosted_url:
+                raise RuntimeError("Invalid response from Memex")
+            trusted_upload_url = _tlon_assert_trusted_memex_url(
+                upload_url,
+                "Memex upload URL",
+            )
+            trusted_hosted_url = _tlon_assert_trusted_memex_url(
+                hosted_url,
+                "Memex hosted URL",
+            )
+            self._put_tlon_media_bytes(
+                trusted_upload_url,
+                media_bytes=media_bytes,
+                content_type=content_type,
+                timeout_seconds=timeout,
+            )
+            return trusted_hosted_url
+        if not _tlon_has_custom_storage_credentials(storage_credentials):
+            raise RuntimeError("No storage credentials configured")
+        raise RuntimeError("Tlon custom S3 upload storage runtime is unavailable.")
+
+    def _request_tlon_scry_json(
+        self,
+        config: _TlonRouteConfig,
+        *,
+        cookie: str,
+        path: str,
+        timeout_seconds: float,
+    ) -> object:
+        del self
+        base_url = _tlon_http_base_url(config.base_url)
+        timeout = max(float(timeout_seconds), 0.001)
+        scry_request = Request(
+            f"{base_url}/~/scry{path}",
+            headers={"Cookie": cookie},
+            method="GET",
+        )
+        try:
+            with urlopen(scry_request, timeout=timeout) as response:
+                status = int(getattr(response, "status", getattr(response, "code", 0)))
+                body = response.read()
+        except HTTPError as exc:
+            raise RuntimeError(f"Scry failed: {exc.code} for path {path}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Tlon scry failed: {exc.reason}") from exc
+        if status < 200 or status >= 300:
+            raise RuntimeError(f"Scry failed: {status} for path {path}")
+        return json.loads(body.decode("utf-8"))
+
+    def _request_tlon_json_url(
+        self,
+        target: str,
+        *,
+        method: str,
+        payload: dict[str, object],
+        timeout_seconds: float,
+    ) -> object:
+        del self
+        timeout = max(float(timeout_seconds), 0.001)
+        request = Request(
+            target,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method=method,
+        )
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                status = int(getattr(response, "status", getattr(response, "code", 0)))
+                body = response.read()
+        except HTTPError as exc:
+            raise RuntimeError(f"Tlon JSON request failed: {exc.code}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Tlon JSON request failed: {exc.reason}") from exc
+        if status < 200 or status >= 300:
+            raise RuntimeError(f"Tlon JSON request failed: {status}")
+        return json.loads(body.decode("utf-8"))
+
+    def _put_tlon_media_bytes(
+        self,
+        target: str,
+        *,
+        media_bytes: bytes,
+        content_type: str,
+        timeout_seconds: float,
+    ) -> None:
+        del self
+        timeout = max(float(timeout_seconds), 0.001)
+        upload_request = Request(
+            target,
+            data=media_bytes,
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "Content-Type": content_type,
+            },
+            method="PUT",
+        )
+        try:
+            with urlopen(upload_request, timeout=timeout) as response:
+                status = int(getattr(response, "status", getattr(response, "code", 0)))
+                response.read()
+        except HTTPError as exc:
+            raise RuntimeError(f"Upload failed: {exc.code}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Upload failed: {exc.reason}") from exc
+        if status < 200 or status >= 300:
+            raise RuntimeError(f"Upload failed: {status}")
 
     def _imessage_binary_available(self, cli_path: str) -> bool:
         del self

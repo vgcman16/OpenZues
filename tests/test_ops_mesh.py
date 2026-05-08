@@ -7346,6 +7346,200 @@ def test_ops_mesh_service_tlon_image_upload_fetches_then_uploads_bytes(
     ]
 
 
+def test_ops_mesh_service_tlon_media_bytes_uploads_via_hosted_memex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, dict[str, str], bytes | None, float]] = []
+
+    class FakeResponse:
+        def __init__(
+            self,
+            *,
+            status: int,
+            body: bytes = b"",
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.status = status
+            self._body = body
+            self.headers = headers or {}
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        request_body = request.data
+        requests.append(
+            (
+                request.full_url,
+                request.get_method(),
+                dict(request.header_items()),
+                request_body if isinstance(request_body, bytes) else None,
+                timeout,
+            )
+        )
+        if request.full_url.endswith("/~/login"):
+            return FakeResponse(
+                status=200,
+                body=b"ok",
+                headers={"Set-Cookie": "urbauth-ship=secret; Path=/"},
+            )
+        if request.full_url.endswith("/~/scry/storage/configuration.json"):
+            return FakeResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "currentBucket": "uploads",
+                        "buckets": ["uploads"],
+                        "publicUrlBase": "https://files.tlon.network/",
+                        "presignedUrl": "https://files.tlon.network/presigned",
+                        "region": "us-east-1",
+                        "service": "presigned-url",
+                    }
+                ).encode("utf-8"),
+            )
+        if request.full_url.endswith("/~/scry/storage/credentials.json"):
+            return FakeResponse(status=200, body=b'{"storage-update": {}}')
+        if request.full_url.endswith("/~/scry/genuine/secret.json"):
+            return FakeResponse(status=200, body=b'{"secret": "genuine-secret"}')
+        if request.full_url == "https://memex.tlon.network/v1/zod/upload":
+            return FakeResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "url": "https://uploads.tlon.network/put",
+                        "filePath": "https://memex.tlon.network/files/uploaded.png",
+                    }
+                ).encode("utf-8"),
+            )
+        if request.full_url == "https://uploads.tlon.network/put":
+            return FakeResponse(status=200)
+        raise AssertionError(f"Unexpected request: {request.full_url}")
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+    monkeypatch.setattr("openzues.services.ops_mesh.time.time", lambda: 1713980000.123)
+    monkeypatch.setattr("openzues.services.ops_mesh.uuid.uuid4", lambda: "upload-uuid")
+
+    uploaded = OpsMeshService.__new__(OpsMeshService)._upload_tlon_media_bytes(
+        _TlonRouteConfig(
+            base_url="https://groups.tlon.network",
+            ship="~zod",
+            code="tlon-code",
+        ),
+        media_bytes=b"image-bytes",
+        filename="photo.png",
+        content_type="image/png",
+        timeout_seconds=2.5,
+    )
+
+    assert uploaded == "https://memex.tlon.network/files/uploaded.png"
+    assert requests[0] == (
+        "https://groups.tlon.network/~/login",
+        "POST",
+        {
+            "Accept": "text/plain",
+            "Content-type": "application/x-www-form-urlencoded",
+        },
+        b"password=tlon-code",
+        2.5,
+    )
+    memex_request = requests[4]
+    assert memex_request[0] == "https://memex.tlon.network/v1/zod/upload"
+    assert memex_request[1] == "PUT"
+    assert memex_request[2] == {"Content-type": "application/json"}
+    assert memex_request[4] == 2.5
+    assert memex_request[3] is not None
+    assert json.loads(memex_request[3].decode("utf-8")) == {
+        "token": "genuine-secret",
+        "contentLength": 11,
+        "contentType": "image/png",
+        "fileName": "zod/1713980000123-upload-uuid-photo.png",
+    }
+    upload_request = requests[5]
+    assert upload_request == (
+        "https://uploads.tlon.network/put",
+        "PUT",
+        {
+            "Cache-control": "public, max-age=3600",
+            "Content-type": "image/png",
+        },
+        b"image-bytes",
+        2.5,
+    )
+
+
+def test_ops_mesh_service_tlon_media_bytes_rejects_untrusted_memex_upload_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def __init__(
+            self,
+            *,
+            status: int,
+            body: bytes = b"",
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.status = status
+            self._body = body
+            self.headers = headers or {}
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del timeout
+        if request.full_url.endswith("/~/login"):
+            return FakeResponse(
+                status=200,
+                headers={"Set-Cookie": "urbauth-ship=secret; Path=/"},
+            )
+        if request.full_url.endswith("/~/scry/storage/configuration.json"):
+            return FakeResponse(status=200, body=b'{"service": "presigned-url"}')
+        if request.full_url.endswith("/~/scry/storage/credentials.json"):
+            return FakeResponse(status=200, body=b'{"storage-update": {}}')
+        if request.full_url.endswith("/~/scry/genuine/secret.json"):
+            return FakeResponse(status=200, body=b'{"secret": "genuine-secret"}')
+        if request.full_url == "https://memex.tlon.network/v1/zod/upload":
+            return FakeResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "url": "https://evil.example/upload",
+                        "filePath": "https://memex.tlon.network/files/uploaded.png",
+                    }
+                ).encode("utf-8"),
+            )
+        raise AssertionError(f"Unexpected request: {request.full_url}")
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError, match="trusted hosted Tlon domain"):
+        OpsMeshService.__new__(OpsMeshService)._upload_tlon_media_bytes(
+            _TlonRouteConfig(
+                base_url="https://groups.tlon.network",
+                ship="~zod",
+                code="tlon-code",
+            ),
+            media_bytes=b"image-bytes",
+            filename="photo.png",
+            content_type="image/png",
+            timeout_seconds=2.5,
+        )
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route(
     monkeypatch: pytest.MonkeyPatch,
