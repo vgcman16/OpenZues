@@ -307,6 +307,14 @@ def _startup_auto_beta_interval_hours(value: object) -> float:
     return _auto_update_float(value, "betaCheckIntervalHours", 1.0, minimum=0.25)
 
 
+def _startup_auto_check_interval_hours(value: object, channel: str) -> float:
+    if channel == "beta":
+        return _startup_auto_beta_interval_hours(value)
+    if channel == "stable":
+        return 1.0
+    return 24.0
+
+
 def _startup_update_channel(value: object) -> str:
     channel = _normalize_update_channel(str(_update_mapping(value).get("channel") or ""))
     return channel or "stable"
@@ -1457,6 +1465,17 @@ class RuntimeUpdateService:
         current_version = _read_package_version(package_root)
         if not current_version:
             return {"status": "skipped", "reason": "current-version-unavailable"}
+        now = self._now()
+        state = await self._read_startup_auto_update_state()
+        last_checked_at = _parse_datetime(state.get("lastCheckedAt"))
+        check_interval_seconds = (
+            _startup_auto_check_interval_hours(config_snapshot, channel) * _ONE_HOUR_SECONDS
+        )
+        if (
+            last_checked_at is not None
+            and (now - last_checked_at).total_seconds() < check_interval_seconds
+        ):
+            return {"status": "skipped", "reason": "recent-check"}
 
         resolved = await self._resolve_startup_package_channel(
             package_name=package_name,
@@ -1483,8 +1502,6 @@ class RuntimeUpdateService:
                 "channel": channel,
                 "targetVersion": target_version,
             }
-        now = self._now()
-        state = await self._read_startup_auto_update_state()
         next_state = dict(state)
         next_state["lastCheckedAt"] = _datetime_iso(now)
         if channel == "stable":

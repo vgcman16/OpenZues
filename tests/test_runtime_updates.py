@@ -380,7 +380,17 @@ async def test_runtime_update_startup_auto_update_defers_recent_beta_attempt(
     )
     _write_package_dist_inventory(package_root)
     command_calls: list[list[str]] = []
-    now_values = ["2026-01-18T00:00:00+00:00"]
+    state_path = tmp_path / "update-check.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "lastCheckedAt": "2026-01-17T00:00:00+00:00",
+                "autoLastAttemptVersion": "2.0.0-beta.1",
+                "autoLastAttemptAt": "2026-01-18T00:10:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     async def fake_command_runner(
         argv: list[str],
@@ -422,21 +432,78 @@ async def test_runtime_update_startup_auto_update_defers_recent_beta_attempt(
         },
         package_root=package_root,
         package_version_resolver=fake_version_resolver,
-        now_provider=lambda: now_values[-1],
+        update_state_path=state_path,
+        now_provider=lambda: "2026-01-18T00:20:00+00:00",
     )
 
-    first = await service.run_startup_auto_update_check(timeout_ms=1000)
-    assert first["status"] == "ok"
+    result = await service.run_startup_auto_update_check(timeout_ms=1000)
 
-    now_values.append("2026-01-18T00:10:00+00:00")
-    second = await service.run_startup_auto_update_check(timeout_ms=1000)
+    assert result["status"] == "skipped"
+    assert result["reason"] == "recent-attempt"
+    assert command_calls == []
 
-    assert second["status"] == "skipped"
-    assert second["reason"] == "recent-attempt"
-    assert command_calls == [
-        ["pnpm", "add", "-g", "openzues@beta"],
-        _post_update_doctor_args(),
-    ]
+
+@pytest.mark.asyncio
+async def test_runtime_update_startup_auto_update_skips_recent_check_interval(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "prefix" / "node_modules" / "openzues"
+    package_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "openzues", "version": "1.0.0", "packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "update-check.json"
+    state_path.write_text(
+        json.dumps({"lastCheckedAt": "2026-01-18T00:00:00+00:00"}),
+        encoding="utf-8",
+    )
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        raise AssertionError("recent check interval should not run commands")
+
+    async def fake_version_resolver(
+        package_name: str,
+        tag: str,
+        timeout_ms: int | None,
+    ) -> str | None:
+        raise AssertionError("recent check interval should not resolve versions")
+
+    async def restart_callback() -> None:
+        raise AssertionError("recent check interval should not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+        config_snapshot_loader=lambda: {
+            "update": {
+                "channel": "beta",
+                "auto": {"enabled": True, "betaCheckIntervalHours": 1},
+            }
+        },
+        package_root=package_root,
+        package_version_resolver=fake_version_resolver,
+        update_state_path=state_path,
+        now_provider=lambda: "2026-01-18T00:10:00+00:00",
+    )
+
+    result = await service.run_startup_auto_update_check(timeout_ms=1000)
+
+    assert result == {
+        "status": "skipped",
+        "reason": "recent-check",
+    }
 
 
 @pytest.mark.asyncio
