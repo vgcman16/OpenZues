@@ -1508,6 +1508,65 @@ async def test_runtime_update_run_package_update_ignores_dist_inventory_omission
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_package_update_rejects_unsafe_dist_symlink(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "package-root"
+    package_root.mkdir()
+    (package_root / "package.json").write_text('{"version":"2026.4.15"}', encoding="utf-8")
+    unsafe_path = package_root / "dist" / "entry.js"
+    unsafe_path.parent.mkdir(parents=True)
+    unsafe_path.write_text("export {};\n", encoding="utf-8")
+    _write_package_dist_inventory(package_root, [])
+    original_is_symlink = Path.is_symlink
+
+    def fake_is_symlink(path: Path) -> bool:
+        if path == unsafe_path:
+            return True
+        return original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del argv, cwd, timeout_ms
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@latest",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "error"
+    assert result["reason"] == "global-install-verify-failed"
+    assert result["steps"][1]["name"] == "global install verify"
+    assert result["steps"][1]["log"]["stderrTail"] == (
+        "Unsafe package dist path: dist/entry.js"
+    )
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_update_skips_dirty_worktree_before_fetch(
     tmp_path,
 ) -> None:

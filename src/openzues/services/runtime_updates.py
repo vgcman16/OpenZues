@@ -780,22 +780,26 @@ def _read_package_dist_inventory_if_present(
     return inventory_files, None
 
 
-def _collect_package_dist_inventory(package_root: Path) -> list[str]:
+def _collect_package_dist_inventory(package_root: Path) -> tuple[list[str], list[str]]:
     dist_root = package_root / "dist"
     if not _path_exists(dist_root):
-        return []
+        return [], []
     files: list[str] = []
+    errors: list[str] = []
     for path in dist_root.rglob("*"):
         try:
-            if not path.is_file() or path.is_symlink():
+            relative_path = path.relative_to(package_root).as_posix()
+            if path.is_symlink():
+                errors.append(f"Unsafe package dist path: {relative_path}")
+                continue
+            if not path.is_file():
                 continue
         except OSError:
             continue
-        relative_path = path.relative_to(package_root).as_posix()
         if not _is_packaged_dist_file(relative_path):
             continue
         files.append(relative_path)
-    return sorted(set(files))
+    return sorted(set(files)), sorted(set(errors))
 
 
 def _is_legacy_plugin_dependency_dir_path(relative_path: str) -> bool:
@@ -833,10 +837,10 @@ def _collect_package_dist_inventory_file_errors(
     package_root: Path,
     inventory_files: Sequence[str],
 ) -> list[str]:
-    actual_files = _collect_package_dist_inventory(package_root)
+    actual_files, unsafe_errors = _collect_package_dist_inventory(package_root)
     actual_set = set(actual_files)
     inventory_set = set(inventory_files)
-    errors: list[str] = []
+    errors: list[str] = [*unsafe_errors]
     for relative_path in inventory_files:
         if relative_path not in actual_set:
             errors.append(f"missing packaged dist file {relative_path}")
