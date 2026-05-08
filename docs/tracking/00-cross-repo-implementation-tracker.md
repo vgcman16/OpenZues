@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -102,8 +102,9 @@ checkpointed in `49838584`, and `OZ-PLUGIN-00318` irc-surface is
 checkpointed in `a2edff86`. `OZ-PLUGIN-00319` mattermost-policy is
 checkpointed in `f18197d2`, and `OZ-PLUGIN-00320` matrix-runtime-surface is
 checkpointed in `f4473e05`. `OZ-PLUGIN-00321` matrix-thread-bindings is
-checkpointed in `61ade86a`; continue `matrix-surface` and broader
-provider/channel facade seams.
+checkpointed in `61ade86a`, and `OZ-PLUGIN-00322` matrix-surface is
+checkpointed in `20eb2b27`; continue remaining Matrix/provider facade seams
+and broader repo parity breadth.
 
 ## Active Slice Detail
 

@@ -20305,6 +20305,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1148 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `61ade86a`.
+- Imported plugin SDK `matrix-surface` now exposes the exact scoped/unscoped
+  Matrix facade for `createMatrixThreadBindingManager`,
+  `matrixSessionBindingAdapterChannels`, and `resetMatrixThreadBindingsForTests`,
+  including manager reuse, account mismatch errors, no-binding list methods,
+  reset cleanup, and a native manager path shared with the Matrix lifecycle
+  setters. This closes `OZ-PLUGIN-00322`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999995%.
+- Verified the matrix-surface helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_matrix_surface_helper -q`
+  (the exact subpath fell through to the generic SDK and produced a missing
+  manager-method error before implementation, then `1 passed`), adjacent
+  Matrix facade proof `python -m pytest tests\test_gateway_node_methods.py -q
+  -k "matrix_surface or matrix_thread_bindings or matrix_runtime_surface or
+  thread_bindings_runtime"` (`4 passed, 1149 deselected`), `ruff check
+  src\openzues\cli.py tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `20eb2b27`.
 
 ## References
 
