@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999999999999999999999995%.
+  band of ~80-99.9999999999999999999999996%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10435,3 +10435,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.9999999999999999999999995%. Continue `facade-resolution-shared`,
   `facade-runtime`, or remaining exact SDK subpaths.
+- Current queue-head adjustment: imported plugin SDK `facade-resolution-shared`
+  now exposes pure facade resolution-key, boundary-root, bundled artifact, and
+  registry-record lookup helpers through a real scoped/unscoped exact subpath
+  shim. Source/test checkpointed in `2938b03a`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999996%. Continue `facade-runtime` activation/
+  public-surface loading breadth or remaining exact SDK subpaths.

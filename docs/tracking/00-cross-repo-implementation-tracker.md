@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999996% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -84,8 +84,9 @@ source-checkout availability clearing is checkpointed in `e66c5082`, and
 checkpointed in `1d19a46c`. `OZ-PLUGIN-00301` facade-loader is checkpointed
 in `29aa7956`, `OZ-PLUGIN-00302` session-transcript-hit is checkpointed
 in `b294d317`, and `OZ-PLUGIN-00303` pairing-access is checkpointed in
-`e04677d3`; continue `facade-resolution-shared`, facade-runtime, or remaining
-exact plugin SDK subpaths.
+`e04677d3`. `OZ-PLUGIN-00304` facade-resolution-shared is checkpointed in
+`2938b03a`; continue facade-runtime activation/public-surface breadth or
+remaining exact plugin SDK subpaths.
 
 ## Active Slice Detail
 
@@ -1034,6 +1035,28 @@ exact plugin SDK subpaths.
     `1 passed`), adjacent proof
     `python -m pytest tests\test_gateway_node_methods.py -q -k "pairing_access or channel_pairing or pairing_paths"`
     (`3 passed, 1131 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00304` Imported facade-resolution-shared subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/facade-resolution-shared.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `facade-resolution-shared` and receive pure helpers for facade
+    resolution keys, bundled boundary roots, source/built public-surface
+    artifact selection, explicit bundled-plugin roots, and registry module
+    lookup by plugin id, root basename, or channel id.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `2938b03a`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_facade_resolution_shared_helpers -q`
+    (generic fallback returned objects into `path.relative` before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "facade_resolution_shared or facade_loader or plugin_test_runtime"`
+    (`3 passed, 1132 deselected`), `ruff check src\openzues\cli.py
     tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
     focused `git diff --check`.
 

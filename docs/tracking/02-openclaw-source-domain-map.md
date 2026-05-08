@@ -542,6 +542,8 @@ in `9c56ff39`.
 checkpointed in `b294d317`.
 `pairing-access` from `src/plugin-sdk/pairing-access.ts` is checkpointed in
 `e04677d3`.
+`facade-resolution-shared` from `src/plugin-sdk/facade-resolution-shared.ts`
+is checkpointed in `2938b03a`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
