@@ -10316,3 +10316,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   with the evidence band tightened to ~80-99.9999999999999999999995%.
   Continue preflight lint/no-good-commit cleanup edge cases or startup
   auto-update policy next.
+- Current queue-head adjustment: native git updates now abort a failed
+  selected-candidate rebase before returning `rebase-failed`, matching
+  OpenClaw's cleanup path. Source/test checkpointed in `3a61f139`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999996%. Continue preflight lint/no-good-commit
+  cleanup edge cases or startup auto-update policy next.

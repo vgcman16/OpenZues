@@ -19759,6 +19759,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `84a78474`.
+- Native git updates now run `git rebase --abort` when the selected-candidate
+  rebase fails, matching OpenClaw's rebase cleanup path before returning
+  `rebase-failed`. This closes `OZ-PKG-001BW`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999996%.
+- Verified rebase abort cleanup with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase -q`
+  (`1 failed` before implementation, then covered green), adjacent git update
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`43 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `3a61f139`.
 
 ## References
 
