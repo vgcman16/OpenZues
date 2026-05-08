@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999999999999999999999995%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -20581,6 +20581,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1164 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `1717d1c2`.
+- Imported plugin SDK `talk-voice` now exposes the exact scoped/unscoped
+  bundled talk-voice plugin-entry facade instead of the broad generic SDK
+  passthrough. This closes `OZ-PLUGIN-00340`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999995%.
+- Verified the talk-voice helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_talk_voice_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent plugin-entry facade proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "talk_voice_helpers or plugin_entry_facade or copilot_proxy or private_qa_bundled_env"`
+  (`3 passed, 1166 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `114f60ec`.
 
 ## References
 

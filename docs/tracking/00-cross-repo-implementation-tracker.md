@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -119,9 +119,10 @@ checkpointed in `c298b482`, and `OZ-PLUGIN-00327` minimax is checkpointed in
 `OZ-PLUGIN-00336` ollama/ollama-runtime is checkpointed in `2b1e3865`;
 `OZ-PLUGIN-00337` line-surface is checkpointed in `fee011e1`, and
 `OZ-PLUGIN-00338` line root/core is checkpointed in `696e61f2`.
-`OZ-PLUGIN-00339` matrix-helper is checkpointed in `1717d1c2`; continue
-remaining exact SDK helper seams, provider/runtime breadth, and broader repo
-parity.
+`OZ-PLUGIN-00339` matrix-helper is checkpointed in `1717d1c2`, and
+`OZ-PLUGIN-00340` talk-voice is checkpointed in `114f60ec`; continue
+remaining exact SDK helper seams starting with `memory-lancedb`, then
+provider/runtime breadth and broader repo parity.
 
 ## Active Slice Detail
 
