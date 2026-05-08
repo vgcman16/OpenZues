@@ -655,6 +655,27 @@ def _expected_package_version_from_spec(package_spec: str) -> str | None:
     return candidate
 
 
+def _collect_package_update_verify_errors(
+    package_root: Path,
+    *,
+    expected_version: str | None,
+) -> list[str]:
+    errors: list[str] = []
+    resolved_root = package_root.resolve(strict=False)
+    has_source_marker = _path_exists(resolved_root / ".git") or _path_exists(
+        resolved_root / "pnpm-workspace.yaml"
+    )
+    if has_source_marker and _path_exists(resolved_root / "src") and _path_exists(
+        resolved_root / "extensions"
+    ):
+        errors.append(f"global package root resolves to source checkout: {resolved_root}")
+    installed_version = _read_package_version(package_root)
+    if expected_version is not None and installed_version != expected_version:
+        found = installed_version or "<missing>"
+        errors.append(f"expected installed version {expected_version}, found {found}")
+    return errors
+
+
 async def _default_update_command_runner(
     argv: list[str],
     cwd: Path,
@@ -978,8 +999,11 @@ class RuntimeUpdateService:
             after_version = _read_package_version(verification_root)
             after = {"sha": None, "version": after_version}
             expected_version = _expected_package_version_from_spec(package_spec)
-            if expected_version is not None and after_version != expected_version:
-                found = after_version or "<missing>"
+            verification_errors = _collect_package_update_verify_errors(
+                verification_root,
+                expected_version=expected_version,
+            )
+            if verification_errors:
                 verify_step = {
                     "name": "global install verify",
                     "command": f"verify {verification_root}",
@@ -987,9 +1011,7 @@ class RuntimeUpdateService:
                     "durationMs": 0,
                     "log": {
                         "stdoutTail": None,
-                        "stderrTail": (
-                            f"expected installed version {expected_version}, found {found}"
-                        ),
+                        "stderrTail": "\n".join(verification_errors),
                         "exitCode": 1,
                     },
                 }
