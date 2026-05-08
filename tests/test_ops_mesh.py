@@ -8038,6 +8038,118 @@ async def test_ops_mesh_service_persists_tlon_dm_pending_approval_by_default() -
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_approves_tlon_dm_pending_request_from_owner() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-dm-approval-response"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    pending_approval = {
+        "id": "dm-1713980000123-abcdef",
+        "type": "dm",
+        "requestingShip": "~sampel-palnet",
+        "messagePreview": "replay me",
+        "timestamp": 1713980000123,
+        "originalMessage": {
+            "messageId": "tlon-dm-original-1",
+            "messageText": "replay me",
+            "messageContent": [{"inline": ["replay me"]}],
+            "timestamp": 1713980000123,
+        },
+    }
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="",
+        assistant_agent_id="main",
+        server_version=None,
+        data_dir=tmp_path / "config",
+    )
+    config_service.patch_object(
+        {
+            "channels": {
+                "tlon": {
+                    "dmAllowlist": [],
+                    "ownerShip": "~zod",
+                    "pendingApprovals": [pending_approval],
+                }
+            }
+        }
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "tlon-replayed-session-message"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=config_service,
+    )
+
+    result = await service.handle_tlon_inbound_event(
+        {
+            "id": "tlon-owner-approve-1",
+            "whom": "~zod",
+            "response": {
+                "add": {
+                    "essay": {
+                        "author": "~zod",
+                        "sent": 1713980000999,
+                        "content": [{"inline": ["approve dm-1713980000123-abcdef"]}],
+                    }
+                }
+            },
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="tlon",
+        account_id="default",
+        peer_kind="direct",
+        peer_id="~sampel-palnet",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    assert session_deliveries == [(expected_session_key, "replay me")]
+    assert result == {
+        "ok": True,
+        "channel": "tlon",
+        "eventType": "chat",
+        "status": "approval_resolved",
+        "approvalAction": "approve",
+        "approvalId": "dm-1713980000123-abcdef",
+        "approval": {
+            "type": "dm",
+            "requestingShip": "~sampel-palnet",
+            "ownerShip": "~zod",
+            "processedOriginalMessage": True,
+        },
+        "inboundMessageId": "tlon-owner-approve-1",
+        "messageId": "tlon-replayed-session-message",
+        "sessionKey": expected_session_key,
+    }
+    snapshot = config_service.build_snapshot()
+    assert snapshot["channels"]["tlon"]["dmAllowlist"] == ["~sampel-palnet"]
+    assert snapshot["channels"]["tlon"]["pendingApprovals"] == []
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_routes_tlon_group_thread_firehose_event_to_session() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-group-inbound"
     shutil.rmtree(tmp_path, ignore_errors=True)

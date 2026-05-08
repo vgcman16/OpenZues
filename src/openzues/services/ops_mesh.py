@@ -7393,6 +7393,24 @@ def _tlon_pending_approval_metadata(
     return metadata
 
 
+def _tlon_parse_approval_response(text: str) -> tuple[str, str | None] | None:
+    match = re.match(r"^\s*(approve|deny|block)(?:\s+(.+?))?\s*$", text, flags=re.I)
+    if match is None:
+        return None
+    approval_id = match.group(2).strip() if match.group(2) else None
+    return match.group(1).lower(), approval_id or None
+
+
+def _tlon_pending_approval_matches(
+    pending: Mapping[str, Any],
+    *,
+    approval_id: str | None,
+) -> bool:
+    if approval_id is None:
+        return True
+    return _msteams_inbound_optional_string(pending.get("id")) == approval_id
+
+
 def _tlon_inbound_authorization_block_metadata(
     message: _TlonInboundMessage,
     *,
@@ -12392,6 +12410,221 @@ class OpsMeshService:
         self.gateway_config_service.patch_object(patch)
         return {"approvalId": approval_id, "notified": False, "persisted": True}
 
+    def _patch_tlon_approval_state(
+        self,
+        *,
+        account_id: str | None,
+        pending_approvals: list[object],
+        dm_allowlist: list[str] | None = None,
+        channel_rules: Mapping[str, object] | None = None,
+    ) -> None:
+        if self.gateway_config_service is None:
+            return
+        account = normalize_optional_account_id(account_id)
+        tlon_patch: dict[str, Any] = {"pendingApprovals": pending_approvals}
+        if dm_allowlist is not None:
+            tlon_patch["dmAllowlist"] = dm_allowlist
+        if channel_rules is not None:
+            tlon_patch["authorization"] = {"channelRules": dict(channel_rules)}
+        if account and account != DEFAULT_ACCOUNT_ID:
+            patch: dict[str, Any] = {
+                "channels": {"tlon": {"accounts": {account: tlon_patch}}}
+            }
+        else:
+            patch = {"channels": {"tlon": tlon_patch}}
+        self.gateway_config_service.patch_object(patch)
+
+    async def _deliver_tlon_inbound_message(
+        self,
+        message: _TlonInboundMessage,
+        *,
+        account_id: str | None,
+    ) -> dict[str, object]:
+        if self.session_delivery_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Tlon inbound session delivery is unavailable."
+            )
+        context = _tlon_inbound_session_context(message, account_id=account_id)
+        staged_media = await self._stage_tlon_inbound_media(
+            message,
+            account_id=account_id,
+        )
+        delivery_text = message.text
+        if staged_media:
+            media_lines = "\n".join(
+                (
+                    "[media attached: "
+                    f"{media.path} ({media.content_type or 'application/octet-stream'}) "
+                    f"| {media.path}]"
+                )
+                for media in staged_media
+            )
+            delivery_text = f"{media_lines}\n{message.text}"
+        delivery_result = await self.session_delivery_service(
+            context.session_key,
+            delivery_text,
+        )
+        delivery_message_id = _session_delivery_message_id(delivery_result)
+        delivery: dict[str, object] = {"runtime": "session-backed"}
+        if staged_media:
+            delivery["media"] = {"staged": len(staged_media)}
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "tlon",
+            "eventType": message.event_type,
+            "inboundMessageId": message.message_id,
+            "sessionKey": context.session_key,
+            "text": message.text,
+            "senderId": context.sender_id,
+            "conversationId": context.conversation_id,
+            "conversationType": context.conversation_type,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "delivery": delivery,
+        }
+        if delivery_message_id is not None:
+            result["messageId"] = delivery_message_id
+        if staged_media:
+            result["mediaUrls"] = [media.source_url for media in staged_media]
+            result.update(_msteams_media_payload(staged_media))
+            result["stagedMedia"] = _msteams_staged_media_metadata(staged_media)
+        if message.timestamp is not None:
+            result["timestamp"] = message.timestamp
+        if context.thread_id is not None:
+            result["threadId"] = context.thread_id
+        return result
+
+    async def _handle_tlon_approval_response(
+        self,
+        message: _TlonInboundMessage,
+        *,
+        channel_config: Mapping[str, Any],
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        sender_ship = _tlon_normalize_target_ship(message.sender_ship)
+        owner_ship = _tlon_owner_ship(channel_config)
+        if sender_ship is None or owner_ship is None or sender_ship != owner_ship:
+            return None
+        parsed = _tlon_parse_approval_response(message.text)
+        if parsed is None:
+            return None
+        action, approval_id = parsed
+        pending_raw = channel_config.get("pendingApprovals")
+        pending = list(pending_raw) if isinstance(pending_raw, list) else []
+        pending_records = [
+            item for item in pending if isinstance(item, Mapping)
+        ]
+        if not pending_records:
+            return None
+        selected = None
+        if approval_id is None:
+            selected = pending_records[-1]
+        else:
+            for item in pending_records:
+                if _tlon_pending_approval_matches(item, approval_id=approval_id):
+                    selected = item
+                    break
+        if selected is None:
+            return None
+        selected_id = _msteams_inbound_optional_string(selected.get("id")) or ""
+        approval_type = _msteams_inbound_optional_string(selected.get("type")) or "dm"
+        requesting_ship = _tlon_normalize_target_ship(
+            _msteams_inbound_optional_string(selected.get("requestingShip"))
+        )
+        if requesting_ship is None:
+            return None
+        remaining = [
+            item
+            for item in pending
+            if not (
+                isinstance(item, Mapping)
+                and _msteams_inbound_optional_string(item.get("id")) == selected_id
+            )
+        ]
+        processed_original = False
+        delivery_result: dict[str, object] | None = None
+        if action == "approve":
+            dm_allowlist = _tlon_ship_list(channel_config.get("dmAllowlist"))
+            channel_rules = _msteams_inbound_mapping(
+                _msteams_inbound_mapping(channel_config.get("authorization")).get(
+                    "channelRules"
+                )
+            )
+            if approval_type == "channel":
+                channel_nest = _msteams_inbound_optional_string(selected.get("channelNest"))
+                if channel_nest is not None:
+                    next_rules = dict(channel_rules)
+                    rule = dict(_msteams_inbound_mapping(next_rules.get(channel_nest)))
+                    allowed = _tlon_ship_list(rule.get("allowedShips"))
+                    if requesting_ship not in allowed:
+                        allowed.append(requesting_ship)
+                    rule["mode"] = _msteams_inbound_optional_string(
+                        rule.get("mode")
+                    ) or "restricted"
+                    rule["allowedShips"] = allowed
+                    next_rules[channel_nest] = rule
+                    self._patch_tlon_approval_state(
+                        account_id=account_id,
+                        pending_approvals=remaining,
+                        channel_rules=next_rules,
+                    )
+            else:
+                if requesting_ship not in dm_allowlist:
+                    dm_allowlist.append(requesting_ship)
+                self._patch_tlon_approval_state(
+                    account_id=account_id,
+                    pending_approvals=remaining,
+                    dm_allowlist=dm_allowlist,
+                )
+            original = _msteams_inbound_mapping(selected.get("originalMessage"))
+            original_text = _msteams_inbound_optional_string(original.get("messageText"))
+            if original_text is not None:
+                replay_message = _TlonInboundMessage(
+                    event_type="channels" if approval_type == "channel" else "chat",
+                    message_id=(
+                        _msteams_inbound_optional_string(original.get("messageId"))
+                        or selected_id
+                    ),
+                    sender_ship=requesting_ship,
+                    text=original_text,
+                    content=original.get("messageContent"),
+                    timestamp=_tlon_read_int(original, "timestamp"),
+                    channel_nest=_msteams_inbound_optional_string(
+                        selected.get("channelNest")
+                    ),
+                    thread_id=_msteams_inbound_optional_string(original.get("parentId")),
+                )
+                delivery_result = await self._deliver_tlon_inbound_message(
+                    replay_message,
+                    account_id=account_id,
+                )
+                processed_original = True
+        else:
+            self._patch_tlon_approval_state(
+                account_id=account_id,
+                pending_approvals=remaining,
+            )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "tlon",
+            "eventType": message.event_type,
+            "status": "approval_resolved",
+            "approvalAction": action,
+            "approvalId": selected_id,
+            "approval": {
+                "type": approval_type,
+                "requestingShip": requesting_ship,
+                "ownerShip": owner_ship,
+                "processedOriginalMessage": processed_original,
+            },
+            "inboundMessageId": message.message_id,
+        }
+        if delivery_result is not None:
+            if "messageId" in delivery_result:
+                result["messageId"] = delivery_result["messageId"]
+            if "sessionKey" in delivery_result:
+                result["sessionKey"] = delivery_result["sessionKey"]
+        return result
+
     def _msteams_sso_config(
         self,
         *,
@@ -13992,6 +14225,13 @@ class OpsMeshService:
                 "reason": "tlon_inbound_event_without_message_text",
             }
         channel_config = self._tlon_channel_config(account_id=account_id)
+        approval_response = await self._handle_tlon_approval_response(
+            message,
+            channel_config=channel_config,
+            account_id=account_id,
+        )
+        if approval_response is not None:
+            return approval_response
         approval_request = _tlon_inbound_pending_approval_request(
             message,
             channel_config=channel_config,
@@ -14007,58 +14247,7 @@ class OpsMeshService:
         )
         if authorization_block is not None:
             return authorization_block
-        if self.session_delivery_service is None:
-            raise GatewayOutboundRuntimeUnavailableError(
-                "Tlon inbound session delivery is unavailable."
-            )
-        context = _tlon_inbound_session_context(message, account_id=account_id)
-        staged_media = await self._stage_tlon_inbound_media(
-            message,
-            account_id=account_id,
-        )
-        delivery_text = message.text
-        if staged_media:
-            media_lines = "\n".join(
-                (
-                    "[media attached: "
-                    f"{media.path} ({media.content_type or 'application/octet-stream'}) "
-                    f"| {media.path}]"
-                )
-                for media in staged_media
-            )
-            delivery_text = f"{media_lines}\n{message.text}"
-        delivery_result = await self.session_delivery_service(
-            context.session_key,
-            delivery_text,
-        )
-        delivery_message_id = _session_delivery_message_id(delivery_result)
-        delivery: dict[str, object] = {"runtime": "session-backed"}
-        if staged_media:
-            delivery["media"] = {"staged": len(staged_media)}
-        result: dict[str, object] = {
-            "ok": True,
-            "channel": "tlon",
-            "eventType": message.event_type,
-            "inboundMessageId": message.message_id,
-            "sessionKey": context.session_key,
-            "text": message.text,
-            "senderId": context.sender_id,
-            "conversationId": context.conversation_id,
-            "conversationType": context.conversation_type,
-            "conversationTarget": context.conversation_target.model_dump(mode="json"),
-            "delivery": delivery,
-        }
-        if delivery_message_id is not None:
-            result["messageId"] = delivery_message_id
-        if staged_media:
-            result["mediaUrls"] = [media.source_url for media in staged_media]
-            result.update(_msteams_media_payload(staged_media))
-            result["stagedMedia"] = _msteams_staged_media_metadata(staged_media)
-        if message.timestamp is not None:
-            result["timestamp"] = message.timestamp
-        if context.thread_id is not None:
-            result["threadId"] = context.thread_id
-        return result
+        return await self._deliver_tlon_inbound_message(message, account_id=account_id)
 
     async def _default_tlon_inbound_media_fetch(
         self,
