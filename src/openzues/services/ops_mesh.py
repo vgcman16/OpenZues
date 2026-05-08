@@ -24,6 +24,7 @@ import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -578,6 +579,40 @@ class GatewayTlonApprovalQueueRequest:
 GatewayTlonApprovalQueueService = Callable[
     [GatewayTlonApprovalQueueRequest],
     Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayTlonMonitorSubscription:
+    app: str
+    path: str
+    delivers_inbound: bool = False
+
+
+GatewayTlonMonitorEventHandler = Callable[
+    [Mapping[str, Any]],
+    Coroutine[Any, Any, dict[str, object]],
+]
+
+
+class GatewayTlonMonitorHandle(Protocol):
+    async def close(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayTlonMonitorStartRequest:
+    route_id: int
+    route_name: str
+    account_id: str
+    config: _TlonRouteConfig
+    subscriptions: tuple[GatewayTlonMonitorSubscription, ...]
+    handle_event: GatewayTlonMonitorEventHandler
+    channel_config: Mapping[str, Any]
+
+
+GatewayTlonMonitorRuntimeService = Callable[
+    [GatewayTlonMonitorStartRequest],
+    Awaitable[GatewayTlonMonitorHandle],
 ]
 
 
@@ -7156,6 +7191,10 @@ TLON_TARGET_HINT = (
 TLON_MEMEX_BASE_URL = "https://memex.tlon.network"
 TLON_INBOUND_MAX_IMAGES_PER_MESSAGE = 8
 TLON_INBOUND_MAX_IMAGE_BYTES = 6 * 1024 * 1024
+TLON_MONITOR_CONNECT_TIMEOUT_SECONDS = 60.0
+TLON_MONITOR_REQUEST_TIMEOUT_SECONDS = 30.0
+TLON_MONITOR_RECONNECT_DELAY_SECONDS = 5.0
+TLON_MONITOR_ACK_THRESHOLD = 20
 
 
 def _tlon_normalize_ship(raw_ship: str | None) -> str | None:
@@ -7194,6 +7233,336 @@ def _tlon_route_config(target: str | None, secret_token: str | None) -> _TlonRou
     if not code:
         raise RuntimeError("Tlon route is missing an access code secret.")
     return _TlonRouteConfig(base_url=base_url, ship=ship, code=code)
+
+
+def _tlon_monitor_subscriptions() -> tuple[GatewayTlonMonitorSubscription, ...]:
+    return (
+        GatewayTlonMonitorSubscription("channels", "/v2", delivers_inbound=True),
+        GatewayTlonMonitorSubscription("chat", "/v3", delivers_inbound=True),
+        GatewayTlonMonitorSubscription("contacts", "/v1/news"),
+        GatewayTlonMonitorSubscription("settings", "/desk/moltbot"),
+        GatewayTlonMonitorSubscription("groups", "/groups/ui"),
+        GatewayTlonMonitorSubscription("groups", "/v1/foreigns"),
+    )
+
+
+def _tlon_cookie_header(cookie: str) -> str:
+    return str(cookie or "").split(";", 1)[0].strip()
+
+
+def _tlon_monitor_auth_cookie(
+    config: _TlonRouteConfig,
+    *,
+    timeout_seconds: float,
+) -> str:
+    base_url = _tlon_http_base_url(config.base_url)
+    timeout = max(float(timeout_seconds), 0.001)
+    request = Request(
+        f"{base_url}/~/login",
+        data=urlencode({"password": config.code}).encode("utf-8"),
+        headers={
+            "Accept": "text/plain",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            status = int(getattr(response, "status", getattr(response, "code", 0)))
+            response.read()
+            if status < 200 or status >= 300:
+                raise RuntimeError(f"Login failed with status {status}")
+            cookie = str(response.headers.get("Set-Cookie") or "").strip()
+    except HTTPError as exc:
+        raise RuntimeError(f"Login failed with status {exc.code}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Tlon login failed: {exc.reason}") from exc
+    if not cookie:
+        raise RuntimeError("No authentication cookie received")
+    return cookie
+
+
+def _tlon_monitor_put_channel_payload(
+    config: _TlonRouteConfig,
+    *,
+    cookie: str,
+    channel_id: str,
+    payload: object,
+    timeout_seconds: float,
+) -> None:
+    timeout = max(float(timeout_seconds), 0.001)
+    request = Request(
+        f"{_tlon_http_base_url(config.base_url)}/~/channel/{channel_id}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Cookie": _tlon_cookie_header(cookie),
+        },
+        method="PUT",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            status = int(getattr(response, "status", getattr(response, "code", 0)))
+            response.read()
+            if status < 200 or (status >= 300 and status != 204):
+                raise RuntimeError(f"Tlon channel request failed with status {status}")
+    except HTTPError as exc:
+        error_text = exc.read().decode("utf-8", "replace").strip()
+        suffix = f" - {error_text}" if error_text else ""
+        raise RuntimeError(f"Tlon channel request failed: {exc.code}{suffix}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Tlon channel request failed: {exc.reason}") from exc
+
+
+def _tlon_monitor_delete_channel(
+    config: _TlonRouteConfig,
+    *,
+    cookie: str,
+    channel_id: str,
+    timeout_seconds: float,
+) -> None:
+    request = Request(
+        f"{_tlon_http_base_url(config.base_url)}/~/channel/{channel_id}",
+        headers={"Cookie": _tlon_cookie_header(cookie)},
+        method="DELETE",
+    )
+    with urlopen(request, timeout=max(float(timeout_seconds), 0.001)) as response:
+        response.read()
+
+
+class _TlonNativeSseMonitorHandle:
+    def __init__(self, request: GatewayTlonMonitorStartRequest) -> None:
+        self._request = request
+        self._loop = asyncio.get_running_loop()
+        self._stop_event = threading.Event()
+        self._state_lock = threading.Lock()
+        self._cookie: str | None = None
+        self._channel_id: str | None = None
+        self._last_heard_event_id = -1
+        self._last_acknowledged_event_id = -1
+        self._inbound_subscription_ids = {
+            index
+            for index, subscription in enumerate(request.subscriptions, start=1)
+            if subscription.delivers_inbound
+        }
+        self._task = asyncio.create_task(
+            self._run(),
+            name=f"openzues-tlon-monitor-{request.route_id}-{request.account_id}",
+        )
+
+    async def close(self) -> None:
+        self._stop_event.set()
+        self._task.cancel()
+        await asyncio.to_thread(self._cleanup_channel)
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+
+    async def _run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.to_thread(self._run_once)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if not self._stop_event.is_set():
+                    logger.exception(
+                        "Tlon monitor crashed for route %s account %s",
+                        self._request.route_id,
+                        self._request.account_id,
+                    )
+            finally:
+                await asyncio.to_thread(self._cleanup_channel)
+            if self._stop_event.is_set():
+                break
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._stop_event.wait),
+                    timeout=TLON_MONITOR_RECONNECT_DELAY_SECONDS,
+                )
+            except TimeoutError:
+                continue
+
+    def _run_once(self) -> None:
+        cookie = _tlon_monitor_auth_cookie(
+            self._request.config,
+            timeout_seconds=TLON_MONITOR_REQUEST_TIMEOUT_SECONDS,
+        )
+        channel_id = f"{int(time.time())}-{uuid.uuid4()}"
+        with self._state_lock:
+            self._cookie = cookie
+            self._channel_id = channel_id
+            self._last_heard_event_id = -1
+            self._last_acknowledged_event_id = -1
+        subscription_payload = [
+            {
+                "id": index,
+                "action": "subscribe",
+                "ship": self._request.config.ship.lstrip("~"),
+                "app": subscription.app,
+                "path": subscription.path,
+            }
+            for index, subscription in enumerate(self._request.subscriptions, start=1)
+        ]
+        _tlon_monitor_put_channel_payload(
+            self._request.config,
+            cookie=cookie,
+            channel_id=channel_id,
+            payload=subscription_payload,
+            timeout_seconds=TLON_MONITOR_REQUEST_TIMEOUT_SECONDS,
+        )
+        stream_request = Request(
+            f"{_tlon_http_base_url(self._request.config.base_url)}/~/channel/{channel_id}",
+            headers={
+                "Accept": "text/event-stream",
+                "Cookie": _tlon_cookie_header(cookie),
+            },
+            method="GET",
+        )
+        with urlopen(
+            stream_request,
+            timeout=TLON_MONITOR_CONNECT_TIMEOUT_SECONDS,
+        ) as response:
+            status = int(getattr(response, "status", getattr(response, "code", 0)))
+            if status < 200 or status >= 300:
+                response.read()
+                raise RuntimeError(f"Tlon SSE stream failed with status {status}")
+            event_lines: list[str] = []
+            while not self._stop_event.is_set():
+                line_bytes = response.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode("utf-8", "replace").rstrip("\r\n")
+                if line:
+                    event_lines.append(line)
+                    continue
+                if event_lines:
+                    self._process_sse_event("\n".join(event_lines))
+                    event_lines = []
+
+    def _cleanup_channel(self) -> None:
+        with self._state_lock:
+            cookie = self._cookie
+            channel_id = self._channel_id
+            self._cookie = None
+            self._channel_id = None
+        if not cookie or not channel_id:
+            return
+        unsubscribes = [
+            {"id": index, "action": "unsubscribe", "subscription": index}
+            for index, _subscription in enumerate(self._request.subscriptions, start=1)
+        ]
+        try:
+            _tlon_monitor_put_channel_payload(
+                self._request.config,
+                cookie=cookie,
+                channel_id=channel_id,
+                payload=unsubscribes,
+                timeout_seconds=TLON_MONITOR_REQUEST_TIMEOUT_SECONDS,
+            )
+            _tlon_monitor_delete_channel(
+                self._request.config,
+                cookie=cookie,
+                channel_id=channel_id,
+                timeout_seconds=TLON_MONITOR_REQUEST_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.exception(
+                "Tlon monitor cleanup failed for route %s account %s",
+                self._request.route_id,
+                self._request.account_id,
+            )
+
+    def _process_sse_event(self, event_data: str) -> None:
+        data: str | None = None
+        event_id: int | None = None
+        for line in event_data.splitlines():
+            if line.startswith("id: "):
+                try:
+                    event_id = int(line[4:].strip())
+                except ValueError:
+                    event_id = None
+            elif line.startswith("data: "):
+                data = line[6:]
+        if event_id is not None:
+            self._ack_if_needed(event_id)
+        if not data:
+            return
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError:
+            logger.exception("Tlon monitor received invalid SSE JSON")
+            return
+        if not isinstance(parsed, Mapping):
+            return
+        if parsed.get("response") == "quit":
+            return
+        payload = parsed.get("json")
+        if not isinstance(payload, Mapping):
+            return
+        subscription_id = parsed.get("id")
+        if isinstance(subscription_id, int):
+            if subscription_id in self._inbound_subscription_ids:
+                self._dispatch_inbound_event(payload)
+            return
+        self._dispatch_inbound_event(payload)
+
+    def _ack_if_needed(self, event_id: int) -> None:
+        with self._state_lock:
+            if event_id <= self._last_heard_event_id:
+                return
+            self._last_heard_event_id = event_id
+            if event_id - self._last_acknowledged_event_id <= TLON_MONITOR_ACK_THRESHOLD:
+                return
+            self._last_acknowledged_event_id = event_id
+            cookie = self._cookie
+            channel_id = self._channel_id
+        if not cookie or not channel_id:
+            return
+        try:
+            _tlon_monitor_put_channel_payload(
+                self._request.config,
+                cookie=cookie,
+                channel_id=channel_id,
+                payload=[
+                    {
+                        "id": int(time.time() * 1000),
+                        "action": "ack",
+                        "event-id": event_id,
+                    }
+                ],
+                timeout_seconds=10.0,
+            )
+        except Exception:
+            logger.exception("Tlon monitor ack failed for event %s", event_id)
+
+    def _dispatch_inbound_event(self, event: Mapping[str, Any]) -> None:
+        if self._stop_event.is_set():
+            return
+        try:
+            future: Future[dict[str, object]] = asyncio.run_coroutine_threadsafe(
+                self._request.handle_event(event),
+                self._loop,
+            )
+        except RuntimeError:
+            return
+        try:
+            future.result(timeout=TLON_MONITOR_REQUEST_TIMEOUT_SECONDS)
+        except Exception:
+            logger.exception(
+                "Tlon monitor inbound dispatch failed for route %s account %s",
+                self._request.route_id,
+                self._request.account_id,
+            )
+
+
+class _DefaultGatewayTlonMonitorRuntime:
+    async def __call__(
+        self,
+        request: GatewayTlonMonitorStartRequest,
+    ) -> GatewayTlonMonitorHandle:
+        return _TlonNativeSseMonitorHandle(request)
 
 
 def _tlon_normalize_target_ship(raw_ship: str | None) -> str | None:
@@ -12294,6 +12663,7 @@ class OpsMeshService:
     msteams_inbound_media_fetch_service: GatewayMSTeamsInboundMediaFetchService | None = None
     tlon_inbound_media_fetch_service: GatewayTlonInboundMediaFetchService | None = None
     tlon_approval_queue_service: GatewayTlonApprovalQueueService | None = None
+    tlon_monitor_runtime_service: GatewayTlonMonitorRuntimeService | None = None
     msteams_feedback_reflection_service: GatewayMSTeamsFeedbackReflectionService | None = None
     discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
     gateway_config_service: GatewayConfigService | None = None
@@ -12313,11 +12683,16 @@ class OpsMeshService:
         init=False,
         default_factory=dict,
     )
+    _tlon_monitor_handles: dict[str, GatewayTlonMonitorHandle] = field(
+        init=False,
+        default_factory=dict,
+    )
 
     async def start(self) -> None:
         if self._task is not None:
             return
         await self._migrate_legacy_secret_refs()
+        await self._start_tlon_provider_monitors()
         self._stop_event.clear()
         self._task = asyncio.create_task(self._runner_loop(), name="openzues-ops-mesh")
 
@@ -12330,6 +12705,7 @@ class OpsMeshService:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        await self._stop_tlon_provider_monitors()
 
     def _resolve_outbound_runtime_service(self) -> GatewayOutboundRuntimeService | None:
         runtime = self.outbound_runtime_service
@@ -12373,6 +12749,91 @@ class OpsMeshService:
         if not isinstance(snapshot, Mapping):
             return {}
         return _tlon_channel_config_from_snapshot(snapshot, account_id=account_id)
+
+    def _tlon_monitor_runtime(self) -> GatewayTlonMonitorRuntimeService:
+        return self.tlon_monitor_runtime_service or _DefaultGatewayTlonMonitorRuntime()
+
+    @staticmethod
+    def _tlon_monitor_handle_key(route_id: int, account_id: str) -> str:
+        return f"{route_id}:{account_id}"
+
+    async def _start_tlon_provider_monitors(self) -> None:
+        runtime = self._tlon_monitor_runtime()
+        for route in await self.database.list_notification_routes():
+            if not bool(route.get("enabled")):
+                continue
+            if str(route.get("kind") or "").strip().lower() != "tlon":
+                continue
+            try:
+                route_id = int(route["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            target = _normalize_conversation_target(route.get("conversation_target"))
+            account_id = (
+                normalize_optional_account_id(
+                    str((target or {}).get("account_id") or "").strip()
+                )
+                or DEFAULT_ACCOUNT_ID
+            )
+            handle_key = self._tlon_monitor_handle_key(route_id, account_id)
+            if handle_key in self._tlon_monitor_handles:
+                continue
+            secret_token = await self._notification_route_secret_token(route)
+            if not str(secret_token or "").strip():
+                logger.warning(
+                    "Skipping Tlon monitor for route %s account %s: missing credential secret",
+                    route_id,
+                    account_id,
+                )
+                continue
+            try:
+                config = _tlon_route_config(str(route.get("target") or ""), str(secret_token))
+            except RuntimeError:
+                logger.exception(
+                    "Skipping Tlon monitor for route %s account %s: invalid route config",
+                    route_id,
+                    account_id,
+                )
+                continue
+
+            async def handle_event(
+                event: Mapping[str, Any],
+                *,
+                bound_account_id: str = account_id,
+            ) -> dict[str, object]:
+                return await self.handle_tlon_inbound_event(
+                    event,
+                    account_id=bound_account_id,
+                )
+
+            request = GatewayTlonMonitorStartRequest(
+                route_id=route_id,
+                route_name=str(route.get("name") or f"Tlon route {route_id}"),
+                account_id=account_id,
+                config=config,
+                subscriptions=_tlon_monitor_subscriptions(),
+                handle_event=handle_event,
+                channel_config=self._tlon_channel_config(account_id=account_id),
+            )
+            try:
+                handle = await runtime(request)
+            except Exception:
+                logger.exception(
+                    "Failed to start Tlon monitor for route %s account %s",
+                    route_id,
+                    account_id,
+                )
+                continue
+            self._tlon_monitor_handles[handle_key] = handle
+
+    async def _stop_tlon_provider_monitors(self) -> None:
+        handles = list(self._tlon_monitor_handles.items())
+        self._tlon_monitor_handles.clear()
+        for handle_key, handle in handles:
+            try:
+                await handle.close()
+            except Exception:
+                logger.exception("Failed to stop Tlon monitor %s", handle_key)
 
     async def _queue_tlon_approval_request(
         self,

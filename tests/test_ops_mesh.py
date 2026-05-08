@@ -8719,6 +8719,322 @@ async def test_ops_mesh_service_queues_tlon_channel_approval_when_owner_is_confi
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_starts_tlon_monitor_for_enabled_native_route() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-monitor-start"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Tlon Native Monitor",
+        kind="tlon",
+        target="https://zod.tlon.network?ship=~zod",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tlon-code",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "tlon",
+            "account_id": "ship",
+            "peer_kind": "direct",
+            "peer_id": "~sampel-palnet",
+        },
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+    monitor_starts: list[object] = []
+    monitor_closes: list[str] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "tlon-monitor-session-message"}
+
+    async def fake_tlon_monitor_runtime(request: object) -> object:
+        monitor_starts.append(request)
+
+        class FakeHandle:
+            async def close(self) -> None:
+                monitor_closes.append(request.account_id)
+
+        return FakeHandle()
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        tlon_monitor_runtime_service=fake_tlon_monitor_runtime,
+    )
+
+    await service.start()
+    try:
+        assert len(monitor_starts) == 1
+        start_request = monitor_starts[0]
+        assert start_request.route_id == 1
+        assert start_request.route_name == "Tlon Native Monitor"
+        assert start_request.account_id == "ship"
+        assert start_request.config == _TlonRouteConfig(
+            base_url="https://zod.tlon.network",
+            ship="~zod",
+            code="tlon-code",
+        )
+        assert [
+            (subscription.app, subscription.path, subscription.delivers_inbound)
+            for subscription in start_request.subscriptions
+        ] == [
+            ("channels", "/v2", True),
+            ("chat", "/v3", True),
+            ("contacts", "/v1/news", False),
+            ("settings", "/desk/moltbot", False),
+            ("groups", "/groups/ui", False),
+            ("groups", "/v1/foreigns", False),
+        ]
+
+        delivered = await start_request.handle_event(
+            {
+                "id": "tlon-monitor-dm-1",
+                "whom": "~sampel-palnet",
+                "response": {
+                    "add": {
+                        "essay": {
+                            "author": "~sampel-palnet",
+                            "sent": 1713980000123,
+                            "content": [{"inline": ["hello from monitor"]}],
+                        }
+                    }
+                },
+            }
+        )
+    finally:
+        await service.close()
+
+    assert session_deliveries == [
+        (
+            build_launch_session_key(
+                mode="workspace_affinity",
+                preferred_instance_id=None,
+                task_id=None,
+                project_id=None,
+                operator_id=None,
+                conversation_target=ConversationTargetView(
+                    channel="tlon",
+                    account_id="ship",
+                    peer_kind="direct",
+                    peer_id="~sampel-palnet",
+                    thread_id=None,
+                    to="~sampel-palnet",
+                    metadata={"eventType": "chat", "senderShip": "~sampel-palnet"},
+                ),
+            ),
+            "hello from monitor",
+        )
+    ]
+    assert delivered["delivery"] == {"runtime": "session-backed"}
+    assert delivered["messageId"] == "tlon-monitor-session-message"
+    assert monitor_closes == ["ship"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_tlon_native_monitor_streams_and_cleans_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-native-monitor"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Tlon Native Monitor",
+        kind="tlon",
+        target="https://zod.tlon.network?ship=~zod",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tlon-code",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "tlon",
+            "account_id": "ship",
+            "peer_kind": "direct",
+            "peer_id": "~sampel-palnet",
+        },
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+    login_posts: list[str] = []
+    channel_payloads: list[list[dict[str, object]]] = []
+    stream_gets: list[str] = []
+    deletes: list[str] = []
+
+    class FakeTlonMonitorResponse:
+        def __init__(
+            self,
+            *,
+            status: int,
+            headers: dict[str, str] | None = None,
+            lines: list[bytes] | None = None,
+        ) -> None:
+            self.status = status
+            self.code = status
+            self.headers = headers or {}
+            self._lines = list(lines or [])
+
+        def __enter__(self) -> FakeTlonMonitorResponse:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b""
+
+        def readline(self) -> bytes:
+            return self._lines.pop(0) if self._lines else b""
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeTlonMonitorResponse:
+        del timeout
+        url = request.full_url
+        method = request.get_method()
+        if method == "POST" and url == "https://zod.tlon.network/~/login":
+            login_posts.append((request.data or b"").decode("utf-8"))
+            return FakeTlonMonitorResponse(
+                status=204,
+                headers={"Set-Cookie": "urbauth-ship=session; Path=/"},
+            )
+        if method == "PUT" and "/~/channel/" in url:
+            channel_payloads.append(json.loads((request.data or b"[]").decode("utf-8")))
+            return FakeTlonMonitorResponse(status=204)
+        if method == "GET" and "/~/channel/" in url:
+            stream_gets.append(url)
+            return FakeTlonMonitorResponse(
+                status=200,
+                lines=[
+                    b"id: 21\n",
+                    (
+                        b'data: {"id":2,"json":{"id":"tlon-monitor-native-1",'
+                        b'"whom":"~sampel-palnet","response":{"add":{"essay":{'
+                        b'"author":"~sampel-palnet","sent":1713980000123,'
+                        b'"content":[{"inline":["native stream hello"]}]}}}}}\n'
+                    ),
+                    b"\n",
+                    b"",
+                ],
+            )
+        if method == "DELETE" and "/~/channel/" in url:
+            deletes.append(url)
+            return FakeTlonMonitorResponse(status=204)
+        raise AssertionError(f"unexpected Tlon monitor request: {method} {url}")
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "tlon-native-monitor-session-message"}
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    await service.start()
+    try:
+        for _attempt in range(50):
+            if session_deliveries and deletes:
+                break
+            await asyncio.sleep(0.02)
+    finally:
+        await service.close()
+
+    assert login_posts == ["password=tlon-code"]
+    assert stream_gets and stream_gets[0].startswith(
+        "https://zod.tlon.network/~/channel/"
+    )
+    assert channel_payloads[0] == [
+        {
+            "id": 1,
+            "action": "subscribe",
+            "ship": "zod",
+            "app": "channels",
+            "path": "/v2",
+        },
+        {
+            "id": 2,
+            "action": "subscribe",
+            "ship": "zod",
+            "app": "chat",
+            "path": "/v3",
+        },
+        {
+            "id": 3,
+            "action": "subscribe",
+            "ship": "zod",
+            "app": "contacts",
+            "path": "/v1/news",
+        },
+        {
+            "id": 4,
+            "action": "subscribe",
+            "ship": "zod",
+            "app": "settings",
+            "path": "/desk/moltbot",
+        },
+        {
+            "id": 5,
+            "action": "subscribe",
+            "ship": "zod",
+            "app": "groups",
+            "path": "/groups/ui",
+        },
+        {
+            "id": 6,
+            "action": "subscribe",
+            "ship": "zod",
+            "app": "groups",
+            "path": "/v1/foreigns",
+        },
+    ]
+    assert {"id": 1, "action": "unsubscribe", "subscription": 1} in channel_payloads[-1]
+    assert {"id": 6, "action": "unsubscribe", "subscription": 6} in channel_payloads[-1]
+    assert any(
+        payload == [{"id": payload[0]["id"], "action": "ack", "event-id": 21}]
+        for payload in channel_payloads
+        if payload and payload[0].get("action") == "ack"
+    )
+    assert deletes and deletes[0].startswith("https://zod.tlon.network/~/channel/")
+    assert session_deliveries == [
+        (
+            build_launch_session_key(
+                mode="workspace_affinity",
+                preferred_instance_id=None,
+                task_id=None,
+                project_id=None,
+                operator_id=None,
+                conversation_target=ConversationTargetView(
+                    channel="tlon",
+                    account_id="ship",
+                    peer_kind="direct",
+                    peer_id="~sampel-palnet",
+                    thread_id=None,
+                    to="~sampel-palnet",
+                    metadata={"eventType": "chat", "senderShip": "~sampel-palnet"},
+                ),
+            ),
+            "native stream hello",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_stages_tlon_inbound_image_blocks_for_session() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-media-inbound"
     shutil.rmtree(tmp_path, ignore_errors=True)
