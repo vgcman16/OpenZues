@@ -10183,3 +10183,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   with the evidence band tightened to ~80-99.999999999999999995%. Continue
   supplemental bundled runtime sidecar verification when inventory omits
   critical sidecars next.
+- Current queue-head adjustment: native package update verification now
+  enforces critical bundled plugin runtime sidecars even when the valid
+  inventory omits them, matching OpenClaw's supplemental sidecar verifier.
+  Source/test checkpointed in `9ba6843f`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999996%. Continue private-QA sidecar omission and
+  package dist inventory filter exclusions next.
