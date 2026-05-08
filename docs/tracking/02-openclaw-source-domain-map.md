@@ -546,6 +546,8 @@ checkpointed in `b294d317`.
 is checkpointed in `2938b03a`.
 `facade-runtime` from `src/plugin-sdk/facade-runtime.ts` is checkpointed in
 `1e9b65f5`.
+`test-helpers/string-utils` from
+`src/plugin-sdk/test-helpers/string-utils.ts` is checkpointed in `e2ba3082`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map

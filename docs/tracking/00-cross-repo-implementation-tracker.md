@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999997% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -86,9 +86,9 @@ in `29aa7956`, `OZ-PLUGIN-00302` session-transcript-hit is checkpointed
 in `b294d317`, and `OZ-PLUGIN-00303` pairing-access is checkpointed in
 `e04677d3`. `OZ-PLUGIN-00304` facade-resolution-shared is checkpointed in
 `2938b03a`, and `OZ-PLUGIN-00305` facade-runtime is checkpointed in
-`1e9b65f5`; continue remaining exact plugin SDK subpaths such as
-`test-helpers/string-utils`, `test-helpers/envelope-timestamp`, or
-`test-helpers/pairing-reply`.
+`1e9b65f5`. `OZ-PLUGIN-00306` test-helpers/string-utils is checkpointed in
+`e2ba3082`; continue remaining exact plugin SDK subpaths such as
+`test-helpers/envelope-timestamp` or `test-helpers/pairing-reply`.
 
 ## Active Slice Detail
 
@@ -1081,6 +1081,27 @@ in `b294d317`, and `OZ-PLUGIN-00303` pairing-access is checkpointed in
     implementation, then `1 passed`), adjacent proof
     `python -m pytest tests\test_gateway_node_methods.py -q -k "facade_runtime or facade_resolution_shared or facade_loader"`
     (`3 passed, 1133 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00306` Imported test-helpers/string-utils subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/test-helpers/string-utils.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `test-helpers/string-utils` and receive only the
+    `uniqueSortedStrings` helper, preserving the exact upstream subpath export
+    shape instead of the broad generic SDK proxy.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `e2ba3082`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_helpers_string_utils -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "test_helpers_string_utils or channel_test_helpers or plugin_test_api"`
+    (`3 passed, 1134 deselected`), `ruff check src\openzues\cli.py
     tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
     focused `git diff --check`.
 
