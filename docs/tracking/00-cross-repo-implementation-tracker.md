@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -140,8 +140,9 @@ checkpointed in `c298b482`, and `OZ-PLUGIN-00327` minimax is checkpointed in
 `OZ-PLUGIN-00357` memory-core-bundled-runtime is checkpointed in `280e6b6c`;
 `OZ-PLUGIN-00358` twitch is checkpointed in `24f8edee`, and
 `OZ-PLUGIN-00359` tlon is checkpointed in `2c3feae2`. `OZ-PLUGIN-00360`
-nostr is checkpointed in `70792d82`; continue remaining exact SDK helper seams
-and provider/runtime breadth.
+nostr is checkpointed in `70792d82`, and `OZ-PLUGIN-00361` msteams is
+checkpointed in `09d036fd`; continue remaining exact SDK helper seams and
+provider/runtime breadth.
 
 ## Active Slice Detail
 
