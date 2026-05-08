@@ -296,6 +296,58 @@ async def test_runtime_update_run_package_update_retries_npm_without_optional_de
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_package_update_verifies_expected_version(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "package-root"
+    package_root.mkdir()
+    (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del argv, cwd, timeout_ms
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@2026.5.2",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "error"
+    assert result["reason"] == "global-install-verify-failed"
+    assert [step["name"] for step in result["steps"]] == [
+        "global update",
+        "global install verify",
+    ]
+    verify_step = result["steps"][1]
+    assert isinstance(verify_step, dict)
+    assert verify_step["log"]["exitCode"] == 1
+    assert verify_step["log"]["stderrTail"] == (
+        "expected installed version 2026.5.2, found 2026.5.1"
+    )
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_update_skips_dirty_worktree_before_fetch(
     tmp_path,
 ) -> None:

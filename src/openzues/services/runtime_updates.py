@@ -129,6 +129,16 @@ def _global_package_update_fallback_args(
     return ["npm", "i", "-g", spec, *_NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS]
 
 
+def _expected_package_version_from_spec(package_spec: str) -> str | None:
+    spec = package_spec.strip()
+    if "@" not in spec:
+        return None
+    candidate = spec.rsplit("@", maxsplit=1)[-1].strip()
+    if not candidate or not candidate[0].isdigit() or "." not in candidate:
+        return None
+    return candidate
+
+
 async def _default_update_command_runner(
     argv: list[str],
     cwd: Path,
@@ -375,7 +385,33 @@ class RuntimeUpdateService:
                     started_at=started_at,
                 )
 
-        after = {"sha": None, "version": _read_package_version(package_root)}
+        after_version = _read_package_version(package_root)
+        after = {"sha": None, "version": after_version}
+        expected_version = _expected_package_version_from_spec(package_spec)
+        if expected_version is not None and after_version != expected_version:
+            found = after_version or "unknown"
+            verify_step = {
+                "name": "global install verify",
+                "command": f"verify {package_root}",
+                "cwd": str(package_root),
+                "durationMs": 0,
+                "log": {
+                    "stdoutTail": None,
+                    "stderrTail": f"expected installed version {expected_version}, found {found}",
+                    "exitCode": 1,
+                },
+            }
+            steps.append(verify_step)
+            return self._build_package_update_result(
+                status="error",
+                reason="global-install-verify-failed",
+                mode=package_manager,
+                root=package_root,
+                before=before,
+                after=after,
+                steps=steps,
+                started_at=started_at,
+            )
         return self._build_package_update_result(
             status="ok",
             reason=None,
