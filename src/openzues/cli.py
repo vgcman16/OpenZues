@@ -98432,10 +98432,14 @@ def update_root(
         if dev_target_ref is not None:
             payload = await services.runtime_updates.run_update(
                 timeout_ms=timeout_ms,
+                channel=effective_channel,
                 dev_target_ref=dev_target_ref,
             )
         else:
-            payload = await services.runtime_updates.run_update(timeout_ms=timeout_ms)
+            payload = await services.runtime_updates.run_update(
+                timeout_ms=timeout_ms,
+                channel=effective_channel,
+            )
         payload = _openclaw_update_attach_requested_channel(
             services,
             payload,

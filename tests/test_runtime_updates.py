@@ -692,6 +692,58 @@ async def test_runtime_update_run_update_uses_dev_target_ref_without_rebase(
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_update_checks_out_main_for_dev_channel(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[list[str]] = []
+    revision_probe = RevisionProbe("rev-a", "rev-b")
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        command_calls.append(argv)
+        if argv == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return {"stdout": "feature/work\n", "stderr": "", "exitCode": 0}
+        if argv == ["git", "rev-parse", "@{upstream}"]:
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        if argv[:2] == ["git", "rev-list"]:
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("run_update should report restart posture, not exec immediately")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=revision_probe,
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000, channel="dev")
+
+    assert result["status"] == "ok"
+    assert [step["name"] for step in result["steps"]][:3] == [
+        "git status",
+        "git checkout main",
+        "git fetch",
+    ]
+    assert command_calls[:3] == [
+        ["git", "status", "--porcelain", "--", ":!dist/control-ui/"],
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        ["git", "checkout", "main"],
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_package_update_executes_global_install_step(
     tmp_path,
 ) -> None:

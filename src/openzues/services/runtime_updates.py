@@ -31,6 +31,8 @@ _NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS = (
 _PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.json"
 _FIRST_PACKAGED_DIST_INVENTORY_VERSION = (2026, 4, 15)
 _UPDATE_PREFLIGHT_MAX_COMMITS = 10
+_UPDATE_CHANNELS = {"stable", "beta", "dev"}
+_UPDATE_DEV_BRANCH = "main"
 _PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS = {
     "dist/.buildstamp",
     "dist/.runtime-postbuildstamp",
@@ -206,6 +208,13 @@ def _normalize_dev_target_ref(value: str | None) -> str | None:
         return None
     target_ref = value.strip()
     return target_ref or None
+
+
+def _normalize_update_channel(value: str | None) -> str | None:
+    if value is None:
+        return None
+    channel = value.strip().lower()
+    return channel if channel in _UPDATE_CHANNELS else None
 
 
 def _looks_like_full_commit_sha(value: str) -> bool:
@@ -1176,11 +1185,13 @@ class RuntimeUpdateService:
         *,
         timeout_ms: int | None = None,
         dev_target_ref: str | None = None,
+        channel: str | None = None,
     ) -> dict[str, object]:
         started_at = time.monotonic()
         steps: list[dict[str, object]] = []
         root = self.repo_root
         normalized_dev_target_ref = _normalize_dev_target_ref(dev_target_ref)
+        normalized_channel = _normalize_update_channel(channel)
         if root is None:
             return {
                 "status": "error",
@@ -1219,6 +1230,26 @@ class RuntimeUpdateService:
                 steps=steps,
                 started_at=started_at,
             )
+
+        if normalized_channel == "dev" and normalized_dev_target_ref is None:
+            branch = await self._read_update_branch_name(root=root, timeout_ms=timeout_ms)
+            if branch != _UPDATE_DEV_BRANCH:
+                checkout_main_step = await self._run_update_command_step(
+                    f"git checkout {_UPDATE_DEV_BRANCH}",
+                    ["git", "checkout", _UPDATE_DEV_BRANCH],
+                    timeout_ms=timeout_ms,
+                )
+                steps.append(checkout_main_step)
+                if _update_step_exit_code(checkout_main_step) != 0:
+                    return self._build_update_command_result(
+                        status="error",
+                        reason="checkout-failed",
+                        root=root,
+                        before=before,
+                        after=None,
+                        steps=steps,
+                        started_at=started_at,
+                    )
 
         fetch_step = await self._run_update_command_step(
             "git fetch",
@@ -1778,6 +1809,29 @@ class RuntimeUpdateService:
             timeout_ms=timeout_ms,
             started_at=started_at,
         )
+
+    async def _read_update_branch_name(
+        self,
+        *,
+        root: Path,
+        timeout_ms: int | None,
+    ) -> str | None:
+        try:
+            result = await self._update_command_runner(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                root,
+                timeout_ms,
+            )
+        except Exception:
+            logger.debug("Could not read update branch.", exc_info=True)
+            return None
+        if _update_command_exit_code(result.get("exitCode")) != 0:
+            return None
+        stdout = result.get("stdout")
+        if not isinstance(stdout, str):
+            return None
+        branch = stdout.strip()
+        return branch or None
 
     async def _run_update_command_step_at(
         self,
