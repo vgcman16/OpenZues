@@ -87533,6 +87533,42 @@ const feishuSecurityRuntime = {
   collectFeishuSecurityAuditFindings,
 };
 
+function collectSynologyChatSecurityAuditFindings(params = {}) {
+  const account = isRecord(params.account) ? params.account : {};
+  if (!account.dangerouslyAllowNameMatching) {
+    return [];
+  }
+  const accountId =
+    normalizeOptionalString(params.accountId) ||
+    normalizeOptionalString(account.accountId) ||
+    DEFAULT_ACCOUNT_ID;
+  const orderedAccountIds = Array.isArray(params.orderedAccountIds)
+    ? params.orderedAccountIds
+    : [];
+  const accountNote =
+    orderedAccountIds.length > 1 || params.hasExplicitAccountPath
+      ? ` (account: ${accountId})`
+      : "";
+  return [
+    {
+      checkId: "channels.synology-chat.reply.dangerous_name_matching_enabled",
+      severity: "info",
+      title: `Synology Chat dangerous name matching is enabled${accountNote}`,
+      detail:
+        "dangerouslyAllowNameMatching=true re-enables mutable username/nickname " +
+        "matching for reply delivery. This is a break-glass compatibility mode, " +
+        "not a hardened default.",
+      remediation:
+        "Prefer stable numeric Synology Chat user IDs for reply delivery, then " +
+        "disable dangerouslyAllowNameMatching.",
+    },
+  ];
+}
+
+const synologyChatRuntime = {
+  collectSynologyChatSecurityAuditFindings,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -89792,6 +89828,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/feishu-security"
   ) {
     return feishuSecurityRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/synology-chat" ||
+    request === "@openclaw/plugin-sdk/synology-chat"
+  ) {
+    return synologyChatRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/bluebubbles-policy" ||

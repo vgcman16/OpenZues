@@ -21163,6 +21163,144 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_synology_chat_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-synology-chat.cjs"
+    runtime_entry.write_text(
+        """
+const synology = require("openclaw/plugin-sdk/synology-chat");
+const scopedSynology = require("@openclaw/plugin-sdk/synology-chat");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.synology_chat",
+      description: "Use OpenClaw synology-chat SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const dangerous = synology.collectSynologyChatSecurityAuditFindings({
+          accountId: "Ops",
+          account: {
+            accountId: "ops",
+            dangerouslyAllowNameMatching: true
+          },
+          orderedAccountIds: ["ops", "qa"],
+          hasExplicitAccountPath: false
+        });
+        const explicitDefault = synology.collectSynologyChatSecurityAuditFindings({
+          account: {
+            accountId: "default",
+            dangerouslyAllowNameMatching: true
+          },
+          orderedAccountIds: ["default"],
+          hasExplicitAccountPath: true
+        });
+        const safe = synology.collectSynologyChatSecurityAuditFindings({
+          account: { accountId: "safe" },
+          orderedAccountIds: ["safe"],
+          hasExplicitAccountPath: false
+        });
+        return {
+          keys: Object.keys(synology).sort(),
+          scopedSame:
+            scopedSynology.collectSynologyChatSecurityAuditFindings ===
+              synology.collectSynologyChatSecurityAuditFindings,
+          dangerous,
+          explicitDefault,
+          safe
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-synology-chat-plugin",
+                    "name": "Runtime Synology Chat Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-synology-chat.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.synology_chat"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.synology_chat"})
+
+    base_finding = {
+        "checkId": "channels.synology-chat.reply.dangerous_name_matching_enabled",
+        "severity": "info",
+        "detail": (
+            "dangerouslyAllowNameMatching=true re-enables mutable username/nickname "
+            "matching for reply delivery. This is a break-glass compatibility mode, "
+            "not a hardened default."
+        ),
+        "remediation": (
+            "Prefer stable numeric Synology Chat user IDs for reply delivery, then "
+            "disable dangerouslyAllowNameMatching."
+        ),
+    }
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["collectSynologyChatSecurityAuditFindings"],
+        "scopedSame": True,
+        "dangerous": [
+            {
+                **base_finding,
+                "title": (
+                    "Synology Chat dangerous name matching is enabled (account: Ops)"
+                ),
+            }
+        ],
+        "explicitDefault": [
+            {
+                **base_finding,
+                "title": (
+                    "Synology Chat dangerous name matching is enabled (account: default)"
+                ),
+            }
+        ],
+        "safe": [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
     tmp_path,
 ) -> None:
