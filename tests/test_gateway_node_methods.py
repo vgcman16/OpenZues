@@ -53863,6 +53863,137 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_qa_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-qa-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const qaRuntime = require("openclaw/plugin-sdk/qa-runtime");
+const scopedQaRuntime = require("@openclaw/plugin-sdk/qa-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.qa_runtime",
+      description: "Use OpenClaw qa-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const calls = [];
+        globalThis.__openzuesQaRunnerRuntime = {
+          loadBundledPluginPublicSurfaceModuleSync(params) {
+            calls.push(params);
+            return {
+              defaultQaRuntimeModelForMode: (mode, options = {}) =>
+                `${mode}:${options.alternate ? "alt" : "main"}:` +
+                  (options.preferredLiveModel || "none"),
+              startQaLiveLaneGateway: (...args) => ({ startedWith: args })
+            };
+          }
+        };
+
+        const keys = Object.keys(qaRuntime).sort();
+        const beforeCalls = calls.length;
+        const module = qaRuntime.loadQaRuntimeModule();
+        const liveModel = module.defaultQaRuntimeModelForMode("live", {
+          alternate: true,
+          preferredLiveModel: "gpt-qa"
+        });
+        const started = module.startQaLiveLaneGateway("lane", { count: 2 });
+        const available = scopedQaRuntime.isQaRuntimeAvailable();
+
+        globalThis.__openzuesQaRunnerRuntime.loadBundledPluginPublicSurfaceModuleSync = () => {
+          throw new Error(
+            "Unable to resolve bundled plugin public surface qa-lab/runtime-api.js"
+          );
+        };
+        const unavailable = qaRuntime.isQaRuntimeAvailable();
+
+        return {
+          keys,
+          scopedSame:
+            scopedQaRuntime.loadQaRuntimeModule === qaRuntime.loadQaRuntimeModule,
+          beforeCalls,
+          liveModel,
+          started,
+          available,
+          unavailable,
+          callSummary: calls.map((call) => ({
+            dirName: call.dirName,
+            artifact: call.artifactBasename,
+            hasEnv: !!call.env
+          }))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-qa-runtime-plugin",
+                    "name": "Runtime QA Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-qa-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.qa_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.qa_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["isQaRuntimeAvailable", "loadQaRuntimeModule"],
+        "scopedSame": True,
+        "beforeCalls": 0,
+        "liveModel": "live:alt:gpt-qa",
+        "started": {"startedWith": ["lane", {"count": 2}]},
+        "available": True,
+        "unavailable": False,
+        "callSummary": [
+            {"dirName": "qa-lab", "artifact": "runtime-api.js", "hasEnv": False},
+            {"dirName": "qa-lab", "artifact": "runtime-api.js", "hasEnv": False},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_qa_runner_runtime_helpers(
     tmp_path,
 ) -> None:

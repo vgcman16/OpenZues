@@ -68281,6 +68281,11 @@ const skillsRuntime = {
   shouldRefreshSnapshotForVersion,
 };
 
+const qaRuntimeRuntime = {
+  isQaRuntimeAvailable,
+  loadQaRuntimeModule,
+};
+
 const qaRunnerRuntime = {
   isQaRuntimeAvailable,
   listQaRunnerCliContributions,
@@ -89122,6 +89127,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/agent-harness"
   ) {
     return agentHarnessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/qa-runtime" ||
+    request === "@openclaw/plugin-sdk/qa-runtime"
+  ) {
+    return qaRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/qa-runner-runtime" ||
