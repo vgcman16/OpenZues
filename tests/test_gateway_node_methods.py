@@ -63454,6 +63454,147 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_facade_test_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-facade-test-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const helpers = require("openclaw/plugin-sdk/browser-facade-test-helpers");
+const scopedHelpers = require("@openclaw/plugin-sdk/browser-facade-test-helpers");
+
+function createMock() {
+  const fn = (...args) => {
+    fn.calls.push(args);
+    if (fn.impl) {
+      return fn.impl(...args);
+    }
+    return fn.value;
+  };
+  fn.calls = [];
+  fn.mock = { calls: fn.calls };
+  fn.mockReturnValue = (value) => {
+    fn.value = value;
+    return fn;
+  };
+  fn.mockImplementation = (impl) => {
+    fn.impl = impl;
+    return fn;
+  };
+  return fn;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_facade_test_helpers",
+      description: "Use OpenClaw browser facade test helpers",
+      parameters: { type: "object" },
+      async execute() {
+        const executable = { kind: "system", path: "/usr/bin/google-chrome" };
+        const loader = createMock();
+        const facade = helpers.mockBrowserHostInspectionFacade(loader, executable);
+        const hostInspection = loader({
+          dirName: "browser",
+          artifactBasename: "browser-host-inspection.js"
+        }) || facade;
+        helpers.expectBrowserHostInspectionDelegation({
+          executable,
+          hostInspection,
+          loadBundledPluginPublicSurfaceModuleSync: loader
+        });
+        const unavailableLoader = createMock();
+        const unavailable = await scopedHelpers
+          .expectBrowserHostInspectionFacadeUnavailable(unavailableLoader)
+          .then(() => "ok");
+        return {
+          keys: Object.keys(helpers).sort(),
+          scopedSame:
+            scopedHelpers.mockBrowserHostInspectionFacade ===
+            helpers.mockBrowserHostInspectionFacade,
+          resolved: hostInspection.resolveGoogleChromeExecutableForPlatform("linux"),
+          version: hostInspection.readBrowserVersion(executable.path),
+          major: hostInspection.parseBrowserMajorVersion("Google Chrome 144.0.7534.0"),
+          loaderCall: loader.calls[0][0],
+          unavailable
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-facade-test-helpers-plugin",
+                    "name": "Runtime Browser Facade Test Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-facade-test-helpers.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_facade_test_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.browser_facade_test_helpers"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "expectBrowserHostInspectionDelegation",
+            "expectBrowserHostInspectionFacadeUnavailable",
+            "mockBrowserHostInspectionFacade",
+        ],
+        "scopedSame": True,
+        "resolved": {"kind": "system", "path": "/usr/bin/google-chrome"},
+        "version": "Google Chrome 144.0.7534.0",
+        "major": 144,
+        "loaderCall": {
+            "dirName": "browser",
+            "artifactBasename": "browser-host-inspection.js",
+        },
+        "unavailable": "ok",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_browser_host_inspection_helpers(
     tmp_path,
 ) -> None:

@@ -72705,6 +72705,125 @@ const browserHostInspectionRuntime = {
   resolveGoogleChromeExecutableForPlatform,
 };
 
+const BROWSER_HOST_INSPECTION_ARTIFACT = {
+  dirName: "browser",
+  artifactBasename: "browser-host-inspection.js",
+};
+
+const BROWSER_FACADE_TEST_VERSION = "Google Chrome 144.0.7534.0";
+
+function makeBrowserFacadeTestMockFn(returnValue) {
+  const fn = (...args) => {
+    fn.mock.calls.push(args);
+    if (typeof fn._impl === "function") {
+      return fn._impl(...args);
+    }
+    return fn._returnValue;
+  };
+  fn.mock = { calls: [] };
+  fn._returnValue = returnValue;
+  fn.mockReturnValue = (value) => {
+    fn._returnValue = value;
+    return fn;
+  };
+  fn.mockImplementation = (impl) => {
+    fn._impl = impl;
+    return fn;
+  };
+  return fn;
+}
+
+function mockBrowserHostInspectionFacade(loadBundledPluginPublicSurfaceModuleSync, executable) {
+  const facade = {
+    resolveGoogleChromeExecutableForPlatform: makeBrowserFacadeTestMockFn(executable),
+    readBrowserVersion: makeBrowserFacadeTestMockFn(BROWSER_FACADE_TEST_VERSION),
+    parseBrowserMajorVersion: makeBrowserFacadeTestMockFn(144),
+  };
+  if (
+    loadBundledPluginPublicSurfaceModuleSync &&
+    typeof loadBundledPluginPublicSurfaceModuleSync.mockReturnValue === "function"
+  ) {
+    loadBundledPluginPublicSurfaceModuleSync.mockReturnValue(facade);
+  }
+  return facade;
+}
+
+function browserFacadeLoaderCalls(loader) {
+  if (loader && loader.mock && Array.isArray(loader.mock.calls)) {
+    return loader.mock.calls;
+  }
+  if (loader && Array.isArray(loader.calls)) {
+    return loader.calls;
+  }
+  return [];
+}
+
+function browserFacadeLoaderWasCalledWithArtifact(loader) {
+  return browserFacadeLoaderCalls(loader).some((call) => {
+    const firstArg = Array.isArray(call) ? call[0] : call;
+    return JSON.stringify(firstArg) === JSON.stringify(BROWSER_HOST_INSPECTION_ARTIFACT);
+  });
+}
+
+function expectBrowserHostInspectionDelegation(params = {}) {
+  const hostInspection = params.hostInspection || {};
+  assertPluginContractEqual(
+    hostInspection.resolveGoogleChromeExecutableForPlatform("linux"),
+    params.executable,
+    "expected browser host inspection executable delegation",
+  );
+  assertPluginContractEqual(
+    hostInspection.readBrowserVersion(params.executable && params.executable.path),
+    BROWSER_FACADE_TEST_VERSION,
+    "expected browser host inspection version delegation",
+  );
+  assertPluginContractEqual(
+    hostInspection.parseBrowserMajorVersion(BROWSER_FACADE_TEST_VERSION),
+    144,
+    "expected browser host inspection major-version delegation",
+  );
+  if (!browserFacadeLoaderWasCalledWithArtifact(params.loadBundledPluginPublicSurfaceModuleSync)) {
+    throw new Error(
+      `expected browser host inspection facade loader to be called with ${JSON.stringify(
+        BROWSER_HOST_INSPECTION_ARTIFACT,
+      )}`,
+    );
+  }
+}
+
+async function expectBrowserHostInspectionFacadeUnavailable(
+  loadBundledPluginPublicSurfaceModuleSync,
+) {
+  if (
+    loadBundledPluginPublicSurfaceModuleSync &&
+    typeof loadBundledPluginPublicSurfaceModuleSync.mockImplementation === "function"
+  ) {
+    loadBundledPluginPublicSurfaceModuleSync.mockImplementation(() => {
+      throw new Error("missing browser host inspection facade");
+    });
+  }
+  try {
+    if (typeof loadBundledPluginPublicSurfaceModuleSync === "function") {
+      loadBundledPluginPublicSurfaceModuleSync(BROWSER_HOST_INSPECTION_ARTIFACT);
+    } else {
+      throw new Error("missing browser host inspection facade");
+    }
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    if (message.includes("missing browser host inspection facade")) {
+      return;
+    }
+    throw error;
+  }
+  throw new Error("expected browser host inspection facade to be unavailable");
+}
+
+const browserFacadeTestHelpersRuntime = {
+  expectBrowserHostInspectionDelegation,
+  expectBrowserHostInspectionFacadeUnavailable,
+  mockBrowserHostInspectionFacade,
+};
+
 const ErrorCodes = {
   NOT_LINKED: "NOT_LINKED",
   NOT_PAIRED: "NOT_PAIRED",
@@ -90571,6 +90690,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-host-inspection"
   ) {
     return browserHostInspectionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-facade-test-helpers" ||
+    request === "@openclaw/plugin-sdk/browser-facade-test-helpers"
+  ) {
+    return browserFacadeTestHelpersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/browser-node-host" ||
