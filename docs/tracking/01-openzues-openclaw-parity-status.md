@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999995% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999996% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6227,6 +6227,25 @@ may lag behind this tracker.
     (dotted import exposed generic SDK exports before implementation, then
     `1 passed`), adjacent command-status proof (`2 passed, 1159 deselected`),
     `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK image-generation provider/asset shim.
+  - Source: `openclaw-main/src/plugin-sdk/image-generation.ts`,
+    `openclaw-main/src/image-generation/image-assets.ts`,
+    `openclaw-main/src/image-generation/openai-compatible-image-provider.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `image-generation` imports expose the
+    OpenAI-compatible provider factory and image asset helpers for data URLs,
+    base64 response parsing, MIME sniffing, upload filenames, provider model
+    copy semantics, edit support errors, and missing API-key errors.
+  - Evidence required: focused image-generation import test, adjacent
+    image/media helper proof, ruff, mypy
+  - Status: checkpointed in `8457701d`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused image-generation red/green proof
+    (exact import returned generic passthrough objects before implementation,
+    then `1 passed`), adjacent image/media helper proof (`5 passed, 1157
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 
