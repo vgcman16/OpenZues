@@ -20379,6 +20379,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1153 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `c298b482`.
+- Imported plugin SDK `minimax` now exposes the exact scoped/unscoped Minimax
+  model reference constants for `MiniMax-M2.7` and `MiniMax-M2.7-highspeed`
+  instead of the broad generic SDK passthrough. This closes `OZ-PLUGIN-00327`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999999999999996%.
+- Verified the minimax helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_minimax_helper -q`
+  (the exact subpath returned the whole generic SDK surface before
+  implementation, then `1 passed`), adjacent provider/model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "minimax_helper or vercel_ai_gateway or provider_model_catalog or provider_env_vars or provider_stream_family"`
+  (`5 passed, 1153 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `95d0e552`.
 
 ## References
 

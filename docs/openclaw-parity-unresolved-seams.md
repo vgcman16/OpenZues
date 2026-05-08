@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.999999999999999999999999999995%.
+  band of ~80-99.999999999999999999999999999996%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10604,3 +10604,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, with the evidence band tightened to
   ~80-99.999999999999999999999999999995%. Continue remaining exact SDK helper
   seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `minimax` now exposes the
+  exact Minimax model-ref constant surface (`MiniMax-M2.7` plus highspeed)
+  instead of generic passthrough. Source/test checkpointed in `95d0e552`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999999999999996%. Continue remaining
+  exact SDK helper seams and broader provider/runtime parity breadth.
