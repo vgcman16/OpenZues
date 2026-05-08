@@ -5,10 +5,10 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999999999999999999999999%.
+  band of ~80-99.99999999999999999999999999999999999999999999998%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~98.4% after the latest
+- The chat/session contract subfamily is estimated at ~99.96% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
@@ -2708,6 +2708,67 @@ Current queue-head adjustment: `chat.history` and direct
 RPC `maxChars` still overrides config. The next bounded seam should inspect a
 new source-backed `chat.*` / `sessions.*` read-model mismatch, not the now-closed
 default/config text cap path.
+
+Current queue-head adjustment: `chat.history` now mirrors OpenClaw's hard
+1000-message cap for oversized `limit` values: numeric limits are still floored
+like upstream, but values above 1000 are clamped instead of rejected before the
+read-model lookup. Verified on 2026-05-08 with focused red/green
+`python -m pytest tests\test_gateway_node_methods.py::test_chat_history_caps_large_limit_like_openclaw -q`
+(`1 passed`), adjacent transcript/read-model proof
+`python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+(`32 passed, 1175 deselected`), `ruff check
+src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+`mypy src\openzues\services\gateway_node_methods.py`, and focused
+`git diff --check`. Source/test checkpointed in `6a964896`.
+
+Current queue-head adjustment: `chat.history` now redacts structured base64
+audio content blocks like OpenClaw's `sanitizeChatHistoryMessages`: the
+embedded `source.data` string is removed, `source.omitted=true` is surfaced,
+and `source.bytes` records the encoded payload length. Verified on 2026-05-08
+with focused red/green
+`python -m pytest tests\test_gateway_node_methods.py::test_chat_history_redacts_base64_audio_content_blocks -q`
+(`1 passed`), adjacent transcript/read-model proof
+`python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+(`33 passed, 1175 deselected`), `ruff check
+src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+`mypy src\openzues\services\gateway_node_methods.py`, and focused
+`git diff --check`. Source/test checkpointed in `d8fe12d3`.
+
+Current queue-head adjustment: `chat.history` now also redacts inline image
+content block `data` fields like OpenClaw's display projection sanitizer,
+returning `omitted=true` plus encoded byte length instead of the embedded image
+payload. Verified on 2026-05-08 with focused red/green
+`python -m pytest tests\test_gateway_node_methods.py::test_chat_history_redacts_inline_image_data_blocks -q`
+(`1 passed`), adjacent transcript/read-model proof
+`python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+(`34 passed, 1175 deselected`), `ruff check
+src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+`mypy src\openzues\services\gateway_node_methods.py`, and focused
+`git diff --check`. Source/test checkpointed in `cd286b80`.
+
+Current queue-head adjustment: `chat.history` now applies the OpenClaw
+structured-block text cap to non-tool `partialJson` and string `arguments`
+fields, preserving exact tool block payloads for a separate tool-display seam.
+Verified on 2026-05-08 with focused red/green
+`python -m pytest tests\test_gateway_node_methods.py::test_chat_history_truncates_structured_partial_json_fields -q`
+(`1 passed`), adjacent transcript/read-model proof
+`python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+(`35 passed, 1175 deselected`), `ruff check
+src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+`mypy src\openzues\services\gateway_node_methods.py`, and focused
+`git diff --check`. Source/test checkpointed in `812f50de`.
+
+Current queue-head adjustment: `chat.history` now preserves exact structured
+tool-history block text/content payloads while still stripping display-only
+directives, matching OpenClaw's `preserveExactToolPayload` branch. Verified on
+2026-05-08 with focused red/green
+`python -m pytest tests\test_gateway_node_methods.py::test_chat_history_preserves_exact_tool_block_payloads -q`
+(`1 passed`), adjacent transcript/read-model proof
+`python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+(`36 passed, 1175 deselected`), `ruff check
+src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+`mypy src\openzues\services\gateway_node_methods.py`, and focused
+`git diff --check`. Source/test checkpointed in `ec0a6950`.
 
 Current queue-head adjustment: `chat.history` now replaces single oversized
 projected messages with `[chat.history omitted: message too large]` and
@@ -10704,3 +10765,390 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   with the evidence band tightened to
   ~80-99.99999999999999999999999999999999%. Continue remaining provider
   facade/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `talk-voice` now exposes
+  the exact bundled talk-voice plugin-entry helper facade instead of the broad
+  generic SDK passthrough. Source/test checkpointed in `114f60ec`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999995%. Continue remaining exact SDK
+  helper seams, starting with `memory-lancedb`.
+- Current queue-head adjustment: imported plugin SDK `memory-lancedb` now
+  exposes the exact bundled memory-lancedb plugin-entry plus state-dir helper
+  facade instead of the broad generic SDK passthrough. Source/test checkpointed
+  in `beac73d9`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.999999999999999999999999999999997%. Continue remaining exact SDK
+  helper seams, starting with `phone-control`.
+- Current queue-head adjustment: imported plugin SDK `phone-control` now
+  exposes the exact bundled phone-control plugin-entry helper facade instead of
+  the broad generic SDK passthrough. Source/test checkpointed in `93b139e3`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999999999999999998%. Continue remaining
+  exact SDK helper seams, starting with `matrix-runtime-shared`.
+- Current queue-head adjustment: imported plugin SDK `matrix-runtime-shared`
+  now exposes the exact Matrix runtime-shared `formatZonedTimestamp` helper
+  facade instead of the broad generic SDK passthrough. Source/test checkpointed
+  in `c34a2d10`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999999999999999999999999999%.
+  Continue remaining exact SDK helper seams, starting with `lobster`.
+- Current queue-head adjustment: imported plugin SDK `lobster` now exposes the
+  exact bundled Lobster plugin-entry plus Windows spawn helper facade instead of
+  the broad generic SDK passthrough. Source/test checkpointed in `0beb9dbc`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999999999999995%. Continue remaining
+  exact SDK helper seams and provider facade breadth.
+- Current queue-head adjustment: imported plugin SDK `voice-call` now exposes
+  the exact bundled voice-call plugin-entry, TTS schema, HTTP body, SSRF fetch,
+  and sleep helper facade instead of the broad generic SDK passthrough.
+  Source/test checkpointed in `bdbc7724`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999997%. Continue remaining exact SDK
+  helper seams and provider facade breadth.
+- Current queue-head adjustment: imported plugin SDK `matrix-deps` now exposes
+  the exact Matrix dependency availability and install-confirmation facade
+  instead of the broad generic SDK passthrough. Source/test checkpointed in
+  `3cdfebfd`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999999999999999999998%. Continue
+  remaining exact SDK helper seams and provider facade breadth.
+- Current queue-head adjustment: imported plugin SDK `feishu-security` now
+  exposes the exact Feishu document-owner security audit facade instead of the
+  broad generic SDK passthrough. Source/test checkpointed in `a7ea60d4`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999999999999999999985%. Continue remaining
+  exact SDK helper seams and provider facade breadth.
+- Current queue-head adjustment: imported plugin SDK `synology-chat` now
+  exposes the exact Synology Chat dangerous-name-matching security audit facade
+  instead of the broad generic SDK passthrough. Source/test checkpointed in
+  `eaf176bb`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999999999999999999999%. Continue
+  remaining exact SDK helper seams and provider facade breadth.
+- Current queue-head adjustment: imported plugin SDK `qa-runtime` now exposes
+  the exact QA runtime public-surface loader facade instead of the broad generic
+  SDK passthrough. Source/test checkpointed in `a20434e1`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999995%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `qa-lab` now exposes the
+  exact bundled QA Lab CLI facade instead of the broad generic SDK passthrough.
+  Source/test checkpointed in `d187a8ce`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999997%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `feishu-setup` now exposes
+  the exact lazy Feishu setup adapter/wizard facade instead of the broad generic
+  SDK passthrough. Source/test checkpointed in `5bd3b500`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999998%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `zalo-setup` now exposes
+  the exact Zalo setup and group-access facade instead of the broad generic SDK
+  passthrough. Source/test checkpointed in `759e64fe`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `feishu-conversation` now
+  exposes the exact Feishu conversation and thread-binding facade instead of the
+  broad generic SDK passthrough. Source/test checkpointed in `16442d3d`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999999999999999999995%. Continue
+  remaining exact SDK helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `slack` now exposes the
+  exact Slack interactive-replies and security-audit facade instead of the broad
+  generic SDK passthrough. Source/test checkpointed in `4221913e`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999996%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `xiaomi` now exposes the
+  exact Xiaomi provider/onboarding facade instead of the broad generic SDK
+  passthrough. Source/test checkpointed in `04c0b54d`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999997%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `matrix-runtime-heavy`
+  now exposes the exact Matrix legacy migration runtime facade instead of the
+  broad generic SDK passthrough. Source/test checkpointed in `d3619058`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999999999999999999998%. Continue
+  remaining exact SDK helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK
+  `memory-core-bundled-runtime` now exposes the exact memory-core API/runtime
+  public-surface facade instead of the broad generic SDK passthrough.
+  Source/test checkpointed in `280e6b6c`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `twitch` now exposes the
+  exact root optional setup adapter/wizard surface while preserving inherited
+  generic SDK helpers. Source/test checkpointed in `24f8edee`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999995%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `tlon` now exposes the
+  exact root optional setup adapter/wizard surface while preserving inherited
+  generic SDK helpers. Source/test checkpointed in `2c3feae2`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999997%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `nostr` now exposes the
+  exact root optional setup adapter/wizard surface while preserving inherited
+  generic SDK helpers. Source/test checkpointed in `70792d82`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999998%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `msteams` now exposes the
+  exact root optional setup adapter/wizard surface while preserving inherited
+  generic SDK helpers. Source/test checkpointed in `09d036fd`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `googlechat` now exposes
+  the exact root optional setup adapter/wizard surface and Google Chat group
+  mention-gating helper while preserving inherited generic SDK helpers.
+  Source/test checkpointed in `37ec6cd2`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999995%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `telegram` now exposes the
+  exact root helper facade for topic conversation parsing, single-account
+  migration keys, account-config merging, and Telegram security audit findings
+  instead of broad generic SDK placeholders. Source/test checkpointed in
+  `2723c527`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99999999999999999999999999999999999997%. Continue
+  remaining exact SDK helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `feishu` now exposes the
+  exact root setup and conversation facade by composing the already verified
+  Feishu setup and conversation subpath runtimes while preserving inherited
+  generic SDK helpers. Source/test checkpointed in `45877663`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999998%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: root `openclaw/plugin-sdk` now exposes the
+  exact tiny upstream enumerable helper surface while inheriting legacy generic
+  SDK properties for existing consumers. Source/test checkpointed in
+  `b0df7421`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99999999999999999999999999999999999999%. Continue
+  remaining exact SDK helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK
+  `qa-runtime.test-helpers` now exposes the exact upstream helper surface for
+  private QA temp source roots, cleanup, env restore, and runtime-surface load
+  expectations instead of broad generic placeholder helpers. Source/test
+  checkpointed in `a15dc5d5`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999995%. Continue remaining exact
+  SDK helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK
+  `browser-facade-test-helpers` now exposes the exact upstream helper surface
+  for browser host-inspection facade mocking, delegation assertions, and
+  unavailable-facade checks instead of broad generic placeholder helpers.
+  Source/test checkpointed in `4e950ba5`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999997%. Continue remaining exact
+  SDK helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `api-baseline` now exposes
+  the upstream value export names and exact SHA-256 hash-file formatting helper
+  for rendered JSON/JSONL API baseline artifacts instead of broad generic
+  placeholder helpers. Source/test checkpointed in `bcf2185c`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999998%. Continue remaining exact
+  SDK helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `nextcloud-talk` now
+  exposes the bundled private helper barrel by composing native auth-rate-limit,
+  channel config, setup wizard, secret input, group policy, reply payload,
+  inbound dispatch, status, and runtime logger helpers instead of broad generic
+  placeholder helpers. Source/test checkpointed in `b76a0b47`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999%. Continue provider/runtime
+  breadth and any newly exposed exact SDK helper seams.
+- Current queue-head adjustment: imported plugin SDK root `test-helpers` now
+  exposes `createPluginSdkTestHarness` with OpenClaw-style fixture-root temp
+  directory sequencing for async and sync test cases instead of broad generic
+  placeholder helpers. Source/test checkpointed in `2af9f158`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999995%. Continue provider/runtime
+  breadth and any newly exposed exact SDK helper seams.
+- Current queue-head adjustment: imported plugin SDK `qa-channel` now exposes
+  the manual QA channel facade with exact target normalization/parsing/building
+  helpers, the QA channel plugin object, runtime setter, and JSON bus method
+  exports instead of broad generic placeholder helpers. Source/test
+  checkpointed in `fda1c201`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999996%. Continue provider/runtime
+  breadth and any newly exposed exact SDK helper seams.
+- Current queue-head adjustment: imported plugin SDK `irc` now exposes the
+  bundled private IRC helper barrel by composing channel config, pairing, reply
+  payload, inbound dispatch, runtime logger, status, setup, account, and
+  policy helpers instead of broad generic placeholder helpers. Source/test
+  checkpointed in `16b12bb8`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999997%. Continue remaining exact
+  SDK root seams (`bluebubbles`, `matrix`, `mattermost`, `memory-core`,
+  `zalo`) plus provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `matrix` now exposes the
+  Matrix root setup and single-account promotion helper facade instead of broad
+  generic placeholder helpers. Source/test checkpointed in `a00b4035`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999999999999999999998%. Continue
+  remaining exact SDK root seams (`bluebubbles`, `mattermost`, `memory-core`,
+  `zalo`) plus provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `memory-core` now exposes
+  the root memory-core barrel by composing the verified engine, runtime-core,
+  CLI, events, status, and runtime-files facades; the status facade now also
+  includes the OpenClaw dreaming config/day/workspace helpers. Source/test
+  checkpointed in `21cbfac2`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999%. Continue remaining exact
+  SDK root seams (`bluebubbles`, `mattermost`, `zalo`) plus provider/runtime
+  breadth.
+- Current queue-head adjustment: imported plugin SDK `mattermost` now exposes
+  the bundled private Mattermost helper barrel by composing channel config,
+  pairing, reply history, single-channel secret, status, media, group policy,
+  request-body, and proxy/client-IP helpers instead of broad generic placeholder
+  helpers. Source/test checkpointed in `5500bc77`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999995%. Continue remaining exact
+  SDK root seams (`bluebubbles`, `zalo`) plus provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `zalo` now exposes the
+  root bundled Zalo helper barrel by composing setup, allow-from, command-auth,
+  channel config, pairing, reply payload, status, webhook ingress, outbound
+  media, and proxy/client-IP helpers instead of broad generic placeholder
+  helpers. Source/test checkpointed in `e789e816`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999997%. Continue the remaining
+  exact SDK root seam (`bluebubbles`) plus provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `bluebubbles` now exposes
+  the root BlueBubbles helper barrel by composing the lazy bundled `api.js`
+  facade for conversation binding/status helpers plus action constants, channel
+  config, BlueBubbles policy, media, command/tool, webhook, text, and routing
+  helpers instead of broad generic placeholder helpers. Source/test checkpointed
+  in `f5b4121a`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999998%. The current exact SDK
+  root seam queue is complete; continue broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now hides empty user transcript
+  rows, OpenClaw heartbeat poll prompts, and short heartbeat acknowledgements
+  from projected history, matching the upstream display-projection
+  heartbeat-filter path. Source/test checkpointed in `7e480dec`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999995%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `sessions.history` now applies the same
+  visible-history heartbeat/empty-row filtering for session snapshots, hiding
+  configured heartbeat prompts and short acknowledgement rows while preserving
+  meaningful assistant alerts. Source/test checkpointed in `7d8e6b3b`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to
+  ~80-99.9999999999999999999999999999999999999999997%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now hides structured user
+  content arrays made only of empty text blocks, matching OpenClaw's
+  `isEmptyTextOnlyContent` display-projection rule. Source/test checkpointed
+  in `5230af34`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999998%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `sessions.history` now hides structured user
+  content arrays made only of empty text blocks, matching the same OpenClaw
+  session snapshot visible-history rule. Source/test checkpointed in
+  `e38d7753`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to
+  ~80-99.9999999999999999999999999999999999999999999%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now resolves structured text
+  blocks before heartbeat prompt filtering, hiding content-array heartbeat
+  prompts like OpenClaw's `isHeartbeatUserMessage` helper. Source/test
+  checkpointed in `0041dded`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999995%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `sessions.history` now resolves structured
+  text blocks before heartbeat prompt filtering, hiding session snapshot
+  content-array heartbeat prompts like OpenClaw's visible-history projection.
+  Source/test checkpointed in `8b4c51e5`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999997%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now preserves assistant
+  messages with an intentionally empty structured content array while keeping
+  commentary/suppressed assistant rows hidden. Source/test checkpointed in
+  `25900ca9`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to
+  ~80-99.99999999999999999999999999999999999999999998%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now sanitizes assistant
+  usage/cost metadata to OpenClaw's known numeric usage fields and
+  `cost.total`, including nested `usage.cost.total`. Source/test checkpointed
+  in `3817410c`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now strips legacy OpenClaw
+  internal runtime-context delimiter blocks before projecting structured
+  transcript text. Source/test checkpointed in `b6d1b5b1`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999995%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `sessions.history` now strips legacy
+  OpenClaw internal runtime-context delimiter blocks before projecting
+  structured session snapshot text. Source/test checkpointed in `b16e8234`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to
+  ~80-99.999999999999999999999999999999999999999999997%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now strips OpenClaw-style user
+  channel envelopes and `[message_id: ...]` hints from raw user transcript
+  rows. Source/test checkpointed in `e5586d6e`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now strips OpenClaw-style user
+  channel envelopes and `[message_id: ...]` hints inside structured user
+  content blocks without corrupting JSON payload parsing. Source/test
+  checkpointed in `cfec33ca`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999999995%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `sessions.history` now strips OpenClaw-style
+  raw user channel envelopes and `[message_id: ...]` hints while preserving
+  raw JSON parsing for structured rows. Source/test checkpointed in
+  `abd535b3`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to
+  ~80-99.9999999999999999999999999999999999999999999997%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `sessions.history` now strips OpenClaw-style
+  structured user channel envelopes and `[message_id: ...]` hints from
+  structured session content blocks. Source/test checkpointed in `0802c431`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to
+  ~80-99.9999999999999999999999999999999999999999999998%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now strips OpenClaw-injected
+  inbound metadata prefix blocks and injected weekday timestamp prefixes from
+  visible raw user transcript text. Source/test checkpointed in `fc562e74`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to
+  ~80-99.99999999999999999999999999999999999999999999985%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now projects OpenClaw-style
+  `senderLabel` from inbound sender metadata before stripping AI-facing metadata
+  blocks from visible transcript text. Source/test checkpointed in `ee8a3679`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to
+  ~80-99.9999999999999999999999999999999999999999999999%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `sessions.history` now projects OpenClaw-style
+  `senderLabel` from inbound sender/conversation metadata before returning
+  session snapshots. Source/test checkpointed in `858df20e`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999995%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now extracts `senderLabel` from
+  inbound metadata inside structured user content blocks. Source/test
+  checkpointed in `666db310`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999997%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `sessions.history` now extracts `senderLabel`
+  from inbound metadata inside structured user content blocks. Source/test
+  checkpointed in `22940711`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999998%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.

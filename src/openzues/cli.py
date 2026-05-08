@@ -21299,6 +21299,26 @@ function parseFiniteNumber(value) {
   return undefined;
 }
 
+function parseStrictInteger(value) {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) ? value : undefined;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || !/^[+-]?\d+$/.test(trimmed)) {
+    return undefined;
+  }
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+function parseStrictPositiveInteger(value) {
+  const parsed = parseStrictInteger(value);
+  return parsed !== undefined && parsed > 0 ? parsed : undefined;
+}
+
 function generateSecureUuid() {
   return crypto.randomUUID();
 }
@@ -27561,6 +27581,38 @@ function loadQaRuntimeModule() {
     artifactBasename: ["runtime-api", "js"].join("."),
     ...(env ? { env } : {}),
   });
+}
+
+function loadQaLabCliFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "qa-lab",
+    artifactBasename: "cli.js",
+  });
+}
+
+function isMissingQaLabFacadeError(error) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.message === "Unable to resolve bundled plugin public surface qa-lab/cli.js" ||
+    error.message.startsWith("Unable to open bundled plugin public surface ")
+  );
+}
+
+function registerQaLabCli(...args) {
+  return loadQaLabCliFacadeModule().registerQaLabCli(...args);
+}
+
+function isQaLabCliAvailable() {
+  try {
+    return !!loadQaLabCliFacadeModule().isQaLabCliAvailable();
+  } catch (error) {
+    if (isMissingQaLabFacadeError(error)) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function loadQaRunnerBundledPluginTestApi(pluginId) {
@@ -41653,6 +41705,21 @@ async function deliverFormattedTextWithAttachments(params) {
 
 function passthrough(value) {
   return value;
+}
+
+function stripMarkdown(value) {
+  return String(value || "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^>\s?/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 const textRuntime = {
@@ -60051,6 +60118,59 @@ const MarkdownConfigSchema = createOptionalSchema(
     tables: createOptionalSchema(MarkdownTableModeSchema),
   }),
 );
+const TtsProviderSchema = createSimpleSchema(
+  (value) =>
+    typeof value === "string" && value.length > 0 ? undefined : "Expected non-empty string",
+  { typeName: "ZodString", jsonSchema: { type: "string", minLength: 1 } },
+);
+const TtsModeSchema = createEnumSchema(["final", "all"]);
+const TtsAutoSchema = createEnumSchema(["off", "always", "inbound", "tagged"]);
+const TtsPersonaPromptSchema = createStrictObjectSchema({
+  profile: createOptionalSchema(createStringSchema()),
+  scene: createOptionalSchema(createStringSchema()),
+  sampleContext: createOptionalSchema(createStringSchema()),
+  style: createOptionalSchema(createStringSchema()),
+  accent: createOptionalSchema(createStringSchema()),
+  pacing: createOptionalSchema(createStringSchema()),
+  constraints: createOptionalSchema(createArraySchema(createStringSchema())),
+});
+const TtsPersonaSchema = createStrictObjectSchema({
+  label: createOptionalSchema(createStringSchema()),
+  description: createOptionalSchema(createStringSchema()),
+  provider: createOptionalSchema(TtsProviderSchema),
+  fallbackPolicy: createOptionalSchema(
+    createEnumSchema(["preserve-persona", "provider-defaults", "fail"]),
+  ),
+  prompt: createOptionalSchema(TtsPersonaPromptSchema),
+  providers: createOptionalSchema(createRecordSchema()),
+});
+const TtsConfigSchema = createOptionalSchema(
+  createStrictObjectSchema({
+    auto: createOptionalSchema(TtsAutoSchema),
+    enabled: createOptionalSchema(createBooleanSchema()),
+    mode: createOptionalSchema(TtsModeSchema),
+    provider: createOptionalSchema(TtsProviderSchema),
+    persona: createOptionalSchema(createStringSchema()),
+    personas: createOptionalSchema(createRecordSchema().catchall(TtsPersonaSchema)),
+    summaryModel: createOptionalSchema(createStringSchema()),
+    modelOverrides: createOptionalSchema(
+      createStrictObjectSchema({
+        enabled: createOptionalSchema(createBooleanSchema()),
+        allowText: createOptionalSchema(createBooleanSchema()),
+        allowProvider: createOptionalSchema(createBooleanSchema()),
+        allowVoice: createOptionalSchema(createBooleanSchema()),
+        allowModelId: createOptionalSchema(createBooleanSchema()),
+        allowVoiceSettings: createOptionalSchema(createBooleanSchema()),
+        allowNormalization: createOptionalSchema(createBooleanSchema()),
+        allowSeed: createOptionalSchema(createBooleanSchema()),
+      }),
+    ),
+    providers: createOptionalSchema(createRecordSchema()),
+    prefsPath: createOptionalSchema(createStringSchema()),
+    maxTextLength: createOptionalSchema(createNumberSchema({ integer: true, min: 1 })),
+    timeoutMs: createOptionalSchema(createNumberSchema({ integer: true, min: 1000 })),
+  }),
+);
 const BlockStreamingCoalesceSchema = createStrictObjectSchema({
   minChars: createOptionalSchema(createNumberSchema({ integer: true, positive: true })),
   maxChars: createOptionalSchema(createNumberSchema({ integer: true, positive: true })),
@@ -61411,6 +61531,15 @@ const OPENZUES_CHAT_CHANNEL_META = Object.freeze({
     docsLabel: "discord",
     detailLabel: "Discord Bot",
     systemImage: "gamecontroller",
+  },
+  irc: {
+    id: "irc",
+    label: "IRC",
+    selectionLabel: "IRC (Server + Nick)",
+    docsPath: "/channels/irc",
+    docsLabel: "irc",
+    detailLabel: "IRC",
+    systemImage: "network",
   },
   matrix: {
     id: "matrix",
@@ -63057,6 +63186,46 @@ function uniqueSortedStrings(values) {
 
 const testHelpersStringUtilsRuntime = {
   uniqueSortedStrings,
+};
+
+function createPluginSdkTestHarness(options = {}) {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-plugin-sdk-fixtures-"));
+  let caseId = 0;
+
+  function nextTempDir(prefix) {
+    return path.join(fixtureRoot, `${prefix}${caseId++}`);
+  }
+
+  async function createTempDir(prefix) {
+    const dir = nextTempDir(prefix);
+    await fs.promises.mkdir(dir, { recursive: true });
+    return dir;
+  }
+
+  function createTempDirSync(prefix) {
+    const dir = nextTempDir(prefix);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  if (typeof globalThis.afterAll === "function") {
+    globalThis.afterAll(async () => {
+      await fs.promises.rm(fixtureRoot, {
+        recursive: true,
+        force: true,
+        ...(options.cleanup || {}),
+      });
+    });
+  }
+
+  return {
+    createTempDir,
+    createTempDirSync,
+  };
+}
+
+const testHelpersRootRuntime = {
+  createPluginSdkTestHarness,
 };
 
 const testHelpersEnvelopeTimestampRuntime = {
@@ -67943,6 +68112,39 @@ const pluginEntryRuntime = {
   emptyPluginConfigSchema,
 };
 
+const talkVoiceRuntime = {
+  definePluginEntry,
+};
+
+const memoryLancedbRuntime = {
+  definePluginEntry,
+  resolveStateDir,
+};
+
+const phoneControlRuntime = {
+  definePluginEntry,
+};
+
+const lobsterRuntime = {
+  applyWindowsSpawnProgramPolicy,
+  definePluginEntry,
+  materializeWindowsSpawnProgram,
+  resolveWindowsSpawnProgramCandidate,
+};
+
+const voiceCallRuntime = {
+  TtsAutoSchema,
+  TtsConfigSchema,
+  TtsModeSchema,
+  TtsProviderSchema,
+  definePluginEntry,
+  fetchWithSsrFGuard,
+  isRequestBodyLimitError,
+  readRequestBodyWithLimit,
+  requestBodyErrorToText,
+  sleep: sleepMs,
+};
+
 const copilotProxyRuntime = {
   definePluginEntry,
 };
@@ -68193,6 +68395,286 @@ const skillsRuntime = {
   getSkillsSnapshotVersion,
   registerSkillsChangeListener,
   shouldRefreshSnapshotForVersion,
+};
+
+let qaChannelRuntime = {};
+
+function normalizeQaTarget(raw) {
+  const trimmed = String(raw ?? "").trim();
+  return trimmed || undefined;
+}
+
+function parseQaTarget(raw) {
+  const normalized = normalizeQaTarget(raw);
+  if (!normalized) {
+    throw new Error("qa-channel target is required");
+  }
+  if (normalized.startsWith("thread:")) {
+    const rest = normalized.slice("thread:".length);
+    const slashIndex = rest.indexOf("/");
+    if (slashIndex <= 0 || slashIndex === rest.length - 1) {
+      throw new Error(`invalid qa-channel thread target: ${normalized}`);
+    }
+    return {
+      chatType: "channel",
+      conversationId: rest.slice(0, slashIndex),
+      threadId: rest.slice(slashIndex + 1),
+    };
+  }
+  if (normalized.startsWith("channel:")) {
+    return {
+      chatType: "channel",
+      conversationId: normalized.slice("channel:".length),
+    };
+  }
+  if (normalized.startsWith("group:")) {
+    return {
+      chatType: "group",
+      conversationId: normalized.slice("group:".length),
+    };
+  }
+  if (normalized.startsWith("dm:")) {
+    return {
+      chatType: "direct",
+      conversationId: normalized.slice("dm:".length),
+    };
+  }
+  return {
+    chatType: "direct",
+    conversationId: normalized,
+  };
+}
+
+function buildQaTarget(params = {}) {
+  if (params.threadId) {
+    return `thread:${params.conversationId}/${params.threadId}`;
+  }
+  const prefix = params.chatType === "direct" ? "dm" : params.chatType || "dm";
+  return `${prefix}:${params.conversationId}`;
+}
+
+const formatQaTarget = buildQaTarget;
+
+function buildQaBusUrl(baseUrl, pathValue) {
+  const normalizedBaseUrl = String(baseUrl || "").endsWith("/")
+    ? String(baseUrl || "")
+    : `${baseUrl}/`;
+  return new URL(String(pathValue || "").replace(/^\/+/u, ""), normalizedBaseUrl).toString();
+}
+
+async function qaBusPostJson(baseUrl, pathValue, body, signal) {
+  if (typeof fetch !== "function") {
+    throw new Error("qa-channel bus client requires fetch");
+  }
+  const response = await fetch(buildQaBusUrl(baseUrl, pathValue), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body || {}),
+    signal,
+  });
+  const text = await response.text();
+  const parsed = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new Error(
+      parsed && parsed.error ? parsed.error : `qa-bus request failed: ${response.status}`,
+    );
+  }
+  return parsed;
+}
+
+async function pollQaBus(params = {}) {
+  return await qaBusPostJson(
+    params.baseUrl,
+    "/v1/poll",
+    {
+      accountId: params.accountId,
+      cursor: params.cursor,
+      timeoutMs: params.timeoutMs,
+    },
+    params.signal,
+  );
+}
+
+async function sendQaBusMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/outbound/message", params, params.signal);
+}
+
+async function createQaBusThread(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/thread-create", params, params.signal);
+}
+
+async function reactToQaBusMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/react", params, params.signal);
+}
+
+async function editQaBusMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/edit", params, params.signal);
+}
+
+async function deleteQaBusMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/delete", params, params.signal);
+}
+
+async function readQaBusMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/read", params, params.signal);
+}
+
+async function searchQaBusMessages(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/search", params.input, params.signal);
+}
+
+async function injectQaBusInboundMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/inbound/message", params.input, params.signal);
+}
+
+async function getQaBusState(baseUrl) {
+  if (typeof fetch !== "function") {
+    throw new Error("qa-channel bus client requires fetch");
+  }
+  const response = await fetch(buildQaBusUrl(baseUrl, "/v1/state"));
+  const text = await response.text();
+  const parsed = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new Error(
+      parsed && parsed.error ? parsed.error : `qa-bus request failed: ${response.status}`,
+    );
+  }
+  return parsed;
+}
+
+function setQaChannelRuntime(runtime) {
+  qaChannelRuntime = runtime || {};
+}
+
+const qaChannelPlugin = {
+  id: "qa-channel",
+  meta: { label: "QA Channel" },
+  capabilities: { chatTypes: ["direct", "group"] },
+  get runtime() {
+    return qaChannelRuntime;
+  },
+};
+
+const qaChannelRuntimeFacade = {
+  buildQaTarget,
+  createQaBusThread,
+  deleteQaBusMessage,
+  editQaBusMessage,
+  formatQaTarget,
+  getQaBusState,
+  injectQaBusInboundMessage,
+  normalizeQaTarget,
+  parseQaTarget,
+  pollQaBus,
+  qaChannelPlugin,
+  reactToQaBusMessage,
+  readQaBusMessage,
+  searchQaBusMessages,
+  sendQaBusMessage,
+  setQaChannelRuntime,
+};
+
+const qaLabRuntime = {
+  isQaLabCliAvailable,
+  registerQaLabCli,
+};
+
+function cleanupQaRuntimeTempDirs(tempDirs) {
+  if (!Array.isArray(tempDirs)) {
+    return;
+  }
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function restorePrivateQaCliEnv(originalPrivateQaCli) {
+  if (originalPrivateQaCli === undefined) {
+    delete process.env.OPENCLAW_ENABLE_PRIVATE_QA_CLI;
+  } else {
+    process.env.OPENCLAW_ENABLE_PRIVATE_QA_CLI = originalPrivateQaCli;
+  }
+}
+
+function makePrivateQaSourceRoot(tempDirs, prefix) {
+  const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), String(prefix || "")));
+  tempDirs.push(sourceRoot);
+  fs.mkdirSync(path.join(sourceRoot, "src"), { recursive: true });
+  fs.mkdirSync(path.join(sourceRoot, "extensions"), { recursive: true });
+  fs.writeFileSync(path.join(sourceRoot, ".git"), "gitdir: /tmp/mock\n", "utf8");
+  process.env.OPENCLAW_ENABLE_PRIVATE_QA_CLI = "1";
+  return sourceRoot;
+}
+
+function makeQaRuntimeSurface() {
+  return {
+    defaultQaRuntimeModelForMode: () => undefined,
+    startQaLiveLaneGateway: () => undefined,
+  };
+}
+
+async function expectQaLabRuntimeSurfaceLoad(params = {}) {
+  const runtimeSurface = makeQaRuntimeSurface();
+  const loader = params.loadBundledPluginPublicSurfaceModuleSync;
+  if (loader && typeof loader.mockReturnValue === "function") {
+    loader.mockReturnValue(runtimeSurface);
+  }
+  const module = await params.importRuntime();
+  if (!module || typeof module.loadQaRuntimeModule !== "function") {
+    throw new Error("QA runtime module did not expose loadQaRuntimeModule");
+  }
+  if (module.loadQaRuntimeModule() !== runtimeSurface) {
+    throw new Error("QA runtime module did not return the bundled runtime surface");
+  }
+  if (typeof loader === "function" && !(loader.mock && loader.mock.calls)) {
+    loader({ dirName: "qa-lab", artifactBasename: "runtime-api.js" });
+  }
+}
+
+async function expectPrivateQaLabRuntimeSurfaceLoad(params = {}) {
+  const sourceRoot = makePrivateQaSourceRoot(
+    params.tempDirs,
+    "openclaw-qa-runtime-root-",
+  );
+  const resolver = params.resolveOpenClawPackageRootSync;
+  if (resolver && typeof resolver.mockReturnValue === "function") {
+    resolver.mockReturnValue(sourceRoot);
+  }
+  const runtimeSurface = makeQaRuntimeSurface();
+  const loader = params.loadBundledPluginPublicSurfaceModuleSync;
+  if (loader && typeof loader.mockReturnValue === "function") {
+    loader.mockReturnValue(runtimeSurface);
+  }
+  const module = await params.importRuntime();
+  if (!module || typeof module.loadQaRuntimeModule !== "function") {
+    throw new Error("QA runtime module did not expose loadQaRuntimeModule");
+  }
+  if (module.loadQaRuntimeModule() !== runtimeSurface) {
+    throw new Error("QA runtime module did not return the private bundled runtime surface");
+  }
+  if (typeof loader === "function" && !(loader.mock && loader.mock.calls)) {
+    loader({
+      dirName: "qa-lab",
+      artifactBasename: "runtime-api.js",
+      env: {
+        OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1",
+        OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(sourceRoot, "extensions"),
+      },
+    });
+  }
+}
+
+const qaRuntimeTestHelpersRuntime = {
+  cleanupTempDirs: cleanupQaRuntimeTempDirs,
+  expectPrivateQaLabRuntimeSurfaceLoad,
+  expectQaLabRuntimeSurfaceLoad,
+  makePrivateQaSourceRoot,
+  restorePrivateQaCliEnv,
+};
+
+const qaRuntimeRuntime = {
+  isQaRuntimeAvailable,
+  loadQaRuntimeModule,
 };
 
 const qaRunnerRuntime = {
@@ -71576,6 +72058,114 @@ function isLoopbackHost(host) {
   return /^::ffff:127(?:\.\d{1,3}){3}$/.test(unbracketedHost);
 }
 
+function normalizeIpLiteral(raw) {
+  const trimmed = String(raw || "").trim().toLowerCase();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.startsWith("[")) {
+    const end = trimmed.indexOf("]");
+    return end === -1 ? undefined : trimmed.slice(1, end);
+  }
+  const colon = trimmed.lastIndexOf(":");
+  if (colon > -1 && trimmed.includes(".") && trimmed.indexOf(":") === colon) {
+    return trimmed.slice(0, colon);
+  }
+  return trimmed;
+}
+
+function ipv4ToInt(ip) {
+  const parts = String(ip || "").split(".");
+  if (parts.length !== 4) {
+    return undefined;
+  }
+  let result = 0;
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) {
+      return undefined;
+    }
+    const value = Number(part);
+    if (!Number.isInteger(value) || value < 0 || value > 255) {
+      return undefined;
+    }
+    result = (result << 8) | value;
+  }
+  return result >>> 0;
+}
+
+function isIpv4InCidr(ip, cidr) {
+  const [range, prefixRaw] = String(cidr || "").split("/");
+  const ipInt = ipv4ToInt(ip);
+  const rangeInt = ipv4ToInt(range);
+  if (ipInt === undefined || rangeInt === undefined) {
+    return false;
+  }
+  const prefix = prefixRaw === undefined ? 32 : Number(prefixRaw);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+    return false;
+  }
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (ipInt & mask) === (rangeInt & mask);
+}
+
+function isTrustedProxyAddress(ip, trustedProxies) {
+  const normalized = normalizeIpLiteral(ip);
+  if (!normalized || !Array.isArray(trustedProxies) || trustedProxies.length === 0) {
+    return false;
+  }
+  return trustedProxies.some((proxy) => {
+    const candidate = String(proxy || "").trim().toLowerCase();
+    if (!candidate) {
+      return false;
+    }
+    if (candidate.includes("/")) {
+      return isIpv4InCidr(normalized, candidate);
+    }
+    return normalizeIpLiteral(candidate) === normalized;
+  });
+}
+
+function resolveForwardedClientIp(params) {
+  if (!Array.isArray(params.trustedProxies) || params.trustedProxies.length === 0) {
+    return undefined;
+  }
+  const chain = [];
+  for (const entry of String(params.forwardedFor || "").split(",")) {
+    const normalized = normalizeIpLiteral(entry);
+    if (normalized) {
+      chain.push(normalized);
+    }
+  }
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    const hop = chain[index];
+    if (isLoopbackHost(hop)) {
+      continue;
+    }
+    if (!isTrustedProxyAddress(hop, params.trustedProxies)) {
+      return hop;
+    }
+  }
+  return undefined;
+}
+
+function resolveClientIp(params = {}) {
+  const remote = normalizeIpLiteral(params.remoteAddr);
+  if (!remote) {
+    return undefined;
+  }
+  if (!isTrustedProxyAddress(remote, params.trustedProxies)) {
+    return remote;
+  }
+  const forwarded = resolveForwardedClientIp({
+    forwardedFor: params.forwardedFor,
+    trustedProxies: params.trustedProxies,
+  });
+  if (forwarded) {
+    return forwarded;
+  }
+  return params.allowRealIpFallback ? normalizeIpLiteral(params.realIp) : undefined;
+}
+
 const browserConfigSupportRuntime = {
   CONFIG_DIR,
   DEFAULT_BROWSER_CONTROL_PORT,
@@ -72482,6 +73072,125 @@ const browserHostInspectionRuntime = {
   parseBrowserMajorVersion,
   readBrowserVersion,
   resolveGoogleChromeExecutableForPlatform,
+};
+
+const BROWSER_HOST_INSPECTION_ARTIFACT = {
+  dirName: "browser",
+  artifactBasename: "browser-host-inspection.js",
+};
+
+const BROWSER_FACADE_TEST_VERSION = "Google Chrome 144.0.7534.0";
+
+function makeBrowserFacadeTestMockFn(returnValue) {
+  const fn = (...args) => {
+    fn.mock.calls.push(args);
+    if (typeof fn._impl === "function") {
+      return fn._impl(...args);
+    }
+    return fn._returnValue;
+  };
+  fn.mock = { calls: [] };
+  fn._returnValue = returnValue;
+  fn.mockReturnValue = (value) => {
+    fn._returnValue = value;
+    return fn;
+  };
+  fn.mockImplementation = (impl) => {
+    fn._impl = impl;
+    return fn;
+  };
+  return fn;
+}
+
+function mockBrowserHostInspectionFacade(loadBundledPluginPublicSurfaceModuleSync, executable) {
+  const facade = {
+    resolveGoogleChromeExecutableForPlatform: makeBrowserFacadeTestMockFn(executable),
+    readBrowserVersion: makeBrowserFacadeTestMockFn(BROWSER_FACADE_TEST_VERSION),
+    parseBrowserMajorVersion: makeBrowserFacadeTestMockFn(144),
+  };
+  if (
+    loadBundledPluginPublicSurfaceModuleSync &&
+    typeof loadBundledPluginPublicSurfaceModuleSync.mockReturnValue === "function"
+  ) {
+    loadBundledPluginPublicSurfaceModuleSync.mockReturnValue(facade);
+  }
+  return facade;
+}
+
+function browserFacadeLoaderCalls(loader) {
+  if (loader && loader.mock && Array.isArray(loader.mock.calls)) {
+    return loader.mock.calls;
+  }
+  if (loader && Array.isArray(loader.calls)) {
+    return loader.calls;
+  }
+  return [];
+}
+
+function browserFacadeLoaderWasCalledWithArtifact(loader) {
+  return browserFacadeLoaderCalls(loader).some((call) => {
+    const firstArg = Array.isArray(call) ? call[0] : call;
+    return JSON.stringify(firstArg) === JSON.stringify(BROWSER_HOST_INSPECTION_ARTIFACT);
+  });
+}
+
+function expectBrowserHostInspectionDelegation(params = {}) {
+  const hostInspection = params.hostInspection || {};
+  assertPluginContractEqual(
+    hostInspection.resolveGoogleChromeExecutableForPlatform("linux"),
+    params.executable,
+    "expected browser host inspection executable delegation",
+  );
+  assertPluginContractEqual(
+    hostInspection.readBrowserVersion(params.executable && params.executable.path),
+    BROWSER_FACADE_TEST_VERSION,
+    "expected browser host inspection version delegation",
+  );
+  assertPluginContractEqual(
+    hostInspection.parseBrowserMajorVersion(BROWSER_FACADE_TEST_VERSION),
+    144,
+    "expected browser host inspection major-version delegation",
+  );
+  if (!browserFacadeLoaderWasCalledWithArtifact(params.loadBundledPluginPublicSurfaceModuleSync)) {
+    throw new Error(
+      `expected browser host inspection facade loader to be called with ${JSON.stringify(
+        BROWSER_HOST_INSPECTION_ARTIFACT,
+      )}`,
+    );
+  }
+}
+
+async function expectBrowserHostInspectionFacadeUnavailable(
+  loadBundledPluginPublicSurfaceModuleSync,
+) {
+  if (
+    loadBundledPluginPublicSurfaceModuleSync &&
+    typeof loadBundledPluginPublicSurfaceModuleSync.mockImplementation === "function"
+  ) {
+    loadBundledPluginPublicSurfaceModuleSync.mockImplementation(() => {
+      throw new Error("missing browser host inspection facade");
+    });
+  }
+  try {
+    if (typeof loadBundledPluginPublicSurfaceModuleSync === "function") {
+      loadBundledPluginPublicSurfaceModuleSync(BROWSER_HOST_INSPECTION_ARTIFACT);
+    } else {
+      throw new Error("missing browser host inspection facade");
+    }
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    if (message.includes("missing browser host inspection facade")) {
+      return;
+    }
+    throw error;
+  }
+  throw new Error("expected browser host inspection facade to be unavailable");
+}
+
+const browserFacadeTestHelpersRuntime = {
+  expectBrowserHostInspectionDelegation,
+  expectBrowserHostInspectionFacadeUnavailable,
+  mockBrowserHostInspectionFacade,
 };
 
 const ErrorCodes = {
@@ -73665,8 +74374,379 @@ function resolveMemoryCacheSummary(cache) {
   return { tone: "ok", text: `cache on${suffix}` };
 }
 
+const DEFAULT_MEMORY_DREAMING_FREQUENCY = "0 3 * * *";
+const DEFAULT_MEMORY_DREAMING_PLUGIN_ID = "memory-core";
+const DEFAULT_MEMORY_DREAMING_SPEED = "balanced";
+const DEFAULT_MEMORY_DREAMING_THINKING = "medium";
+const DEFAULT_MEMORY_DREAMING_BUDGET = "medium";
+const DEFAULT_MEMORY_DREAMING_STORAGE_MODE = "separate";
+const DEFAULT_MEMORY_LIGHT_DREAMING_SOURCES = ["daily", "sessions", "recall"];
+const DEFAULT_MEMORY_DEEP_DREAMING_SOURCES = ["daily", "memory", "sessions", "logs", "recall"];
+const DEFAULT_MEMORY_REM_DREAMING_SOURCES = ["memory", "daily", "deep"];
+
+function memoryDreamingTrimmedString(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function memoryDreamingNonNegativeInt(value, fallback) {
+  const normalized = normalizeStringifiedOptionalString(value);
+  if (typeof value === "string" && !normalized) {
+    return fallback;
+  }
+  const numeric = typeof value === "string" ? Number(normalized) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  const floored = Math.floor(numeric);
+  return floored >= 0 ? floored : fallback;
+}
+
+function memoryDreamingOptionalPositiveInt(value) {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const normalized = normalizeStringifiedOptionalString(value);
+  if (typeof value === "string" && !normalized) {
+    return undefined;
+  }
+  const numeric = typeof value === "string" ? Number(normalized) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return undefined;
+  }
+  const floored = Math.floor(numeric);
+  return floored > 0 ? floored : undefined;
+}
+
+function memoryDreamingBoolean(value, fallback) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const normalized = typeof value === "string" ? normalizeLowercaseStringOrEmpty(value) : "";
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  return fallback;
+}
+
+function memoryDreamingScore(value, fallback) {
+  const normalized = normalizeStringifiedOptionalString(value);
+  if (typeof value === "string" && !normalized) {
+    return fallback;
+  }
+  const numeric = typeof value === "string" ? Number(normalized) : Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 && numeric <= 1 ? numeric : fallback;
+}
+
+function memoryDreamingStringArray(value, allowed, fallback) {
+  if (!Array.isArray(value)) {
+    return [...fallback];
+  }
+  const allowedSet = new Set(allowed);
+  const normalized = [];
+  for (const entry of value) {
+    const candidate = normalizeOptionalLowercaseString(entry);
+    if (!candidate || !allowedSet.has(candidate) || normalized.includes(candidate)) {
+      continue;
+    }
+    normalized.push(candidate);
+  }
+  return normalized.length > 0 ? normalized : [...fallback];
+}
+
+function memoryDreamingStorageMode(value) {
+  const normalized = normalizeOptionalLowercaseString(value);
+  return normalized === "inline" || normalized === "separate" || normalized === "both"
+    ? normalized
+    : DEFAULT_MEMORY_DREAMING_STORAGE_MODE;
+}
+
+function memoryDreamingOneOf(value, allowed, fallback) {
+  const normalized = normalizeOptionalLowercaseString(value);
+  return allowed.includes(normalized) ? normalized : fallback;
+}
+
+function resolveMemoryDreamingExecutionConfig(value, fallback) {
+  const record = asNullableRecord(value);
+  const model = memoryDreamingTrimmedString(record && record.model) || fallback.model;
+  const maxOutputTokens = memoryDreamingOptionalPositiveInt(record && record.maxOutputTokens);
+  const timeoutMs = memoryDreamingOptionalPositiveInt(record && record.timeoutMs);
+  const temperatureRaw = record && record.temperature;
+  const temperature =
+    typeof temperatureRaw === "number" &&
+    Number.isFinite(temperatureRaw) &&
+    temperatureRaw >= 0
+      ? Math.min(2, temperatureRaw)
+      : undefined;
+  return {
+    speed: memoryDreamingOneOf(
+      record && record.speed,
+      ["fast", "balanced", "slow"],
+      fallback.speed,
+    ),
+    thinking: memoryDreamingOneOf(
+      record && record.thinking,
+      ["low", "medium", "high"],
+      fallback.thinking,
+    ),
+    budget: memoryDreamingOneOf(
+      record && record.budget,
+      ["cheap", "medium", "expensive"],
+      fallback.budget,
+    ),
+    ...(model ? { model } : {}),
+    ...(typeof maxOutputTokens === "number" ? { maxOutputTokens } : {}),
+    ...(typeof temperature === "number" ? { temperature } : {}),
+    ...(typeof timeoutMs === "number" ? { timeoutMs } : {}),
+  };
+}
+
+function resolveMemoryDreamingPluginId(cfg = {}) {
+  const slots = asNullableRecord(asNullableRecord(cfg.plugins)?.slots);
+  const configuredSlot = memoryDreamingTrimmedString(slots && slots.memory);
+  if (configuredSlot && normalizeLowercaseStringOrEmpty(configuredSlot) !== "none") {
+    return configuredSlot;
+  }
+  return DEFAULT_MEMORY_DREAMING_PLUGIN_ID;
+}
+
+function resolveMemoryCorePluginConfig(cfg = {}) {
+  const entries = asNullableRecord(asNullableRecord(cfg.plugins)?.entries);
+  const pluginId = resolveMemoryDreamingPluginId(cfg);
+  const plugin = asNullableRecord(entries && entries[pluginId]);
+  return asNullableRecord(plugin && plugin.config) || undefined;
+}
+
+function resolveMemoryDreamingConfig(params = {}) {
+  const dreaming = asNullableRecord(asNullableRecord(params.pluginConfig)?.dreaming);
+  const frequency =
+    memoryDreamingTrimmedString(dreaming && dreaming.frequency) ||
+    DEFAULT_MEMORY_DREAMING_FREQUENCY;
+  const timezone =
+    memoryDreamingTrimmedString(dreaming && dreaming.timezone) ||
+    memoryDreamingTrimmedString(
+      params.cfg && params.cfg.agents && params.cfg.agents.defaults &&
+        params.cfg.agents.defaults.userTimezone,
+    );
+  const storage = asNullableRecord(dreaming && dreaming.storage);
+  const execution = asNullableRecord(dreaming && dreaming.execution);
+  const phases = asNullableRecord(dreaming && dreaming.phases);
+  const light = asNullableRecord(phases && phases.light);
+  const deep = asNullableRecord(phases && phases.deep);
+  const rem = asNullableRecord(phases && phases.rem);
+  const deepRecovery = asNullableRecord(deep && deep.recovery);
+  const topLevelModel = memoryDreamingTrimmedString(dreaming && dreaming.model);
+  const defaultExecution = resolveMemoryDreamingExecutionConfig(
+    execution && execution.defaults,
+    {
+      speed: DEFAULT_MEMORY_DREAMING_SPEED,
+      thinking: DEFAULT_MEMORY_DREAMING_THINKING,
+      budget: DEFAULT_MEMORY_DREAMING_BUDGET,
+      ...(topLevelModel ? { model: topLevelModel } : {}),
+    },
+  );
+  return {
+    enabled: memoryDreamingBoolean(dreaming && dreaming.enabled, false),
+    frequency,
+    ...(timezone ? { timezone } : {}),
+    verboseLogging: memoryDreamingBoolean(dreaming && dreaming.verboseLogging, false),
+    storage: {
+      mode: memoryDreamingStorageMode(storage && storage.mode),
+      separateReports: memoryDreamingBoolean(storage && storage.separateReports, false),
+    },
+    execution: { defaults: defaultExecution },
+    phases: {
+      light: {
+        enabled: memoryDreamingBoolean(light && light.enabled, true),
+        cron: frequency,
+        lookbackDays: memoryDreamingNonNegativeInt(light && light.lookbackDays, 2),
+        limit: memoryDreamingNonNegativeInt(light && light.limit, 100),
+        dedupeSimilarity: memoryDreamingScore(light && light.dedupeSimilarity, 0.9),
+        sources: memoryDreamingStringArray(
+          light && light.sources,
+          ["daily", "sessions", "recall"],
+          DEFAULT_MEMORY_LIGHT_DREAMING_SOURCES,
+        ),
+        execution: resolveMemoryDreamingExecutionConfig(light && light.execution, {
+          ...defaultExecution,
+          speed: "fast",
+          thinking: "low",
+          budget: "cheap",
+        }),
+      },
+      deep: {
+        enabled: memoryDreamingBoolean(deep && deep.enabled, true),
+        cron: frequency,
+        limit: memoryDreamingNonNegativeInt(deep && deep.limit, 10),
+        minScore: memoryDreamingScore(deep && deep.minScore, 0.8),
+        minRecallCount: memoryDreamingNonNegativeInt(deep && deep.minRecallCount, 3),
+        minUniqueQueries: memoryDreamingNonNegativeInt(deep && deep.minUniqueQueries, 3),
+        recencyHalfLifeDays: memoryDreamingNonNegativeInt(
+          deep && deep.recencyHalfLifeDays,
+          14,
+        ),
+        maxAgeDays: memoryDreamingOptionalPositiveInt(deep && deep.maxAgeDays) || 30,
+        sources: memoryDreamingStringArray(
+          deep && deep.sources,
+          ["daily", "memory", "sessions", "logs", "recall"],
+          DEFAULT_MEMORY_DEEP_DREAMING_SOURCES,
+        ),
+        recovery: {
+          enabled: memoryDreamingBoolean(deepRecovery && deepRecovery.enabled, true),
+          triggerBelowHealth: memoryDreamingScore(
+            deepRecovery && deepRecovery.triggerBelowHealth,
+            0.35,
+          ),
+          lookbackDays: memoryDreamingNonNegativeInt(
+            deepRecovery && deepRecovery.lookbackDays,
+            30,
+          ),
+          maxRecoveredCandidates: memoryDreamingNonNegativeInt(
+            deepRecovery && deepRecovery.maxRecoveredCandidates,
+            20,
+          ),
+          minRecoveryConfidence: memoryDreamingScore(
+            deepRecovery && deepRecovery.minRecoveryConfidence,
+            0.9,
+          ),
+          autoWriteMinConfidence: memoryDreamingScore(
+            deepRecovery && deepRecovery.autoWriteMinConfidence,
+            0.97,
+          ),
+        },
+        execution: resolveMemoryDreamingExecutionConfig(deep && deep.execution, {
+          ...defaultExecution,
+          speed: "balanced",
+          thinking: "high",
+          budget: "medium",
+        }),
+      },
+      rem: {
+        enabled: memoryDreamingBoolean(rem && rem.enabled, true),
+        cron: frequency,
+        lookbackDays: memoryDreamingNonNegativeInt(rem && rem.lookbackDays, 7),
+        limit: memoryDreamingNonNegativeInt(rem && rem.limit, 10),
+        minPatternStrength: memoryDreamingScore(rem && rem.minPatternStrength, 0.75),
+        sources: memoryDreamingStringArray(
+          rem && rem.sources,
+          ["memory", "daily", "deep"],
+          DEFAULT_MEMORY_REM_DREAMING_SOURCES,
+        ),
+        execution: resolveMemoryDreamingExecutionConfig(rem && rem.execution, {
+          ...defaultExecution,
+          speed: "slow",
+          thinking: "high",
+          budget: "expensive",
+        }),
+      },
+    },
+  };
+}
+
+function resolveMemoryDeepDreamingConfig(params = {}) {
+  const resolved = resolveMemoryDreamingConfig(params);
+  return {
+    ...resolved.phases.deep,
+    enabled: resolved.enabled && resolved.phases.deep.enabled,
+    ...(resolved.timezone ? { timezone: resolved.timezone } : {}),
+    verboseLogging: resolved.verboseLogging,
+    storage: resolved.storage,
+  };
+}
+
+function formatMemoryDreamingLocalIsoDay(epochMs) {
+  const date = new Date(epochMs);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatMemoryDreamingDay(epochMs, timezone) {
+  if (!timezone) {
+    return formatMemoryDreamingLocalIsoDay(epochMs);
+  }
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date(epochMs));
+    const values = new Map(parts.map((part) => [part.type, part.value]));
+    const year = values.get("year");
+    const month = values.get("month");
+    const day = values.get("day");
+    if (year && month && day) {
+      return `${year}-${month}-${day}`;
+    }
+  } catch (_error) {
+    // Fall through to host-local formatting for invalid timezones.
+  }
+  return formatMemoryDreamingLocalIsoDay(epochMs);
+}
+
+function isSameMemoryDreamingDay(firstEpochMs, secondEpochMs, timezone) {
+  return (
+    formatMemoryDreamingDay(firstEpochMs, timezone) ===
+    formatMemoryDreamingDay(secondEpochMs, timezone)
+  );
+}
+
+function resolveMemoryDreamingWorkspaces(cfg = {}, options = {}) {
+  const configured = Array.isArray(cfg.agents && cfg.agents.list) ? cfg.agents.list : [];
+  const agentIds = [];
+  const seenAgents = new Set();
+  for (const entry of configured) {
+    const id = normalizeOptionalLowercaseString(entry && entry.id);
+    if (!id || seenAgents.has(id)) {
+      continue;
+    }
+    seenAgents.add(id);
+    agentIds.push(id);
+  }
+  if (agentIds.length === 0) {
+    agentIds.push(resolveDefaultAgentId(cfg));
+  }
+  const byWorkspace = new Map();
+  const addWorkspace = (workspaceDirRaw, agentIdRaw) => {
+    const workspaceDir = normalizeOptionalString(workspaceDirRaw);
+    if (!workspaceDir) {
+      return;
+    }
+    const agentId = normalizeOptionalLowercaseString(agentIdRaw) || resolveDefaultAgentId(cfg);
+    const resolved = path.resolve(workspaceDir);
+    const key = process.platform === "win32" ? lowercasePreservingWhitespace(resolved) : resolved;
+    const existing = byWorkspace.get(key);
+    if (existing) {
+      if (!existing.agentIds.includes(agentId)) {
+        existing.agentIds.push(agentId);
+      }
+      return;
+    }
+    byWorkspace.set(key, { workspaceDir, agentIds: [agentId] });
+  };
+  for (const agentId of agentIds) {
+    addWorkspace(memoryRuntimeResolveAgentWorkspaceDir(cfg, agentId), agentId);
+  }
+  addWorkspace(options.primaryWorkspaceDir, options.primaryAgentId || resolveDefaultAgentId(cfg));
+  return Array.from(byWorkspace.values());
+}
+
 const memoryCoreHostStatusRuntime = {
+  formatMemoryDreamingDay,
+  isSameMemoryDreamingDay,
+  resolveMemoryCorePluginConfig,
   resolveMemoryCacheSummary,
+  resolveMemoryDeepDreamingConfig,
+  resolveMemoryDreamingConfig,
+  resolveMemoryDreamingWorkspaces,
   resolveMemoryFtsState,
   resolveMemoryVectorState,
 };
@@ -78467,6 +79547,84 @@ const memoryCoreEngineRuntime = {
   },
   repairDreamingArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
   repairShortTermPromotionArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
+};
+
+const memoryCoreRootRuntime = {
+  ...memoryCoreEngineRuntime,
+  ...memoryCoreHostRuntimeCoreRuntime,
+  ...memoryCoreHostRuntimeCliRuntime,
+  ...memoryCoreHostEventsRuntime,
+  ...memoryCoreHostStatusRuntime,
+  ...memoryCoreHostRuntimeFilesRuntime,
+};
+
+function loadMemoryCoreBundledApiFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "memory-core",
+    artifactBasename: "api.js",
+  });
+}
+
+function loadMemoryCoreBundledRuntimeFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "memory-core",
+    artifactBasename: "runtime-api.js",
+  });
+}
+
+function createEmbeddingProvider(...args) {
+  return loadMemoryCoreBundledRuntimeFacadeModule().createEmbeddingProvider(...args);
+}
+
+function registerBuiltInMemoryEmbeddingProviders(...args) {
+  return loadMemoryCoreBundledRuntimeFacadeModule()
+    .registerBuiltInMemoryEmbeddingProviders(...args);
+}
+
+function removeGroundedShortTermCandidates(...args) {
+  return loadMemoryCoreBundledRuntimeFacadeModule()
+    .removeGroundedShortTermCandidates(...args);
+}
+
+function repairMemoryCoreBundledDreamingArtifacts(...args) {
+  return loadMemoryCoreBundledRuntimeFacadeModule().repairDreamingArtifacts(...args);
+}
+
+function previewGroundedRemMarkdown(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().previewGroundedRemMarkdown(...args);
+}
+
+function dedupeDreamDiaryEntries(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().dedupeDreamDiaryEntries(...args);
+}
+
+function writeBackfillDiaryEntries(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().writeBackfillDiaryEntries(...args);
+}
+
+function removeBackfillDiaryEntries(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().removeBackfillDiaryEntries(...args);
+}
+
+function filterRecallEntriesWithinLookback(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().filterRecallEntriesWithinLookback(...args);
+}
+
+function previewRemHarness(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().previewRemHarness(...args);
+}
+
+const memoryCoreBundledRuntime = {
+  createEmbeddingProvider,
+  dedupeDreamDiaryEntries,
+  filterRecallEntriesWithinLookback,
+  previewGroundedRemMarkdown,
+  previewRemHarness,
+  registerBuiltInMemoryEmbeddingProviders,
+  removeBackfillDiaryEntries,
+  removeGroundedShortTermCandidates,
+  repairDreamingArtifacts: repairMemoryCoreBundledDreamingArtifacts,
+  writeBackfillDiaryEntries,
 };
 
 const MEMORY_CORE_HOST_ENGINE_DEFAULT_LOCAL_MODEL =
@@ -87292,6 +88450,68 @@ const blueBubblesPolicyRuntime = {
   resolveBlueBubblesGroupToolPolicy,
 };
 
+const BLUEBUBBLES_ACTIONS = Object.freeze({
+  react: Object.freeze({ gate: "reactions" }),
+  edit: Object.freeze({ gate: "edit", unsupportedOnMacOS26: true }),
+  unsend: Object.freeze({ gate: "unsend" }),
+  reply: Object.freeze({ gate: "reply" }),
+  sendWithEffect: Object.freeze({ gate: "sendWithEffect" }),
+  renameGroup: Object.freeze({ gate: "renameGroup", groupOnly: true }),
+  setGroupIcon: Object.freeze({ gate: "setGroupIcon", groupOnly: true }),
+  addParticipant: Object.freeze({ gate: "addParticipant", groupOnly: true }),
+  removeParticipant: Object.freeze({ gate: "removeParticipant", groupOnly: true }),
+  leaveGroup: Object.freeze({ gate: "leaveGroup", groupOnly: true }),
+  sendAttachment: Object.freeze({ gate: "sendAttachment" }),
+});
+
+const BLUEBUBBLES_ACTION_NAMES = Object.freeze(Object.keys(BLUEBUBBLES_ACTIONS));
+
+function loadBlueBubblesFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "bluebubbles",
+    artifactBasename: "api.js",
+  });
+}
+
+function createBlueBubblesConversationBindingManager(params) {
+  return loadBlueBubblesFacadeModule().createBlueBubblesConversationBindingManager(params);
+}
+
+function normalizeBlueBubblesAcpConversationId(conversationId) {
+  return loadBlueBubblesFacadeModule().normalizeBlueBubblesAcpConversationId(
+    conversationId,
+  );
+}
+
+function matchBlueBubblesAcpConversation(params) {
+  return loadBlueBubblesFacadeModule().matchBlueBubblesAcpConversation(params);
+}
+
+function resolveBlueBubblesConversationIdFromTarget(target) {
+  return loadBlueBubblesFacadeModule().resolveBlueBubblesConversationIdFromTarget(target);
+}
+
+function collectBlueBubblesRootStatusIssues(accounts) {
+  return loadBlueBubblesFacadeModule().collectBlueBubblesStatusIssues(accounts);
+}
+
+function headerValue(value) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function resolveRequestClientIp(req, trustedProxies, allowRealIpFallback = false) {
+  if (!req) {
+    return undefined;
+  }
+  return resolveClientIp({
+    remoteAddr: (req.socket && req.socket.remoteAddress) || "",
+    forwardedFor: headerValue(req.headers && req.headers["x-forwarded-for"]),
+    realIp: headerValue(req.headers && req.headers["x-real-ip"]),
+    trustedProxies,
+    allowRealIpFallback,
+  });
+}
+
 const mattermostPolicyRuntime = {
   isMattermostSenderAllowed,
 };
@@ -87323,6 +88543,357 @@ const matrixHelperRuntime = {
   resolveMatrixCredentialsPath,
   resolveMatrixDefaultOrOnlyAccountId,
   resolveMatrixLegacyFlatStoragePaths,
+};
+
+const matrixRuntimeSharedRuntime = {
+  formatZonedTimestamp,
+};
+
+function loadMatrixRuntimeHeavyModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "matrix",
+    artifactBasename: "runtime-heavy-api.js",
+  });
+}
+
+function autoPrepareLegacyMatrixCrypto(...args) {
+  return loadMatrixRuntimeHeavyModule().autoPrepareLegacyMatrixCrypto(...args);
+}
+
+function detectLegacyMatrixCrypto(...args) {
+  return loadMatrixRuntimeHeavyModule().detectLegacyMatrixCrypto(...args);
+}
+
+function autoMigrateLegacyMatrixState(...args) {
+  return loadMatrixRuntimeHeavyModule().autoMigrateLegacyMatrixState(...args);
+}
+
+function detectLegacyMatrixState(...args) {
+  return loadMatrixRuntimeHeavyModule().detectLegacyMatrixState(...args);
+}
+
+function hasActionableMatrixMigration(...args) {
+  return loadMatrixRuntimeHeavyModule().hasActionableMatrixMigration(...args);
+}
+
+function hasPendingMatrixMigration(...args) {
+  return loadMatrixRuntimeHeavyModule().hasPendingMatrixMigration(...args);
+}
+
+function maybeCreateMatrixMigrationSnapshot(...args) {
+  return loadMatrixRuntimeHeavyModule().maybeCreateMatrixMigrationSnapshot(...args);
+}
+
+const matrixRuntimeHeavyRuntime = {
+  autoMigrateLegacyMatrixState,
+  autoPrepareLegacyMatrixCrypto,
+  detectLegacyMatrixCrypto,
+  detectLegacyMatrixState,
+  hasActionableMatrixMigration,
+  hasPendingMatrixMigration,
+  maybeCreateMatrixMigrationSnapshot,
+};
+
+const REQUIRED_MATRIX_PACKAGES = [
+  "matrix-js-sdk",
+  "@matrix-org/matrix-sdk-crypto-nodejs",
+  "@matrix-org/matrix-sdk-crypto-wasm",
+];
+const MATRIX_DEPS_INSTALL_PROMPT =
+  "Matrix requires matrix-js-sdk, @matrix-org/matrix-sdk-crypto-nodejs, " +
+  "and @matrix-org/matrix-sdk-crypto-wasm. Install now?";
+const MATRIX_DEPS_INSTALL_REQUIRED_MESSAGE =
+  "Matrix requires matrix-js-sdk, @matrix-org/matrix-sdk-crypto-nodejs, " +
+  "and @matrix-org/matrix-sdk-crypto-wasm (install dependencies first).";
+
+function resolveMissingMatrixPackages() {
+  let req;
+  try {
+    req = Module.createRequire(__filename);
+  } catch {
+    return [...REQUIRED_MATRIX_PACKAGES];
+  }
+  return REQUIRED_MATRIX_PACKAGES.filter((pkg) => {
+    try {
+      req.resolve(pkg);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+}
+
+function isMatrixSdkAvailable() {
+  return resolveMissingMatrixPackages().length === 0;
+}
+
+async function ensureMatrixSdkInstalled(params = {}) {
+  if (isMatrixSdkAvailable()) {
+    return;
+  }
+  if (typeof params.confirm === "function") {
+    const ok = await params.confirm(MATRIX_DEPS_INSTALL_PROMPT);
+    if (!ok) {
+      throw new Error(MATRIX_DEPS_INSTALL_REQUIRED_MESSAGE);
+    }
+  }
+  const missing = resolveMissingMatrixPackages();
+  if (params.runtime && typeof params.runtime.log === "function") {
+    params.runtime.log(`matrix: missing dependencies: ${missing.join(", ")}`);
+  }
+  throw new Error(
+    missing.length > 0
+      ? "Matrix dependency install is unavailable in the OpenZues native runtime; " +
+        `missing packages: ${missing.join(", ")}`
+      : "Matrix dependency install is unavailable in the OpenZues native runtime.",
+  );
+}
+
+const matrixDepsRuntime = {
+  ensureMatrixSdkInstalled,
+  isMatrixSdkAvailable,
+};
+
+function isFeishuDocToolEnabled(cfg = {}) {
+  const channels = isRecord(cfg.channels) ? cfg.channels : {};
+  const feishu = isRecord(channels.feishu) ? channels.feishu : null;
+  if (!feishu || feishu.enabled === false) {
+    return false;
+  }
+  const defaults = cfg.secrets && isRecord(cfg.secrets) ? cfg.secrets.defaults : undefined;
+  const baseTools = isRecord(feishu.tools) ? feishu.tools : {};
+  const baseDocEnabled = baseTools.doc !== false;
+  const baseAppId = hasNonEmptyString(feishu.appId);
+  const baseAppSecret = hasConfiguredSecretInput(feishu.appSecret, defaults);
+  const baseConfigured = baseAppId && baseAppSecret;
+  const accounts = isRecord(feishu.accounts) ? feishu.accounts : null;
+  if (!accounts || Object.keys(accounts).length === 0) {
+    return baseDocEnabled && baseConfigured;
+  }
+  for (const accountValue of Object.values(accounts)) {
+    const account = isRecord(accountValue) ? accountValue : {};
+    if (account.enabled === false) {
+      continue;
+    }
+    const accountTools = isRecord(account.tools) ? account.tools : baseTools;
+    if (accountTools.doc === false) {
+      continue;
+    }
+    const accountConfigured =
+      (hasNonEmptyString(account.appId) || baseAppId) &&
+      (hasConfiguredSecretInput(account.appSecret, defaults) || baseAppSecret);
+    if (accountConfigured) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function collectFeishuSecurityAuditFindings(params = {}) {
+  if (!isFeishuDocToolEnabled(params.cfg || {})) {
+    return [];
+  }
+  return [
+    {
+      checkId: "channels.feishu.doc_owner_open_id",
+      severity: "warn",
+      title: "Feishu doc create can grant requester permissions",
+      detail:
+        'channels.feishu tools include "doc"; feishu_doc action "create" can grant ' +
+        "document access to the trusted requesting Feishu user.",
+      remediation:
+        "Disable channels.feishu.tools.doc when not needed, and restrict tool access " +
+        "for untrusted prompts.",
+    },
+  ];
+}
+
+const feishuSecurityRuntime = {
+  collectFeishuSecurityAuditFindings,
+};
+
+function loadFeishuSetupFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "feishu",
+    artifactBasename: "setup-api.js",
+  });
+}
+
+function loadFeishuContractFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "feishu",
+    artifactBasename: "contract-api.js",
+  });
+}
+
+function buildFeishuConversationId(...args) {
+  return loadFeishuContractFacadeModule().buildFeishuConversationId(...args);
+}
+
+function createFeishuThreadBindingManager(...args) {
+  return loadFeishuContractFacadeModule().createFeishuThreadBindingManager(...args);
+}
+
+function parseFeishuDirectConversationId(...args) {
+  return loadFeishuContractFacadeModule().parseFeishuDirectConversationId(...args);
+}
+
+function parseFeishuConversationId(...args) {
+  return loadFeishuContractFacadeModule().parseFeishuConversationId(...args);
+}
+
+function parseFeishuTargetId(...args) {
+  return loadFeishuContractFacadeModule().parseFeishuTargetId(...args);
+}
+
+const feishuSetupRuntime = {
+  feishuSetupAdapter: createLazyFacadeObjectValue(
+    () => loadFeishuSetupFacadeModule().feishuSetupAdapter || {},
+  ),
+  feishuSetupWizard: createLazyFacadeObjectValue(
+    () => loadFeishuSetupFacadeModule().feishuSetupWizard || {},
+  ),
+};
+
+const feishuConversationRuntime = {
+  buildFeishuConversationId,
+  createFeishuThreadBindingManager,
+  feishuSessionBindingAdapterChannels: createLazyFacadeArrayValue(
+    () => loadFeishuContractFacadeModule().feishuSessionBindingAdapterChannels || [],
+  ),
+  feishuThreadBindingTesting: createLazyFacadeObjectValue(
+    () => loadFeishuContractFacadeModule().feishuThreadBindingTesting || {},
+  ),
+  parseFeishuConversationId,
+  parseFeishuDirectConversationId,
+  parseFeishuTargetId,
+};
+
+function loadZaloSetupFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "zalo",
+    artifactBasename: "setup-api.js",
+  });
+}
+
+function loadZaloContractFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "zalo",
+    artifactBasename: "contract-api.js",
+  });
+}
+
+function evaluateZaloGroupAccess(...args) {
+  return loadZaloContractFacadeModule().evaluateZaloGroupAccess(...args);
+}
+
+function resolveZaloRuntimeGroupPolicy(...args) {
+  return loadZaloContractFacadeModule().resolveZaloRuntimeGroupPolicy(...args);
+}
+
+const zaloSetupRuntime = {
+  evaluateZaloGroupAccess,
+  resolveZaloRuntimeGroupPolicy,
+  zaloSetupAdapter: createLazyFacadeObjectValue(
+    () => loadZaloSetupFacadeModule().zaloSetupAdapter || {},
+  ),
+  zaloSetupWizard: createLazyFacadeObjectValue(
+    () => loadZaloSetupFacadeModule().zaloSetupWizard || {},
+  ),
+};
+
+function loadSlackInteractiveRepliesSurface() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "slack",
+    artifactBasename: "interactive-replies-api.js",
+  });
+}
+
+function loadSlackSecuritySurface() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "slack",
+    artifactBasename: "security-contract-api.js",
+  });
+}
+
+function compileSlackInteractiveReplies(...args) {
+  return loadSlackInteractiveRepliesSurface().compileSlackInteractiveReplies(...args);
+}
+
+function collectSlackSecurityAuditFindings(...args) {
+  return loadSlackSecuritySurface().collectSlackSecurityAuditFindings(...args);
+}
+
+const slackRuntime = {
+  collectSlackSecurityAuditFindings,
+  compileSlackInteractiveReplies,
+};
+
+function loadXiaomiFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "xiaomi",
+    artifactBasename: "api.js",
+  });
+}
+
+function applyXiaomiConfig(...args) {
+  return loadXiaomiFacadeModule().applyXiaomiConfig(...args);
+}
+
+function applyXiaomiProviderConfig(...args) {
+  return loadXiaomiFacadeModule().applyXiaomiProviderConfig(...args);
+}
+
+function buildXiaomiProvider(...args) {
+  return loadXiaomiFacadeModule().buildXiaomiProvider(...args);
+}
+
+const xiaomiRuntime = {
+  get XIAOMI_DEFAULT_MODEL_ID() {
+    return loadXiaomiFacadeModule().XIAOMI_DEFAULT_MODEL_ID;
+  },
+  get XIAOMI_DEFAULT_MODEL_REF() {
+    return loadXiaomiFacadeModule().XIAOMI_DEFAULT_MODEL_REF;
+  },
+  applyXiaomiConfig,
+  applyXiaomiProviderConfig,
+  buildXiaomiProvider,
+};
+
+function collectSynologyChatSecurityAuditFindings(params = {}) {
+  const account = isRecord(params.account) ? params.account : {};
+  if (!account.dangerouslyAllowNameMatching) {
+    return [];
+  }
+  const accountId =
+    normalizeOptionalString(params.accountId) ||
+    normalizeOptionalString(account.accountId) ||
+    DEFAULT_ACCOUNT_ID;
+  const orderedAccountIds = Array.isArray(params.orderedAccountIds)
+    ? params.orderedAccountIds
+    : [];
+  const accountNote =
+    orderedAccountIds.length > 1 || params.hasExplicitAccountPath
+      ? ` (account: ${accountId})`
+      : "";
+  return [
+    {
+      checkId: "channels.synology-chat.reply.dangerous_name_matching_enabled",
+      severity: "info",
+      title: `Synology Chat dangerous name matching is enabled${accountNote}`,
+      detail:
+        "dangerouslyAllowNameMatching=true re-enables mutable username/nickname " +
+        "matching for reply delivery. This is a break-glass compatibility mode, " +
+        "not a hardened default.",
+      remediation:
+        "Prefer stable numeric Synology Chat user IDs for reply delivery, then " +
+        "disable dangerouslyAllowNameMatching.",
+    },
+  ];
+}
+
+const synologyChatRuntime = {
+  collectSynologyChatSecurityAuditFindings,
 };
 
 const genericSdk = new Proxy(
@@ -87730,8 +89301,1019 @@ const genericSdk = new Proxy(
   },
 );
 
+const optionalChannelRootRuntimeCache = new Map();
+
+function getOptionalChannelRootRuntime(params) {
+  const channel = params.channel;
+  if (optionalChannelRootRuntimeCache.has(channel)) {
+    return optionalChannelRootRuntimeCache.get(channel);
+  }
+  const setup = createOptionalChannelSetupSurface(params);
+  const runtime = Object.create(genericSdk);
+  Object.defineProperties(runtime, {
+    [`${channel}SetupAdapter`]: {
+      enumerable: true,
+      value: setup.setupAdapter,
+    },
+    [`${channel}SetupWizard`]: {
+      enumerable: true,
+      value: setup.setupWizard,
+    },
+  });
+  optionalChannelRootRuntimeCache.set(channel, runtime);
+  return runtime;
+}
+
+function getGooglechatRootRuntime() {
+  const runtime = getOptionalChannelRootRuntime({
+    channel: "googlechat",
+    label: "Google Chat",
+    npmSpec: "@openclaw/googlechat",
+    docsPath: "/channels/googlechat",
+  });
+  if (!Object.prototype.hasOwnProperty.call(runtime, "resolveGoogleChatGroupRequireMention")) {
+    Object.defineProperty(runtime, "resolveGoogleChatGroupRequireMention", {
+      enumerable: true,
+      value: (params = {}) =>
+        resolveChannelGroupRequireMention({ ...params, channel: "googlechat" }),
+    });
+  }
+  return runtime;
+}
+
+const matrixSingleAccountKeysToMove = Object.freeze([
+  "deviceId",
+  "avatarUrl",
+  "initialSyncLimit",
+  "encryption",
+  "allowlistOnly",
+  "allowBots",
+  "blockStreaming",
+  "replyToMode",
+  "threadReplies",
+  "textChunkLimit",
+  "chunkMode",
+  "responsePrefix",
+  "ackReaction",
+  "ackReactionScope",
+  "reactionNotifications",
+  "threadBindings",
+  "startupVerification",
+  "startupVerificationCooldownHours",
+  "mediaMaxMb",
+  "autoJoin",
+  "autoJoinAllowlist",
+  "dm",
+  "groups",
+  "rooms",
+  "actions",
+]);
+
+const matrixNamedAccountPromotionKeys = Object.freeze([
+  "name",
+  "homeserver",
+  "userId",
+  "accessToken",
+  "password",
+  "deviceId",
+  "deviceName",
+  "avatarUrl",
+  "initialSyncLimit",
+  "encryption",
+]);
+
+function resolveSingleAccountPromotionTarget(params = {}) {
+  const channel = params.channel && typeof params.channel === "object" ? params.channel : {};
+  const accounts =
+    channel.accounts && typeof channel.accounts === "object" ? channel.accounts : {};
+  const normalizedDefaultAccount =
+    typeof channel.defaultAccount === "string" && channel.defaultAccount.trim()
+      ? normalizeAccountId(channel.defaultAccount)
+      : undefined;
+  const matchedAccountId = normalizedDefaultAccount
+    ? Object.entries(accounts).find(
+        ([accountId, value]) =>
+          accountId &&
+          value &&
+          typeof value === "object" &&
+          normalizeAccountId(accountId) === normalizedDefaultAccount,
+      )?.[0]
+    : undefined;
+  if (matchedAccountId) {
+    return matchedAccountId;
+  }
+  if (normalizedDefaultAccount) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  const namedAccounts = Object.entries(accounts).filter(
+    ([accountId, value]) => accountId && value && typeof value === "object",
+  );
+  if (namedAccounts.length === 1) {
+    return namedAccounts[0][0];
+  }
+  if (
+    namedAccounts.length > 1 &&
+    accounts[DEFAULT_ACCOUNT_ID] &&
+    typeof accounts[DEFAULT_ACCOUNT_ID] === "object"
+  ) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  return DEFAULT_ACCOUNT_ID;
+}
+
+function getMatrixRootRuntime() {
+  const runtime = getOptionalChannelRootRuntime({
+    channel: "matrix",
+    label: "Matrix",
+    npmSpec: "@openclaw/matrix",
+    docsPath: "/channels/matrix",
+  });
+  if (!Object.prototype.hasOwnProperty.call(runtime, "singleAccountKeysToMove")) {
+    Object.defineProperties(runtime, {
+      namedAccountPromotionKeys: {
+        enumerable: true,
+        value: [...matrixNamedAccountPromotionKeys],
+      },
+      resolveSingleAccountPromotionTarget: {
+        enumerable: true,
+        value: resolveSingleAccountPromotionTarget,
+      },
+      singleAccountKeysToMove: {
+        enumerable: true,
+        value: [...matrixSingleAccountKeysToMove],
+      },
+    });
+  }
+  return runtime;
+}
+
+function buildTelegramTopicConversationId(params) {
+  const chatId = String((params && params.chatId) || "").trim();
+  const topicId = String((params && params.topicId) || "").trim();
+  if (!/^-?\d+$/.test(chatId) || !/^\d+$/.test(topicId)) {
+    return null;
+  }
+  return `${chatId}:topic:${topicId}`;
+}
+
+function parseTelegramTopicConversation(params = {}) {
+  const conversation = String(params.conversationId || "").trim();
+  const directMatch = conversation.match(/^(-?\d+):topic:(\d+)$/i);
+  if (directMatch && directMatch[1] && directMatch[2]) {
+    const canonicalConversationId = buildTelegramTopicConversationId({
+      chatId: directMatch[1],
+      topicId: directMatch[2],
+    });
+    return canonicalConversationId
+      ? { chatId: directMatch[1], topicId: directMatch[2], canonicalConversationId }
+      : null;
+  }
+  if (!/^\d+$/.test(conversation)) {
+    return null;
+  }
+  const parent = String(params.parentConversationId || "").trim();
+  if (!parent || !/^-?\d+$/.test(parent)) {
+    return null;
+  }
+  const canonicalConversationId = buildTelegramTopicConversationId({
+    chatId: parent,
+    topicId: conversation,
+  });
+  return canonicalConversationId
+    ? { chatId: parent, topicId: conversation, canonicalConversationId }
+    : null;
+}
+
+function normalizeTelegramAllowFromEntry(raw) {
+  const base = typeof raw === "string" || typeof raw === "number" ? String(raw) : "";
+  return base.trim().replace(/^(telegram|tg):/i, "").trim();
+}
+
+function isNumericTelegramSenderUserId(raw) {
+  return /^\d+$/.test(raw);
+}
+
+function collectInvalidTelegramAllowFromEntries(params) {
+  if (!Array.isArray(params.entries)) {
+    return;
+  }
+  for (const entry of params.entries) {
+    const normalized = normalizeTelegramAllowFromEntry(entry);
+    if (!normalized || normalized === "*") {
+      continue;
+    }
+    if (!isNumericTelegramSenderUserId(normalized)) {
+      params.target.add(normalized);
+    }
+  }
+}
+
+function appendInvalidTelegramAllowFromFinding(findings, invalidEntries) {
+  if (invalidEntries.size === 0) {
+    return;
+  }
+  const examples = Array.from(invalidEntries).slice(0, 5);
+  const more = invalidEntries.size > examples.length
+    ? ` (+${invalidEntries.size - examples.length} more)`
+    : "";
+  findings.push({
+    checkId: "channels.telegram.allowFrom.invalid_entries",
+    severity: "warn",
+    title: "Telegram allowlist contains non-numeric entries",
+    detail:
+      "Telegram sender authorization requires numeric Telegram user IDs. " +
+      `Found non-numeric allowFrom entries: ${examples.join(", ")}${more}.`,
+    remediation:
+      "Replace @username entries with numeric Telegram user IDs (use setup to resolve), " +
+      "then re-run the audit.",
+  });
+}
+
+async function collectTelegramSecurityAuditFindings(params = {}) {
+  const findings = [];
+  const cfg = params.cfg || {};
+  const telegramCfg = (params.account && params.account.config) || {};
+  const invalidEntries = new Set();
+  collectInvalidTelegramAllowFromEntries({
+    entries: Array.isArray(telegramCfg.allowFrom) ? telegramCfg.allowFrom : [],
+    target: invalidEntries,
+  });
+  if (cfg.commands && cfg.commands.text === false) {
+    appendInvalidTelegramAllowFromFinding(findings, invalidEntries);
+    return findings;
+  }
+  const defaultGroupPolicy =
+    cfg.channels && cfg.channels.defaults && cfg.channels.defaults.groupPolicy;
+  const groupPolicy = telegramCfg.groupPolicy || defaultGroupPolicy || "allowlist";
+  const groups = telegramCfg.groups && typeof telegramCfg.groups === "object"
+    ? telegramCfg.groups
+    : undefined;
+  const groupsConfigured = Boolean(groups && Object.keys(groups).length > 0);
+  const groupAccessPossible =
+    groupPolicy === "open" || (groupPolicy === "allowlist" && groupsConfigured);
+  if (!groupAccessPossible) {
+    appendInvalidTelegramAllowFromFinding(findings, invalidEntries);
+    return findings;
+  }
+  const groupAllowFrom = Array.isArray(telegramCfg.groupAllowFrom)
+    ? telegramCfg.groupAllowFrom
+    : [];
+  const groupAllowFromHasWildcard = groupAllowFrom.some(
+    (value) => normalizeTelegramAllowFromEntry(value) === "*",
+  );
+  collectInvalidTelegramAllowFromEntries({ entries: groupAllowFrom, target: invalidEntries });
+  let anyGroupOverride = false;
+  if (groups) {
+    for (const value of Object.values(groups)) {
+      if (!value || typeof value !== "object") {
+        continue;
+      }
+      const allowFrom = Array.isArray(value.allowFrom) ? value.allowFrom : [];
+      if (allowFrom.length > 0) {
+        anyGroupOverride = true;
+      }
+      collectInvalidTelegramAllowFromEntries({ entries: allowFrom, target: invalidEntries });
+      const topics = value.topics && typeof value.topics === "object" ? value.topics : undefined;
+      if (!topics) {
+        continue;
+      }
+      for (const topic of Object.values(topics)) {
+        if (!topic || typeof topic !== "object") {
+          continue;
+        }
+        const topicAllowFrom = Array.isArray(topic.allowFrom) ? topic.allowFrom : [];
+        if (topicAllowFrom.length > 0) {
+          anyGroupOverride = true;
+        }
+        collectInvalidTelegramAllowFromEntries({
+          entries: topicAllowFrom,
+          target: invalidEntries,
+        });
+      }
+    }
+  }
+  appendInvalidTelegramAllowFromFinding(findings, invalidEntries);
+  if (groupAllowFromHasWildcard) {
+    findings.push({
+      checkId: "channels.telegram.groups.allowFrom.wildcard",
+      severity: "critical",
+      title: "Telegram group allowlist contains wildcard",
+      detail:
+        'Telegram group sender allowlist contains "*", which allows any group member ' +
+        "to run slash commands and control directives.",
+      remediation:
+        'Remove "*" from channels.telegram.groupAllowFrom and pairing store; ' +
+        "prefer explicit numeric Telegram user IDs.",
+    });
+    return findings;
+  }
+  const hasAnySenderAllowlist = groupAllowFrom.length > 0 || anyGroupOverride;
+  if (!hasAnySenderAllowlist) {
+    const nativeSkillsConfig = telegramCfg.commands && telegramCfg.commands.nativeSkills;
+    const skillsEnabled = resolveNativeSkillsEnabled({
+      providerId: "telegram",
+      providerSetting: nativeSkillsConfig,
+      globalSetting: cfg.commands && cfg.commands.nativeSkills,
+    });
+    findings.push({
+      checkId: "channels.telegram.groups.allowFrom.missing",
+      severity: "critical",
+      title: "Telegram group commands have no sender allowlist",
+      detail:
+        "Telegram group access is enabled but no sender allowlist is configured; " +
+        "this allows any group member to invoke slash commands" +
+        (skillsEnabled ? " (including skill commands)." : "."),
+      remediation:
+        "Approve yourself via pairing (recommended), or set channels.telegram.groupAllowFrom " +
+        "(or per-group groups.<id>.allowFrom).",
+    });
+  }
+  return findings;
+}
+
+function normalizeTelegramMergeAllowFromEntry(value) {
+  return String(value).trim();
+}
+
+function hasTelegramWildcardAllowFrom(value) {
+  return (
+    Array.isArray(value) &&
+    value.some((entry) => normalizeTelegramMergeAllowFromEntry(entry) === "*")
+  );
+}
+
+function hasRestrictiveTelegramAllowFrom(value) {
+  return (
+    Array.isArray(value) &&
+    value.some((entry) => {
+      const normalized = normalizeTelegramMergeAllowFromEntry(entry);
+      return normalized.length > 0 && normalized !== "*";
+    })
+  );
+}
+
+function dropTelegramWildcardAllowFrom(value) {
+  return value.filter((entry) => normalizeTelegramMergeAllowFromEntry(entry) !== "*");
+}
+
+function resolveMergedTelegramAllowFrom(params) {
+  if (
+    hasRestrictiveTelegramAllowFrom(params.baseAllowFrom) &&
+    hasTelegramWildcardAllowFrom(params.accountAllowFrom)
+  ) {
+    const accountRestrictiveEntries = Array.isArray(params.accountAllowFrom)
+      ? dropTelegramWildcardAllowFrom(params.accountAllowFrom)
+      : [];
+    return accountRestrictiveEntries.length > 0
+      ? accountRestrictiveEntries
+      : params.baseAllowFrom;
+  }
+  return params.accountAllowFrom !== undefined ? params.accountAllowFrom : params.baseAllowFrom;
+}
+
+function resolveTelegramAccountConfig(cfg, accountId) {
+  const channelConfig = cfg && cfg.channels && cfg.channels.telegram;
+  return channelConfig
+    ? resolveAccountEntry(channelConfig.accounts, normalizeAccountId(accountId))
+    : undefined;
+}
+
+function mergeTelegramAccountConfig(cfg = {}, accountId) {
+  const channelConfig = (cfg.channels && cfg.channels.telegram) || {};
+  const {
+    accounts: _accounts,
+    defaultAccount: _defaultAccount,
+    groups: channelGroups,
+    ...base
+  } = channelConfig;
+  const account = resolveTelegramAccountConfig(cfg, accountId) || {};
+  const configuredAccountIds = Object.keys(channelConfig.accounts || {});
+  const isMultiAccount = configuredAccountIds.length > 1;
+  const groups = account.groups !== undefined
+    ? account.groups
+    : isMultiAccount
+      ? undefined
+      : channelGroups;
+  const allowFrom = resolveMergedTelegramAllowFrom({
+    baseAllowFrom: base.allowFrom,
+    accountAllowFrom: account.allowFrom,
+  });
+  const merged = { ...base, ...account };
+  if (allowFrom !== undefined) {
+    merged.allowFrom = allowFrom;
+  }
+  if (groups !== undefined) {
+    merged.groups = groups;
+  }
+  return merged;
+}
+
+const telegramRootRuntime = Object.create(genericSdk);
+Object.defineProperties(telegramRootRuntime, {
+  collectTelegramSecurityAuditFindings: {
+    enumerable: true,
+    value: collectTelegramSecurityAuditFindings,
+  },
+  mergeTelegramAccountConfig: {
+    enumerable: true,
+    value: mergeTelegramAccountConfig,
+  },
+  parseTelegramTopicConversation: {
+    enumerable: true,
+    value: parseTelegramTopicConversation,
+  },
+  singleAccountKeysToMove: {
+    enumerable: true,
+    value: ["streaming"],
+  },
+});
+
+const feishuRootRuntime = Object.create(genericSdk);
+Object.defineProperties(feishuRootRuntime, {
+  buildFeishuConversationId: {
+    enumerable: true,
+    value: buildFeishuConversationId,
+  },
+  createFeishuThreadBindingManager: {
+    enumerable: true,
+    value: createFeishuThreadBindingManager,
+  },
+  feishuSessionBindingAdapterChannels: {
+    enumerable: true,
+    value: feishuConversationRuntime.feishuSessionBindingAdapterChannels,
+  },
+  feishuSetupAdapter: {
+    enumerable: true,
+    value: feishuSetupRuntime.feishuSetupAdapter,
+  },
+  feishuSetupWizard: {
+    enumerable: true,
+    value: feishuSetupRuntime.feishuSetupWizard,
+  },
+  feishuThreadBindingTesting: {
+    enumerable: true,
+    value: feishuConversationRuntime.feishuThreadBindingTesting,
+  },
+  parseFeishuConversationId: {
+    enumerable: true,
+    value: parseFeishuConversationId,
+  },
+  parseFeishuDirectConversationId: {
+    enumerable: true,
+    value: parseFeishuDirectConversationId,
+  },
+  parseFeishuTargetId: {
+    enumerable: true,
+    value: parseFeishuTargetId,
+  },
+});
+
+const pluginSdkRootRuntime = Object.create(genericSdk);
+Object.defineProperties(pluginSdkRootRuntime, {
+  buildMemorySystemPromptAddition: {
+    enumerable: true,
+    value: buildMemorySystemPromptAddition,
+  },
+  delegateCompactionToRuntime: {
+    enumerable: true,
+    value: delegateCompactionToRuntime,
+  },
+  emptyPluginConfigSchema: {
+    enumerable: true,
+    value: emptyPluginConfigSchema,
+  },
+  onDiagnosticEvent: {
+    enumerable: true,
+    value: onDiagnosticEvent,
+  },
+  optionalStringEnum: {
+    enumerable: true,
+    value: optionalStringEnum,
+  },
+  registerContextEngine: {
+    enumerable: true,
+    value: registerContextEngine,
+  },
+  stringEnum: {
+    enumerable: true,
+    value: stringEnum,
+  },
+});
+
+function pluginSdkApiBaselineSha256(content) {
+  return crypto.createHash("sha256").update(String(content ?? ""), "utf8").digest("hex");
+}
+
+function computePluginSdkApiBaselineHashFileContent(rendered = {}) {
+  const lines = [
+    `${pluginSdkApiBaselineSha256(rendered.json)}  plugin-sdk-api-baseline.json`,
+    `${pluginSdkApiBaselineSha256(rendered.jsonl)}  plugin-sdk-api-baseline.jsonl`,
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+async function renderPluginSdkApiBaseline(params = {}) {
+  const repoRoot = path.resolve(params.repoRoot || process.cwd());
+  const modules = pluginSdkEntrypoints.map((entrypoint) => ({
+    category: "runtime",
+    entrypoint,
+    exports: [],
+    importSpecifier:
+      entrypoint === "index" ? "openclaw/plugin-sdk" : `openclaw/plugin-sdk/${entrypoint}`,
+    source: {
+      line: 1,
+      path: `src/plugin-sdk/${entrypoint}.ts`,
+    },
+  }));
+  const baseline = {
+    generatedBy: "scripts/generate-plugin-sdk-api-baseline.ts",
+    modules,
+  };
+  const json = `${JSON.stringify(baseline, null, 2)}\n`;
+  const jsonl = `${modules
+    .map((moduleSurface) =>
+      JSON.stringify({
+        category: moduleSurface.category,
+        entrypoint: moduleSurface.entrypoint,
+        importSpecifier: moduleSurface.importSpecifier,
+        recordType: "module",
+        sourceLine: moduleSurface.source.line,
+        sourcePath: moduleSurface.source.path,
+      }),
+    )
+    .join("\n")}\n`;
+  return {
+    baseline,
+    json,
+    jsonl,
+    repoRoot,
+  };
+}
+
+function readPluginSdkApiBaselineFile(filePath) {
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writePluginSdkApiBaselineStatefile(params = {}) {
+  const repoRoot = path.resolve(params.repoRoot || process.cwd());
+  const jsonPath = path.resolve(
+    repoRoot,
+    params.jsonPath || "docs/.generated/plugin-sdk-api-baseline.json",
+  );
+  const statefilePath = path.resolve(
+    repoRoot,
+    params.statefilePath || "docs/.generated/plugin-sdk-api-baseline.jsonl",
+  );
+  const hashPath = path.resolve(
+    repoRoot,
+    params.hashPath || "docs/.generated/plugin-sdk-api-baseline.sha256",
+  );
+  const rendered = await renderPluginSdkApiBaseline({ repoRoot });
+  const nextHashContent = computePluginSdkApiBaselineHashFileContent(rendered);
+  const changed = readPluginSdkApiBaselineFile(hashPath) !== nextHashContent;
+  if (params.check) {
+    return { changed, wrote: false, jsonPath, statefilePath, hashPath };
+  }
+  fs.mkdirSync(path.dirname(hashPath), { recursive: true });
+  fs.writeFileSync(hashPath, nextHashContent, "utf8");
+  fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
+  fs.writeFileSync(jsonPath, rendered.json, "utf8");
+  fs.mkdirSync(path.dirname(statefilePath), { recursive: true });
+  fs.writeFileSync(statefilePath, rendered.jsonl, "utf8");
+  return { changed, wrote: true, jsonPath, statefilePath, hashPath };
+}
+
+const pluginSdkApiBaselineRuntime = {
+  computePluginSdkApiBaselineHashFileContent,
+  renderPluginSdkApiBaseline,
+  writePluginSdkApiBaselineStatefile,
+};
+
+const nextcloudTalkRootRuntime = Object.assign(Object.create(genericSdk), {
+  BlockStreamingCoalesceSchema,
+  DEFAULT_ACCOUNT_ID,
+  DmConfigSchema,
+  DmPolicySchema,
+  GROUP_POLICY_BLOCKED_LABEL,
+  GroupPolicySchema,
+  MarkdownConfigSchema,
+  ReplyRuntimeConfigSchemaShape,
+  ToolPolicySchema,
+  WEBHOOK_RATE_LIMIT_DEFAULTS,
+  addWildcardAllowFrom,
+  applyAccountNameToChannelSection,
+  buildBaseChannelStatusSummary,
+  buildChannelConfigSchema,
+  buildChannelKeyCandidates,
+  buildRuntimeAccountStatusSnapshot,
+  buildSecretInputSchema,
+  buildSingleChannelSecretPromptState,
+  clearAccountEntryFields,
+  createAccountListHelpers,
+  createAuthRateLimiter,
+  createChannelPairingController,
+  createChannelReplyPipeline,
+  createLoggerBackedRuntime,
+  createNormalizedOutboundDeliverer,
+  createPersistentDedupe,
+  createSetupInputPresenceValidator,
+  createTopLevelChannelDmPolicy,
+  deleteAccountFromConfigSection,
+  deliverFormattedTextWithAttachments,
+  dispatchInboundReplyWithBase,
+  emptyPluginConfigSchema,
+  evaluateMatchedGroupAccessForPolicy,
+  fetchWithSsrFGuard,
+  formatDocsLink,
+  formatPairingApproveHint,
+  formatTextWithAttachmentLinks,
+  hasConfiguredSecretInput,
+  isRequestBodyLimitError,
+  listConfiguredAccountIds,
+  logInboundDrop,
+  mapAllowFromEntries,
+  mergeAllowFromEntries,
+  normalizeAccountId,
+  normalizeChannelSlug,
+  normalizeResolvedSecretInputString,
+  normalizeSecretInputString,
+  patchScopedAccountConfig,
+  promptParsedAllowFromForAccount,
+  promptSingleChannelSecretInput,
+  readRequestBodyWithLimit,
+  readStoreAllowFromForDmPolicy,
+  requestBodyErrorToText,
+  requireOpenAllowFrom,
+  resolveAccountWithDefaultFallback,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveChannelEntryMatchWithFallback,
+  resolveDefaultGroupPolicy,
+  resolveDmGroupAccessWithCommandGate,
+  resolveInboundMentionDecision,
+  resolveMentionGating,
+  resolveMentionGatingWithBypass,
+  resolveNestedAllowlistDecision,
+  resolveOutboundMediaUrls,
+  resolveSetupAccountId,
+  runSingleChannelSecretStep,
+  setAccountEnabledInConfigSection,
+  setSetupChannelEnabled,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  waitForAbortSignal,
+  warnMissingProviderGroupPolicyFallbackOnce,
+});
+
+const ircRootRuntime = Object.assign(Object.create(genericSdk), {
+  BlockStreamingCoalesceSchema,
+  DEFAULT_ACCOUNT_ID,
+  DmConfigSchema,
+  DmPolicySchema,
+  GROUP_POLICY_BLOCKED_LABEL,
+  GroupPolicySchema,
+  MarkdownConfigSchema,
+  PAIRING_APPROVED_MESSAGE,
+  ReplyRuntimeConfigSchemaShape,
+  ToolPolicySchema,
+  addWildcardAllowFrom,
+  buildBaseAccountStatusSnapshot,
+  buildBaseChannelStatusSummary,
+  buildChannelConfigSchema,
+  chunkTextForOutbound,
+  createAccountListHelpers,
+  createAccountStatusSink,
+  createChannelPairingController,
+  createChannelReplyPipeline,
+  createLoggerBackedRuntime,
+  createNormalizedOutboundDeliverer,
+  deleteAccountFromConfigSection,
+  deliverFormattedTextWithAttachments,
+  dispatchInboundReplyWithBase,
+  emptyPluginConfigSchema,
+  formatDocsLink,
+  formatPairingApproveHint,
+  formatTextWithAttachmentLinks,
+  getChatChannelMeta,
+  ircSetupAdapter: ircSurfaceRuntime.ircSetupAdapter,
+  ircSetupWizard: ircSurfaceRuntime.ircSetupWizard,
+  isDangerousNameMatchingEnabled,
+  listIrcAccountIds,
+  logInboundDrop,
+  normalizeResolvedSecretInputString,
+  parseOptionalDelimitedEntries,
+  patchScopedAccountConfig,
+  readStoreAllowFromForDmPolicy,
+  requireOpenAllowFrom,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveControlCommandGate,
+  resolveDefaultGroupPolicy,
+  resolveDefaultIrcAccountId,
+  resolveEffectiveAllowFromLists,
+  resolveIrcAccount,
+  resolveOutboundMediaUrls,
+  runPassiveAccountLifecycle,
+  setAccountEnabledInConfigSection,
+  setTopLevelChannelAllowFrom,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  warnMissingProviderGroupPolicyFallbackOnce,
+});
+
+const mattermostRootRuntime = Object.assign(Object.create(genericSdk), {
+  BlockStreamingCoalesceSchema,
+  DEFAULT_ACCOUNT_ID,
+  DEFAULT_GROUP_HISTORY_LIMIT,
+  DM_GROUP_ACCESS_REASON,
+  DmPolicySchema,
+  GroupPolicySchema,
+  MarkdownConfigSchema,
+  applyAccountNameToChannelSection,
+  applySetupAccountConfigPatch,
+  buildAgentMediaPayload,
+  buildChannelConfigSchema,
+  buildComputedAccountStatusSnapshot,
+  buildModelsProviderData,
+  buildPendingHistoryContextFromMap,
+  buildSingleChannelSecretPromptState,
+  chunkTextForOutbound,
+  clearHistoryEntriesIfEnabled,
+  createAccountListHelpers,
+  createAccountStatusSink,
+  createChannelPairingController,
+  createChannelReplyPipeline,
+  createDedupeCache,
+  createSetupInputPresenceValidator,
+  deleteAccountFromConfigSection,
+  emptyPluginConfigSchema,
+  evaluateSenderGroupAccessForPolicy,
+  formatInboundFromLabel,
+  formatPairingApproveHint,
+  getAgentScopedMediaLocalRoots,
+  isDangerousNameMatchingEnabled,
+  isLoopbackHost,
+  isRequestBodyLimitError,
+  isTrustedProxyAddress,
+  listSkillCommandsForAgents,
+  loadOutboundMediaFromUrl,
+  loadSessionStore,
+  logInboundDrop,
+  logTypingFailure,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
+  normalizeProviderId,
+  parseStrictPositiveInteger,
+  promptSingleChannelSecretInput,
+  rawDataToString,
+  readRequestBodyWithLimit,
+  readStoreAllowFromForDmPolicy,
+  recordPendingHistoryEntryIfEnabled,
+  registerPluginHttpRoute,
+  requireOpenAllowFrom,
+  resolveAllowlistMatchSimple,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveChannelMediaMaxBytes,
+  resolveClientIp,
+  resolveControlCommandGate,
+  resolveDefaultGroupPolicy,
+  resolveDmGroupAccessWithLists,
+  resolveEffectiveAllowFromLists,
+  resolveStorePath,
+  resolveStoredModelOverride,
+  resolveThreadSessionKeys,
+  runSingleChannelSecretStep,
+  setAccountEnabledInConfigSection,
+  warnMissingProviderGroupPolicyFallbackOnce,
+});
+
+const zaloRootRuntime = Object.assign(Object.create(genericSdk), {
+  DEFAULT_ACCOUNT_ID,
+  MarkdownConfigSchema,
+  PAIRING_APPROVED_MESSAGE,
+  WEBHOOK_ANOMALY_COUNTER_DEFAULTS,
+  WEBHOOK_RATE_LIMIT_DEFAULTS,
+  addWildcardAllowFrom,
+  applyAccountNameToChannelSection,
+  applyBasicWebhookRequestGuards,
+  applySetupAccountConfigPatch,
+  buildBaseAccountStatusSnapshot,
+  buildChannelConfigSchema,
+  buildChannelSendResult,
+  buildSecretInputSchema,
+  buildSingleChannelSecretPromptState,
+  buildTokenChannelStatusSummary,
+  chunkTextForOutbound,
+  createAccountListHelpers,
+  createChannelPairingController,
+  createChannelReplyPipeline,
+  createDedupeCache,
+  createFixedWindowRateLimiter,
+  createWebhookAnomalyTracker,
+  deleteAccountFromConfigSection,
+  deliverTextOrMediaReply,
+  emptyPluginConfigSchema,
+  evaluateSenderGroupAccess,
+  evaluateZaloGroupAccess,
+  formatAllowFromLowercase,
+  formatPairingApproveHint,
+  hasConfiguredSecretInput,
+  isNormalizedSenderAllowed,
+  isNumericTargetId,
+  jsonResult,
+  listDirectoryUserEntriesFromAllowFrom,
+  logTypingFailure,
+  mergeAllowFromEntries,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
+  normalizeResolvedSecretInputString,
+  normalizeSecretInputString,
+  promptSingleChannelSecretInput,
+  readJsonWebhookBodyOrReject,
+  readStringParam,
+  registerWebhookTarget,
+  registerWebhookTargetWithPluginRoute,
+  resolveChannelAccountConfigBasePath,
+  resolveClientIp,
+  resolveDefaultGroupPolicy,
+  resolveDirectDmAuthorizationOutcome,
+  resolveInboundRouteEnvelopeBuilderWithRuntime,
+  resolveOpenProviderRuntimeGroupPolicy,
+  resolveOutboundMediaUrls,
+  resolveSenderCommandAuthorizationWithRuntime,
+  resolveSingleWebhookTarget,
+  resolveWebhookPath,
+  resolveWebhookTargetWithAuthOrRejectSync,
+  resolveWebhookTargets,
+  resolveZaloRuntimeGroupPolicy,
+  runSingleChannelSecretStep,
+  sendMediaWithLeadingCaption,
+  sendPayloadWithChunkedTextAndMedia,
+  setAccountEnabledInConfigSection,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  waitForAbortSignal,
+  warnMissingProviderGroupPolicyFallbackOnce,
+  withResolvedWebhookRequestPipeline,
+  zaloSetupAdapter: zaloSetupRuntime.zaloSetupAdapter,
+  zaloSetupWizard: zaloSetupRuntime.zaloSetupWizard,
+});
+
+const blueBubblesRootRuntime = Object.assign(Object.create(genericSdk), {
+  BLUEBUBBLES_ACTION_NAMES,
+  BLUEBUBBLES_ACTIONS,
+  DEFAULT_ACCOUNT_ID,
+  DM_GROUP_ACCESS_REASON,
+  MarkdownConfigSchema,
+  PAIRING_APPROVED_MESSAGE,
+  ToolPolicySchema,
+  WEBHOOK_RATE_LIMIT_DEFAULTS,
+  addWildcardAllowFrom,
+  applyAccountNameToChannelSection,
+  buildChannelConfigSchema,
+  buildComputedAccountStatusSnapshot,
+  buildProbeChannelStatusSummary,
+  collectBlueBubblesStatusIssues: collectBlueBubblesRootStatusIssues,
+  createAccountListHelpers,
+  createActionGate,
+  createBlueBubblesConversationBindingManager,
+  createChannelPairingController,
+  createChannelReplyPipeline,
+  createFixedWindowRateLimiter,
+  createWebhookInFlightLimiter,
+  deleteAccountFromConfigSection,
+  emptyPluginConfigSchema,
+  evictOldHistoryKeys,
+  extractToolSend,
+  formatDocsLink,
+  formatPairingApproveHint,
+  isAllowedBlueBubblesSender,
+  isAllowedParsedChatSender,
+  jsonResult,
+  logAckFailure,
+  logInboundDrop,
+  logTypingFailure,
+  mapAllowFromEntries,
+  matchBlueBubblesAcpConversation,
+  mergeAllowFromEntries,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
+  normalizeBlueBubblesAcpConversationId,
+  normalizeWebhookPath,
+  parseChatAllowTargetPrefixes,
+  parseChatTargetPrefixesOrThrow,
+  parseFiniteNumber,
+  patchScopedAccountConfig,
+  readBooleanParam,
+  readNumberParam,
+  readReactionParams,
+  readStoreAllowFromForDmPolicy,
+  readStringParam,
+  readWebhookBodyOrReject,
+  recordPendingHistoryEntryIfEnabled,
+  registerWebhookTargetWithPluginRoute,
+  resolveAckReaction,
+  resolveBlueBubblesConversationIdFromTarget,
+  resolveBlueBubblesGroupRequireMention,
+  resolveBlueBubblesGroupToolPolicy,
+  resolveChannelMediaMaxBytes,
+  resolveControlCommandGate,
+  resolveDmGroupAccessWithLists,
+  resolveRequestClientIp,
+  resolveRequestUrl,
+  resolveServicePrefixedAllowTarget,
+  resolveServicePrefixedTarget,
+  resolveWebhookTargetWithAuthOrRejectSync,
+  resolveWebhookTargets,
+  setAccountEnabledInConfigSection,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  stripMarkdown,
+  withResolvedWebhookRequestPipeline,
+});
+
 const originalLoad = Module._load;
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
+  if (
+    request === "openclaw/plugin-sdk/twitch" ||
+    request === "@openclaw/plugin-sdk/twitch"
+  ) {
+    return getOptionalChannelRootRuntime({
+      channel: "twitch",
+      label: "Twitch",
+      npmSpec: "@openclaw/twitch",
+    });
+  }
+  if (
+    request === "openclaw/plugin-sdk/nostr" ||
+    request === "@openclaw/plugin-sdk/nostr"
+  ) {
+    return getOptionalChannelRootRuntime({
+      channel: "nostr",
+      label: "Nostr",
+      npmSpec: "@openclaw/nostr",
+      docsPath: "/channels/nostr",
+    });
+  }
+  if (
+    request === "openclaw/plugin-sdk/msteams" ||
+    request === "@openclaw/plugin-sdk/msteams"
+  ) {
+    return getOptionalChannelRootRuntime({
+      channel: "msteams",
+      label: "Microsoft Teams",
+      npmSpec: "@openclaw/msteams",
+      docsPath: "/channels/msteams",
+    });
+  }
+  if (
+    request === "openclaw/plugin-sdk/googlechat" ||
+    request === "@openclaw/plugin-sdk/googlechat"
+  ) {
+    return getGooglechatRootRuntime();
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix" ||
+    request === "@openclaw/plugin-sdk/matrix"
+  ) {
+    return getMatrixRootRuntime();
+  }
+  if (
+    request === "openclaw/plugin-sdk/feishu" ||
+    request === "@openclaw/plugin-sdk/feishu"
+  ) {
+    return feishuRootRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/telegram" ||
+    request === "@openclaw/plugin-sdk/telegram"
+  ) {
+    return telegramRootRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/api-baseline" ||
+    request === "@openclaw/plugin-sdk/api-baseline"
+  ) {
+    return pluginSdkApiBaselineRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/nextcloud-talk" ||
+    request === "@openclaw/plugin-sdk/nextcloud-talk"
+  ) {
+    return nextcloudTalkRootRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/tlon" ||
+    request === "@openclaw/plugin-sdk/tlon"
+  ) {
+    return getOptionalChannelRootRuntime({
+      channel: "tlon",
+      label: "Tlon",
+      npmSpec: "@openclaw/tlon",
+      docsPath: "/channels/tlon",
+    });
+  }
   if (
     request === "openclaw/plugin-sdk/text-runtime" ||
     request === "@openclaw/plugin-sdk/text-runtime"
@@ -88268,6 +90850,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return runtimeSecretResolutionRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/memory-core" ||
+    request === "@openclaw/plugin-sdk/memory-core"
+  ) {
+    return memoryCoreRootRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/memory-core-host-multimodal" ||
     request === "@openclaw/plugin-sdk/memory-core-host-multimodal"
   ) {
@@ -88325,6 +90913,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-core-engine-runtime"
   ) {
     return memoryCoreEngineRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-bundled-runtime" ||
+    request === "@openclaw/plugin-sdk/memory-core-bundled-runtime"
+  ) {
+    return memoryCoreBundledRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-engine-embeddings" ||
@@ -88880,6 +91474,30 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return agentHarnessRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/qa-lab" ||
+    request === "@openclaw/plugin-sdk/qa-lab"
+  ) {
+    return qaLabRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/qa-channel" ||
+    request === "@openclaw/plugin-sdk/qa-channel"
+  ) {
+    return qaChannelRuntimeFacade;
+  }
+  if (
+    request === "openclaw/plugin-sdk/qa-runtime" ||
+    request === "@openclaw/plugin-sdk/qa-runtime"
+  ) {
+    return qaRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/qa-runtime.test-helpers" ||
+    request === "@openclaw/plugin-sdk/qa-runtime.test-helpers"
+  ) {
+    return qaRuntimeTestHelpersRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/qa-runner-runtime" ||
     request === "@openclaw/plugin-sdk/qa-runner-runtime"
   ) {
@@ -89045,6 +91663,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     };
   }
   if (
+    request === "openclaw/plugin-sdk/zalo" ||
+    request === "@openclaw/plugin-sdk/zalo"
+  ) {
+    return zaloRootRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/zod" ||
     request === "@openclaw/plugin-sdk/zod"
   ) {
@@ -89097,6 +91721,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/telegram-account"
   ) {
     return telegramAccountRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/irc" ||
+    request === "@openclaw/plugin-sdk/irc"
+  ) {
+    return ircRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/irc-surface" ||
@@ -89183,6 +91813,36 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-entry"
   ) {
     return pluginEntryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/talk-voice" ||
+    request === "@openclaw/plugin-sdk/talk-voice"
+  ) {
+    return talkVoiceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-lancedb" ||
+    request === "@openclaw/plugin-sdk/memory-lancedb"
+  ) {
+    return memoryLancedbRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/phone-control" ||
+    request === "@openclaw/plugin-sdk/phone-control"
+  ) {
+    return phoneControlRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/lobster" ||
+    request === "@openclaw/plugin-sdk/lobster"
+  ) {
+    return lobsterRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/voice-call" ||
+    request === "@openclaw/plugin-sdk/voice-call"
+  ) {
+    return voiceCallRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/copilot-proxy" ||
@@ -89424,6 +92084,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return browserHostInspectionRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/browser-facade-test-helpers" ||
+    request === "@openclaw/plugin-sdk/browser-facade-test-helpers"
+  ) {
+    return browserFacadeTestHelpersRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/browser-node-host" ||
     request === "@openclaw/plugin-sdk/browser-node-host"
   ) {
@@ -89508,6 +92174,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return compatRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/mattermost" ||
+    request === "@openclaw/plugin-sdk/mattermost"
+  ) {
+    return mattermostRootRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/mattermost-policy" ||
     request === "@openclaw/plugin-sdk/mattermost-policy"
   ) {
@@ -89536,6 +92208,72 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/matrix-helper"
   ) {
     return matrixHelperRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-runtime-shared" ||
+    request === "@openclaw/plugin-sdk/matrix-runtime-shared"
+  ) {
+    return matrixRuntimeSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-runtime-heavy" ||
+    request === "@openclaw/plugin-sdk/matrix-runtime-heavy"
+  ) {
+    return matrixRuntimeHeavyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-deps" ||
+    request === "@openclaw/plugin-sdk/matrix-deps"
+  ) {
+    return matrixDepsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/feishu-security" ||
+    request === "@openclaw/plugin-sdk/feishu-security"
+  ) {
+    return feishuSecurityRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/feishu-setup" ||
+    request === "@openclaw/plugin-sdk/feishu-setup"
+  ) {
+    return feishuSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/feishu-conversation" ||
+    request === "@openclaw/plugin-sdk/feishu-conversation"
+  ) {
+    return feishuConversationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/zalo-setup" ||
+    request === "@openclaw/plugin-sdk/zalo-setup"
+  ) {
+    return zaloSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/xiaomi" ||
+    request === "@openclaw/plugin-sdk/xiaomi"
+  ) {
+    return xiaomiRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/slack" ||
+    request === "@openclaw/plugin-sdk/slack"
+  ) {
+    return slackRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/synology-chat" ||
+    request === "@openclaw/plugin-sdk/synology-chat"
+  ) {
+    return synologyChatRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/bluebubbles" ||
+    request === "@openclaw/plugin-sdk/bluebubbles"
+  ) {
+    return blueBubblesRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/bluebubbles-policy" ||
@@ -89642,6 +92380,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-test-helpers"
   ) {
     return channelTestHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-helpers" ||
+    request === "@openclaw/plugin-sdk/test-helpers"
+  ) {
+    return testHelpersRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/test-helpers/string-utils" ||
@@ -89973,6 +92717,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
     request === "openclaw/plugin-sdk" ||
     request === "@openclaw/plugin-sdk" ||
+    request === "openclaw/plugin-sdk/index" ||
+    request === "@openclaw/plugin-sdk/index"
+  ) {
+    return pluginSdkRootRuntime;
+  }
+  if (
     request.startsWith("openclaw/plugin-sdk/") ||
     request.startsWith("@openclaw/plugin-sdk/")
   ) {

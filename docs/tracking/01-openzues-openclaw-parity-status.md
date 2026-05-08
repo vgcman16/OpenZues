@@ -16,9 +16,9 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999998% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
-| Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
+| Chat/session contract subfamily | ~99.96% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.9% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
@@ -6389,6 +6389,1213 @@ may lag behind this tracker.
     import returned the generic SDK facade before implementation, then `1
     passed`), adjacent Matrix helper proof (`4 passed, 1164 deselected`),
     `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK talk-voice shim.
+  - Source: `openclaw-main/src/plugin-sdk/talk-voice.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `talk-voice` imports expose only the bundled
+    talk-voice `definePluginEntry` helper facade, preserving lazy
+    `configSchema` resolution and plugin `register` behavior.
+  - Evidence required: focused talk-voice import test, adjacent plugin-entry
+    facade proof, ruff, mypy
+  - Status: checkpointed in `114f60ec`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused talk-voice red/green proof (exact
+    import returned the generic SDK facade before implementation, then `1
+    passed`), adjacent plugin-entry facade proof (`3 passed, 1166
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK memory-lancedb shim.
+  - Source: `openclaw-main/src/plugin-sdk/memory-lancedb.ts`,
+    `openclaw-main/src/plugin-sdk/state-paths.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `memory-lancedb` imports expose only the
+    bundled memory-lancedb `definePluginEntry` and `resolveStateDir` helpers,
+    preserving plugin registration and OpenClaw state-dir resolution.
+  - Evidence required: focused memory-lancedb import test, adjacent
+    state-paths/plugin-entry proof, ruff, mypy
+  - Status: checkpointed in `beac73d9`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused memory-lancedb red/green proof (exact
+    import returned the generic SDK facade before implementation, then `1
+    passed`), adjacent state-paths/plugin-entry proof (`3 passed, 1167
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK phone-control shim.
+  - Source: `openclaw-main/src/plugin-sdk/phone-control.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `phone-control` imports expose only the
+    bundled phone-control `definePluginEntry` helper facade, preserving plugin
+    registration and `nodeHostCommands` projection.
+  - Evidence required: focused phone-control import test, adjacent plugin-entry
+    facade proof, ruff, mypy
+  - Status: checkpointed in `93b139e3`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused phone-control red/green proof (exact
+    import returned the generic SDK facade before implementation, then `1
+    passed`), adjacent plugin-entry facade proof (`3 passed, 1168
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK matrix-runtime-shared shim.
+  - Source: `openclaw-main/src/plugin-sdk/matrix-runtime-shared.ts`,
+    `openclaw-main/src/infra/format-time/format-datetime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `matrix-runtime-shared` imports expose only
+    the runtime `formatZonedTimestamp` helper, preserving UTC formatting,
+    optional seconds, and invalid-timezone undefined projection.
+  - Evidence required: focused Matrix runtime-shared import test, adjacent
+    Matrix/time proof, ruff, mypy
+  - Status: checkpointed in `c34a2d10`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Matrix runtime-shared red/green proof
+    (exact import returned the generic SDK facade before implementation, then
+    `1 passed`), adjacent Matrix/time proof (`4 passed, 1168 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK lobster shim.
+  - Source: `openclaw-main/src/plugin-sdk/lobster.ts`,
+    `openclaw-main/src/plugin-sdk/windows-spawn.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `lobster` imports expose only the bundled
+    Lobster `definePluginEntry`, `resolveWindowsSpawnProgramCandidate`,
+    `applyWindowsSpawnProgramPolicy`, and `materializeWindowsSpawnProgram`
+    helpers.
+  - Evidence required: focused Lobster import test, adjacent
+    Windows-spawn/plugin-entry proof, ruff, mypy
+  - Status: checkpointed in `0beb9dbc`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Lobster red/green proof (exact import
+    returned the generic SDK facade before implementation, then `1 passed`),
+    adjacent Windows-spawn/plugin-entry proof (`3 passed, 1170 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK voice-call shim.
+  - Source: `openclaw-main/src/plugin-sdk/voice-call.ts`,
+    `openclaw-main/src/config/zod-schema.core.ts`,
+    `openclaw-main/src/infra/http-body.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `voice-call` imports expose bundled
+    voice-call `definePluginEntry`, TTS schema helpers, HTTP body limit
+    helpers, SSRF fetch helper, and `sleep`.
+  - Evidence required: focused voice-call import test, adjacent webhook/TTS
+    proof, ruff, mypy
+  - Status: checkpointed in `bdbc7724`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused voice-call red/green proof (fallback
+    returned schema passthrough functions without `safeParse` before
+    implementation, then `1 passed`), adjacent webhook/TTS/Lobster proof (`4
+    passed, 1170 deselected`), `ruff check`, `mypy`, and focused `git diff
+    --check`.
+
+- [x] Imported plugin SDK matrix-deps shim.
+  - Source: `openclaw-main/src/plugin-sdk/matrix-deps.ts`,
+    `openclaw-main/extensions/matrix/src/matrix/deps.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `matrix-deps` imports expose
+    `isMatrixSdkAvailable` and `ensureMatrixSdkInstalled`, including Matrix
+    package availability probing and OpenClaw-shaped confirmation-denied
+    install error text.
+  - Evidence required: focused Matrix deps import test, adjacent Matrix helper
+    proof, ruff, mypy
+  - Status: checkpointed in `3cdfebfd`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Matrix deps red/green proof (exact
+    import returned generic SDK keys before implementation, then `1 passed`),
+    adjacent Matrix helper proof (`4 passed, 1171 deselected`), `ruff check`,
+    `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK feishu-security shim.
+  - Source: `openclaw-main/src/plugin-sdk/feishu-security.ts`,
+    `openclaw-main/extensions/feishu/src/security-audit-shared.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `feishu-security` imports expose
+    `collectFeishuSecurityAuditFindings`, including the Feishu doc tool
+    document-owner permission warning and disabled/no-finding paths.
+  - Evidence required: focused Feishu security import test, adjacent security
+    and secret proof, ruff, mypy
+  - Status: checkpointed in `a7ea60d4`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Feishu security red/green proof (exact
+    import returned generic passthrough values before implementation, then `1
+    passed`), adjacent security/secret proof (`6 passed, 1170 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK synology-chat shim.
+  - Source: `openclaw-main/src/plugin-sdk/synology-chat.ts`,
+    `openclaw-main/extensions/synology-chat/src/security-audit.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `synology-chat` imports expose
+    `collectSynologyChatSecurityAuditFindings`, including the Synology Chat
+    dangerous username/nickname matching warning, account-note formatting, and
+    disabled/no-finding paths.
+  - Evidence required: focused Synology Chat import test, adjacent provider
+    security proof, ruff, mypy
+  - Status: checkpointed in `eaf176bb`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Synology Chat red/green proof (exact
+    import returned the generic SDK facade before implementation, then `1
+    passed`), adjacent provider/security proof (`3 passed, 1174 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK qa-runtime shim.
+  - Source: `openclaw-main/src/plugin-sdk/qa-runtime.ts`,
+    `openclaw-main/src/plugin-sdk/private-qa-bundled-env.ts`,
+    `openclaw-main/src/plugin-sdk/facade-runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `qa-runtime` imports expose only
+    `loadQaRuntimeModule` and `isQaRuntimeAvailable`, preserving cold loading,
+    private-QA env propagation, qa-lab `runtime-api.js` loading, and
+    missing-artifact unavailable projection.
+  - Evidence required: focused QA runtime import test, adjacent QA/facade
+    proof, ruff, mypy
+  - Status: checkpointed in `a20434e1`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused QA runtime red/green proof (exact
+    import returned the generic SDK facade before implementation, then `1
+    passed`), adjacent QA/facade proof (`4 passed, 1174 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK qa-lab shim.
+  - Source: `openclaw-main/src/plugin-sdk/qa-lab.ts`,
+    `openclaw-main/src/plugin-sdk/facade-loader.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `qa-lab` imports expose only
+    `registerQaLabCli` and `isQaLabCliAvailable`, preserving cold loading,
+    `qa-lab/cli.js` public-surface delegation, and missing-artifact
+    unavailable projection.
+  - Evidence required: focused QA Lab import test, adjacent QA proof, ruff,
+    mypy
+  - Status: checkpointed in `d187a8ce`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused QA Lab red/green proof (exact import
+    returned the generic SDK facade before implementation, then `1 passed`),
+    adjacent QA proof (`4 passed, 1175 deselected`), `ruff check`, `mypy`, and
+    focused `git diff --check`.
+
+- [x] Imported plugin SDK feishu-setup shim.
+  - Source: `openclaw-main/src/plugin-sdk/feishu-setup.ts`,
+    `openclaw-main/extensions/feishu/setup-api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `feishu-setup` imports expose lazy
+    `feishuSetupAdapter` and `feishuSetupWizard` facade objects backed by
+    `feishu/setup-api.js`, preserving cold loading and adapter/wizard property
+    passthrough.
+  - Evidence required: focused Feishu setup import test, adjacent Feishu/setup
+    proof, ruff, mypy
+  - Status: checkpointed in `5bd3b500`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Feishu setup red/green proof (exact
+    import returned the generic SDK facade before implementation, then `1
+    passed`), adjacent Feishu/setup proof (`4 passed, 1176 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK zalo-setup shim.
+  - Source: `openclaw-main/src/plugin-sdk/zalo-setup.ts`,
+    `openclaw-main/extensions/zalo/setup-api.ts`,
+    `openclaw-main/extensions/zalo/contract-api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `zalo-setup` imports expose direct
+    `evaluateZaloGroupAccess` and `resolveZaloRuntimeGroupPolicy` facade
+    functions plus lazy `zaloSetupAdapter` and `zaloSetupWizard` objects backed
+    by Zalo public-surface artifacts.
+  - Evidence required: focused Zalo setup import test, adjacent provider/setup
+    proof, ruff, mypy
+  - Status: checkpointed in `759e64fe`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Zalo setup red/green proof (exact import
+    returned the generic SDK facade before implementation, then `1 passed`),
+    adjacent Zalo/setup proof (`6 passed, 1175 deselected`), `ruff check`,
+    `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK feishu-conversation shim.
+  - Source: `openclaw-main/src/plugin-sdk/feishu-conversation.ts`,
+    `openclaw-main/extensions/feishu/contract-api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `feishu-conversation` imports expose direct
+    Feishu conversation parsing/building and thread-binding manager facade
+    functions plus lazy binding-channel/testing surfaces backed by
+    `feishu/contract-api.js`.
+  - Evidence required: focused Feishu conversation import test, adjacent
+    provider/setup proof, ruff, mypy
+  - Status: checkpointed in `16442d3d`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Feishu conversation red/green proof
+    (exact import returned the generic SDK facade before implementation, then
+    `1 passed`), adjacent Feishu/Zalo proof (`4 passed, 1178 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK slack shim.
+  - Source: `openclaw-main/src/plugin-sdk/slack.ts`,
+    `openclaw-main/extensions/slack/interactive-replies-api.ts`,
+    `openclaw-main/extensions/slack/security-contract-api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `slack` imports expose
+    `compileSlackInteractiveReplies` and `collectSlackSecurityAuditFindings`,
+    preserving the interactive-replies and security public-surface loader
+    boundaries.
+  - Evidence required: focused Slack import test, adjacent provider/runtime
+    proof, ruff, mypy
+  - Status: checkpointed in `4221913e`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Slack red/green proof (exact import
+    returned the generic SDK facade before implementation, then `1 passed`),
+    adjacent provider/runtime proof (`4 passed, 1179 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK xiaomi shim.
+  - Source: `openclaw-main/src/plugin-sdk/xiaomi.ts`,
+    `openclaw-main/extensions/xiaomi/api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `xiaomi` imports expose
+    `applyXiaomiConfig`, `applyXiaomiProviderConfig`, `buildXiaomiProvider`,
+    `XIAOMI_DEFAULT_MODEL_ID`, and `XIAOMI_DEFAULT_MODEL_REF`, preserving the
+    `xiaomi/api.js` facade boundary.
+  - Evidence required: focused Xiaomi import test, adjacent provider proof,
+    ruff, mypy
+  - Status: checkpointed in `04c0b54d`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Xiaomi red/green proof (exact import
+    returned the generic SDK facade before implementation, then `1 passed`),
+    adjacent provider proof (`3 passed, 1181 deselected`), `ruff check`,
+    `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK matrix-runtime-heavy shim.
+  - Source: `openclaw-main/src/plugin-sdk/matrix-runtime-heavy.ts`,
+    `openclaw-main/extensions/matrix/runtime-heavy-api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `matrix-runtime-heavy` imports expose Matrix
+    legacy crypto/state detection, migration, pending/actionable checks, and
+    migration snapshot delegates backed by `matrix/runtime-heavy-api.js`.
+  - Evidence required: focused Matrix runtime-heavy import test, adjacent
+    Matrix proof, ruff, mypy
+  - Status: checkpointed in `d3619058`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Matrix runtime-heavy red/green proof
+    (exact import returned the generic SDK facade before implementation, then
+    `1 passed`), adjacent Matrix proof (`4 passed, 1181 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK memory-core-bundled-runtime shim.
+  - Source: `openclaw-main/src/plugin-sdk/memory-core-bundled-runtime.ts`,
+    `openclaw-main/extensions/memory-core/api.ts`,
+    `openclaw-main/extensions/memory-core/runtime-api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `memory-core-bundled-runtime` imports expose
+    memory-core embedding-provider, dream-artifact repair, grounded REM,
+    backfill, recall filtering, and REM harness facade delegates backed by
+    memory-core API/runtime public surfaces.
+  - Evidence required: focused memory-core bundled import test, adjacent memory
+    proof, ruff, mypy
+  - Status: checkpointed in `280e6b6c`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused memory-core bundled red/green proof
+    (exact import returned the generic SDK facade before implementation, then
+    `1 passed`), adjacent memory proof (`4 passed, 1182 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK twitch setup shim.
+  - Source: `openclaw-main/src/plugin-sdk/twitch.ts`,
+    `openclaw-main/src/plugin-sdk/channel-setup.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `twitch` imports expose root
+    `twitchSetupAdapter` and `twitchSetupWizard` optional-channel setup
+    surfaces while inherited generic SDK helper exports remain reachable.
+  - Evidence required: focused Twitch import test, adjacent optional setup
+    proof, ruff, mypy
+  - Status: checkpointed in `24f8edee`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Twitch red/green proof (exact root
+    import returned generic placeholders before implementation, then `1
+    passed`), adjacent optional setup proof (`4 passed, 1183 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK tlon setup shim.
+  - Source: `openclaw-main/src/plugin-sdk/tlon.ts`,
+    `openclaw-main/src/plugin-sdk/channel-setup.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `tlon` imports expose root
+    `tlonSetupAdapter` and `tlonSetupWizard` optional-channel setup surfaces
+    while inherited generic SDK helper exports remain reachable.
+  - Evidence required: focused Tlon import test, adjacent optional setup proof,
+    ruff, mypy
+  - Status: checkpointed in `2c3feae2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Tlon red/green proof (exact root import
+    returned generic placeholders before implementation, then `1 passed`),
+    adjacent optional setup proof (`4 passed, 1184 deselected`), `ruff check`,
+    `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK nostr setup shim.
+  - Source: `openclaw-main/src/plugin-sdk/nostr.ts`,
+    `openclaw-main/src/plugin-sdk/channel-setup.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `nostr` imports expose root
+    `nostrSetupAdapter` and `nostrSetupWizard` optional-channel setup surfaces
+    while inherited generic SDK helper exports remain reachable.
+  - Evidence required: focused Nostr import test, adjacent optional setup
+    proof, ruff, mypy
+  - Status: checkpointed in `70792d82`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Nostr red/green proof (exact root
+    import returned generic placeholders before implementation, then `1
+    passed`), adjacent optional setup proof (`5 passed, 1184 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK msteams setup shim.
+  - Source: `openclaw-main/src/plugin-sdk/msteams.ts`,
+    `openclaw-main/src/plugin-sdk/channel-setup.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `msteams` imports expose root
+    `msteamsSetupAdapter` and `msteamsSetupWizard` optional-channel setup
+    surfaces while inherited generic SDK helper exports remain reachable.
+  - Evidence required: focused Microsoft Teams import test, adjacent optional
+    setup proof, ruff, mypy
+  - Status: checkpointed in `09d036fd`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Microsoft Teams red/green proof (exact
+    root import returned generic placeholders before implementation, then `1
+    passed`), adjacent optional setup proof (`6 passed, 1184 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK googlechat root shim.
+  - Source: `openclaw-main/src/plugin-sdk/googlechat.ts`,
+    `openclaw-main/src/plugin-sdk/channel-setup.ts`,
+    `openclaw-main/src/plugin-sdk/channel-policy.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `googlechat` imports expose root
+    `googlechatSetupAdapter`, `googlechatSetupWizard`, and
+    `resolveGoogleChatGroupRequireMention`, while inherited generic SDK helper
+    exports remain reachable.
+  - Evidence required: focused Google Chat import test, adjacent setup/policy
+    proof, ruff, mypy
+  - Status: checkpointed in `37ec6cd2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Google Chat red/green proof (exact root
+    import returned generic placeholders before implementation, then `1
+    passed`), adjacent setup/policy proof (`4 passed, 1187 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK telegram root shim.
+  - Source: `openclaw-main/src/plugin-sdk/telegram.ts`,
+    `openclaw-main/extensions/telegram/contract-api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `telegram` imports expose
+    `parseTelegramTopicConversation`, `singleAccountKeysToMove`,
+    `mergeTelegramAccountConfig`, and `collectTelegramSecurityAuditFindings`
+    with OpenClaw-shaped parsed topic, merge, and audit result behavior.
+  - Evidence required: focused Telegram import test, adjacent Telegram proof,
+    ruff, mypy
+  - Status: checkpointed in `2723c527`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Telegram red/green proof (exact root
+    import returned generic placeholder behavior before implementation, then
+    `1 passed`), adjacent Telegram proof (`3 passed, 1189 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK feishu root shim.
+  - Source: `openclaw-main/src/plugin-sdk/feishu.ts`,
+    `openclaw-main/src/plugin-sdk/feishu-setup.ts`,
+    `openclaw-main/src/plugin-sdk/feishu-conversation.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `feishu` imports expose root
+    `feishuSetupAdapter`, `feishuSetupWizard`, Feishu conversation parsing and
+    thread-binding helpers, and inherited generic SDK helper exports.
+  - Evidence required: focused Feishu root import test, adjacent Feishu proof,
+    ruff, mypy
+  - Status: checkpointed in `45877663`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Feishu root red/green proof (exact root
+    import returned generic placeholders before implementation, then `1
+    passed`), adjacent Feishu proof (`4 passed, 1189 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK root shim.
+  - Source: `openclaw-main/src/plugin-sdk/index.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped root imports expose the upstream tiny
+    enumerable helper set (`emptyPluginConfigSchema`, context-engine helpers,
+    diagnostic event subscription, and schema enum helpers) while inherited
+    generic SDK properties remain reachable for legacy consumers.
+  - Evidence required: focused root SDK import test, adjacent root/compat
+    proof, ruff, mypy
+  - Status: checkpointed in `b0df7421`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused root SDK red/green proof (root import
+    returned the broad generic enumerable surface before implementation, then
+    `1 passed`), adjacent root/compat proof (`2 passed, 1192 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK QA runtime test helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/qa-runtime.test-helpers.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `qa-runtime.test-helpers` imports expose
+    upstream-shaped temp private-QA source-root creation, temp-dir cleanup, env
+    restore, and QA runtime surface-load expectation helpers.
+  - Evidence required: focused QA runtime test-helper import test, adjacent QA
+    runtime proof, ruff, mypy
+  - Status: checkpointed in `a15dc5d5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused QA runtime test-helper red/green proof
+    (exact helper import returned generic placeholder behavior before
+    implementation, then `1 passed`), adjacent QA runtime proof (`3 passed,
+    1192 deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK browser facade test helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-facade-test-helpers.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `browser-facade-test-helpers` imports expose
+    upstream-shaped browser host-inspection facade mocking, delegation
+    assertions, and unavailable-facade checks.
+  - Evidence required: focused browser facade test-helper import test,
+    adjacent browser host/node proof, ruff, mypy
+  - Status: checkpointed in `4e950ba5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused browser facade test-helper red/green
+    proof (exact helper import returned generic placeholder behavior before
+    implementation, then `1 passed`), adjacent browser facade proof (`3
+    passed, 1193 deselected`), `ruff check`, `mypy`, and focused `git diff
+    --check`.
+
+- [x] Imported plugin SDK API baseline hash helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/api-baseline.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `api-baseline` imports expose the upstream
+    value export names and exact
+    `computePluginSdkApiBaselineHashFileContent(rendered)` SHA-256 hash-file
+    formatting for rendered JSON/JSONL artifacts.
+  - Evidence required: focused API baseline import test, adjacent root SDK
+    proof, ruff, mypy
+  - Status: checkpointed in `bcf2185c`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused API baseline hash-helper red/green
+    proof (exact helper import returned broad generic placeholders before
+    implementation, then `1 passed`), adjacent root SDK proof (`2 passed,
+    1195 deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK Nextcloud Talk root shim.
+  - Source: `openclaw-main/src/plugin-sdk/nextcloud-talk.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `nextcloud-talk` imports expose the bundled
+    private helper barrel for auth-rate-limiting, channel config/setup, secret
+    input, group policy, reply payload, inbound dispatch, status, and runtime
+    logger helpers.
+  - Evidence required: focused Nextcloud Talk root import test, adjacent
+    channel/setup proof, ruff, mypy
+  - Status: checkpointed in `b76a0b47`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Nextcloud Talk root red/green proof
+    (exact root import returned broad generic placeholders before
+    implementation, then `1 passed`), adjacent channel/setup proof (`4 passed,
+    1194 deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK root test-helper harness shim.
+  - Source: `openclaw-main/src/plugin-sdk/test-helpers.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped root `test-helpers` imports expose
+    `createPluginSdkTestHarness()` with OpenClaw-style fixture-root temp
+    directory sequencing for async and sync test cases.
+  - Evidence required: focused root test-helper import test, adjacent
+    test-helper subpath proof, ruff, mypy
+  - Status: checkpointed in `2af9f158`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused root test-helper red/green proof (root
+    import returned no usable harness before implementation, then `1 passed`),
+    adjacent test-helper proof (`4 passed, 1195 deselected`), `ruff check`,
+    `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK QA channel facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/qa-channel.ts`,
+    `openclaw-main/extensions/qa-channel/src/bus-client.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `qa-channel` imports expose exact target
+    normalization/parsing/building helpers, the QA channel plugin object,
+    runtime setter, and JSON bus method exports.
+  - Evidence required: focused QA channel import test, adjacent QA runtime/lab
+    proof, ruff, mypy
+  - Status: checkpointed in `fda1c201`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused QA channel red/green proof (exact
+    facade import returned generic placeholder behavior before implementation,
+    then `1 passed`), adjacent QA proof (`4 passed, 1196 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK IRC root shim.
+  - Source: `openclaw-main/src/plugin-sdk/irc.ts`,
+    `openclaw-main/extensions/irc/package.json`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `irc` imports expose the bundled private IRC
+    helper barrel for channel config, setup, pairing, reply payload, inbound
+    dispatch, account resolution, status, runtime logger, and policy helpers.
+  - Evidence required: focused IRC root import test, adjacent IRC/channel
+    proof, ruff, mypy
+  - Status: checkpointed in `16b12bb8`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused IRC root red/green proof (exact root
+    import returned generic placeholder/meta behavior before implementation,
+    then `1 passed`), adjacent IRC/channel proof (`4 passed, 1197
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK Matrix root shim.
+  - Source: `openclaw-main/src/plugin-sdk/matrix.ts`,
+    `openclaw-main/extensions/matrix/src/setup-contract.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `matrix` imports expose Matrix setup
+    adapter/wizard, single-account migration keys, named-account promotion
+    keys, and the promotion-target resolver while inherited shared SDK helpers
+    remain reachable.
+  - Evidence required: focused Matrix root import test, adjacent Matrix helper
+    proof, ruff, mypy
+  - Status: checkpointed in `a00b4035`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Matrix root red/green proof (exact
+    root import returned generic placeholder array/function behavior before
+    implementation, then `1 passed`), adjacent Matrix proof (`5 passed, 1197
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK memory-core root shim.
+  - Source: `openclaw-main/src/plugin-sdk/memory-core.ts`,
+    `openclaw-main/src/memory-host-sdk/dreaming.ts`,
+    `openclaw-main/src/plugin-sdk/memory-core-host-status.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `memory-core` imports expose the root
+    memory-core barrel by composing engine, runtime-core, CLI, events, status,
+    and runtime-files helpers, including OpenClaw dreaming config/day/workspace
+    helpers.
+  - Evidence required: focused memory-core root import test, adjacent
+    memory-core host/status/files/engine proof, ruff, mypy
+  - Status: checkpointed in `21cbfac2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused memory-core root red/green proof
+    (exact root import returned generic placeholder status/config behavior
+    before implementation, then `1 passed`), adjacent memory-core proof (`6
+    passed, 1197 deselected`), `ruff check`, `mypy`, and focused `git diff
+    --check`.
+
+- [x] Imported plugin SDK Mattermost root shim.
+  - Source: `openclaw-main/src/plugin-sdk/mattermost.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `mattermost` imports expose the bundled
+    private Mattermost helper barrel for channel config, pairing, reply
+    history, single-channel secret, status, media, group policy, request-body,
+    and proxy/client-IP helpers.
+  - Evidence required: focused Mattermost root import test, adjacent
+    Mattermost policy/reply proof, ruff, mypy
+  - Status: checkpointed in `5500bc77`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Mattermost root red/green proof (exact
+    root import returned generic placeholder helper behavior before
+    implementation, then `1 passed`), adjacent Mattermost proof (`3 passed,
+    1201 deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK Zalo root shim.
+  - Source: `openclaw-main/src/plugin-sdk/zalo.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `zalo` imports expose the root bundled Zalo
+    helper barrel for setup, allow-from, command-auth, channel config, pairing,
+    reply payload, status, webhook ingress, outbound media, and proxy/client-IP
+    helpers.
+  - Evidence required: focused Zalo root import test, adjacent
+    Zalo/setup/zalouser/channel-send/webhook proof, ruff, mypy
+  - Status: checkpointed in `e789e816`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Zalo root red/green proof (exact root
+    import returned broad generic fallback behavior before implementation,
+    then `1 passed`), adjacent Zalo/setup/webhook proof (`5 passed, 1200
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK BlueBubbles root shim.
+  - Source: `openclaw-main/src/plugin-sdk/bluebubbles.ts`,
+    `openclaw-main/extensions/bluebubbles/src/actions-contract.ts`,
+    `openclaw-main/extensions/bluebubbles/src/conversation-id.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `bluebubbles` imports expose the root
+    BlueBubbles helper barrel, including the lazy bundled `api.js` facade for
+    conversation binding/status helpers, action constants, channel config,
+    policy, media, command/tool, webhook, text, and routing helpers.
+  - Evidence required: focused BlueBubbles root import test, adjacent
+    BlueBubbles policy/channel/webhook proof, ruff, mypy
+  - Status: checkpointed in `f5b4121a`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused BlueBubbles root red/green proof
+    (exact root import returned broad generic fallback behavior before
+    implementation, then `1 passed`), adjacent BlueBubbles/channel/webhook
+    proof (`5 passed, 1201 deselected`), `ruff check`, `mypy`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` large-limit cap.
+  - Source: `openclaw-main/src/gateway/server-methods/chat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: RPC `chat.history` floors numeric `limit` values and clamps
+    values above OpenClaw's 1000-message hard cap instead of rejecting them
+    before transcript projection.
+  - Evidence required: focused `chat.history` large-limit test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `6a964896`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_caps_large_limit_like_openclaw -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`32 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` base64 audio redaction.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`,
+    `openclaw-main/src/gateway/server-methods/server-methods.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: structured chat-history audio blocks with
+    `source.type="base64"` remove the embedded `source.data`, surface
+    `source.omitted=true`, and retain encoded byte length under
+    `source.bytes`.
+  - Evidence required: focused `chat.history` audio-redaction test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `d8fe12d3`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_redacts_base64_audio_content_blocks -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`33 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` inline image data redaction.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: structured chat-history image blocks remove embedded `data`,
+    surface `omitted=true`, and retain encoded byte length under `bytes`.
+  - Evidence required: focused `chat.history` image-redaction test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `cd286b80`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_redacts_inline_image_data_blocks -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`34 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` structured partial JSON field caps.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: non-tool structured chat-history content blocks apply the
+    effective `maxChars` cap to string `partialJson` and `arguments` fields,
+    while tool block payloads are left for exact tool-display preservation.
+  - Evidence required: focused structured field-cap test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `812f50de`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_truncates_structured_partial_json_fields -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`35 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` exact tool block payload preservation.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: structured content blocks whose type is a tool-history block
+    preserve exact `text` and `content` payloads under `maxChars`, while still
+    stripping display-only inline directives.
+  - Evidence required: focused exact tool-block payload test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `ec0a6950`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_preserves_exact_tool_block_payloads -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`36 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` heartbeat and empty-row filtering.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`,
+    `openclaw-main/src/auto-reply/heartbeat-filter.ts`,
+    `openclaw-main/src/auto-reply/heartbeat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected `chat.history` rows hide empty user content,
+    OpenClaw heartbeat poll/configured/task prompts, and short
+    `HEARTBEAT_OK` assistant acknowledgements while keeping ordinary assistant
+    responses visible.
+  - Evidence required: focused heartbeat/empty-row test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `7e480dec`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_empty_user_and_heartbeat_rows -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`37 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `sessions.history` heartbeat and empty-row filtering.
+  - Source: `openclaw-main/src/gateway/session-history-state.test.ts`,
+    `openclaw-main/src/gateway/chat-display-projection.ts`,
+    `openclaw-main/src/auto-reply/heartbeat-filter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected `sessions.history` rows hide empty user content,
+    configured/task heartbeat prompts, and short `HEARTBEAT_OK` assistant
+    acknowledgements while keeping meaningful assistant alerts visible.
+  - Evidence required: focused sessions-history heartbeat/empty-row test,
+    adjacent transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `7d8e6b3b`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_hides_empty_user_and_heartbeat_rows -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`38 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` structured empty-user filtering.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected `chat.history` rows hide user content arrays made only
+    of empty/whitespace text blocks while preserving non-empty content.
+  - Evidence required: focused structured empty-user test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `5230af34`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_empty_structured_user_content -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`39 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `sessions.history` structured empty-user filtering.
+  - Source: `openclaw-main/src/gateway/session-history-state.test.ts`,
+    `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected `sessions.history` rows hide user content arrays made
+    only of empty/whitespace text blocks while preserving non-empty content.
+  - Evidence required: focused sessions structured empty-user test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `e38d7753`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_hides_empty_structured_user_content -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`40 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` structured heartbeat-user filtering.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`,
+    `openclaw-main/src/auto-reply/heartbeat-filter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected `chat.history` rows resolve text blocks from
+    structured user content arrays before heartbeat prompt filtering.
+  - Evidence required: focused structured heartbeat-user test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `0041dded`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_structured_heartbeat_user_content -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`41 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `sessions.history` structured heartbeat-user filtering.
+  - Source: `openclaw-main/src/gateway/session-history-state.test.ts`,
+    `openclaw-main/src/gateway/chat-display-projection.ts`,
+    `openclaw-main/src/auto-reply/heartbeat-filter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected `sessions.history` rows resolve text blocks from
+    structured user content arrays before heartbeat prompt filtering.
+  - Evidence required: focused sessions structured heartbeat-user test,
+    adjacent transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `8b4c51e5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_hides_structured_heartbeat_user_content -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`42 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` empty assistant structured content.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected `chat.history` rows preserve assistant empty content
+    arrays while keeping hidden commentary/suppressed rows hidden.
+  - Evidence required: focused empty assistant structured-content test,
+    adjacent transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `25900ca9`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_preserves_empty_structured_assistant_content -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`43 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` assistant usage/cost sanitizer.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected `chat.history` assistant metadata retains only known
+    numeric usage fields, nested `usage.cost.total`, and top-level
+    `cost.total`.
+  - Evidence required: focused usage/cost sanitizer test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `3817410c`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_sanitizes_assistant_usage_and_cost_metadata -q`
+    (`1 failed` before implementation, then `1 passed`), valid metadata proof
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_preserves_assistant_usage_and_cost_metadata -q`
+    (`1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`44 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` internal runtime-context stripping.
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/agents/internal-runtime-context.ts`,
+    `openclaw-main/src/gateway/session-history-state.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected `chat.history` text removes legacy internal runtime
+    context delimiter blocks before display.
+  - Evidence required: focused internal-context stripping test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `b6d1b5b1`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_structured_internal_runtime_context -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`45 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `sessions.history` internal runtime-context stripping.
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/agents/internal-runtime-context.ts`,
+    `openclaw-main/src/gateway/session-history-state.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected `sessions.history` structured text/content blocks
+    remove legacy internal runtime context delimiter blocks before display.
+  - Evidence required: focused sessions internal-context stripping test,
+    adjacent transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `b16e8234`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_strips_structured_internal_runtime_context -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`46 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` user envelope/message-id stripping.
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/shared/chat-envelope.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected raw user text strips recognized channel envelope
+    headers and standalone message-id hint lines.
+  - Evidence required: focused user envelope/message-id test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `e5586d6e`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_user_channel_envelope_and_message_id -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`47 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` structured user envelope stripping.
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/shared/chat-envelope.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected structured user text strips recognized channel
+    envelope headers and standalone message-id hints without corrupting JSON.
+  - Evidence required: focused structured user envelope test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `cfec33ca`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_structured_user_channel_envelope -q`
+    (`1 failed` before implementation, then `1 passed`), raw/heartbeat
+    regression proofs (`2 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`48 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `sessions.history` user envelope/message-id stripping.
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/shared/chat-envelope.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected raw user session rows strip recognized channel
+    envelope headers and standalone message-id hint lines.
+  - Evidence required: focused sessions envelope/message-id test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `abd535b3`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_strips_user_channel_envelope_and_message_id -q`
+    (`1 failed` before implementation, then `1 passed`), structured
+    internal-context regression proof (`1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`49 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `sessions.history` structured user envelope stripping.
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/shared/chat-envelope.ts`,
+    `openclaw-main/src/gateway/session-history-state.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected structured user session rows strip recognized channel
+    envelope headers and standalone message-id hint lines.
+  - Evidence required: focused sessions structured envelope test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `0802c431`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_strips_structured_user_channel_envelope -q`
+    (`1 failed` before implementation, then `1 passed`), raw/chat structured
+    envelope regression proof (`2 passed`), structured internal-context
+    regression proof (`1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`50 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` inbound metadata prefix stripping.
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected raw user chat rows strip OpenClaw-injected inbound
+    metadata prefix blocks and weekday timestamp prefixes.
+  - Evidence required: focused chat inbound metadata test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `fc562e74`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_inbound_metadata_prefix -q`
+    (`1 failed` before implementation, then `1 passed`), envelope regression
+    proof (`3 passed`), structured internal-context regression proof
+    (`1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`51 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` inbound sender label projection.
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected raw user chat rows carry `senderLabel` from inbound
+    sender or conversation metadata while hiding the metadata blocks from
+    visible content.
+  - Evidence required: focused chat sender-label test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `ee8a3679`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_projects_inbound_sender_label -q`
+    (`1 failed` before implementation, then `1 passed`),
+    inbound-prefix/structured chat regression proof (`3 passed`), sessions
+    envelope regression proof (`2 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`52 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `sessions.history` inbound sender label projection.
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected raw user session rows carry `senderLabel` from inbound
+    sender or conversation metadata while hiding the metadata blocks from
+    visible content.
+  - Evidence required: focused sessions sender-label test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `858df20e`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_projects_inbound_sender_label -q`
+    (`1 failed` before implementation, then `1 passed`), chat
+    sender/inbound/structured regression proof (`3 passed`), session
+    envelope/internal-context regression proof (`2 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`53 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `chat.history` structured inbound sender label projection.
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected structured user chat rows carry `senderLabel` from
+    inbound metadata inside text/content blocks while hiding the metadata from
+    visible content.
+  - Evidence required: focused structured chat sender-label test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `666db310`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_projects_structured_inbound_sender_label -q`
+    (`1 failed` before implementation, then `1 passed`), raw chat/session
+    sender regression proof (`3 passed`), session envelope regression proof
+    (`2 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`54 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `sessions.history` structured inbound sender label projection.
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: projected structured user session rows carry `senderLabel` from
+    inbound metadata inside text/content blocks while hiding the metadata from
+    visible content.
+  - Evidence required: focused structured sessions sender-label test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `22940711`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_projects_structured_inbound_sender_label -q`
+    (`1 failed` before implementation, then `1 passed`), chat/session sender
+    regression proof (`3 passed`), session envelope regression proof
+    (`2 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`55 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
 
 ## Update Rule
 

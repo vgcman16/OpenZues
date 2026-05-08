@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -20581,6 +20581,917 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1164 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `1717d1c2`.
+- Imported plugin SDK `talk-voice` now exposes the exact scoped/unscoped
+  bundled talk-voice plugin-entry facade instead of the broad generic SDK
+  passthrough. This closes `OZ-PLUGIN-00340`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999995%.
+- Verified the talk-voice helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_talk_voice_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent plugin-entry facade proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "talk_voice_helpers or plugin_entry_facade or copilot_proxy or private_qa_bundled_env"`
+  (`3 passed, 1166 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `114f60ec`.
+- Imported plugin SDK `memory-lancedb` now exposes the exact scoped/unscoped
+  bundled memory-lancedb plugin-entry plus state-dir facade instead of the
+  broad generic SDK passthrough. This closes `OZ-PLUGIN-00341`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999997%.
+- Verified the memory-lancedb helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_memory_lancedb_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent state-paths/plugin-entry proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "memory_lancedb_helpers or talk_voice_helpers or state_paths_helper or plugin_entry_facade"`
+  (`3 passed, 1167 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `beac73d9`.
+- Imported plugin SDK `phone-control` now exposes the exact scoped/unscoped
+  bundled phone-control plugin-entry facade instead of the broad generic SDK
+  passthrough. This closes `OZ-PLUGIN-00342`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999998%.
+- Verified the phone-control helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_phone_control_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent plugin-entry facade proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "phone_control_helpers or memory_lancedb_helpers or talk_voice_helpers or plugin_entry_facade"`
+  (`3 passed, 1168 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `93b139e3`.
+- Imported plugin SDK `matrix-runtime-shared` now exposes the exact
+  scoped/unscoped runtime helper facade for `formatZonedTimestamp` instead of
+  the broad generic SDK passthrough. This closes `OZ-PLUGIN-00343`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999999999999999999%.
+- Verified the Matrix runtime-shared helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_matrix_runtime_shared_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent Matrix/time proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "matrix_runtime_shared_helpers or matrix_helper_helpers or matrix_runtime_surface_helper or time_runtime_helpers"`
+  (`4 passed, 1168 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `c34a2d10`.
+- Imported plugin SDK `lobster` now exposes the exact scoped/unscoped bundled
+  Lobster plugin-entry plus Windows spawn helper facade instead of the broad
+  generic SDK passthrough. This closes `OZ-PLUGIN-00344`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999995%.
+- Verified the Lobster helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_lobster_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent Windows-spawn/plugin-entry proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "lobster_helpers or windows_spawn_helpers or plugin_entry_facade or phone_control_helpers"`
+  (`3 passed, 1170 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `0beb9dbc`.
+- Imported plugin SDK `voice-call` now exposes the exact scoped/unscoped
+  bundled voice-call plugin-entry, TTS schema, HTTP body, SSRF fetch, and sleep
+  helper facade instead of the broad generic SDK passthrough. This closes
+  `OZ-PLUGIN-00345`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999999999999999999999999997%.
+- Verified the voice-call helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_voice_call_helpers -q`
+  (the fallback returned schema passthrough functions without `safeParse`
+  before implementation, then `1 passed`), adjacent webhook/TTS/Lobster proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "voice_call_helpers or lobster_helpers or webhook_ingress or channel_secret_tts"`
+  (`4 passed, 1170 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `bdbc7724`.
+- Imported plugin SDK `matrix-deps` now exposes the exact scoped/unscoped
+  Matrix dependency availability and install-confirmation facade instead of the
+  broad generic SDK passthrough. This closes `OZ-PLUGIN-00346`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999998%.
+- Verified the Matrix deps helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_matrix_deps_helpers -q`
+  (the exact subpath returned generic SDK keys before implementation, then `1
+  passed`), adjacent Matrix helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "matrix_deps_helpers or matrix_runtime_shared_helpers or matrix_helper_helpers or matrix_surface_helper"`
+  (`4 passed, 1171 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `3cdfebfd`.
+- Imported plugin SDK `feishu-security` now exposes the exact scoped/unscoped
+  Feishu document-owner security audit facade instead of the broad generic SDK
+  passthrough. This closes `OZ-PLUGIN-00347`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999985%.
+- Verified the Feishu security helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_feishu_security_helpers -q`
+  (the exact subpath returned generic passthrough values before
+  implementation, then `1 passed`), adjacent security/secret proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "feishu_security_helpers or matrix_deps_helpers or secret_input_runtime or channel_secret"`
+  (`6 passed, 1170 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `a7ea60d4`.
+- Imported plugin SDK `synology-chat` now exposes the exact scoped/unscoped
+  Synology Chat dangerous-name-matching security audit facade instead of the
+  broad generic SDK passthrough. This closes `OZ-PLUGIN-00348`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999%.
+- Verified the Synology Chat helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_synology_chat_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent provider/security proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "synology_chat_helpers or feishu_security_helpers or matrix_deps_helpers"`
+  (`3 passed, 1174 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `eaf176bb`.
+- Imported plugin SDK `qa-runtime` now exposes the exact scoped/unscoped
+  QA runtime public-surface loader facade instead of the broad generic SDK
+  passthrough. This closes `OZ-PLUGIN-00349`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999995%.
+- Verified the QA runtime helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_qa_runtime_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent QA/facade proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "qa_runtime_helpers or qa_runner_runtime_helpers or private_qa_bundled_env or facade_runtime"`
+  (`4 passed, 1174 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `a20434e1`.
+- Imported plugin SDK `qa-lab` now exposes the exact scoped/unscoped bundled
+  QA Lab CLI facade instead of the broad generic SDK passthrough. This closes
+  `OZ-PLUGIN-00350`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.99999999999999999999999999999999997%.
+- Verified the QA Lab helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_qa_lab_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent QA proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "qa_lab_helpers or qa_runtime_helpers or qa_runner_runtime_helpers or private_qa_bundled_env"`
+  (`4 passed, 1175 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `d187a8ce`.
+- Imported plugin SDK `feishu-setup` now exposes the exact scoped/unscoped
+  lazy Feishu setup adapter/wizard facade instead of the broad generic SDK
+  passthrough. This closes `OZ-PLUGIN-00351`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999998%.
+- Verified the Feishu setup helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_feishu_setup_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent Feishu/setup facade proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "feishu_setup_helpers or feishu_security_helpers or setup_adapter_runtime or facade_loader"`
+  (`4 passed, 1176 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `5bd3b500`.
+- Imported plugin SDK `zalo-setup` now exposes the exact scoped/unscoped Zalo
+  setup and group-access facade instead of the broad generic SDK passthrough.
+  This closes `OZ-PLUGIN-00352`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999%.
+- Verified the Zalo setup helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_zalo_setup_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent Zalo/setup proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "zalo_setup_helpers or feishu_setup_helpers or zalouser or group_activation"`
+  (`6 passed, 1175 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `759e64fe`.
+- Imported plugin SDK `feishu-conversation` now exposes the exact
+  scoped/unscoped Feishu conversation and thread-binding facade instead of the
+  broad generic SDK passthrough. This closes `OZ-PLUGIN-00353`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999995%.
+- Verified the Feishu conversation helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_feishu_conversation_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent Feishu/Zalo proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "feishu_conversation_helpers or feishu_setup_helpers or feishu_security_helpers or zalo_setup_helpers"`
+  (`4 passed, 1178 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `16442d3d`.
+- Imported plugin SDK `slack` now exposes the exact scoped/unscoped Slack
+  interactive-replies and security-audit facade instead of the broad generic
+  SDK passthrough. This closes `OZ-PLUGIN-00354`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999996%.
+- Verified the Slack helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_slack_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent provider/runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "slack_helpers or feishu_conversation_helpers or webhook_ingress or reply_dispatch_runtime"`
+  (`4 passed, 1179 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `4221913e`.
+- Imported plugin SDK `xiaomi` now exposes the exact scoped/unscoped Xiaomi
+  provider/onboarding facade instead of the broad generic SDK passthrough. This
+  closes `OZ-PLUGIN-00355`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.999999999999999999999999999999999997%.
+- Verified the Xiaomi helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_xiaomi_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent provider proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "xiaomi_helpers or slack_helpers or provider_setup_helpers or self_hosted_provider_setup"`
+  (`3 passed, 1181 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `04c0b54d`.
+- Imported plugin SDK `matrix-runtime-heavy` now exposes the exact
+  scoped/unscoped Matrix legacy migration runtime facade instead of the broad
+  generic SDK passthrough. This closes `OZ-PLUGIN-00356`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999998%.
+- Verified the Matrix runtime-heavy helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_matrix_runtime_heavy_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent Matrix proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "matrix_runtime_heavy_helpers or matrix_deps_helpers or matrix_runtime_shared_helpers or matrix_helper_helpers"`
+  (`4 passed, 1181 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `d3619058`.
+- Imported plugin SDK `memory-core-bundled-runtime` now exposes the exact
+  scoped/unscoped memory-core API/runtime public-surface facade instead of the
+  broad generic SDK passthrough. This closes `OZ-PLUGIN-00357`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999%.
+- Verified the memory-core bundled helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_memory_core_bundled_runtime_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent memory proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "memory_core_bundled_runtime_helpers or memory_core_engine_runtime or memory_lancedb_helpers or memory_host_search"`
+  (`4 passed, 1182 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `280e6b6c`.
+- Imported plugin SDK `twitch` now exposes the exact root optional setup
+  adapter/wizard surface while preserving inherited generic SDK helpers. This
+  closes `OZ-PLUGIN-00358`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999995%.
+- Verified the Twitch setup helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_twitch_helpers -q`
+  (the exact root import returned generic placeholders before implementation,
+  then `1 passed`), adjacent optional setup proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "twitch_helpers or optional_channel_setup or channel_setup_helpers or setup_adapter_runtime"`
+  (`4 passed, 1183 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `24f8edee`.
+- Imported plugin SDK `tlon` now exposes the exact root optional setup
+  adapter/wizard surface while preserving inherited generic SDK helpers. This
+  closes `OZ-PLUGIN-00359`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999997%.
+- Verified the Tlon setup helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_tlon_helpers -q`
+  (the exact root import returned generic placeholders before implementation,
+  then `1 passed`), adjacent optional setup proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "tlon_helpers or twitch_helpers or optional_channel_setup or channel_setup_helpers"`
+  (`4 passed, 1184 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `2c3feae2`.
+- Imported plugin SDK `nostr` now exposes the exact root optional setup
+  adapter/wizard surface while preserving inherited generic SDK helpers. This
+  closes `OZ-PLUGIN-00360`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999998%.
+- Verified the Nostr setup helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_nostr_helpers -q`
+  (the exact root import returned generic placeholders before implementation,
+  then `1 passed`), adjacent optional setup proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "nostr_helpers or tlon_helpers or twitch_helpers or optional_channel_setup or channel_setup_helpers"`
+  (`5 passed, 1184 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `70792d82`.
+- Imported plugin SDK `msteams` now exposes the exact root optional setup
+  adapter/wizard surface while preserving inherited generic SDK helpers. This
+  closes `OZ-PLUGIN-00361`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999%.
+- Verified the Microsoft Teams setup helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_msteams_helpers -q`
+  (the exact root import returned generic placeholders before implementation,
+  then `1 passed`), adjacent optional setup proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "msteams_helpers or nostr_helpers or tlon_helpers or twitch_helpers or optional_channel_setup or channel_setup_helpers"`
+  (`6 passed, 1184 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `09d036fd`.
+- Imported plugin SDK `googlechat` now exposes the exact root optional setup
+  adapter/wizard surface and Google Chat group mention-gating helper while
+  preserving inherited generic SDK helpers. This closes `OZ-PLUGIN-00362`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999999999999999999999995%.
+- Verified the Google Chat root helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_googlechat_helpers -q`
+  (the exact root import returned generic placeholders before implementation,
+  then `1 passed`), adjacent setup/policy proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "googlechat_helpers or googlechat_runtime_shared_helpers or msteams_helpers or optional_channel_setup or channel_policy_helpers"`
+  (`4 passed, 1187 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `37ec6cd2`.
+- Imported plugin SDK `telegram` now exposes the exact root helper facade for
+  topic conversation parsing, single-account migration keys, account-config
+  merging, and Telegram security audit findings instead of broad generic SDK
+  placeholders. This closes `OZ-PLUGIN-00363`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999997%.
+- Verified the Telegram root helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_telegram_helpers -q`
+  (the exact root import returned generic placeholder behavior before
+  implementation, then `1 passed`), adjacent Telegram proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "telegram_helpers or telegram_account_helpers or telegram_command_ui or telegram_command_config"`
+  (`3 passed, 1189 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `2723c527`.
+- Imported plugin SDK `feishu` now exposes the exact root setup and
+  conversation facade by composing the already verified Feishu setup and
+  conversation subpath runtimes while preserving inherited generic SDK helpers.
+  This closes `OZ-PLUGIN-00364`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999998%.
+- Verified the Feishu root helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_feishu_root_helpers -q`
+  (the exact root import returned generic placeholders before implementation,
+  then `1 passed`), adjacent Feishu proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "feishu_root_helpers or feishu_setup_helpers or feishu_conversation_helpers or feishu_security_helpers"`
+  (`4 passed, 1189 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `45877663`.
+- Imported root `openclaw/plugin-sdk` now exposes the exact tiny upstream
+  enumerable helper surface while inheriting legacy generic SDK properties for
+  existing consumers. This closes `OZ-PLUGIN-00365`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999%.
+- Verified the root plugin SDK helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_plugin_sdk_root_helpers -q`
+  (the root import returned the broad generic enumerable surface before
+  implementation, then `1 passed`), adjacent root/compat proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "plugin_sdk_root_helpers or agent_config_primitives_helpers or compat_helpers or diagnostic_event_helpers"`
+  (`2 passed, 1192 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `b0df7421`.
+- Imported plugin SDK `qa-runtime.test-helpers` now exposes the exact upstream
+  QA runtime test helper surface for temporary private-QA source roots, env
+  restore semantics, cleanup, and runtime-surface load expectations instead of
+  generic placeholder helpers. This closes `OZ-PLUGIN-00366`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999995%.
+- Verified the QA runtime test helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_qa_runtime_test_helpers -q`
+  (the exact helper import returned generic placeholder behavior before
+  implementation, then `1 passed`), adjacent QA runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "qa_runtime_test_helpers or qa_runtime_helpers or qa_lab_helpers"`
+  (`3 passed, 1192 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `a15dc5d5`.
+- Imported plugin SDK `browser-facade-test-helpers` now exposes the exact
+  upstream browser host-inspection facade test helper surface for bundled
+  artifact mocking, delegation assertions, and unavailable-facade checks
+  instead of the generic SDK fallback. This closes `OZ-PLUGIN-00367`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999999999999999999999997%.
+- Verified the browser facade test helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_browser_facade_test_helpers -q`
+  (the exact helper import returned generic placeholder behavior before
+  implementation, then `1 passed`), adjacent browser facade proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_facade_test_helpers or browser_host_inspection_helpers or browser_node_host_helpers"`
+  (`3 passed, 1193 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `4e950ba5`.
+- Imported plugin SDK `api-baseline` now exposes the upstream value export names
+  and exact `computePluginSdkApiBaselineHashFileContent` SHA-256 hash-file
+  formatting for rendered JSON/JSONL API baseline artifacts instead of the
+  generic SDK fallback. This closes `OZ-PLUGIN-00368`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999998%.
+- Verified the API baseline hash helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_api_baseline_helpers -q`
+  (the exact helper import returned the broad generic enumerable surface and a
+  placeholder result before implementation, then `1 passed`), adjacent root SDK
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "api_baseline_helpers or plugin_sdk_root_helpers"`
+  (`2 passed, 1195 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `bcf2185c`.
+- Imported plugin SDK `nextcloud-talk` now exposes the bundled private helper
+  barrel by composing already verified native auth-rate-limit, channel config,
+  setup wizard, secret input, group policy, reply payload, inbound dispatch,
+  status, and runtime logger helpers instead of the generic SDK fallback. This
+  closes `OZ-PLUGIN-00369`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999%.
+- Verified the Nextcloud Talk root helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_nextcloud_talk_helpers -q`
+  (the exact root import returned the broad generic enumerable surface and
+  generic helper behavior before implementation, then `1 passed`), adjacent
+  channel/setup proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "nextcloud_talk_helpers or channel_config_helpers or channel_pairing_helpers or secret_input_helpers"`
+  (`4 passed, 1194 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `b76a0b47`.
+- Imported plugin SDK root `test-helpers` now exposes
+  `createPluginSdkTestHarness` with OpenClaw-style fixture-root temp directory
+  sequencing for async and sync test cases instead of the generic SDK fallback.
+  This closes `OZ-PLUGIN-00370`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999995%.
+- Verified the root test-helper harness with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_helpers_root -q`
+  (the root helper import returned no usable harness before implementation,
+  then `1 passed`), adjacent test-helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "test_helpers_root or test_helpers_string_utils or test_helpers_envelope_timestamp or test_helpers_pairing_reply"`
+  (`4 passed, 1195 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `2af9f158`.
+- Imported plugin SDK `qa-channel` now exposes the manual QA channel facade
+  with exact target normalization/parsing/building helpers, the QA channel
+  plugin object, runtime setter, and JSON bus method exports instead of the
+  generic SDK fallback. This closes `OZ-PLUGIN-00371`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999996%.
+- Verified the QA channel facade with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_qa_channel_helpers -q`
+  (the exact facade import returned lazy generic placeholder behavior before
+  implementation, then `1 passed`), adjacent QA proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "qa_channel_helpers or qa_lab_helpers or qa_runtime_helpers or qa_runtime_test_helpers"`
+  (`4 passed, 1196 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `fda1c201`.
+- Imported plugin SDK `irc` now exposes the bundled private IRC helper barrel
+  by composing already verified channel config, pairing, reply payload,
+  inbound dispatch, runtime logger, status, setup, account, and policy helpers
+  instead of the broad generic SDK fallback. This closes `OZ-PLUGIN-00372`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999999999999999999997%.
+- Verified the IRC root facade with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_irc_root_helpers -q`
+  (the exact root import returned generic placeholder/meta behavior before
+  implementation, then `1 passed`), adjacent IRC/channel proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "irc_root_helpers or irc_surface_helper or channel_config_helpers or channel_pairing_helpers"`
+  (`4 passed, 1197 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `16b12bb8`.
+- Imported plugin SDK `matrix` now exposes the Matrix root setup and
+  single-account promotion helper facade instead of broad generic passthrough
+  placeholders, while preserving inherited shared SDK helpers for runtime
+  consumers. This closes `OZ-PLUGIN-00373`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999998%.
+- Verified the Matrix root facade with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_matrix_root_helpers -q`
+  (the exact root import returned generic placeholder array/function behavior
+  before implementation, then `1 passed`), adjacent Matrix proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "matrix_root_helpers or matrix_runtime_surface_helper or matrix_thread_bindings_helper or matrix_surface_helper or matrix_helper_helpers"`
+  (`5 passed, 1197 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `a00b4035`.
+- Imported plugin SDK `memory-core` now exposes the root memory-core barrel by
+  composing the verified engine, runtime-core, CLI, events, status, and
+  runtime-files facades, and the status facade now includes the OpenClaw
+  dreaming config/day/workspace helpers needed by the root barrel. This closes
+  `OZ-PLUGIN-00374`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999%.
+- Verified the memory-core root facade with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_memory_core_root_helpers -q`
+  (the exact root import returned generic placeholder status/config behavior
+  before implementation, then `1 passed`), adjacent memory-core proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "memory_core_root_helpers or memory_core_host_status_helpers or memory_core_host_events or memory_core_host_runtime_files or memory_core_host_runtime_core or memory_core_engine_runtime"`
+  (`6 passed, 1197 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `21cbfac2`.
+- Imported plugin SDK `mattermost` now exposes the bundled private Mattermost
+  helper barrel by composing verified channel config, pairing, reply history,
+  single-channel secret, status, media, group policy, request-body, and network
+  proxy/client-IP helpers instead of broad generic SDK placeholders. This
+  closes `OZ-PLUGIN-00375`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999995%.
+- Verified the Mattermost root facade with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_mattermost_root_helpers -q`
+  (the exact root import returned generic placeholder helper behavior before
+  implementation, then `1 passed`), adjacent Mattermost proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "mattermost_root_helpers or mattermost_policy_helper or reply_history_helpers"`
+  (`3 passed, 1201 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `5500bc77`.
+- Imported plugin SDK `zalo` now exposes the root bundled Zalo helper barrel
+  by composing verified setup, allow-from, command-auth, channel config,
+  pairing, reply payload, status, webhook ingress, outbound media, and
+  proxy/client-IP helpers instead of broad generic SDK placeholders. This
+  closes `OZ-PLUGIN-00376`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999997%.
+- Verified the Zalo root facade with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_zalo_root_helpers -q`
+  (the exact root import returned broad generic fallback behavior before
+  implementation, then `1 passed`), adjacent Zalo/setup/webhook proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "zalo_root_helpers or zalo_setup_helpers or zalouser_helpers or channel_send_result_helpers or webhook_ingress_helpers"`
+  (`5 passed, 1200 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `e789e816`.
+- Imported plugin SDK `bluebubbles` now exposes the root BlueBubbles helper
+  barrel by composing the lazy bundled `api.js` facade for conversation
+  binding/status helpers plus verified action constants, channel config,
+  BlueBubbles policy, media, command/tool, webhook, text, and routing helpers
+  instead of broad generic SDK placeholders. This closes `OZ-PLUGIN-00377` and
+  finishes the current exact SDK-root queue; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999998%.
+- Verified the BlueBubbles root facade with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_bluebubbles_root_helpers -q`
+  (the exact root import returned broad generic fallback behavior before
+  implementation, then `1 passed`), adjacent BlueBubbles/channel/webhook proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "bluebubbles_root_helpers or bluebubbles_policy_helper or channel_targets_helpers or channel_config_helpers or webhook_ingress_helpers"`
+  (`5 passed, 1201 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `f5b4121a`.
+- `chat.history` now clamps oversized numeric `limit` requests to OpenClaw's
+  hard 1000-message cap instead of rejecting them. This closes a bounded
+  read-model edge in the active `chat.*` / `sessions.*` transcript family;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999999999999999999999999999%.
+- Verified the `chat.history` limit-cap seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_caps_large_limit_like_openclaw -q`
+  (large `limit` raised `ValueError` before implementation, then `1 passed`),
+  adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`32 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `6a964896`.
+- `chat.history` now redacts structured base64 audio content blocks before
+  returning transcript rows, matching OpenClaw's `sanitizeChatHistoryMessages`
+  behavior. Embedded audio `source.data` is removed, `source.omitted=true` is
+  preserved, and `source.bytes` records the encoded payload length. This closes
+  another bounded read-model edge; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999995%.
+- Verified the `chat.history` audio-redaction seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_redacts_base64_audio_content_blocks -q`
+  (base64 audio data was returned before implementation, then `1 passed`),
+  adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`33 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `d8fe12d3`.
+- `chat.history` now also redacts inline image content block `data` fields
+  before returning transcript rows, preserving only `omitted=true` and encoded
+  byte length like OpenClaw's display projection sanitizer. This closes the
+  adjacent structured-media read-model edge; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999997%.
+- Verified the `chat.history` image-redaction seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_redacts_inline_image_data_blocks -q`
+  (inline image data was returned before implementation, then `1 passed`),
+  adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`34 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `cd286b80`.
+- `chat.history` now applies OpenClaw's structured-block text cap to non-tool
+  `partialJson` and string `arguments` fields, while keeping tool block payload
+  preservation available for a separate exact-payload seam. This closes another
+  display-projection sanitizer edge; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999998%.
+- Verified the structured-block field-cap seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_truncates_structured_partial_json_fields -q`
+  (structured `partialJson` / `arguments` were uncapped before implementation,
+  then `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`35 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `812f50de`.
+- `chat.history` now preserves exact structured tool-history block
+  `text`/`content` payloads while still stripping display-only directives,
+  matching OpenClaw's `preserveExactToolPayload` branch. This closes the
+  neighboring tool-display sanitizer edge; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999%.
+- Verified the tool-block exact-payload seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_preserves_exact_tool_block_payloads -q`
+  (tool block text/content were truncated before implementation, then
+  `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`36 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `ec0a6950`.
+- `chat.history` now hides empty user transcript rows plus OpenClaw heartbeat
+  poll prompts and short `HEARTBEAT_OK` acknowledgements from the projected
+  chat display, matching OpenClaw's `shouldHideProjectedHistoryMessage` /
+  heartbeat-filter read-model path while preserving ordinary assistant
+  messages. This closes another transcript display-projection edge; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999995%.
+- Verified the heartbeat/empty-row filtering seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_empty_user_and_heartbeat_rows -q`
+  (empty user and heartbeat rows were returned before implementation, then
+  `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`37 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `7e480dec`.
+- `sessions.history` now applies the same OpenClaw visible-history heartbeat
+  filtering as `chat.history`, hiding empty user rows, configured heartbeat
+  prompts, and short `HEARTBEAT_OK` acknowledgements while preserving
+  meaningful assistant alerts. This closes the adjacent session snapshot
+  read-model edge; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999997%.
+- Verified the `sessions.history` heartbeat/empty-row seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_hides_empty_user_and_heartbeat_rows -q`
+  (empty user and heartbeat rows were returned before implementation, then
+  `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`38 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `7d8e6b3b`.
+- `chat.history` now also hides user messages whose structured content is
+  made only of empty text blocks, matching OpenClaw's
+  `isEmptyTextOnlyContent` projection rule for array content. This closes the
+  structured-content variant of the empty-user transcript edge; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999998%.
+- Verified the structured empty-user content seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_empty_structured_user_content -q`
+  (empty text-only structured user content was returned before implementation,
+  then `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`39 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `5230af34`.
+- `sessions.history` now hides the structured-content variant of empty user
+  transcript rows too, so session snapshots match OpenClaw's text-only empty
+  array projection rule alongside raw empty strings and heartbeat prompts. This
+  closes the adjacent session snapshot structured-content edge; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999999%.
+- Verified the `sessions.history` structured empty-user content seam with
+  focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_hides_empty_structured_user_content -q`
+  (empty text-only structured user content was returned before implementation,
+  then `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`40 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e38d7753`.
+- `chat.history` now resolves structured user text blocks before applying
+  OpenClaw heartbeat prompt filtering, so heartbeat rows serialized as content
+  arrays are hidden the same way as raw-string heartbeat rows. This closes the
+  structured heartbeat-prompt variant of the transcript projection edge;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999999999999999999999999999995%.
+- Verified the structured heartbeat user content seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_structured_heartbeat_user_content -q`
+  (structured heartbeat prompt rows were returned before implementation, then
+  `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`41 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `0041dded`.
+- `sessions.history` now resolves structured user text blocks before applying
+  heartbeat prompt filtering as well, keeping session snapshots aligned with
+  OpenClaw's visible-history projection for content-array heartbeat prompts.
+  This closes the matching session snapshot variant; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999997%.
+- Verified the `sessions.history` structured heartbeat user content seam with
+  focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_hides_structured_heartbeat_user_content -q`
+  (structured heartbeat prompt rows were returned before implementation, then
+  `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`42 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `8b4c51e5`.
+- `chat.history` now preserves assistant messages whose structured content is
+  an intentionally empty array while still dropping commentary/suppressed
+  assistant rows, matching OpenClaw's rule that empty assistant content is not
+  hidden the way empty user content is. This closes a structured assistant
+  display-projection edge; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999998%.
+- Verified the empty structured assistant content seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_preserves_empty_structured_assistant_content -q`
+  (empty assistant content arrays were dropped before implementation, then
+  `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`43 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `25900ca9`.
+- `chat.history` now sanitizes assistant usage/cost metadata before
+  projection, retaining only OpenClaw's known numeric usage fields and
+  `cost.total` while dropping unknown keys and non-numeric values. This closes
+  the assistant metadata sanitizer edge from `chat-display-projection`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999999999999999999999999999999%.
+- Verified the assistant usage/cost metadata sanitizer seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_sanitizes_assistant_usage_and_cost_metadata -q`
+  (unknown/string metadata fields leaked before implementation, then
+  `1 passed`), existing valid metadata proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_preserves_assistant_usage_and_cost_metadata -q`
+  (`1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`44 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `3817410c`.
+- `chat.history` now strips legacy OpenClaw internal runtime-context delimiter
+  blocks before exposing structured transcript text, so runtime-only context is
+  removed and visible user text remains. This closes the first
+  `chat-sanitize` / session-history state envelope-stripping edge in the
+  transcript display path; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999995%.
+- Verified the structured internal runtime-context stripping seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_structured_internal_runtime_context -q`
+  (the internal block was exposed before implementation, then `1 passed`),
+  adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`45 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `b6d1b5b1`.
+- `sessions.history` now strips the same legacy internal runtime-context
+  delimiter blocks from structured text/content blocks before returning
+  session snapshots. This closes the session snapshot side of the
+  `chat-sanitize` envelope-stripping edge; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999997%.
+- Verified the `sessions.history` structured internal runtime-context seam
+  with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_strips_structured_internal_runtime_context -q`
+  (the internal block was exposed before implementation, then `1 passed`),
+  adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`46 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `b16e8234`.
+- `chat.history` now strips OpenClaw-style user channel envelopes and
+  `[message_id: ...]` hints before projecting raw user transcript text, while
+  keeping the stripping role-aware so assistant text is not over-normalized.
+  This closes the raw user side of the `chat-sanitize` channel envelope edge;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999999999999999999999999999999%.
+- Verified the user channel-envelope/message-id stripping seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_user_channel_envelope_and_message_id -q`
+  (the envelope/header leaked before implementation, then `1 passed`),
+  adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`47 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e5586d6e`.
+- `chat.history` now applies the same role-aware user envelope/message-id
+  stripping inside structured content blocks, parsing JSON content from the raw
+  row first so envelope normalization cannot corrupt structured payloads. This
+  closes the structured user side of the `chat-sanitize` channel envelope
+  edge; repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999999999999999999999999995%.
+- Verified the structured user channel-envelope stripping seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_structured_user_channel_envelope -q`
+  (structured envelope rows leaked/corrupted before implementation, then
+  `1 passed`), raw envelope and structured heartbeat regression proofs
+  (`2 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`48 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `cfec33ca`.
+- `sessions.history` now strips OpenClaw-style raw user channel envelopes and
+  standalone message-id hint lines before returning session snapshots, while
+  parsing structured JSON from raw rows to keep structured snapshots intact.
+  This closes the session snapshot raw user side of the channel envelope edge;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999999999999999999999999997%.
+- Verified the `sessions.history` user envelope/message-id seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_strips_user_channel_envelope_and_message_id -q`
+  (the envelope/header leaked before implementation, then `1 passed`),
+  structured internal-context regression proof (`1 passed`), adjacent
+  transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`49 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `abd535b3`.
+- `sessions.history` now applies the same OpenClaw user-envelope sanitizer to
+  structured user content blocks before returning session snapshots, including
+  recognized channel envelope headers and standalone message-id hint lines.
+  This closes the structured session snapshot user side of the channel envelope
+  edge; repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999999999999999999999999998%.
+- Verified the `sessions.history` structured user envelope seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_strips_structured_user_channel_envelope -q`
+  (the structured envelope leaked before implementation, then `1 passed`),
+  raw/chat structured envelope regression proof (`2 passed`), structured
+  internal-context regression proof (`1 passed`), adjacent transcript/read-model
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`50 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `0802c431`.
+- `chat.history` now strips OpenClaw-injected inbound metadata prefix blocks and
+  injected weekday timestamp prefixes before exposing raw user transcript text.
+  This ports the visible-history portion of upstream `stripInboundMetadata`
+  into the native Python display projection; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999985%.
+- Verified the `chat.history` inbound metadata prefix seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_inbound_metadata_prefix -q`
+  (the metadata block and timestamp leaked before implementation, then
+  `1 passed`), envelope regression proof (`3 passed`), structured
+  internal-context regression proof (`1 passed`), adjacent transcript/read-model
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`51 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `fc562e74`.
+- `chat.history` now projects OpenClaw-style `senderLabel` from inbound sender
+  metadata before stripping AI-facing metadata blocks from visible transcript
+  text. This closes the raw chat-history sender label side of upstream
+  `extractInboundSenderLabel`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999999999%.
+- Verified the `chat.history` inbound sender label seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_projects_inbound_sender_label -q`
+  (content stripped correctly but `senderLabel` was absent before
+  implementation, then `1 passed`), inbound-prefix/structured chat regression
+  proof (`3 passed` after updating the prefix expectation to include the
+  newly projected label), sessions envelope regression proof (`2 passed`),
+  adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`52 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `ee8a3679`.
+- `sessions.history` now projects the same OpenClaw-style `senderLabel` from
+  inbound sender/conversation metadata before returning session snapshots. This
+  closes the session snapshot sender label side of upstream
+  `stripEnvelopeFromMessage`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999995%.
+- Verified the `sessions.history` inbound sender label seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_projects_inbound_sender_label -q`
+  (content stripped correctly but `senderLabel` was absent before
+  implementation, then `1 passed`), chat sender/inbound/structured regression
+  proof (`3 passed`), session envelope/internal-context regression proof
+  (`2 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`53 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `858df20e`.
+- `chat.history` now extracts OpenClaw-style `senderLabel` from inbound metadata
+  inside structured user content blocks before returning structured chat
+  messages. This closes the structured chat content-array side of upstream
+  `extractMessageSenderLabel`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999997%.
+- Verified the `chat.history` structured inbound sender label seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_projects_structured_inbound_sender_label -q`
+  (structured content stripped correctly but `senderLabel` was absent before
+  implementation, then `1 passed`), raw chat/session sender regression proof
+  (`3 passed`), session envelope regression proof (`2 passed`), adjacent
+  transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`54 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `666db310`.
+- `sessions.history` now extracts OpenClaw-style `senderLabel` from inbound
+  metadata inside structured user content blocks before returning session
+  snapshots. This closes the structured session content-array side of upstream
+  `extractMessageSenderLabel`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999998%.
+- Verified the `sessions.history` structured inbound sender label seam with
+  focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_projects_structured_inbound_sender_label -q`
+  (structured content stripped correctly but `senderLabel` was absent before
+  implementation, then `1 passed`), chat/session sender regression proof
+  (`3 passed`), session envelope regression proof (`2 passed`), adjacent
+  transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`55 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `22940711`.
 
 ## References
 

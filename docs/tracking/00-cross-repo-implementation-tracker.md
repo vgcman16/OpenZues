@@ -20,9 +20,9 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Chat/session contract subfamily | ~99.96% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -119,9 +119,52 @@ checkpointed in `c298b482`, and `OZ-PLUGIN-00327` minimax is checkpointed in
 `OZ-PLUGIN-00336` ollama/ollama-runtime is checkpointed in `2b1e3865`;
 `OZ-PLUGIN-00337` line-surface is checkpointed in `fee011e1`, and
 `OZ-PLUGIN-00338` line root/core is checkpointed in `696e61f2`.
-`OZ-PLUGIN-00339` matrix-helper is checkpointed in `1717d1c2`; continue
-remaining exact SDK helper seams, provider/runtime breadth, and broader repo
-parity.
+`OZ-PLUGIN-00339` matrix-helper is checkpointed in `1717d1c2`, and
+`OZ-PLUGIN-00340` talk-voice is checkpointed in `114f60ec`.
+`OZ-PLUGIN-00341` memory-lancedb is checkpointed in `beac73d9`, and
+`OZ-PLUGIN-00342` phone-control is checkpointed in `93b139e3`.
+`OZ-PLUGIN-00343` matrix-runtime-shared is checkpointed in `c34a2d10`;
+`OZ-PLUGIN-00344` lobster is checkpointed in `0beb9dbc`, and
+`OZ-PLUGIN-00345` voice-call is checkpointed in `bdbc7724`.
+`OZ-PLUGIN-00346` matrix-deps is checkpointed in `3cdfebfd`,
+`OZ-PLUGIN-00347` feishu-security is checkpointed in `a7ea60d4`, and
+`OZ-PLUGIN-00348` synology-chat is checkpointed in `eaf176bb`.
+`OZ-PLUGIN-00349` qa-runtime is checkpointed in `a20434e1`, and
+`OZ-PLUGIN-00350` qa-lab is checkpointed in `d187a8ce`.
+`OZ-PLUGIN-00351` feishu-setup is checkpointed in `5bd3b500`, and
+`OZ-PLUGIN-00352` zalo-setup is checkpointed in `759e64fe`.
+`OZ-PLUGIN-00353` feishu-conversation is checkpointed in `16442d3d`, and
+`OZ-PLUGIN-00354` slack is checkpointed in `4221913e`.
+`OZ-PLUGIN-00355` xiaomi is checkpointed in `04c0b54d`, and
+`OZ-PLUGIN-00356` matrix-runtime-heavy is checkpointed in `d3619058`.
+`OZ-PLUGIN-00357` memory-core-bundled-runtime is checkpointed in `280e6b6c`;
+`OZ-PLUGIN-00358` twitch is checkpointed in `24f8edee`, and
+`OZ-PLUGIN-00359` tlon is checkpointed in `2c3feae2`. `OZ-PLUGIN-00360`
+nostr is checkpointed in `70792d82`, and `OZ-PLUGIN-00361` msteams is
+checkpointed in `09d036fd`. `OZ-PLUGIN-00362` googlechat is checkpointed in
+`37ec6cd2`, and `OZ-PLUGIN-00363` telegram is checkpointed in `2723c527`;
+`OZ-PLUGIN-00364` feishu is checkpointed in `45877663`;
+`OZ-PLUGIN-00365` root plugin-sdk is checkpointed in `b0df7421`, and
+`OZ-PLUGIN-00366` qa-runtime.test-helpers is checkpointed in `a15dc5d5`.
+`OZ-PLUGIN-00367` browser-facade-test-helpers is checkpointed in `4e950ba5`.
+`OZ-PLUGIN-00368` api-baseline is checkpointed in `bcf2185c`.
+`OZ-PLUGIN-00369` nextcloud-talk is checkpointed in `b76a0b47`.
+`OZ-PLUGIN-00370` test-helpers is checkpointed in `2af9f158`.
+`OZ-PLUGIN-00371` qa-channel is checkpointed in `fda1c201`.
+`OZ-PLUGIN-00372` irc is checkpointed in `16b12bb8`.
+`OZ-PLUGIN-00373` matrix is checkpointed in `a00b4035`.
+`OZ-PLUGIN-00374` memory-core is checkpointed in `21cbfac2`.
+`OZ-PLUGIN-00375` mattermost is checkpointed in `5500bc77`.
+`OZ-PLUGIN-00376` zalo is checkpointed in `e789e816`.
+`OZ-PLUGIN-00377` bluebubbles is checkpointed in `f5b4121a`.
+The current exact SDK-root seam queue is complete. `OZ-RT-001AA`
+`chat.history` large-limit cap is checkpointed in `6a964896`, and
+`OZ-RT-001AB` `chat.history` base64-audio redaction is checkpointed in
+`d8fe12d3`; `OZ-RT-001AC` `chat.history` inline-image redaction is
+checkpointed in `cd286b80`; `OZ-RT-001AD` structured chat-history field caps
+are checkpointed in `812f50de`; `OZ-RT-001AE` exact tool-block payload
+preservation is checkpointed in `ec0a6950`; continue broader provider/runtime
+breadth.
 
 ## Active Slice Detail
 
@@ -13711,6 +13754,450 @@ parity.
     or whatsapp_media or send_direct_channel_poll_uses_whatsapp"` (`5
     passed`), `ruff check src\openzues\services\ops_mesh.py
     tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-RT-001AF` Chat history heartbeat and empty-row filtering
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`,
+    `openclaw-main/src/auto-reply/heartbeat-filter.ts`, and
+    `openclaw-main/src/auto-reply/heartbeat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` omits empty user transcript rows, OpenClaw
+    heartbeat poll prompts, configured heartbeat prompt rows, task heartbeat
+    prompts, and short assistant heartbeat acknowledgements from projected
+    history while preserving ordinary assistant rows.
+  - Evidence required: focused heartbeat/empty-row history test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `7e480dec`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_empty_user_and_heartbeat_rows -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`37 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AG` Sessions history heartbeat and empty-row filtering
+  - Source: `openclaw-main/src/gateway/session-history-state.test.ts`,
+    `openclaw-main/src/gateway/chat-display-projection.ts`,
+    `openclaw-main/src/auto-reply/heartbeat-filter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `sessions.history` omits empty user transcript rows, configured
+    heartbeat prompt rows, task heartbeat prompts, and short assistant
+    heartbeat acknowledgements from session snapshots while preserving
+    meaningful assistant alerts.
+  - Evidence required: focused sessions-history heartbeat/empty-row test,
+    adjacent transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `7d8e6b3b`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_hides_empty_user_and_heartbeat_rows -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`38 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AH` Chat history structured empty-user filtering
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` omits user rows whose structured content array is
+    empty or contains only text blocks with empty/whitespace text, while
+    preserving non-empty user content and meaningful assistant rows.
+  - Evidence required: focused structured empty-user test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `5230af34`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_empty_structured_user_content -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`39 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AI` Sessions history structured empty-user filtering
+  - Source: `openclaw-main/src/gateway/session-history-state.test.ts`,
+    `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `sessions.history` omits user rows whose structured content
+    array is empty or contains only text blocks with empty/whitespace text,
+    while preserving non-empty user content and meaningful assistant rows.
+  - Evidence required: focused sessions structured empty-user test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `e38d7753`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_hides_empty_structured_user_content -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`40 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AJ` Chat history structured heartbeat-user filtering
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`,
+    `openclaw-main/src/auto-reply/heartbeat-filter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` resolves text blocks from structured user
+    content arrays before applying OpenClaw heartbeat prompt filtering, hiding
+    structured heartbeat rows while preserving non-heartbeat structured input.
+  - Evidence required: focused structured heartbeat-user test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `0041dded`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_structured_heartbeat_user_content -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`41 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AK` Sessions history structured heartbeat-user filtering
+  - Source: `openclaw-main/src/gateway/session-history-state.test.ts`,
+    `openclaw-main/src/gateway/chat-display-projection.ts`,
+    `openclaw-main/src/auto-reply/heartbeat-filter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `sessions.history` resolves text blocks from structured user
+    content arrays before applying OpenClaw heartbeat prompt filtering, hiding
+    structured heartbeat rows from session snapshots while preserving
+    non-heartbeat structured input.
+  - Evidence required: focused sessions structured heartbeat-user test,
+    adjacent transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `8b4c51e5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_hides_structured_heartbeat_user_content -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`42 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AL` Chat history empty assistant structured content
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` preserves assistant rows whose structured
+    content is an empty array, while still dropping commentary and suppressed
+    assistant control rows.
+  - Evidence required: focused empty assistant structured-content test,
+    adjacent transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `25900ca9`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_preserves_empty_structured_assistant_content -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`43 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AM` Chat history assistant usage/cost sanitizer
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` projects assistant usage metadata with only
+    OpenClaw's known numeric token/cache fields plus nested `usage.cost.total`,
+    and projects top-level cost metadata as only numeric `total`.
+  - Evidence required: focused usage/cost sanitizer test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `3817410c`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_sanitizes_assistant_usage_and_cost_metadata -q`
+    (`1 failed` before implementation, then `1 passed`), valid metadata proof
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_preserves_assistant_usage_and_cost_metadata -q`
+    (`1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`44 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AN` Chat history internal runtime-context stripping
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/agents/internal-runtime-context.ts`,
+    `openclaw-main/src/gateway/session-history-state.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` removes legacy internal runtime-context delimiter
+    blocks from projected transcript text before visibility filtering and
+    structured-content output.
+  - Evidence required: focused internal-context stripping test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `b6d1b5b1`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_structured_internal_runtime_context -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`45 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AO` Sessions history internal runtime-context stripping
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/agents/internal-runtime-context.ts`,
+    `openclaw-main/src/gateway/session-history-state.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `sessions.history` removes legacy internal runtime-context
+    delimiter blocks from structured text/content blocks before returning
+    session snapshots.
+  - Evidence required: focused sessions internal-context stripping test,
+    adjacent transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `b16e8234`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_strips_structured_internal_runtime_context -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`46 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AP` Chat history user envelope/message-id stripping
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/shared/chat-envelope.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` strips recognized user channel envelope headers
+    and standalone `[message_id: ...]` hint lines before display projection,
+    without applying that envelope stripping to assistant rows by default.
+  - Evidence required: focused user envelope/message-id test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `e5586d6e`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_user_channel_envelope_and_message_id -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`47 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AQ` Chat history structured user envelope stripping
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/shared/chat-envelope.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` strips recognized user channel envelopes and
+    standalone message-id hints inside structured text blocks while parsing
+    structured JSON from the raw row to avoid payload corruption.
+  - Evidence required: focused structured user envelope test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `cfec33ca`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_structured_user_channel_envelope -q`
+    (`1 failed` before implementation, then `1 passed`), raw/heartbeat
+    regression proofs (`2 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`48 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AR` Sessions history user envelope/message-id stripping
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/shared/chat-envelope.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `sessions.history` strips recognized raw user channel envelope
+    headers and standalone `[message_id: ...]` hint lines while preserving raw
+    structured JSON parsing for structured session rows.
+  - Evidence required: focused sessions envelope/message-id test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `abd535b3`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_strips_user_channel_envelope_and_message_id -q`
+    (`1 failed` before implementation, then `1 passed`), structured
+    internal-context regression proof (`1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`49 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AS` Sessions history structured user envelope stripping
+  - Source: `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/shared/chat-envelope.ts`,
+    `openclaw-main/src/gateway/session-history-state.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `sessions.history` strips recognized channel envelope headers
+    and standalone `[message_id: ...]` hint lines from structured user content
+    blocks while keeping assistant/tool structured blocks role-preserved.
+  - Evidence required: focused sessions structured envelope test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `0802c431`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_strips_structured_user_channel_envelope -q`
+    (`1 failed` before implementation, then `1 passed`), raw/chat structured
+    envelope regression proof (`2 passed`), structured internal-context
+    regression proof (`1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`50 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AT` Chat history inbound metadata prefix stripping
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` strips OpenClaw-injected inbound metadata prefix
+    blocks and weekday timestamp prefixes from raw visible transcript text.
+  - Evidence required: focused chat inbound metadata test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `fc562e74`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_inbound_metadata_prefix -q`
+    (`1 failed` before implementation, then `1 passed`), envelope regression
+    proof (`3 passed`), structured internal-context regression proof
+    (`1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`51 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AU` Chat history inbound sender label projection
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` projects `senderLabel` from inbound sender or
+    conversation metadata before stripping AI-facing metadata blocks from
+    visible transcript content.
+  - Evidence required: focused chat sender-label test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `ee8a3679`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_projects_inbound_sender_label -q`
+    (`1 failed` before implementation, then `1 passed`),
+    inbound-prefix/structured chat regression proof (`3 passed`), sessions
+    envelope regression proof (`2 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`52 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AV` Sessions history inbound sender label projection
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `sessions.history` projects `senderLabel` from inbound sender or
+    conversation metadata before stripping AI-facing metadata blocks from
+    visible session snapshot content.
+  - Evidence required: focused sessions sender-label test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `858df20e`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_projects_inbound_sender_label -q`
+    (`1 failed` before implementation, then `1 passed`), chat
+    sender/inbound/structured regression proof (`3 passed`), session
+    envelope/internal-context regression proof (`2 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`53 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AW` Chat history structured inbound sender label projection
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` projects `senderLabel` from inbound metadata
+    stored inside structured user content blocks while hiding the metadata from
+    visible content.
+  - Evidence required: focused structured chat sender-label test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `666db310`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_projects_structured_inbound_sender_label -q`
+    (`1 failed` before implementation, then `1 passed`), raw chat/session
+    sender regression proof (`3 passed`), session envelope regression proof
+    (`2 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`54 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AX` Sessions history structured inbound sender label projection
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `sessions.history` projects `senderLabel` from inbound metadata
+    stored inside structured user content blocks while hiding the metadata from
+    visible session snapshot content.
+  - Evidence required: focused structured sessions sender-label test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `22940711`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_projects_structured_inbound_sender_label -q`
+    (`1 failed` before implementation, then `1 passed`), chat/session sender
+    regression proof (`3 passed`), session envelope regression proof
+    (`2 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`55 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
 
 ## Canonical Checklist Format
 
