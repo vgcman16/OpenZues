@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999999997%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999999998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -20659,6 +20659,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1170 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `bdbc7724`.
+- Imported plugin SDK `matrix-deps` now exposes the exact scoped/unscoped
+  Matrix dependency availability and install-confirmation facade instead of the
+  broad generic SDK passthrough. This closes `OZ-PLUGIN-00346`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999998%.
+- Verified the Matrix deps helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_matrix_deps_helpers -q`
+  (the exact subpath returned generic SDK keys before implementation, then `1
+  passed`), adjacent Matrix helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "matrix_deps_helpers or matrix_runtime_shared_helpers or matrix_helper_helpers or matrix_surface_helper"`
+  (`4 passed, 1171 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `3cdfebfd`.
 
 ## References
 
