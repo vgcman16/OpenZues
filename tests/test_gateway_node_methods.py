@@ -19486,6 +19486,164 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_mattermost_root_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-mattermost-root.cjs"
+    runtime_entry.write_text(
+        """
+const mattermost = require("openclaw/plugin-sdk/mattermost");
+const scopedMattermost = require("@openclaw/plugin-sdk/mattermost");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.mattermost_root",
+      description: "Use OpenClaw Mattermost root SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const enabledCfg = mattermost.setAccountEnabledInConfigSection({
+          cfg: {},
+          sectionKey: "mattermost",
+          accountId: "work",
+          enabled: false
+        });
+        const dedupe = mattermost.createDedupeCache({ maxSize: 2, ttlMs: 1000 });
+        const firstSeen = dedupe.check("alpha", 1000);
+        const secondSeen = dedupe.check("alpha", 1001);
+        return {
+          hasRootKeys: [
+            "formatInboundFromLabel",
+            "buildPendingHistoryContextFromMap",
+            "listSkillCommandsForAgents",
+            "resolveControlCommandGate",
+            "buildChannelConfigSchema",
+            "createAccountStatusSink",
+            "resolveThreadSessionKeys",
+            "resolveDmGroupAccessWithLists",
+            "buildAgentMediaPayload",
+            "readRequestBodyWithLimit",
+            "parseStrictPositiveInteger",
+            "isTrustedProxyAddress",
+            "resolveClientIp"
+          ].every((key) => Object.prototype.hasOwnProperty.call(mattermost, key)),
+          scopedSame:
+            scopedMattermost.formatInboundFromLabel ===
+              mattermost.formatInboundFromLabel &&
+            scopedMattermost.resolveClientIp === mattermost.resolveClientIp,
+          chunked: mattermost.chunkTextForOutbound("abcdef", 3),
+          normalizedAccount: mattermost.normalizeAccountId(" Work Team "),
+          enabledPatch: enabledCfg.channels.mattermost.accounts.work.enabled,
+          positiveIntegers: [
+            mattermost.parseStrictPositiveInteger("7"),
+            mattermost.parseStrictPositiveInteger(3),
+            mattermost.parseStrictPositiveInteger("1.2"),
+            mattermost.parseStrictPositiveInteger(0)
+          ],
+          network: {
+            trusted: mattermost.isTrustedProxyAddress("10.0.0.3", ["10.0.0.0/8"]),
+            untrusted: mattermost.isTrustedProxyAddress("198.51.100.7", ["10.0.0.0/8"]),
+            direct: mattermost.resolveClientIp({
+              remoteAddr: "203.0.113.9",
+              trustedProxies: ["10.0.0.0/8"]
+            }),
+            forwarded: mattermost.resolveClientIp({
+              remoteAddr: "10.0.0.3",
+              forwardedFor: "198.51.100.7, 10.0.0.3",
+              trustedProxies: ["10.0.0.0/8"]
+            }),
+            realIp: mattermost.resolveClientIp({
+              remoteAddr: "10.0.0.3",
+              realIp: "198.51.100.8",
+              trustedProxies: ["10.0.0.0/8"],
+              allowRealIpFallback: true
+            })
+          },
+          dedupe: { firstSeen, secondSeen },
+          types: {
+            schema: typeof mattermost.MarkdownConfigSchema.safeParse,
+            httpRoute: typeof mattermost.registerPluginHttpRoute,
+            rawData: mattermost.rawDataToString(Buffer.from("ok"))
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-mattermost-root-plugin",
+                    "name": "Runtime Mattermost Root Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-mattermost-root.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.mattermost_root"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.mattermost_root"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "hasRootKeys": True,
+        "scopedSame": True,
+        "chunked": ["abc", "def"],
+        "normalizedAccount": "work-team",
+        "enabledPatch": False,
+        "positiveIntegers": [7, 3, None, None],
+        "network": {
+            "trusted": True,
+            "untrusted": False,
+            "direct": "203.0.113.9",
+            "forwarded": "198.51.100.7",
+            "realIp": "198.51.100.8",
+        },
+        "dedupe": {"firstSeen": False, "secondSeen": True},
+        "types": {
+            "schema": "function",
+            "httpRoute": "function",
+            "rawData": "ok",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_matrix_root_helpers(
     tmp_path,
 ) -> None:

@@ -21299,6 +21299,26 @@ function parseFiniteNumber(value) {
   return undefined;
 }
 
+function parseStrictInteger(value) {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) ? value : undefined;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || !/^[+-]?\d+$/.test(trimmed)) {
+    return undefined;
+  }
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+function parseStrictPositiveInteger(value) {
+  const parsed = parseStrictInteger(value);
+  return parsed !== undefined && parsed > 0 ? parsed : undefined;
+}
+
 function generateSecureUuid() {
   return crypto.randomUUID();
 }
@@ -72023,6 +72043,114 @@ function isLoopbackHost(host) {
   return /^::ffff:127(?:\.\d{1,3}){3}$/.test(unbracketedHost);
 }
 
+function normalizeIpLiteral(raw) {
+  const trimmed = String(raw || "").trim().toLowerCase();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.startsWith("[")) {
+    const end = trimmed.indexOf("]");
+    return end === -1 ? undefined : trimmed.slice(1, end);
+  }
+  const colon = trimmed.lastIndexOf(":");
+  if (colon > -1 && trimmed.includes(".") && trimmed.indexOf(":") === colon) {
+    return trimmed.slice(0, colon);
+  }
+  return trimmed;
+}
+
+function ipv4ToInt(ip) {
+  const parts = String(ip || "").split(".");
+  if (parts.length !== 4) {
+    return undefined;
+  }
+  let result = 0;
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) {
+      return undefined;
+    }
+    const value = Number(part);
+    if (!Number.isInteger(value) || value < 0 || value > 255) {
+      return undefined;
+    }
+    result = (result << 8) | value;
+  }
+  return result >>> 0;
+}
+
+function isIpv4InCidr(ip, cidr) {
+  const [range, prefixRaw] = String(cidr || "").split("/");
+  const ipInt = ipv4ToInt(ip);
+  const rangeInt = ipv4ToInt(range);
+  if (ipInt === undefined || rangeInt === undefined) {
+    return false;
+  }
+  const prefix = prefixRaw === undefined ? 32 : Number(prefixRaw);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+    return false;
+  }
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (ipInt & mask) === (rangeInt & mask);
+}
+
+function isTrustedProxyAddress(ip, trustedProxies) {
+  const normalized = normalizeIpLiteral(ip);
+  if (!normalized || !Array.isArray(trustedProxies) || trustedProxies.length === 0) {
+    return false;
+  }
+  return trustedProxies.some((proxy) => {
+    const candidate = String(proxy || "").trim().toLowerCase();
+    if (!candidate) {
+      return false;
+    }
+    if (candidate.includes("/")) {
+      return isIpv4InCidr(normalized, candidate);
+    }
+    return normalizeIpLiteral(candidate) === normalized;
+  });
+}
+
+function resolveForwardedClientIp(params) {
+  if (!Array.isArray(params.trustedProxies) || params.trustedProxies.length === 0) {
+    return undefined;
+  }
+  const chain = [];
+  for (const entry of String(params.forwardedFor || "").split(",")) {
+    const normalized = normalizeIpLiteral(entry);
+    if (normalized) {
+      chain.push(normalized);
+    }
+  }
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    const hop = chain[index];
+    if (isLoopbackHost(hop)) {
+      continue;
+    }
+    if (!isTrustedProxyAddress(hop, params.trustedProxies)) {
+      return hop;
+    }
+  }
+  return undefined;
+}
+
+function resolveClientIp(params = {}) {
+  const remote = normalizeIpLiteral(params.remoteAddr);
+  if (!remote) {
+    return undefined;
+  }
+  if (!isTrustedProxyAddress(remote, params.trustedProxies)) {
+    return remote;
+  }
+  const forwarded = resolveForwardedClientIp({
+    forwardedFor: params.forwardedFor,
+    trustedProxies: params.trustedProxies,
+  });
+  if (forwarded) {
+    return forwarded;
+  }
+  return params.allowRealIpFallback ? normalizeIpLiteral(params.realIp) : undefined;
+}
+
 const browserConfigSupportRuntime = {
   CONFIG_DIR,
   DEFAULT_BROWSER_CONTROL_PORT,
@@ -89819,6 +89947,72 @@ const ircRootRuntime = Object.assign(Object.create(genericSdk), {
   warnMissingProviderGroupPolicyFallbackOnce,
 });
 
+const mattermostRootRuntime = Object.assign(Object.create(genericSdk), {
+  BlockStreamingCoalesceSchema,
+  DEFAULT_ACCOUNT_ID,
+  DEFAULT_GROUP_HISTORY_LIMIT,
+  DM_GROUP_ACCESS_REASON,
+  DmPolicySchema,
+  GroupPolicySchema,
+  MarkdownConfigSchema,
+  applyAccountNameToChannelSection,
+  applySetupAccountConfigPatch,
+  buildAgentMediaPayload,
+  buildChannelConfigSchema,
+  buildComputedAccountStatusSnapshot,
+  buildModelsProviderData,
+  buildPendingHistoryContextFromMap,
+  buildSingleChannelSecretPromptState,
+  chunkTextForOutbound,
+  clearHistoryEntriesIfEnabled,
+  createAccountListHelpers,
+  createAccountStatusSink,
+  createChannelPairingController,
+  createChannelReplyPipeline,
+  createDedupeCache,
+  createSetupInputPresenceValidator,
+  deleteAccountFromConfigSection,
+  emptyPluginConfigSchema,
+  evaluateSenderGroupAccessForPolicy,
+  formatInboundFromLabel,
+  formatPairingApproveHint,
+  getAgentScopedMediaLocalRoots,
+  isDangerousNameMatchingEnabled,
+  isLoopbackHost,
+  isRequestBodyLimitError,
+  isTrustedProxyAddress,
+  listSkillCommandsForAgents,
+  loadOutboundMediaFromUrl,
+  loadSessionStore,
+  logInboundDrop,
+  logTypingFailure,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
+  normalizeProviderId,
+  parseStrictPositiveInteger,
+  promptSingleChannelSecretInput,
+  rawDataToString,
+  readRequestBodyWithLimit,
+  readStoreAllowFromForDmPolicy,
+  recordPendingHistoryEntryIfEnabled,
+  registerPluginHttpRoute,
+  requireOpenAllowFrom,
+  resolveAllowlistMatchSimple,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveChannelMediaMaxBytes,
+  resolveClientIp,
+  resolveControlCommandGate,
+  resolveDefaultGroupPolicy,
+  resolveDmGroupAccessWithLists,
+  resolveEffectiveAllowFromLists,
+  resolveStorePath,
+  resolveStoredModelOverride,
+  resolveThreadSessionKeys,
+  runSingleChannelSecretStep,
+  setAccountEnabledInConfigSection,
+  warnMissingProviderGroupPolicyFallbackOnce,
+});
+
 const originalLoad = Module._load;
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
@@ -91752,6 +91946,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/compat"
   ) {
     return compatRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/mattermost" ||
+    request === "@openclaw/plugin-sdk/mattermost"
+  ) {
+    return mattermostRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/mattermost-policy" ||
