@@ -67943,6 +67943,10 @@ const pluginEntryRuntime = {
   emptyPluginConfigSchema,
 };
 
+const talkVoiceRuntime = {
+  definePluginEntry,
+};
+
 const copilotProxyRuntime = {
   definePluginEntry,
 };
@@ -89183,6 +89187,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-entry"
   ) {
     return pluginEntryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/talk-voice" ||
+    request === "@openclaw/plugin-sdk/talk-voice"
+  ) {
+    return talkVoiceRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/copilot-proxy" ||
