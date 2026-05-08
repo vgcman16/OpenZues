@@ -88314,6 +88314,17 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     });
   }
   if (
+    request === "openclaw/plugin-sdk/nostr" ||
+    request === "@openclaw/plugin-sdk/nostr"
+  ) {
+    return getOptionalChannelRootRuntime({
+      channel: "nostr",
+      label: "Nostr",
+      npmSpec: "@openclaw/nostr",
+      docsPath: "/channels/nostr",
+    });
+  }
+  if (
     request === "openclaw/plugin-sdk/tlon" ||
     request === "@openclaw/plugin-sdk/tlon"
   ) {

@@ -21163,6 +21163,120 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_nostr_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-nostr.cjs"
+    runtime_entry.write_text(
+        """
+const nostr = require("openclaw/plugin-sdk/nostr");
+const scopedNostr = require("@openclaw/plugin-sdk/nostr");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.nostr",
+      description: "Use OpenClaw nostr SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const setupKeys = Object.keys(nostr)
+          .filter((key) => key.startsWith("nostrSetup"))
+          .sort();
+        const adapter = nostr.nostrSetupAdapter;
+        const wizard = scopedNostr.nostrSetupWizard;
+        let finalizeError = "";
+        return Promise.resolve()
+          .then(() => wizard.finalize({}))
+          .catch((error) => {
+            finalizeError = error.message;
+          })
+          .then(() => ({
+            setupKeys,
+            scopedSame: scopedNostr.nostrSetupAdapter === nostr.nostrSetupAdapter,
+            inheritedGenericType: typeof nostr.createDedupeCache,
+            account: adapter.resolveAccountId({}),
+            validation: adapter.validateInput({}),
+            wizard: {
+              channel: wizard.channel,
+              hint: wizard.status.unconfiguredHint,
+              selection: wizard.status.resolveSelectionHint(),
+              finalizeError
+            }
+          }));
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-nostr-plugin",
+                    "name": "Runtime Nostr Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-nostr.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.nostr"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.nostr"})
+
+    message = (
+        "Nostr setup requires @openclaw/nostr to be installed. "
+        "Docs: channels/nostr (https://docs.openclaw.ai/channels/nostr)"
+    )
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "setupKeys": ["nostrSetupAdapter", "nostrSetupWizard"],
+        "scopedSame": True,
+        "inheritedGenericType": "function",
+        "account": "default",
+        "validation": message,
+        "wizard": {
+            "channel": "nostr",
+            "hint": message,
+            "selection": message,
+            "finalizeError": message,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_tlon_helpers(
     tmp_path,
 ) -> None:
