@@ -4976,6 +4976,17 @@ may lag behind this tracker.
     (`7 passed, 376 deselected`), adjacent CLI proof (`3 passed, 520
     deselected`), `ruff check`, and `mypy`.
 
+- [x] Tlon group/thread reply proof.
+  - Source: `openclaw-main/extensions/tlon/src/urbit/send.ts`,
+    `openclaw-main/extensions/tlon/src/targets.ts`
+  - Target: `tests/test_ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `0fd7cbb8`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Tlon group reply proof (`1 passed`),
+    adjacent native-provider proof (`8 passed, 376 deselected`), `ruff check`,
+    and `mypy`.
+
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.
   - Source: OpenClaw repo-wide domains.

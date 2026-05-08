@@ -18263,6 +18263,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py tests\test_cli.py`,
   `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `bab52a95`.
+- Tlon group/thread text sends are now explicitly verified against OpenClaw's
+  `sendGroupMessageWithStory` contract: route-backed `group:` and
+  `chat/<ship>/<channel>` targets match saved Tlon group routes, direct sends
+  use the upstream `channel-action-1` poke shape, and numeric `replyToId`
+  values are formatted into dotted `@ud` ids before dispatch. This closes
+  `OZ-PROV-001DC`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band still ~80-99.9999991%. Remaining Tlon-specific runtime depth
+  is media upload fidelity plus inbound/session breadth.
+- Verified the Tlon group/thread proof with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_tlon_group_reply -q`
+  (`1 passed`), adjacent native-provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or irc_native_route or twitch_native_route"`
+  (`8 passed, 376 deselected`), `ruff check tests\test_ops_mesh.py
+  src\openzues\services\ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Test/evidence checkpointed in `0fd7cbb8`.
 
 ## References
 

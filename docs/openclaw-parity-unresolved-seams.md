@@ -1743,8 +1743,10 @@ the upstream target forms, markdown text becomes Tlon story inline content,
 `/~/login` supplies the auth cookie, and `/~/channel/<id>` receives the
 `chat-dm-action` or `channel-action-1` poke. Direct gateway sends now persist
 native transport and provider result metadata with `messageId`, `chatId`, and
-`channelId`. Remaining Tlon runtime parity is now media upload fidelity,
-deeper group/thread reply coverage, and inbound/session breadth.
+`channelId`. Tlon group/thread replies are now additionally verified with the
+upstream `channel-action-1` reply wrapper and dotted `@ud` numeric reply ids.
+Remaining Tlon runtime parity is now media upload fidelity and inbound/session
+breadth.
 iMessage config-backed account probes now mirror OpenClaw's `probeIMessage`
 status hook: `channels status --probe --json` discovers configured
 `channels.imessage` accounts from the Gateway config snapshot, checks the
@@ -9758,8 +9760,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   against `/~/login`, PUT upstream-shaped poke actions into `/~/channel/<id>`,
   convert markdown into Tlon story content, and preserve native provider
   result metadata through direct gateway sends. Source/test checkpointed in
-  `bab52a95`; repo-wide parity remains estimated at ~99.9%, with the evidence
-  band tightened to ~80-99.9999991%. Remaining Tlon-specific gaps are media
-  upload fidelity, deeper group/thread reply proof, and inbound/session
-  breadth before rotating through broader provider, packaging, and companion
-  seams.
+  `bab52a95`; group/thread reply proof checkpointed in `0fd7cbb8`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999991%. Remaining Tlon-specific gaps are media upload
+  fidelity and inbound/session breadth before rotating through broader
+  provider, packaging, and companion seams.

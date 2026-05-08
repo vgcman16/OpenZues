@@ -68,7 +68,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Tlon text send is no longer the head; rotate to Tlon media/group depth, broader provider runtime breadth, packaging, or companion seams |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Tlon text/group send is no longer the head; rotate to Tlon media depth, broader provider runtime breadth, packaging, or companion seams |
 
 ## Active Slice Detail
 
@@ -99,6 +99,25 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     proof (`7 passed, 376 deselected`), adjacent CLI proof (`3 passed, 520
     deselected`), `ruff check src\openzues\services\ops_mesh.py
     tests\test_ops_mesh.py tests\test_cli.py`, and `mypy
+    src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001DC` Tlon group/thread reply proof
+  - Source: `openclaw-main/extensions/tlon/src/urbit/send.ts`,
+    `openclaw-main/extensions/tlon/src/targets.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_ops_mesh.py`
+  - Contract: route-backed `kind="tlon"` group targets use the upstream
+    `channel-action-1` `post.reply` payload and numeric `replyToId` values are
+    converted into dotted `@ud` ids before dispatch.
+  - Evidence required: focused Tlon group reply test, adjacent Tlon/IRC/Twitch
+    native-provider proof, ruff, mypy
+  - Status: checkpointed in `0fd7cbb8`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_tlon_group_reply -q`
+    (`1 passed`), adjacent native-provider proof (`8 passed, 376
+    deselected`), `ruff check tests\test_ops_mesh.py
+    src\openzues\services\ops_mesh.py`, and `mypy
     src\openzues\services\ops_mesh.py`.
 
 - [x] `OZ-PROV-001DA` iMessage config-backed CLI/RPC account probe
