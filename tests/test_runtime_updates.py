@@ -692,6 +692,121 @@ async def test_runtime_update_run_update_uses_dev_target_ref_without_rebase(
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_update_reports_no_target_sha_for_dev_target_ref(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[list[str]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        command_calls.append(argv)
+        if argv[:2] == ["git", "rev-parse"]:
+            return {"stdout": "", "stderr": "unknown ref\n", "exitCode": 1}
+        if argv[:2] in (["git", "worktree"], ["git", "rebase"]):
+            raise AssertionError("missing dev target SHA should stop before preflight")
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("missing dev target SHA should not schedule restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(
+        timeout_ms=1000,
+        dev_target_ref="feature/ref",
+    )
+
+    assert result["status"] == "error"
+    assert result["reason"] == "no-target-sha"
+    assert [step["name"] for step in result["steps"]] == [
+        "git status",
+        "git fetch",
+        "git rev-parse refs/remotes/origin/feature/ref",
+        "git rev-parse refs/tags/feature/ref^{}",
+        "git rev-parse refs/tags/feature/ref",
+    ]
+    assert command_calls[-3:] == [
+        ["git", "rev-parse", "refs/remotes/origin/feature/ref"],
+        ["git", "rev-parse", "refs/tags/feature/ref^{}"],
+        ["git", "rev-parse", "refs/tags/feature/ref"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_reports_preflight_no_good_commit(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[tuple[list[str], Path]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del timeout_ms
+        command_calls.append((argv, cwd))
+        if argv == ["git", "rev-parse", "@{upstream}"]:
+            return {"stdout": "rev-c\n", "stderr": "", "exitCode": 0}
+        if argv[:2] == ["git", "rev-list"]:
+            return {"stdout": "rev-b\nrev-a\n", "stderr": "", "exitCode": 0}
+        if argv == [sys.executable, "-m", "compileall", "-q", "src"] and cwd != tmp_path:
+            return {"stdout": "", "stderr": "bad build\n", "exitCode": 1}
+        if argv[:2] == ["git", "rebase"]:
+            raise AssertionError("no good preflight candidate should stop before rebase")
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("preflight failure should not schedule restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "error"
+    assert result["reason"] == "preflight-no-good-commit"
+    assert [step["name"] for step in result["steps"]] == [
+        "git status",
+        "git fetch",
+        "upstream check",
+        "git rev-parse @{upstream}",
+        "git rev-list",
+        "preflight worktree",
+        "preflight checkout (rev-b)",
+        "preflight deps install (rev-b)",
+        "preflight build (rev-b)",
+        "preflight checkout (rev-a)",
+        "preflight deps install (rev-a)",
+        "preflight build (rev-a)",
+        "preflight cleanup",
+    ]
+    assert all(argv[:2] != ["git", "rebase"] for argv, _cwd in command_calls)
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_update_checks_out_main_for_dev_channel(
     tmp_path,
 ) -> None:
