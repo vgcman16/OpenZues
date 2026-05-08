@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -7461,9 +7461,8 @@ def _tlon_storage_update_payload(value: object) -> dict[str, object]:
 
 
 def _tlon_has_custom_storage_credentials(value: object) -> bool:
-    payload = _tlon_storage_update_payload(value)
-    credentials = payload.get("credentials", payload)
-    if not isinstance(credentials, dict):
+    credentials = _tlon_storage_credentials(value)
+    if credentials is None:
         return False
     return all(
         str(credentials.get(key) or "").strip()
@@ -7471,11 +7470,20 @@ def _tlon_has_custom_storage_credentials(value: object) -> bool:
     )
 
 
-def _tlon_storage_service(value: object) -> str:
+def _tlon_storage_credentials(value: object) -> dict[str, object] | None:
+    payload = _tlon_storage_update_payload(value)
+    credentials = payload.get("credentials", payload)
+    return credentials if isinstance(credentials, dict) else None
+
+
+def _tlon_storage_configuration(value: object) -> dict[str, object]:
     payload = _tlon_storage_update_payload(value)
     configuration = payload.get("configuration", payload)
-    if not isinstance(configuration, dict):
-        return ""
+    return configuration if isinstance(configuration, dict) else {}
+
+
+def _tlon_storage_service(value: object) -> str:
+    configuration = _tlon_storage_configuration(value)
     return str(configuration.get("service") or "").strip()
 
 
@@ -7485,6 +7493,19 @@ def _tlon_genuine_secret(value: object) -> str | None:
     if isinstance(value, dict):
         return str(value.get("secret") or "").strip() or None
     return None
+
+
+def _tlon_assert_safe_upload_result_url(raw_url: str, label: str) -> str:
+    parsed = urlparse(str(raw_url or "").strip())
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError(f"{label} must use http or https")
+    return parsed.geturl()
+
+
+def _tlon_public_upload_url(file_key: str, public_url_base: str, signed_url: str) -> str:
+    if str(public_url_base or "").strip():
+        return urljoin(str(public_url_base), file_key)
+    return str(signed_url).split("?", 1)[0]
 
 
 def _tlon_is_image_url(media_url: str) -> bool:
@@ -25464,7 +25485,129 @@ class OpsMeshService:
             return trusted_hosted_url
         if not _tlon_has_custom_storage_credentials(storage_credentials):
             raise RuntimeError("No storage credentials configured")
-        raise RuntimeError("Tlon custom S3 upload storage runtime is unavailable.")
+        credentials = _tlon_storage_credentials(storage_credentials)
+        configuration = _tlon_storage_configuration(storage_config)
+        if credentials is None:
+            raise RuntimeError("No storage credentials configured")
+        bucket = str(configuration.get("currentBucket") or "").strip()
+        if not bucket:
+            raise RuntimeError("Tlon storage configuration is missing currentBucket.")
+        signed_url = self._presign_tlon_custom_s3_upload_url(
+            endpoint=str(credentials.get("endpoint") or "").strip(),
+            bucket=bucket,
+            file_key=file_key,
+            region=str(configuration.get("region") or "").strip() or "us-east-1",
+            access_key_id=str(credentials.get("accessKeyId") or "").strip(),
+            secret_access_key=str(credentials.get("secretAccessKey") or "").strip(),
+            content_type=content_type,
+        )
+        self._put_tlon_media_bytes(
+            signed_url,
+            media_bytes=media_bytes,
+            content_type=content_type,
+            timeout_seconds=timeout,
+        )
+        public_url = _tlon_public_upload_url(
+            file_key,
+            str(configuration.get("publicUrlBase") or "").strip(),
+            signed_url,
+        )
+        return _tlon_assert_safe_upload_result_url(public_url, "Upload result URL")
+
+    def _presign_tlon_custom_s3_upload_url(
+        self,
+        *,
+        endpoint: str,
+        bucket: str,
+        file_key: str,
+        region: str,
+        access_key_id: str,
+        secret_access_key: str,
+        content_type: str,
+    ) -> str:
+        del content_type
+        if not access_key_id or not secret_access_key:
+            raise RuntimeError("Tlon custom S3 credentials are incomplete.")
+        endpoint_url = urlparse(endpoint if re.match(r"^https?://", endpoint) else f"https://{endpoint}")
+        if endpoint_url.scheme.lower() not in {"http", "https"} or not endpoint_url.netloc:
+            raise RuntimeError("Tlon custom S3 endpoint must be an http(s) URL.")
+        now = datetime.now(UTC)
+        amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+        date_stamp = now.strftime("%Y%m%d")
+        credential_scope = f"{date_stamp}/{region}/s3/aws4_request"
+        canonical_uri = "/" + "/".join(
+            quote(part, safe="-_.~") for part in [bucket, *file_key.split("/")]
+        )
+        query_params = {
+            "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+            "X-Amz-Credential": f"{access_key_id}/{credential_scope}",
+            "X-Amz-Date": amz_date,
+            "X-Amz-Expires": "3600",
+            "X-Amz-SignedHeaders": "host",
+        }
+        canonical_query = "&".join(
+            f"{quote(key, safe='-_.~')}={quote(value, safe='-_.~')}"
+            for key, value in sorted(query_params.items())
+        )
+        host = endpoint_url.netloc
+        canonical_request = "\n".join(
+            (
+                "PUT",
+                canonical_uri,
+                canonical_query,
+                f"host:{host}\n",
+                "host",
+                "UNSIGNED-PAYLOAD",
+            )
+        )
+        string_to_sign = "\n".join(
+            (
+                "AWS4-HMAC-SHA256",
+                amz_date,
+                credential_scope,
+                hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+            )
+        )
+        signing_key = self._aws_sigv4_signing_key(
+            secret_access_key,
+            date_stamp=date_stamp,
+            region=region,
+            service="s3",
+        )
+        signature = hmac.new(
+            signing_key,
+            string_to_sign.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        query = f"{canonical_query}&X-Amz-Signature={signature}"
+        return urlunparse(
+            (
+                endpoint_url.scheme,
+                endpoint_url.netloc,
+                canonical_uri,
+                "",
+                query,
+                "",
+            )
+        )
+
+    def _aws_sigv4_signing_key(
+        self,
+        secret_access_key: str,
+        *,
+        date_stamp: str,
+        region: str,
+        service: str,
+    ) -> bytes:
+        del self
+        date_key = hmac.new(
+            f"AWS4{secret_access_key}".encode(),
+            date_stamp.encode(),
+            hashlib.sha256,
+        ).digest()
+        region_key = hmac.new(date_key, region.encode(), hashlib.sha256).digest()
+        service_key = hmac.new(region_key, service.encode(), hashlib.sha256).digest()
+        return hmac.new(service_key, b"aws4_request", hashlib.sha256).digest()
 
     def _request_tlon_scry_json(
         self,

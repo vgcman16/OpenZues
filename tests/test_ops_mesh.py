@@ -7540,6 +7540,171 @@ def test_ops_mesh_service_tlon_media_bytes_rejects_untrusted_memex_upload_url(
         )
 
 
+def test_ops_mesh_service_tlon_media_bytes_uses_custom_s3_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[str] = []
+    presigns: list[dict[str, object]] = []
+    uploads: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def __init__(
+            self,
+            *,
+            status: int,
+            body: bytes = b"",
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.status = status
+            self._body = body
+            self.headers = headers or {}
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del timeout
+        requests.append(request.full_url)
+        if request.full_url.endswith("/~/login"):
+            return FakeResponse(
+                status=200,
+                headers={"Set-Cookie": "urbauth-ship=secret; Path=/"},
+            )
+        if request.full_url.endswith("/~/scry/storage/configuration.json"):
+            return FakeResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "currentBucket": "uploads",
+                        "buckets": ["uploads"],
+                        "publicUrlBase": "https://cdn.example/",
+                        "presignedUrl": "",
+                        "region": "us-west-2",
+                        "service": "credentials",
+                    }
+                ).encode("utf-8"),
+            )
+        if request.full_url.endswith("/~/scry/storage/credentials.json"):
+            return FakeResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "storage-update": {
+                            "credentials": {
+                                "endpoint": "https://s3.example.com",
+                                "accessKeyId": "access-key",
+                                "secretAccessKey": "secret-key",
+                            }
+                        }
+                    }
+                ).encode("utf-8"),
+            )
+        raise AssertionError(f"Unexpected request: {request.full_url}")
+
+    def fake_presign_tlon_custom_s3_upload_url(
+        self: OpsMeshService,
+        *,
+        endpoint: str,
+        bucket: str,
+        file_key: str,
+        region: str,
+        access_key_id: str,
+        secret_access_key: str,
+        content_type: str,
+    ) -> str:
+        del self
+        presigns.append(
+            {
+                "endpoint": endpoint,
+                "bucket": bucket,
+                "file_key": file_key,
+                "region": region,
+                "access_key_id": access_key_id,
+                "secret_access_key": secret_access_key,
+                "content_type": content_type,
+            }
+        )
+        return "https://s3.example.com/uploads/zod/photo.png?sig=abc"
+
+    def fake_put_tlon_media_bytes(
+        self: OpsMeshService,
+        target: str,
+        *,
+        media_bytes: bytes,
+        content_type: str,
+        timeout_seconds: float,
+    ) -> None:
+        del self
+        uploads.append(
+            {
+                "target": target,
+                "media_bytes": media_bytes,
+                "content_type": content_type,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+    monkeypatch.setattr("openzues.services.ops_mesh.time.time", lambda: 1713980000.123)
+    monkeypatch.setattr("openzues.services.ops_mesh.uuid.uuid4", lambda: "upload-uuid")
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_presign_tlon_custom_s3_upload_url",
+        fake_presign_tlon_custom_s3_upload_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_tlon_media_bytes",
+        fake_put_tlon_media_bytes,
+    )
+
+    uploaded = OpsMeshService.__new__(OpsMeshService)._upload_tlon_media_bytes(
+        _TlonRouteConfig(
+            base_url="https://selfhosted.example",
+            ship="~zod",
+            code="tlon-code",
+        ),
+        media_bytes=b"image-bytes",
+        filename="photo.png",
+        content_type="image/png",
+        timeout_seconds=2.5,
+    )
+
+    assert uploaded == "https://cdn.example/zod/1713980000123-upload-uuid-photo.png"
+    assert requests == [
+        "https://selfhosted.example/~/login",
+        "https://selfhosted.example/~/scry/storage/configuration.json",
+        "https://selfhosted.example/~/scry/storage/credentials.json",
+    ]
+    assert presigns == [
+        {
+            "endpoint": "https://s3.example.com",
+            "bucket": "uploads",
+            "file_key": "zod/1713980000123-upload-uuid-photo.png",
+            "region": "us-west-2",
+            "access_key_id": "access-key",
+            "secret_access_key": "secret-key",
+            "content_type": "image/png",
+        }
+    ]
+    assert uploads == [
+        {
+            "target": "https://s3.example.com/uploads/zod/photo.png?sig=abc",
+            "media_bytes": b"image-bytes",
+            "content_type": "image/png",
+            "timeout_seconds": 2.5,
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route(
     monkeypatch: pytest.MonkeyPatch,
