@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999996% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -75,8 +75,9 @@ are checkpointed in `1f45d307`, and `OZ-PKG-001CB` preflight edge-failure
 proof is checkpointed in `7b15fafc`. `OZ-PKG-001CC` startup auto-update
 dispatch is checkpointed in `822eb6a9`, and `OZ-PKG-001CD` startup throttling
 state is checkpointed in `a1bb5d30`. `OZ-PKG-001CE` startup update
-check-interval gating is checkpointed in `392177e5`; continue startup update
-availability hint/cache projection.
+check-interval gating is checkpointed in `392177e5`, and `OZ-PKG-001CF`
+startup availability hint state is checkpointed in `087924f8`; continue
+checkOnStart=false auto-apply/no-hint and package-install edge parity.
 
 ## Active Slice Detail
 
@@ -11076,6 +11077,33 @@ availability hint/cache projection.
     `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_skips_recent_check_interval tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_stable_until_rollout_window -q`
     (`3 passed`), full runtime update suite
     `python -m pytest tests\test_runtime_updates.py -q` (`56 passed`), `ruff
+    check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+    `mypy src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001CF` startup update availability hint state
+  - Source: `openclaw-main/src/infra/update-startup.ts`,
+    `openclaw-main/src/infra/update-startup.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: startup update checks run hint discovery independently of
+    auto-apply dispatch, persist `lastAvailableVersion`, `lastAvailableTag`,
+    `lastNotifiedVersion`, and `lastNotifiedTag` when updates are available,
+    return persisted availability during recent-check skips, treat
+    `OPENCLAW_NO_AUTO_UPDATE` as command-only suppression while hints remain
+    active, and clear stale availability plus auto-first-seen state when the
+    resolved package target is up to date.
+  - Evidence required: focused availability-state tests, adjacent startup
+    update proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `087924f8`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update tests\test_runtime_updates.py::test_runtime_update_startup_update_hints_record_available_state_when_auto_disabled tests\test_runtime_updates.py::test_runtime_update_startup_update_hints_clear_available_state_when_up_to_date -q`
+    (`3 failed` before implementation, then `3 passed`), adjacent proof
+    `python -m pytest tests\test_runtime_updates.py -q -k "startup_auto_update or startup_update_hints"`
+    (`7 passed, 51 deselected`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`58 passed`), `ruff
     check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
     `mypy src\openzues\services\runtime_updates.py`, and focused
     `git diff --check`.

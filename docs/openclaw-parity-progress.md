@@ -19928,6 +19928,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
   `mypy src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `392177e5`.
+- Startup update checks now separate OpenClaw's update-hint path from the
+  auto-apply path: `checkOnStart` still records `lastAvailableVersion`,
+  `lastAvailableTag`, and `lastNotified*` when auto-update is disabled, recent
+  check skips project persisted availability into the response, and up-to-date
+  checks clear stale availability/auto-first-seen state while preserving the
+  `lastCheckedAt` write. This closes `OZ-PKG-001CF`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999996%.
+- Verified startup update availability state with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update tests\test_runtime_updates.py::test_runtime_update_startup_update_hints_record_available_state_when_auto_disabled tests\test_runtime_updates.py::test_runtime_update_startup_update_hints_clear_available_state_when_up_to_date -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent startup proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "startup_auto_update or startup_update_hints"`
+  (`7 passed, 51 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`58 passed`), `ruff
+  check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+  `mypy src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `087924f8`.
 
 ## References
 
