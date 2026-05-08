@@ -5,14 +5,14 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999995%.
+  band of ~80-99.99999996%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~98.3% after the latest
+- The chat/session contract subfamily is estimated at ~98.4% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
-  `sessions.spawn`, sandboxed remote media staging, and `tools.invoke`
-  runtime seams.
+  `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
+  monitor lifecycle runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
   runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
@@ -1767,7 +1767,10 @@ responses now resolve approved pending DMs/channels, mutate allowlists, remove
 pending approvals, and replay stored original messages into sessions. Tlon
 block/admin handling now persists blocked ships, ignores later blocked inbound
 messages, and handles owner unblock commands without entering a work session.
-Remaining Tlon runtime parity is now production SSE monitor lifecycle.
+Tlon production SSE monitor lifecycle now starts enabled route-backed accounts,
+registers upstream firehose/settings/groups subscriptions, dispatches inbound
+SSE payloads into session routing, acks stream events, and cleans up Urbit
+channels on close. No Tlon-specific runtime queue head remains known.
 iMessage config-backed account probes now mirror OpenClaw's `probeIMessage`
 status hook: `channels status --probe --json` discovers configured
 `channels.imessage` accounts from the Gateway config snapshot, checks the
@@ -9790,7 +9793,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound authorization and pending approvals checkpointed in `d7bd3f7d`;
   owner approval response replay checkpointed in `265b0a10`;
   approval block/admin handling checkpointed in `800d2ab6`;
+  production SSE monitor lifecycle checkpointed in `726f03cb`;
   repo-wide parity remains estimated at ~99.9%, with the evidence band
-  tightened to ~80-99.99999995%. Remaining Tlon-specific gaps are production
-  SSE monitor lifecycle before rotating through broader provider, packaging,
-  and companion seams.
+  tightened to ~80-99.99999996%. No Tlon-specific queue head remains known;
+  rotate through broader provider, packaging, companion, and newly exposed
+  upstream namespace seams.
