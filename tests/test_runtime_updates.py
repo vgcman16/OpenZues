@@ -293,6 +293,153 @@ async def test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_startup_auto_update_defers_stable_until_rollout_window(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "prefix" / "node_modules" / "openzues"
+    package_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "openzues", "version": "1.0.0", "packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    _write_package_dist_inventory(package_root)
+    command_calls: list[list[str]] = []
+    now_values = ["2026-01-18T00:00:00+00:00"]
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        command_calls.append(argv)
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def fake_version_resolver(
+        package_name: str,
+        tag: str,
+        timeout_ms: int | None,
+    ) -> str | None:
+        del package_name, timeout_ms
+        return "2.0.0" if tag == "latest" else None
+
+    async def restart_callback() -> None:
+        raise AssertionError("startup auto-update should not restart inline")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+        config_snapshot_loader=lambda: {
+            "update": {
+                "channel": "stable",
+                "auto": {
+                    "enabled": True,
+                    "stableDelayHours": 6,
+                    "stableJitterHours": 0,
+                },
+            }
+        },
+        package_root=package_root,
+        package_version_resolver=fake_version_resolver,
+        now_provider=lambda: now_values[-1],
+    )
+
+    first = await service.run_startup_auto_update_check(timeout_ms=1000)
+    assert first["status"] == "skipped"
+    assert first["reason"] == "stable-rollout-deferred"
+    assert command_calls == []
+
+    now_values.append("2026-01-18T07:00:00+00:00")
+    second = await service.run_startup_auto_update_check(timeout_ms=1000)
+
+    assert second["status"] == "ok"
+    assert command_calls == [
+        ["pnpm", "add", "-g", "openzues@latest"],
+        _post_update_doctor_args(),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_startup_auto_update_defers_recent_beta_attempt(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "prefix" / "node_modules" / "openzues"
+    package_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "openzues", "version": "1.0.0", "packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    _write_package_dist_inventory(package_root)
+    command_calls: list[list[str]] = []
+    now_values = ["2026-01-18T00:00:00+00:00"]
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        command_calls.append(argv)
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def fake_version_resolver(
+        package_name: str,
+        tag: str,
+        timeout_ms: int | None,
+    ) -> str | None:
+        del package_name, timeout_ms
+        if tag == "beta":
+            return "2.0.0-beta.1"
+        if tag == "latest":
+            return "1.9.0"
+        return None
+
+    async def restart_callback() -> None:
+        raise AssertionError("startup auto-update should not restart inline")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+        config_snapshot_loader=lambda: {
+            "update": {
+                "channel": "beta",
+                "auto": {"enabled": True, "betaCheckIntervalHours": 1},
+            }
+        },
+        package_root=package_root,
+        package_version_resolver=fake_version_resolver,
+        now_provider=lambda: now_values[-1],
+    )
+
+    first = await service.run_startup_auto_update_check(timeout_ms=1000)
+    assert first["status"] == "ok"
+
+    now_values.append("2026-01-18T00:10:00+00:00")
+    second = await service.run_startup_auto_update_check(timeout_ms=1000)
+
+    assert second["status"] == "skipped"
+    assert second["reason"] == "recent-attempt"
+    assert command_calls == [
+        ["pnpm", "add", "-g", "openzues@beta"],
+        _post_update_doctor_args(),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_update_executes_native_git_install_build_steps(
     tmp_path,
 ) -> None:

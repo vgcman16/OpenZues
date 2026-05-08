@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -11,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -33,6 +36,7 @@ _PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.js
 _FIRST_PACKAGED_DIST_INVENTORY_VERSION = (2026, 4, 15)
 _UPDATE_PREFLIGHT_MAX_COMMITS = 10
 _STARTUP_AUTO_UPDATE_COMMAND_TIMEOUT_MS = 45 * 60 * 1000
+_ONE_HOUR_SECONDS = 60 * 60
 _UPDATE_CHANNELS = {"stable", "beta", "dev"}
 _UPDATE_DEV_BRANCH = "main"
 _UPDATE_BETA_TAG_PATTERN = re.compile(r"(?:^|[.-])beta(?:[.-]|$)", re.IGNORECASE)
@@ -127,6 +131,7 @@ RuntimeUpdateCommandRunner = Callable[
 ]
 RuntimeConfigSnapshotLoader = Callable[[], Mapping[str, object]]
 RuntimePackageVersionResolver = Callable[[str, str, int | None], Awaitable[str | None]]
+RuntimeNowProvider = Callable[[], str | datetime]
 
 
 @dataclass(slots=True)
@@ -153,6 +158,25 @@ class _DiskSpaceSnapshot:
 
 def _utcnow_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _datetime_iso(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat()
 
 
 def _find_repo_root(start: Path) -> Path | None:
@@ -258,6 +282,31 @@ def _startup_auto_update_enabled(value: object) -> bool:
     return _update_auto_mapping(value).get("enabled") is True
 
 
+def _auto_update_float(
+    value: object,
+    key: str,
+    default: float,
+    *,
+    minimum: float,
+) -> float:
+    raw = _update_auto_mapping(value).get(key)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(raw):
+        return default
+    return max(minimum, float(raw))
+
+
+def _startup_auto_stable_delay_hours(value: object) -> float:
+    return _auto_update_float(value, "stableDelayHours", 6.0, minimum=0.0)
+
+
+def _startup_auto_stable_jitter_hours(value: object) -> float:
+    return _auto_update_float(value, "stableJitterHours", 12.0, minimum=0.0)
+
+
+def _startup_auto_beta_interval_hours(value: object) -> float:
+    return _auto_update_float(value, "betaCheckIntervalHours", 1.0, minimum=0.25)
+
+
 def _startup_update_channel(value: object) -> str:
     channel = _normalize_update_channel(str(_update_mapping(value).get("channel") or ""))
     return channel or "stable"
@@ -269,6 +318,21 @@ def _channel_to_package_tag(channel: str) -> str:
     if channel == "dev":
         return "dev"
     return "latest"
+
+
+def _stable_auto_update_jitter_seconds(
+    *,
+    install_id: str,
+    version: str,
+    tag: str,
+    jitter_hours: float,
+) -> int:
+    jitter_window_seconds = max(0, int(jitter_hours * _ONE_HOUR_SECONDS))
+    if jitter_window_seconds <= 0:
+        return 0
+    digest = hashlib.sha256(f"{install_id}:{version}:{tag}".encode()).digest()
+    bucket = int.from_bytes(digest[:4], byteorder="big", signed=False)
+    return bucket % (jitter_window_seconds + 1)
 
 
 def _is_update_beta_tag(value: str) -> bool:
@@ -1323,6 +1387,8 @@ class RuntimeUpdateService:
         config_snapshot_loader: RuntimeConfigSnapshotLoader | None = None,
         package_root: Path | None = None,
         package_version_resolver: RuntimePackageVersionResolver | None = None,
+        update_state_path: Path | None = None,
+        now_provider: RuntimeNowProvider | None = None,
     ) -> None:
         self.database = database
         self.poll_interval_seconds = max(5, int(poll_interval_seconds))
@@ -1332,6 +1398,8 @@ class RuntimeUpdateService:
         self._config_snapshot_loader = config_snapshot_loader
         self._package_root = package_root or _default_package_root()
         self._package_version_resolver = package_version_resolver
+        self._update_state_path = update_state_path or (database.path.parent / "update-check.json")
+        self._now_provider = now_provider
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self.repo_root = repo_root or _default_repo_root()
@@ -1405,9 +1473,49 @@ class RuntimeUpdateService:
             }
         comparison = _compare_update_semver_strings(current_version, target_version)
         if comparison is not None and comparison >= 0:
+            state = await self._read_startup_auto_update_state()
+            next_state = dict(state)
+            self._clear_startup_auto_update_state(next_state)
+            await self._write_startup_auto_update_state(next_state)
             return {
                 "status": "skipped",
                 "reason": "up-to-date",
+                "channel": channel,
+                "targetVersion": target_version,
+            }
+        now = self._now()
+        state = await self._read_startup_auto_update_state()
+        next_state = dict(state)
+        next_state["lastCheckedAt"] = _datetime_iso(now)
+        if channel == "stable":
+            apply_after = self._resolve_stable_auto_update_apply_after(
+                state=state,
+                next_state=next_state,
+                now=now,
+                version=target_version,
+                tag=str(target_tag),
+                config_snapshot=config_snapshot,
+            )
+            if now < apply_after:
+                await self._write_startup_auto_update_state(next_state)
+                return {
+                    "status": "skipped",
+                    "reason": "stable-rollout-deferred",
+                    "channel": channel,
+                    "targetVersion": target_version,
+                    "applyAfter": _datetime_iso(apply_after),
+                }
+        if self._has_recent_startup_auto_update_attempt(
+            state=state,
+            now=now,
+            version=target_version,
+            config_snapshot=config_snapshot,
+            channel=channel,
+        ):
+            await self._write_startup_auto_update_state(next_state)
+            return {
+                "status": "skipped",
+                "reason": "recent-attempt",
                 "channel": channel,
                 "targetVersion": target_version,
             }
@@ -1417,12 +1525,21 @@ class RuntimeUpdateService:
         effective_timeout_ms = (
             timeout_ms if timeout_ms is not None else _STARTUP_AUTO_UPDATE_COMMAND_TIMEOUT_MS
         )
+        next_state["autoLastAttemptVersion"] = target_version
+        next_state["autoLastAttemptTag"] = target_tag
+        next_state["autoLastAttemptAt"] = _datetime_iso(now)
+        await self._write_startup_auto_update_state(next_state)
         payload = await self.run_package_update(
             package_root=package_root,
             package_manager=package_manager,
             package_spec=f"{package_name}@{target_tag}",
             timeout_ms=effective_timeout_ms,
         )
+        if payload.get("status") == "ok":
+            next_state["autoLastSuccessVersion"] = target_version
+            next_state["autoLastSuccessTag"] = target_tag
+            next_state["autoLastSuccessAt"] = _datetime_iso(self._now())
+            await self._write_startup_auto_update_state(next_state)
         result = dict(payload)
         result["autoUpdate"] = {
             "channel": channel,
@@ -1484,6 +1601,111 @@ class RuntimeUpdateService:
         except json.JSONDecodeError:
             parsed = raw.strip('"')
         return parsed.strip() if isinstance(parsed, str) and parsed.strip() else None
+
+    def _now(self) -> datetime:
+        provider = self._now_provider
+        if provider is None:
+            return datetime.now(UTC)
+        parsed = _parse_datetime(provider())
+        return parsed or datetime.now(UTC)
+
+    async def _read_startup_auto_update_state(self) -> dict[str, object]:
+        path = self._update_state_path
+
+        def read() -> dict[str, object]:
+            try:
+                parsed = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return {}
+            return dict(parsed) if isinstance(parsed, Mapping) else {}
+
+        return await asyncio.to_thread(read)
+
+    async def _write_startup_auto_update_state(self, state: Mapping[str, object]) -> None:
+        path = self._update_state_path
+        payload = json.dumps(dict(state), indent=2, sort_keys=True) + "\n"
+
+        def write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = path.with_name(f".{path.name}.tmp")
+            tmp_path.write_text(payload, encoding="utf-8")
+            tmp_path.replace(path)
+
+        await asyncio.to_thread(write)
+
+    def _clear_startup_auto_update_state(self, state: dict[str, object]) -> None:
+        for key in (
+            "autoFirstSeenVersion",
+            "autoFirstSeenTag",
+            "autoFirstSeenAt",
+            "autoLastAttemptVersion",
+            "autoLastAttemptTag",
+            "autoLastAttemptAt",
+        ):
+            state.pop(key, None)
+
+    def _resolve_stable_auto_update_apply_after(
+        self,
+        *,
+        state: Mapping[str, object],
+        next_state: dict[str, object],
+        now: datetime,
+        version: str,
+        tag: str,
+        config_snapshot: Mapping[str, object],
+    ) -> datetime:
+        install_id = str(
+            next_state.get("autoInstallId") or state.get("autoInstallId") or ""
+        ).strip()
+        if not install_id:
+            install_id = str(uuid.uuid4())
+        next_state["autoInstallId"] = install_id
+        matches_existing = (
+            state.get("autoFirstSeenVersion") == version
+            and state.get("autoFirstSeenTag") == tag
+        )
+        if matches_existing:
+            first_seen = _parse_datetime(state.get("autoFirstSeenAt")) or now
+            next_state["autoFirstSeenVersion"] = state.get("autoFirstSeenVersion")
+            next_state["autoFirstSeenTag"] = state.get("autoFirstSeenTag")
+            next_state["autoFirstSeenAt"] = state.get("autoFirstSeenAt")
+        else:
+            first_seen = now
+            next_state["autoFirstSeenVersion"] = version
+            next_state["autoFirstSeenTag"] = tag
+            next_state["autoFirstSeenAt"] = _datetime_iso(now)
+        delay_seconds = _startup_auto_stable_delay_hours(config_snapshot) * _ONE_HOUR_SECONDS
+        jitter_seconds = _stable_auto_update_jitter_seconds(
+            install_id=install_id,
+            version=version,
+            tag=tag,
+            jitter_hours=_startup_auto_stable_jitter_hours(config_snapshot),
+        )
+        return datetime.fromtimestamp(
+            first_seen.timestamp() + delay_seconds + jitter_seconds,
+            tz=UTC,
+        )
+
+    def _has_recent_startup_auto_update_attempt(
+        self,
+        *,
+        state: Mapping[str, object],
+        now: datetime,
+        version: str,
+        config_snapshot: Mapping[str, object],
+        channel: str,
+    ) -> bool:
+        if state.get("autoLastAttemptVersion") != version:
+            return False
+        last_attempt = _parse_datetime(state.get("autoLastAttemptAt"))
+        if last_attempt is None:
+            return False
+        interval_hours = (
+            _startup_auto_beta_interval_hours(config_snapshot)
+            if channel == "beta"
+            else 1.0
+        )
+        return (now - last_attempt).total_seconds() < interval_hours * _ONE_HOUR_SECONDS
 
     async def run_update(
         self,
