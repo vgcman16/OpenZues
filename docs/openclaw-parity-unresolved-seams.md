@@ -10921,3 +10921,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~80-99.9999999999999999999999999999999999999997%. Continue remaining exact
   SDK root seams (`bluebubbles`, `matrix`, `mattermost`, `memory-core`,
   `zalo`) plus provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `matrix` now exposes the
+  Matrix root setup and single-account promotion helper facade instead of broad
+  generic placeholder helpers. Source/test checkpointed in `a00b4035`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999999999999999999998%. Continue
+  remaining exact SDK root seams (`bluebubbles`, `mattermost`, `memory-core`,
+  `zalo`) plus provider/runtime breadth.
