@@ -36213,6 +36213,44 @@ function isAllowedBlueBubblesSender(params = {}) {
   });
 }
 
+function normalizeMattermostAllowEntry(entry) {
+  const trimmed = String(entry || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed === "*") {
+    return "*";
+  }
+  const stripped = trimmed
+    .replace(/^(mattermost|user):/i, "")
+    .replace(/^@/, "")
+    .trim();
+  return stripped ? normalizeLowercaseStringOrEmpty(stripped) : "";
+}
+
+function normalizeMattermostAllowList(entries) {
+  const normalized = (Array.isArray(entries) ? entries : [])
+    .map((entry) => normalizeMattermostAllowEntry(entry))
+    .filter(Boolean);
+  return Array.from(new Set(normalized));
+}
+
+function isMattermostSenderAllowed(params = {}) {
+  const allowFrom = normalizeMattermostAllowList(params.allowFrom);
+  if (allowFrom.length === 0) {
+    return false;
+  }
+  const match = resolveAllowlistMatchSimple({
+    allowFrom,
+    senderId: normalizeMattermostAllowEntry(params.senderId),
+    senderName: params.senderName
+      ? normalizeMattermostAllowEntry(params.senderName)
+      : undefined,
+    allowNameMatching: params.allowNameMatching,
+  });
+  return match.allowed;
+}
+
 function collectBlueBubblesStatusIssues(accounts) {
   return Array.isArray(accounts) ? [] : [];
 }
@@ -84412,6 +84450,10 @@ const blueBubblesPolicyRuntime = {
   resolveBlueBubblesGroupToolPolicy,
 };
 
+const mattermostPolicyRuntime = {
+  isMattermostSenderAllowed,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -86495,6 +86537,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/compat"
   ) {
     return compatRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/mattermost-policy" ||
+    request === "@openclaw/plugin-sdk/mattermost-policy"
+  ) {
+    return mattermostPolicyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/bluebubbles-policy" ||

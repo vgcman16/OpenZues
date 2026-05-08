@@ -17912,6 +17912,120 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_mattermost_policy_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-mattermost-policy.cjs"
+    runtime_entry.write_text(
+        """
+const policy = require("openclaw/plugin-sdk/mattermost-policy");
+const scopedPolicy = require("@openclaw/plugin-sdk/mattermost-policy");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.mattermost_policy",
+      description: "Use OpenClaw mattermost-policy SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(policy).sort(),
+          scopedSame:
+            scopedPolicy.isMattermostSenderAllowed ===
+            policy.isMattermostSenderAllowed,
+          exactId: policy.isMattermostSenderAllowed({
+            senderId: "@Alice",
+            senderName: "Alicia",
+            allowFrom: [" mattermost:alice "],
+            allowNameMatching: false
+          }),
+          nameMatch: policy.isMattermostSenderAllowed({
+            senderId: "user-id-1",
+            senderName: "Team Lead",
+            allowFrom: ["user:team lead"],
+            allowNameMatching: true
+          }),
+          nameMatchDisabled: policy.isMattermostSenderAllowed({
+            senderId: "user-id-1",
+            senderName: "Team Lead",
+            allowFrom: ["team lead"],
+            allowNameMatching: false
+          }),
+          wildcard: policy.isMattermostSenderAllowed({
+            senderId: "anyone",
+            allowFrom: ["*"]
+          }),
+          empty: policy.isMattermostSenderAllowed({
+            senderId: "alice",
+            allowFrom: []
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-mattermost-policy-plugin",
+                    "name": "Runtime Mattermost Policy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-mattermost-policy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.mattermost_policy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.mattermost_policy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["isMattermostSenderAllowed"],
+        "scopedSame": True,
+        "exactId": True,
+        "nameMatch": True,
+        "nameMatchDisabled": False,
+        "wildcard": True,
+        "empty": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
     tmp_path,
 ) -> None:
