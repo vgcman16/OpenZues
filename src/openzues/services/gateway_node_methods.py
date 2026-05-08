@@ -16867,6 +16867,20 @@ def _sessions_history_is_tool_role(role: str) -> bool:
     return role in {"tool", "toolResult"}
 
 
+def _chat_history_is_tool_block_type(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().lower()
+    return normalized in {
+        "toolcall",
+        "tool_call",
+        "tooluse",
+        "tool_use",
+        "toolresult",
+        "tool_result",
+    }
+
+
 def _chat_history_structured_content(
     text: str,
     *,
@@ -16910,6 +16924,11 @@ def _sanitize_chat_history_content_block(
         if max_chars is not None:
             value = _chat_history_truncated_text(value, max_chars)
         sanitized[key] = value
+    if not _chat_history_is_tool_block_type(sanitized.get("type")):
+        for key in ("partialJson", "arguments"):
+            value = sanitized.get(key)
+            if isinstance(value, str) and max_chars is not None:
+                sanitized[key] = _chat_history_truncated_text(value, max_chars)
     if "thinkingSignature" in sanitized:
         sanitized.pop("thinkingSignature", None)
     if sanitized.get("type") == "image":
