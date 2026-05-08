@@ -17099,6 +17099,10 @@ def _sessions_history_sanitize_tool_call_block(
     block: Mapping[str, Any],
 ) -> tuple[dict[str, Any], bool]:
     next_block = dict(block)
+    for key in ("text", "content"):
+        value = next_block.get(key)
+        if isinstance(value, str):
+            next_block[key] = _chat_history_display_text(value)
     block_type = _string_or_none(block.get("type"))
     if block_type not in {"toolCall", "toolUse", "functionCall"}:
         return next_block, False
