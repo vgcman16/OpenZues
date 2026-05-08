@@ -10827,3 +10827,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.9999999999999999999999999999999999997%. Continue remaining exact SDK
   helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `nostr` now exposes the
+  exact root optional setup adapter/wizard surface while preserving inherited
+  generic SDK helpers. Source/test checkpointed in `70792d82`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999998%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.

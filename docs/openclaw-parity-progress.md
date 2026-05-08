@@ -20841,6 +20841,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1184 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `2c3feae2`.
+- Imported plugin SDK `nostr` now exposes the exact root optional setup
+  adapter/wizard surface while preserving inherited generic SDK helpers. This
+  closes `OZ-PLUGIN-00360`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999998%.
+- Verified the Nostr setup helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_nostr_helpers -q`
+  (the exact root import returned generic placeholders before implementation,
+  then `1 passed`), adjacent optional setup proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "nostr_helpers or tlon_helpers or twitch_helpers or optional_channel_setup or channel_setup_helpers"`
+  (`5 passed, 1184 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `70792d82`.
 
 ## References
 
