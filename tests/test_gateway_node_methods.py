@@ -49453,6 +49453,233 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_line_surface_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-line-surface.cjs"
+    runtime_entry.write_text(
+        """
+const surface = require("openclaw/plugin-sdk/line-surface");
+const scopedSurface = require("@openclaw/plugin-sdk/line-surface");
+const runtime = require("openclaw/plugin-sdk/line-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.line_surface",
+      description: "Use OpenClaw LINE surface SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          channels: {
+            line: {
+              channelAccessToken: " base-token ",
+              channelSecret: " base-secret ",
+              defaultAccount: "work",
+              groups: { "room:r1": { systemPrompt: "room" } },
+              accounts: {
+                work: {
+                  enabled: true,
+                  name: "Work Bot",
+                  channelAccessToken: " work-token ",
+                  channelSecret: " work-secret ",
+                  groups: { "group:g1": { requireMention: true } }
+                },
+                other: { enabled: false }
+              }
+            }
+          }
+        };
+        const info = surface.createInfoCard("Status", "All good", "footer");
+        const list = surface.createListCard("Tasks", [
+          {
+            title: "Ship",
+            subtitle: "Today",
+            action: runtime.messageAction("Open dashboard", "/status")
+          }
+        ]);
+        const image = surface.createImageCard(
+          "https://example.test/a.png",
+          "Image",
+          "caption",
+          { aspectRatio: "1:1" }
+        );
+        const action = surface.createActionCard("Deploy", "Ready", [
+          { label: "Run", action: runtime.postbackAction("Run deploy", "deploy=1") }
+        ]);
+        const processed = surface.processLineMessage(
+          "## Heading\\nHello **world**\\n\\n```js\\nconsole.log(1)\\n```"
+        );
+        return {
+          keys: Object.keys(surface).sort(),
+          scopedTypes: [
+            typeof scopedSurface.resolveLineAccount,
+            typeof scopedSurface.createInfoCard
+          ],
+          runtimeTypes: [
+            typeof runtime.messageAction,
+            typeof runtime.createQuickReplyItems,
+            typeof runtime.parseLineDirectives
+          ],
+          accounts: {
+            ids: surface.listLineAccountIds(cfg),
+            defaultAccount: surface.resolveDefaultLineAccountId(cfg),
+            normalized: surface.normalizeAccountId(" Work Account! "),
+            work: surface.resolveLineAccount({ cfg, accountId: "work" }),
+            groupKey: surface.resolveExactLineGroupConfigKey({
+              cfg,
+              accountId: "work",
+              groupId: "g1"
+            })
+          },
+          actions: {
+            message: runtime.messageAction("Open dashboard", "/status"),
+            uri: runtime.uriAction("Open docs", "https://example.test/docs"),
+            postback: runtime.postbackAction("Run deploy", "deploy=1", "Deploy"),
+            quickReply: runtime.createQuickReplyItems(["One", "Two"])
+          },
+          cards: {
+            infoTitle: info.body.contents[0].contents[1].text,
+            infoFooter: info.footer.contents[0].text,
+            listFirst: list.body.contents[2].contents[0].contents[1].contents[0].text,
+            imageRatio: image.hero.aspectRatio,
+            actionStyle: action.footer.contents[0].style
+          },
+          processed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "line-surface-plugin",
+                    "name": "LINE Surface Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-line-surface.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.line_surface"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.line_surface"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "LineConfigSchema",
+        "createActionCard",
+        "createAgendaCard",
+        "createAppleTvRemoteCard",
+        "createDeviceControlCard",
+        "createEventCard",
+        "createImageCard",
+        "createInfoCard",
+        "createListCard",
+        "createMediaPlayerCard",
+        "createReceiptCard",
+        "listLineAccountIds",
+        "normalizeAccountId",
+        "processLineMessage",
+        "resolveDefaultLineAccountId",
+        "resolveExactLineGroupConfigKey",
+        "resolveLineAccount",
+    ]
+    assert result["scopedTypes"] == ["function", "function"]
+    assert result["runtimeTypes"] == ["function", "function", "function"]
+    assert result["accounts"]["ids"] == ["default", "work", "other"]
+    assert result["accounts"]["defaultAccount"] == "work"
+    assert result["accounts"]["normalized"] == "work-account"
+    assert result["accounts"]["groupKey"] == "group:g1"
+    assert result["accounts"]["work"] == {
+        "accountId": "work",
+        "name": "Work Bot",
+        "enabled": True,
+        "channelAccessToken": "work-token",
+        "channelSecret": "work-secret",
+        "tokenSource": "config",
+        "config": {
+            "channelAccessToken": " work-token ",
+            "channelSecret": " work-secret ",
+            "enabled": True,
+            "groups": {"group:g1": {"requireMention": True}},
+            "name": "Work Bot",
+        },
+    }
+    assert result["actions"] == {
+        "message": {"type": "message", "label": "Open dashboard", "text": "/status"},
+        "uri": {
+            "type": "uri",
+            "label": "Open docs",
+            "uri": "https://example.test/docs",
+        },
+        "postback": {
+            "type": "postback",
+            "label": "Run deploy",
+            "data": "deploy=1",
+            "displayText": "Deploy",
+        },
+        "quickReply": {
+            "items": [
+                {
+                    "type": "action",
+                    "action": {"type": "message", "label": "One", "text": "One"},
+                },
+                {
+                    "type": "action",
+                    "action": {"type": "message", "label": "Two", "text": "Two"},
+                },
+            ]
+        },
+    }
+    assert result["cards"] == {
+        "infoTitle": "Status",
+        "infoFooter": "footer",
+        "listFirst": "Ship",
+        "imageRatio": "1:1",
+        "actionStyle": "primary",
+    }
+    assert result["processed"]["text"] == "Heading\nHello world"
+    assert [message["altText"] for message in result["processed"]["flexMessages"]] == ["Code"]
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_onboard_helpers(
     tmp_path,
 ) -> None:

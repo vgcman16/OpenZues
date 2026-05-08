@@ -46935,6 +46935,586 @@ const ollamaRuntimeRuntime = {
   wrapOllamaCompatNumCtx,
 };
 
+const LineConfigSchema = {
+  type: "object",
+  additionalProperties: true,
+};
+
+function resolveLineConfig(cfg = {}) {
+  return (cfg.channels && cfg.channels.line) || {};
+}
+
+function resolveLineAccountEntry(accounts, accountId) {
+  if (!accounts || typeof accounts !== "object") {
+    return undefined;
+  }
+  if (accounts[accountId]) {
+    return accounts[accountId];
+  }
+  const normalized = normalizeAccountId(accountId);
+  for (const [candidateId, candidate] of Object.entries(accounts)) {
+    if (normalizeAccountId(candidateId) === normalized) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function listLineAccountIds(cfg = {}) {
+  const lineConfig = resolveLineConfig(cfg);
+  const accounts =
+    lineConfig.accounts && typeof lineConfig.accounts === "object" ? lineConfig.accounts : {};
+  const ids = new Set();
+  if (
+    normalizeOptionalString(lineConfig.channelAccessToken) ||
+    lineConfig.tokenFile ||
+    normalizeOptionalString(process.env.LINE_CHANNEL_ACCESS_TOKEN)
+  ) {
+    ids.add(DEFAULT_ACCOUNT_ID);
+  }
+  for (const id of Object.keys(accounts)) {
+    ids.add(id);
+  }
+  return Array.from(ids);
+}
+
+function resolveDefaultLineAccountId(cfg = {}) {
+  const lineConfig = resolveLineConfig(cfg);
+  const preferred = normalizeOptionalAccountId(lineConfig.defaultAccount);
+  const ids = listLineAccountIds(cfg);
+  if (preferred && ids.some((accountId) => normalizeAccountId(accountId) === preferred)) {
+    return preferred;
+  }
+  if (ids.includes(DEFAULT_ACCOUNT_ID)) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  return ids[0] || DEFAULT_ACCOUNT_ID;
+}
+
+function resolveLineCredential(params = {}) {
+  const accountId = params.accountId || DEFAULT_ACCOUNT_ID;
+  const accountConfig = params.accountConfig || {};
+  const baseConfig = params.baseConfig || {};
+  const key = params.key;
+  const envKey = params.envKey;
+  const value = normalizeOptionalString(accountConfig[key]);
+  if (value) {
+    return { value, source: "config" };
+  }
+  if (accountId === DEFAULT_ACCOUNT_ID) {
+    const baseValue = normalizeOptionalString(baseConfig[key]);
+    if (baseValue) {
+      return { value: baseValue, source: "config" };
+    }
+    const envValue = normalizeOptionalString(process.env[envKey]);
+    if (envValue) {
+      return { value: envValue, source: "env" };
+    }
+  }
+  return { value: "", source: "none" };
+}
+
+function resolveLineAccount(params = {}) {
+  const cfg = params.cfg || {};
+  const lineConfig = resolveLineConfig(cfg);
+  const accountId = normalizeAccountId(params.accountId || resolveDefaultLineAccountId(cfg));
+  const accountConfig =
+    accountId !== DEFAULT_ACCOUNT_ID
+      ? resolveLineAccountEntry(lineConfig.accounts, accountId) || {}
+      : {};
+  const token = resolveLineCredential({
+    accountId,
+    baseConfig: lineConfig,
+    accountConfig,
+    key: "channelAccessToken",
+    envKey: "LINE_CHANNEL_ACCESS_TOKEN",
+  });
+  const secret = resolveLineCredential({
+    accountId,
+    baseConfig: lineConfig,
+    accountConfig,
+    key: "channelSecret",
+    envKey: "LINE_CHANNEL_SECRET",
+  });
+  const { accounts, defaultAccount, ...lineBase } = lineConfig || {};
+  const mergedConfig = {
+    ...lineBase,
+    ...accountConfig,
+  };
+  const enabled =
+    accountConfig.enabled !== undefined
+      ? accountConfig.enabled
+      : accountId === DEFAULT_ACCOUNT_ID
+        ? lineConfig.enabled ?? true
+        : false;
+  const name =
+    accountConfig.name ||
+    (accountId === DEFAULT_ACCOUNT_ID ? lineConfig.name || undefined : undefined);
+  return {
+    accountId,
+    ...(name ? { name } : {}),
+    enabled,
+    channelAccessToken: token.value,
+    channelSecret: secret.value,
+    tokenSource: token.source,
+    config: mergedConfig,
+  };
+}
+
+function resolveLineGroupLookupIds(groupId) {
+  const normalized = normalizeOptionalString(groupId);
+  if (!normalized) {
+    return [];
+  }
+  if (normalized.startsWith("group:") || normalized.startsWith("room:")) {
+    const rawId = normalized.split(":").slice(1).join(":");
+    return rawId ? [rawId, normalized] : [normalized];
+  }
+  return [normalized, `group:${normalized}`, `room:${normalized}`];
+}
+
+function resolveExactLineGroupConfigKey(params = {}) {
+  const lineConfig = resolveLineConfig(params.cfg || {});
+  const accountId = params.accountId ? normalizeAccountId(params.accountId) : undefined;
+  const accountConfig = accountId
+    ? resolveLineAccountEntry(lineConfig.accounts, accountId)
+    : undefined;
+  const groups =
+    (accountConfig && accountConfig.groups) || lineConfig.groups || undefined;
+  if (!groups || typeof groups !== "object") {
+    return undefined;
+  }
+  return resolveLineGroupLookupIds(params.groupId).find((candidate) =>
+    Object.prototype.hasOwnProperty.call(groups, candidate),
+  );
+}
+
+function attachLineFooterText(bubble, footer) {
+  bubble.footer = {
+    type: "box",
+    layout: "vertical",
+    contents: [
+      {
+        type: "text",
+        text: footer,
+        size: "sm",
+        color: "#888888",
+        wrap: true,
+      },
+    ],
+    paddingAll: "lg",
+  };
+}
+
+function createInfoCard(title, body, footer) {
+  const bubble = {
+    type: "bubble",
+    size: "mega",
+    body: {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        {
+          type: "box",
+          layout: "horizontal",
+          contents: [
+            {
+              type: "box",
+              layout: "vertical",
+              contents: [],
+              width: "4px",
+              backgroundColor: "#06C755",
+              cornerRadius: "2px",
+            },
+            {
+              type: "text",
+              text: title,
+              weight: "bold",
+              size: "xl",
+              color: "#111111",
+              wrap: true,
+              flex: 1,
+              margin: "lg",
+            },
+          ],
+        },
+        {
+          type: "box",
+          layout: "vertical",
+          contents: [
+            {
+              type: "text",
+              text: body,
+              size: "md",
+              color: "#444444",
+              wrap: true,
+              lineSpacing: "6px",
+            },
+          ],
+          margin: "xl",
+          paddingAll: "lg",
+          backgroundColor: "#F8F9FA",
+          cornerRadius: "lg",
+        },
+      ],
+      paddingAll: "xl",
+      backgroundColor: "#FFFFFF",
+    },
+  };
+  if (footer) {
+    attachLineFooterText(bubble, footer);
+  }
+  return bubble;
+}
+
+function createListCard(title, items = []) {
+  const itemContents = items.slice(0, 8).map((item, index) => {
+    const textContents = [
+      {
+        type: "text",
+        text: item.title,
+        size: "md",
+        weight: "bold",
+        color: "#1a1a1a",
+        wrap: true,
+      },
+    ];
+    if (item.subtitle) {
+      textContents.push({
+        type: "text",
+        text: item.subtitle,
+        size: "sm",
+        color: "#888888",
+        wrap: true,
+        margin: "xs",
+      });
+    }
+    return {
+      type: "box",
+      layout: "horizontal",
+      contents: [
+        {
+          type: "box",
+          layout: "vertical",
+          contents: [
+            {
+              type: "box",
+              layout: "vertical",
+              contents: [],
+              width: "8px",
+              height: "8px",
+              backgroundColor: index === 0 ? "#06C755" : "#DDDDDD",
+              cornerRadius: "4px",
+            },
+          ],
+          width: "20px",
+          alignItems: "center",
+          paddingTop: "sm",
+        },
+        {
+          type: "box",
+          layout: "vertical",
+          contents: textContents,
+          flex: 1,
+        },
+      ],
+      ...(index > 0 ? { margin: "lg" } : {}),
+      ...(item.action ? { action: item.action } : {}),
+    };
+  });
+  return {
+    type: "bubble",
+    size: "mega",
+    body: {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        {
+          type: "text",
+          text: title,
+          weight: "bold",
+          size: "xl",
+          color: "#111111",
+          wrap: true,
+        },
+        { type: "separator", margin: "lg", color: "#EEEEEE" },
+        {
+          type: "box",
+          layout: "vertical",
+          contents: itemContents,
+          margin: "lg",
+        },
+      ],
+      paddingAll: "xl",
+      backgroundColor: "#FFFFFF",
+    },
+  };
+}
+
+function createImageCard(imageUrl, title, body, options = {}) {
+  const bubble = {
+    type: "bubble",
+    hero: {
+      type: "image",
+      url: imageUrl,
+      size: "full",
+      aspectRatio: options.aspectRatio || "20:13",
+      aspectMode: options.aspectMode || "cover",
+      ...(options.action ? { action: options.action } : {}),
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        {
+          type: "text",
+          text: title,
+          weight: "bold",
+          size: "xl",
+          wrap: true,
+        },
+      ],
+      paddingAll: "lg",
+    },
+  };
+  if (body) {
+    bubble.body.contents.push({
+      type: "text",
+      text: body,
+      size: "md",
+      wrap: true,
+      margin: "md",
+      color: "#666666",
+    });
+  }
+  return bubble;
+}
+
+function createActionCard(title, body, actions = [], options = {}) {
+  const bubble = {
+    type: "bubble",
+    body: {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        { type: "text", text: title, weight: "bold", size: "xl", wrap: true },
+        { type: "text", text: body, size: "md", wrap: true, margin: "md", color: "#666666" },
+      ],
+      paddingAll: "lg",
+    },
+    footer: {
+      type: "box",
+      layout: "vertical",
+      contents: actions.slice(0, 4).map((action, index) => ({
+        type: "button",
+        action: action.action,
+        style: index === 0 ? "primary" : "secondary",
+        ...(index > 0 ? { margin: "sm" } : {}),
+      })),
+      paddingAll: "md",
+    },
+  };
+  if (options.imageUrl) {
+    bubble.hero = {
+      type: "image",
+      url: options.imageUrl,
+      size: "full",
+      aspectRatio: options.aspectRatio || "20:13",
+      aspectMode: "cover",
+    };
+  }
+  return bubble;
+}
+
+function createReceiptCard(title, items = [], total) {
+  return createListCard(
+    title,
+    [
+      ...items.map((item) => ({
+        title: item.label || item.title || "",
+        subtitle: item.value || item.subtitle || "",
+      })),
+      ...(total ? [{ title: "Total", subtitle: total }] : []),
+    ],
+  );
+}
+
+function createAgendaCard(title, items = []) {
+  return createListCard(title, items);
+}
+
+function createEventCard(title, date, body) {
+  return createInfoCard(title, [date, body].filter(Boolean).join("\n"));
+}
+
+function createDeviceControlCard(name, status, actions = []) {
+  return createActionCard(name, status || "", actions);
+}
+
+function createMediaPlayerCard(title, artist, actions = []) {
+  return createActionCard(title, artist || "", actions);
+}
+
+function createAppleTvRemoteCard(name, status) {
+  return createInfoCard(name || "Apple TV", status || "");
+}
+
+function toFlexMessage(altText, contents) {
+  return { type: "flex", altText, contents };
+}
+
+function processLineMessage(text = "") {
+  const flexMessages = [];
+  let processedText = String(text);
+  processedText = processedText.replace(/```[^\n]*\n([\s\S]*?)```/g, (_match, code) => {
+    flexMessages.push(toFlexMessage("Code", createInfoCard("Code", String(code).trim())));
+    return "";
+  });
+  processedText = processedText
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return { text: processedText, flexMessages };
+}
+
+function messageAction(label, text) {
+  return {
+    type: "message",
+    label: String(label).slice(0, 20),
+    text: text ?? label,
+  };
+}
+
+function uriAction(label, uri) {
+  return {
+    type: "uri",
+    label: String(label).slice(0, 20),
+    uri,
+  };
+}
+
+function postbackAction(label, data, displayText) {
+  return {
+    type: "postback",
+    label: String(label).slice(0, 20),
+    data: String(data).slice(0, 300),
+    ...(displayText !== undefined ? { displayText: String(displayText).slice(0, 300) } : {}),
+  };
+}
+
+function datetimePickerAction(label, data, mode, options = {}) {
+  return {
+    type: "datetimepicker",
+    label: String(label).slice(0, 20),
+    data: String(data).slice(0, 300),
+    mode,
+    ...(options.initial ? { initial: options.initial } : {}),
+    ...(options.max ? { max: options.max } : {}),
+    ...(options.min ? { min: options.min } : {}),
+  };
+}
+
+function createQuickReplyItems(labels = []) {
+  return {
+    items: labels.slice(0, 13).map((label) => ({
+      type: "action",
+      action: messageAction(String(label).slice(0, 20), label),
+    })),
+  };
+}
+
+const LINE_DIRECTIVE_RE = new RegExp(
+  String.raw`\[\[(quick_replies|location|confirm|buttons|media_player|event|agenda|device|` +
+    String.raw`appletv_remote):`,
+  "i",
+);
+
+function hasLineDirectives(text = "") {
+  return LINE_DIRECTIVE_RE.test(String(text));
+}
+
+function parseLineDirectives(payload = {}) {
+  let text = payload.text;
+  if (!text) {
+    return payload;
+  }
+  const result = { ...payload };
+  const lineData = {
+    ...((result.channelData && result.channelData.line) || {}),
+  };
+  const quickRepliesMatch = text.match(/\[\[quick_replies:\s*([^\]]+)\]\]/i);
+  if (quickRepliesMatch) {
+    const options = quickRepliesMatch[1]
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (options.length > 0) {
+      lineData.quickReplies = [...(lineData.quickReplies || []), ...options];
+    }
+    text = text.replace(quickRepliesMatch[0], "").trim();
+  }
+  result.text = text || undefined;
+  if (Object.keys(lineData).length > 0) {
+    result.channelData = { ...result.channelData, line: lineData };
+  }
+  return result;
+}
+
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
+function normalizeAllowFrom(values) {
+  return Array.isArray(values)
+    ? values.map((value) => String(value).trim()).filter(Boolean)
+    : [];
+}
+
+function isSenderAllowed(senderId, allowFrom = []) {
+  const normalized = normalizeAllowFrom(allowFrom);
+  return normalized.includes("*") || normalized.includes(String(senderId || "").trim());
+}
+
+const lineSurfaceRuntime = {
+  LineConfigSchema,
+  createActionCard,
+  createAgendaCard,
+  createAppleTvRemoteCard,
+  createDeviceControlCard,
+  createEventCard,
+  createImageCard,
+  createInfoCard,
+  createListCard,
+  createMediaPlayerCard,
+  createReceiptCard,
+  listLineAccountIds,
+  normalizeAccountId,
+  processLineMessage,
+  resolveDefaultLineAccountId,
+  resolveExactLineGroupConfigKey,
+  resolveLineAccount,
+};
+
+const lineRuntimeRuntime = {
+  ...lineSurfaceRuntime,
+  buildTemplateMessageFromPayload: (payload) => payload,
+  createDefaultMenuConfig: () => ({}),
+  createQuickReplyItems,
+  datetimePickerAction,
+  firstDefined,
+  hasLineDirectives,
+  isSenderAllowed,
+  messageAction,
+  normalizeAllowFrom,
+  normalizeDmAllowFromWithStore: (values) => normalizeAllowFrom(values),
+  parseLineDirectives,
+  postbackAction,
+  toFlexMessage,
+  uriAction,
+};
+
 const PROVIDER_USAGE_DEFAULT_TIMEOUT_MS = 5000;
 const PROVIDER_USAGE_LABELS = {
   anthropic: "Claude",
@@ -87227,6 +87807,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/ollama-runtime"
   ) {
     return ollamaRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/line-surface" ||
+    request === "@openclaw/plugin-sdk/line-surface"
+  ) {
+    return lineSurfaceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/line-runtime" ||
+    request === "@openclaw/plugin-sdk/line-runtime"
+  ) {
+    return lineRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-usage" ||
