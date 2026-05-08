@@ -1721,6 +1721,114 @@ def test_channels_status_json_uses_route_backed_mattermost_probe(
     ]
 
 
+def test_channels_status_json_uses_route_backed_signal_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Signal Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Signal Native Probe Route",
+            kind="signal",
+            target="http://signal.example.com:8080",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "signal",
+                "account_id": "signal-daemon",
+                "peer_kind": "direct",
+                "peer_id": "signal:+15551234567",
+                "summary": "signal daemon direct +15551234567",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token=None,
+            vault_secret_id=None,
+        )
+    )
+    signal_gets: list[tuple[str, str | None, str | None, float]] = []
+    signal_posts: list[tuple[str, str, object | None, float]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self
+        signal_gets.append((target, secret_header_name, secret_token, timeout_seconds))
+        return {"status": 204}
+
+    def fake_request_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token, extra_headers
+        signal_posts.append((target, method, payload, timeout_seconds))
+        return {"jsonrpc": "2.0", "result": {"version": "0.120.0"}, "id": "version"}
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["signal"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "signal",
+        "runtime": "native-provider-backed",
+        "accountId": "signal-daemon",
+        "httpStatus": 204,
+        "version": "0.120.0",
+        "timeoutMs": 2500,
+    }
+    assert signal_gets == [
+        ("http://signal.example.com:8080/api/v1/check", None, None, 2.5)
+    ]
+    assert len(signal_posts) == 1
+    target, method, rpc_payload, timeout_seconds = signal_posts[0]
+    assert target == "http://signal.example.com:8080/api/v1/rpc"
+    assert method == "POST"
+    assert timeout_seconds == 2.5
+    assert isinstance(rpc_payload, dict)
+    assert rpc_payload["jsonrpc"] == "2.0"
+    assert rpc_payload["method"] == "version"
+    assert isinstance(rpc_payload["id"], str)
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,
