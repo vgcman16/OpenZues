@@ -1156,6 +1156,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         enabled=app_settings.auto_self_update_enabled,
         poll_interval_seconds=app_settings.auto_self_update_poll_interval_seconds,
         restart_callback=lambda: asyncio.sleep(0),
+        config_snapshot_loader=gateway_config.build_snapshot,
     )
 
     async def run_runtime_update(

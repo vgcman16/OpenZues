@@ -32,6 +32,7 @@ _NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS = (
 _PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.json"
 _FIRST_PACKAGED_DIST_INVENTORY_VERSION = (2026, 4, 15)
 _UPDATE_PREFLIGHT_MAX_COMMITS = 10
+_STARTUP_AUTO_UPDATE_COMMAND_TIMEOUT_MS = 45 * 60 * 1000
 _UPDATE_CHANNELS = {"stable", "beta", "dev"}
 _UPDATE_DEV_BRANCH = "main"
 _UPDATE_BETA_TAG_PATTERN = re.compile(r"(?:^|[.-])beta(?:[.-]|$)", re.IGNORECASE)
@@ -124,6 +125,8 @@ RuntimeUpdateCommandRunner = Callable[
     [list[str], Path, int | None],
     Awaitable[dict[str, object]],
 ]
+RuntimeConfigSnapshotLoader = Callable[[], Mapping[str, object]]
+RuntimePackageVersionResolver = Callable[[str, str, int | None], Awaitable[str | None]]
 
 
 @dataclass(slots=True)
@@ -161,6 +164,13 @@ def _find_repo_root(start: Path) -> Path | None:
 
 def _default_repo_root() -> Path | None:
     return _find_repo_root(Path(__file__).resolve())
+
+
+def _default_package_root() -> Path:
+    try:
+        return Path(__file__).resolve(strict=False).parents[2]
+    except IndexError:  # pragma: no cover - defensive fallback for unusual loaders
+        return Path.cwd()
 
 
 def _resolve_git_revision(repo_root: Path) -> str | None:
@@ -223,6 +233,42 @@ def _normalize_update_channel(value: str | None) -> str | None:
         return None
     channel = value.strip().lower()
     return channel if channel in _UPDATE_CHANNELS else None
+
+
+def _is_truthy_env_value(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _update_mapping(value: object) -> Mapping[str, object]:
+    if isinstance(value, Mapping):
+        update = value.get("update")
+        if isinstance(update, Mapping):
+            return update
+    return {}
+
+
+def _update_auto_mapping(value: object) -> Mapping[str, object]:
+    auto = _update_mapping(value).get("auto")
+    return auto if isinstance(auto, Mapping) else {}
+
+
+def _startup_auto_update_enabled(value: object) -> bool:
+    return _update_auto_mapping(value).get("enabled") is True
+
+
+def _startup_update_channel(value: object) -> str:
+    channel = _normalize_update_channel(str(_update_mapping(value).get("channel") or ""))
+    return channel or "stable"
+
+
+def _channel_to_package_tag(channel: str) -> str:
+    if channel == "beta":
+        return "beta"
+    if channel == "dev":
+        return "dev"
+    return "latest"
 
 
 def _is_update_beta_tag(value: str) -> bool:
@@ -385,6 +431,29 @@ def _read_package_name(package_root: Path) -> str:
         return package_root.name
     name = parsed.get("name")
     return name.strip() if isinstance(name, str) and name.strip() else package_root.name
+
+
+def _detect_package_manager(package_root: Path) -> str:
+    package_json = package_root / "package.json"
+    if _path_exists(package_json):
+        try:
+            parsed = json.loads(package_json.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            parsed = None
+        if isinstance(parsed, Mapping):
+            raw_manager = str(parsed.get("packageManager") or "").strip()
+            manager = raw_manager.split("@", maxsplit=1)[0].strip().lower()
+            if manager in {"pnpm", "bun", "npm"}:
+                return manager
+    for filename, manager in (
+        ("pnpm-lock.yaml", "pnpm"),
+        ("bun.lock", "bun"),
+        ("bun.lockb", "bun"),
+        ("package-lock.json", "npm"),
+    ):
+        if _path_exists(package_root / filename):
+            return manager
+    return "unknown"
 
 
 def _find_existing_disk_space_path(target_path: Path) -> Path | None:
@@ -1251,12 +1320,18 @@ class RuntimeUpdateService:
         repo_root: Path | None = None,
         revision_resolver: Callable[[Path], str | None] = _resolve_git_revision,
         update_command_runner: RuntimeUpdateCommandRunner | None = None,
+        config_snapshot_loader: RuntimeConfigSnapshotLoader | None = None,
+        package_root: Path | None = None,
+        package_version_resolver: RuntimePackageVersionResolver | None = None,
     ) -> None:
         self.database = database
         self.poll_interval_seconds = max(5, int(poll_interval_seconds))
         self._restart_callback = restart_callback
         self._revision_resolver = revision_resolver
         self._update_command_runner = update_command_runner or _default_update_command_runner
+        self._config_snapshot_loader = config_snapshot_loader
+        self._package_root = package_root or _default_package_root()
+        self._package_version_resolver = package_version_resolver
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self.repo_root = repo_root or _default_repo_root()
@@ -1281,6 +1356,134 @@ class RuntimeUpdateService:
 
     def snapshot(self) -> dict[str, object]:
         return self._snapshot.to_dict()
+
+    async def run_startup_auto_update_check(
+        self,
+        *,
+        timeout_ms: int | None = None,
+    ) -> dict[str, object]:
+        config_loader = self._config_snapshot_loader
+        if config_loader is None:
+            return {"status": "skipped", "reason": "config-unavailable"}
+        try:
+            config_snapshot = config_loader()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.exception("Startup auto-update config load failed.")
+            return {"status": "error", "reason": "config-load-failed", "error": str(exc)}
+        if not _startup_auto_update_enabled(config_snapshot):
+            return {"status": "skipped", "reason": "auto-disabled"}
+        if _is_truthy_env_value(os.environ.get("OPENCLAW_NO_AUTO_UPDATE")):
+            return {"status": "skipped", "reason": "auto-disabled-by-env"}
+
+        channel = _startup_update_channel(config_snapshot)
+        if channel not in {"stable", "beta"}:
+            return {
+                "status": "skipped",
+                "reason": "auto-channel-unsupported",
+                "channel": channel,
+            }
+        package_root = self._package_root
+        if _path_exists(package_root / ".git"):
+            return {"status": "skipped", "reason": "not-package-install"}
+        package_name = _read_package_name(package_root)
+        current_version = _read_package_version(package_root)
+        if not current_version:
+            return {"status": "skipped", "reason": "current-version-unavailable"}
+
+        resolved = await self._resolve_startup_package_channel(
+            package_name=package_name,
+            channel=channel,
+            timeout_ms=timeout_ms,
+        )
+        target_version = resolved.get("version")
+        target_tag = resolved.get("tag")
+        if not isinstance(target_version, str) or not target_version.strip():
+            return {
+                "status": "skipped",
+                "reason": "target-version-unavailable",
+                "channel": channel,
+            }
+        comparison = _compare_update_semver_strings(current_version, target_version)
+        if comparison is not None and comparison >= 0:
+            return {
+                "status": "skipped",
+                "reason": "up-to-date",
+                "channel": channel,
+                "targetVersion": target_version,
+            }
+        package_manager = _detect_package_manager(package_root)
+        if package_manager == "unknown":
+            return {"status": "error", "reason": "package-manager-unavailable"}
+        effective_timeout_ms = (
+            timeout_ms if timeout_ms is not None else _STARTUP_AUTO_UPDATE_COMMAND_TIMEOUT_MS
+        )
+        payload = await self.run_package_update(
+            package_root=package_root,
+            package_manager=package_manager,
+            package_spec=f"{package_name}@{target_tag}",
+            timeout_ms=effective_timeout_ms,
+        )
+        result = dict(payload)
+        result["autoUpdate"] = {
+            "channel": channel,
+            "tag": target_tag,
+            "targetVersion": target_version,
+        }
+        return result
+
+    async def _resolve_startup_package_channel(
+        self,
+        *,
+        package_name: str,
+        channel: str,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        channel_tag = _channel_to_package_tag(channel)
+        channel_version = await self._fetch_package_version(
+            package_name,
+            channel_tag,
+            timeout_ms,
+        )
+        if channel != "beta":
+            return {"tag": channel_tag, "version": channel_version}
+        latest_version = await self._fetch_package_version(package_name, "latest", timeout_ms)
+        if not latest_version:
+            return {"tag": channel_tag, "version": channel_version}
+        if not channel_version:
+            return {"tag": "latest", "version": latest_version}
+        comparison = _compare_update_semver_strings(channel_version, latest_version)
+        if comparison is not None and comparison < 0:
+            return {"tag": "latest", "version": latest_version}
+        return {"tag": channel_tag, "version": channel_version}
+
+    async def _fetch_package_version(
+        self,
+        package_name: str,
+        tag: str,
+        timeout_ms: int | None,
+    ) -> str | None:
+        if self._package_version_resolver is not None:
+            return await self._package_version_resolver(package_name, tag, timeout_ms)
+        try:
+            result = await self._update_command_runner(
+                ["npm", "view", f"{package_name}@{tag}", "version", "--json"],
+                self._package_root,
+                timeout_ms,
+            )
+        except Exception:
+            logger.debug("Could not resolve package update version.", exc_info=True)
+            return None
+        if _update_command_exit_code(result.get("exitCode")) != 0:
+            return None
+        stdout = result.get("stdout")
+        if not isinstance(stdout, str) or not stdout.strip():
+            return None
+        raw = stdout.strip()
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = raw.strip('"')
+        return parsed.strip() if isinstance(parsed, str) and parsed.strip() else None
 
     async def run_update(
         self,
@@ -2163,6 +2366,10 @@ class RuntimeUpdateService:
         return True
 
     async def _runner_loop(self) -> None:
+        try:
+            await self.run_startup_auto_update_check()
+        except Exception:  # pragma: no cover - defensive guard
+            logger.exception("Startup auto-update check failed.")
         while not self._stop_event.is_set():
             try:
                 await self.tick()
