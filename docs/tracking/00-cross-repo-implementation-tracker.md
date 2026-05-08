@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999997% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -72,7 +72,9 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 
 Latest queue addendum: `OZ-PKG-001CA` stable/beta release-channel git updates
 are checkpointed in `1f45d307`, and `OZ-PKG-001CB` preflight edge-failure
-proof is checkpointed in `7b15fafc`; continue startup auto-update policy.
+proof is checkpointed in `7b15fafc`. `OZ-PKG-001CC` startup auto-update
+dispatch is checkpointed in `822eb6a9`; continue stable rollout state/delay and
+recent-attempt throttling.
 
 ## Active Slice Detail
 
@@ -10988,6 +10990,40 @@ proof is checkpointed in `7b15fafc`; continue startup auto-update policy.
     `python -m pytest tests\test_runtime_updates.py -q` (`51 passed`), `ruff
     check tests\test_runtime_updates.py`, `mypy
     src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001CC` startup auto-update dispatch
+  - Source: `openclaw-main/src/infra/update-startup.ts`,
+    `openclaw-main/src/infra/update-startup.test.ts`,
+    `openclaw-main/src/infra/update-check.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `src/openzues/app.py`, `src/openzues/cli.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: app/CLI construction wires the runtime update service to the
+    gateway config snapshot; package-shaped startup auto-update reads
+    `update.auto.enabled`, resolves stable/beta package targets with beta
+    fallback, dispatches the native package update path, and honors
+    `OPENCLAW_NO_AUTO_UPDATE` before version lookup or command execution.
+  - Evidence required: focused startup auto-update tests, adjacent runtime/app
+    and CLI proofs, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `822eb6a9`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_dispatches_beta_package_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update -q`
+    (`2 failed` before implementation, then `2 passed`), adjacent runtime
+    proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_dispatches_beta_package_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight -q`
+    (`4 passed`), app proof
+    `python -m pytest tests\test_app.py::test_health_endpoint -q` (`1
+    passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`53 passed`),
+    adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_runtime_update_service or update_json_passes_effective_git_channel_to_runtime or update_dry_run_json_uses_stored_update_channel"`
+    (`3 passed, 558 deselected`), `ruff check
+    src\openzues\services\runtime_updates.py src\openzues\app.py
+    src\openzues\cli.py tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py src\openzues\app.py
+    src\openzues\cli.py`, and focused `git diff --check`.
 
 - [x] `OZ-PROV-001M` Slack agent-request thread metadata
   - Source: `openclaw-main/src/agents/subagent-announce-delivery.ts`,

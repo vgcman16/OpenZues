@@ -10359,3 +10359,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `7b15fafc`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.99999999999999999999997%. Continue startup
   auto-update policy next.
+- Current queue-head adjustment: startup auto-update now has a native
+  app/CLI-wired runtime hook for package-shaped installs, config
+  `update.auto.enabled`, stable/beta channel target resolution, beta fallback,
+  package update dispatch, and `OPENCLAW_NO_AUTO_UPDATE` suppression before
+  version lookup. Source/test checkpointed in `822eb6a9`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999998%. Continue stable rollout state/delay and
+  recent-attempt throttling next.

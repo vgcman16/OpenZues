@@ -37,6 +37,10 @@ tag selection, beta stable-fallback, detached checkout, and `no-release-tag`.
 `OZ-PKG-001CB` preflight edge-failure proof from
 `src/infra/update-runner.ts` is checkpointed in `7b15fafc`; it covers
 `no-target-sha` and `preflight-no-good-commit`.
+`OZ-PKG-001CC` startup auto-update dispatch from
+`src/infra/update-startup.ts`, `src/infra/update-startup.test.ts`, and
+`src/infra/update-check.ts` is checkpointed in `822eb6a9`; it covers
+config-enabled package auto-update dispatch and `OPENCLAW_NO_AUTO_UPDATE`.
 
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is

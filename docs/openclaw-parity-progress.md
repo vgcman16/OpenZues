@@ -19871,6 +19871,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
   Test checkpointed in `7b15fafc`.
+- Startup auto-update now has a native OpenZues runtime hook wired through app
+  and CLI construction: when gateway config contains
+  `update.auto.enabled=true`, package-shaped installs resolve the configured
+  stable/beta target, apply the OpenClaw beta-to-latest fallback rule, dispatch
+  the existing package update path, and honor `OPENCLAW_NO_AUTO_UPDATE` before
+  version lookup or command execution. This closes `OZ-PKG-001CC`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999998%.
+- Verified startup auto-update with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_dispatches_beta_package_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent runtime proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_dispatches_beta_package_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight -q`
+  (`4 passed`), app construction proof
+  `python -m pytest tests\test_app.py::test_health_endpoint -q` (`1 passed`),
+  full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`53 passed`),
+  adjacent CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_runtime_update_service or update_json_passes_effective_git_channel_to_runtime or update_dry_run_json_uses_stored_update_channel"`
+  (`3 passed, 558 deselected`), `ruff check
+  src\openzues\services\runtime_updates.py src\openzues\app.py
+  src\openzues\cli.py tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py src\openzues\app.py
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `822eb6a9`.
 
 ## References
 
