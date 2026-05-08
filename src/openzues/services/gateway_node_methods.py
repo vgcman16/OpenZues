@@ -16856,7 +16856,7 @@ def _project_sessions_history_messages(
             continue
         structured_content = _sessions_history_structured_content(text)
         if structured_content is not None:
-            if role == "user" and _chat_history_is_empty_text_only_content(
+            if role == "user" and _chat_history_should_hide_structured_user_content(
                 structured_content["content"]
             ):
                 continue
