@@ -282,6 +282,10 @@ def _startup_auto_update_enabled(value: object) -> bool:
     return _update_auto_mapping(value).get("enabled") is True
 
 
+def _startup_update_hints_enabled(value: object) -> bool:
+    return _update_mapping(value).get("checkOnStart") is not False
+
+
 def _auto_update_float(
     value: object,
     key: str,
@@ -1446,10 +1450,15 @@ class RuntimeUpdateService:
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.exception("Startup auto-update config load failed.")
             return {"status": "error", "reason": "config-load-failed", "error": str(exc)}
-        if not _startup_auto_update_enabled(config_snapshot):
-            return {"status": "skipped", "reason": "auto-disabled"}
-        if _is_truthy_env_value(os.environ.get("OPENCLAW_NO_AUTO_UPDATE")):
-            return {"status": "skipped", "reason": "auto-disabled-by-env"}
+        auto_enabled = _startup_auto_update_enabled(config_snapshot)
+        auto_disabled_by_env = _is_truthy_env_value(os.environ.get("OPENCLAW_NO_AUTO_UPDATE"))
+        should_run_auto_update = auto_enabled and not auto_disabled_by_env
+        should_run_update_hints = _startup_update_hints_enabled(config_snapshot)
+        if not should_run_update_hints and not should_run_auto_update:
+            return {
+                "status": "skipped",
+                "reason": "auto-disabled-by-env" if auto_enabled else "auto-disabled",
+            }
 
         channel = _startup_update_channel(config_snapshot)
         if channel not in {"stable", "beta"}:
@@ -1475,7 +1484,14 @@ class RuntimeUpdateService:
             last_checked_at is not None
             and (now - last_checked_at).total_seconds() < check_interval_seconds
         ):
-            return {"status": "skipped", "reason": "recent-check"}
+            result: dict[str, object] = {"status": "skipped", "reason": "recent-check"}
+            persisted_available = self._resolve_startup_update_available(
+                state=state,
+                current_version=current_version,
+            )
+            if should_run_update_hints and persisted_available is not None:
+                result["updateAvailable"] = persisted_available
+            return result
 
         resolved = await self._resolve_startup_package_channel(
             package_name=package_name,
@@ -1484,16 +1500,19 @@ class RuntimeUpdateService:
         )
         target_version = resolved.get("version")
         target_tag = resolved.get("tag")
+        next_state = dict(state)
+        next_state["lastCheckedAt"] = _datetime_iso(now)
         if not isinstance(target_version, str) or not target_version.strip():
+            await self._write_startup_auto_update_state(next_state)
             return {
                 "status": "skipped",
                 "reason": "target-version-unavailable",
                 "channel": channel,
             }
+        tag = str(target_tag or _channel_to_package_tag(channel))
         comparison = _compare_update_semver_strings(current_version, target_version)
-        if comparison is not None and comparison >= 0:
-            state = await self._read_startup_auto_update_state()
-            next_state = dict(state)
+        if comparison is None or comparison >= 0:
+            self._clear_startup_update_available_state(next_state)
             self._clear_startup_auto_update_state(next_state)
             await self._write_startup_auto_update_state(next_state)
             return {
@@ -1502,15 +1521,41 @@ class RuntimeUpdateService:
                 "channel": channel,
                 "targetVersion": target_version,
             }
-        next_state = dict(state)
-        next_state["lastCheckedAt"] = _datetime_iso(now)
+        update_available = {
+            "currentVersion": current_version,
+            "latestVersion": target_version,
+            "channel": tag,
+        }
+        next_state["lastAvailableVersion"] = target_version
+        next_state["lastAvailableTag"] = tag
+        should_notify = (
+            state.get("lastNotifiedVersion") != target_version
+            or state.get("lastNotifiedTag") != tag
+        )
+        if should_run_update_hints and should_notify:
+            next_state["lastNotifiedVersion"] = target_version
+            next_state["lastNotifiedTag"] = tag
+        if not should_run_auto_update:
+            await self._write_startup_auto_update_state(next_state)
+            reason = (
+                "auto-disabled-by-env"
+                if auto_enabled and auto_disabled_by_env
+                else "auto-disabled"
+            )
+            return {
+                "status": "skipped",
+                "reason": reason,
+                "channel": channel,
+                "targetVersion": target_version,
+                "updateAvailable": update_available,
+            }
         if channel == "stable":
             apply_after = self._resolve_stable_auto_update_apply_after(
                 state=state,
                 next_state=next_state,
                 now=now,
                 version=target_version,
-                tag=str(target_tag),
+                tag=tag,
                 config_snapshot=config_snapshot,
             )
             if now < apply_after:
@@ -1520,6 +1565,7 @@ class RuntimeUpdateService:
                     "reason": "stable-rollout-deferred",
                     "channel": channel,
                     "targetVersion": target_version,
+                    "updateAvailable": update_available,
                     "applyAfter": _datetime_iso(apply_after),
                 }
         if self._has_recent_startup_auto_update_attempt(
@@ -1535,6 +1581,7 @@ class RuntimeUpdateService:
                 "reason": "recent-attempt",
                 "channel": channel,
                 "targetVersion": target_version,
+                "updateAvailable": update_available,
             }
         package_manager = _detect_package_manager(package_root)
         if package_manager == "unknown":
@@ -1543,26 +1590,27 @@ class RuntimeUpdateService:
             timeout_ms if timeout_ms is not None else _STARTUP_AUTO_UPDATE_COMMAND_TIMEOUT_MS
         )
         next_state["autoLastAttemptVersion"] = target_version
-        next_state["autoLastAttemptTag"] = target_tag
+        next_state["autoLastAttemptTag"] = tag
         next_state["autoLastAttemptAt"] = _datetime_iso(now)
         await self._write_startup_auto_update_state(next_state)
         payload = await self.run_package_update(
             package_root=package_root,
             package_manager=package_manager,
-            package_spec=f"{package_name}@{target_tag}",
+            package_spec=f"{package_name}@{tag}",
             timeout_ms=effective_timeout_ms,
         )
         if payload.get("status") == "ok":
             next_state["autoLastSuccessVersion"] = target_version
-            next_state["autoLastSuccessTag"] = target_tag
+            next_state["autoLastSuccessTag"] = tag
             next_state["autoLastSuccessAt"] = _datetime_iso(self._now())
             await self._write_startup_auto_update_state(next_state)
         result = dict(payload)
         result["autoUpdate"] = {
             "channel": channel,
-            "tag": target_tag,
+            "tag": tag,
             "targetVersion": target_version,
         }
+        result["updateAvailable"] = update_available
         return result
 
     async def _resolve_startup_package_channel(
@@ -1649,6 +1697,29 @@ class RuntimeUpdateService:
             tmp_path.replace(path)
 
         await asyncio.to_thread(write)
+
+    def _resolve_startup_update_available(
+        self,
+        *,
+        state: Mapping[str, object],
+        current_version: str,
+    ) -> dict[str, object] | None:
+        latest_version = state.get("lastAvailableVersion")
+        if not isinstance(latest_version, str) or not latest_version.strip():
+            return None
+        comparison = _compare_update_semver_strings(current_version, latest_version)
+        if comparison is None or comparison >= 0:
+            return None
+        tag = state.get("lastAvailableTag")
+        return {
+            "currentVersion": current_version,
+            "latestVersion": latest_version,
+            "channel": str(tag).strip() if isinstance(tag, str) and tag.strip() else "latest",
+        }
+
+    def _clear_startup_update_available_state(self, state: dict[str, object]) -> None:
+        for key in ("lastAvailableVersion", "lastAvailableTag"):
+            state.pop(key, None)
 
     def _clear_startup_auto_update_state(self, state: dict[str, object]) -> None:
         for key in (

@@ -253,6 +253,8 @@ async def test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update
         encoding="utf-8",
     )
     monkeypatch.setenv("OPENCLAW_NO_AUTO_UPDATE", "1")
+    state_path = tmp_path / "update-check.json"
+    version_calls: list[tuple[str, str, int | None]] = []
 
     async def fake_command_runner(
         argv: list[str],
@@ -266,7 +268,12 @@ async def test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update
         tag: str,
         timeout_ms: int | None,
     ) -> str | None:
-        raise AssertionError("disabled startup auto-update should not query versions")
+        version_calls.append((package_name, tag, timeout_ms))
+        if tag == "beta":
+            return "2.0.0-beta.1"
+        if tag == "latest":
+            return "1.9.0"
+        return None
 
     async def restart_callback() -> None:
         raise AssertionError("disabled startup auto-update should not restart")
@@ -282,14 +289,167 @@ async def test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update
         config_snapshot_loader=lambda: {"update": {"channel": "beta", "auto": {"enabled": True}}},
         package_root=package_root,
         package_version_resolver=fake_version_resolver,
+        update_state_path=state_path,
     )
 
     result = await service.run_startup_auto_update_check(timeout_ms=1000)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
 
-    assert result == {
-        "status": "skipped",
-        "reason": "auto-disabled-by-env",
+    assert result["status"] == "skipped"
+    assert result["reason"] == "auto-disabled-by-env"
+    assert result["updateAvailable"] == {
+        "currentVersion": "1.0.0",
+        "latestVersion": "2.0.0-beta.1",
+        "channel": "beta",
     }
+    assert state["lastAvailableVersion"] == "2.0.0-beta.1"
+    assert state["lastAvailableTag"] == "beta"
+    assert state["lastNotifiedVersion"] == "2.0.0-beta.1"
+    assert state["lastNotifiedTag"] == "beta"
+    assert version_calls == [
+        ("openzues", "beta", 1000),
+        ("openzues", "latest", 1000),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_startup_update_hints_record_available_state_when_auto_disabled(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "prefix" / "node_modules" / "openzues"
+    package_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "openzues", "version": "1.0.0", "packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "update-check.json"
+    command_calls: list[list[str]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        command_calls.append(argv)
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def fake_version_resolver(
+        package_name: str,
+        tag: str,
+        timeout_ms: int | None,
+    ) -> str | None:
+        del package_name, timeout_ms
+        return "2.0.0" if tag == "latest" else None
+
+    async def restart_callback() -> None:
+        raise AssertionError("startup update hints should not restart inline")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+        config_snapshot_loader=lambda: {"update": {"channel": "stable"}},
+        package_root=package_root,
+        package_version_resolver=fake_version_resolver,
+        update_state_path=state_path,
+        now_provider=lambda: "2026-01-18T00:00:00+00:00",
+    )
+
+    result = await service.run_startup_auto_update_check(timeout_ms=1000)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "auto-disabled"
+    assert result["updateAvailable"] == {
+        "currentVersion": "1.0.0",
+        "latestVersion": "2.0.0",
+        "channel": "latest",
+    }
+    assert command_calls == []
+    assert state["lastCheckedAt"] == "2026-01-18T00:00:00+00:00"
+    assert state["lastAvailableVersion"] == "2.0.0"
+    assert state["lastAvailableTag"] == "latest"
+    assert state["lastNotifiedVersion"] == "2.0.0"
+    assert state["lastNotifiedTag"] == "latest"
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_startup_update_hints_clear_available_state_when_up_to_date(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "prefix" / "node_modules" / "openzues"
+    package_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "openzues", "version": "1.0.0", "packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "update-check.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "lastCheckedAt": "2026-01-17T00:00:00+00:00",
+                "lastAvailableVersion": "2.0.0",
+                "lastAvailableTag": "latest",
+                "autoFirstSeenVersion": "2.0.0",
+                "autoFirstSeenTag": "latest",
+                "autoFirstSeenAt": "2026-01-17T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        raise AssertionError("up-to-date startup hints should not run commands")
+
+    async def fake_version_resolver(
+        package_name: str,
+        tag: str,
+        timeout_ms: int | None,
+    ) -> str | None:
+        del package_name, tag, timeout_ms
+        return "1.0.0"
+
+    async def restart_callback() -> None:
+        raise AssertionError("startup update hints should not restart inline")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+        config_snapshot_loader=lambda: {"update": {"channel": "stable"}},
+        package_root=package_root,
+        package_version_resolver=fake_version_resolver,
+        update_state_path=state_path,
+        now_provider=lambda: "2026-01-18T00:00:00+00:00",
+    )
+
+    result = await service.run_startup_auto_update_check(timeout_ms=1000)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "up-to-date"
+    assert result["targetVersion"] == "1.0.0"
+    assert state["lastCheckedAt"] == "2026-01-18T00:00:00+00:00"
+    assert "lastAvailableVersion" not in state
+    assert "lastAvailableTag" not in state
+    assert "autoFirstSeenVersion" not in state
 
 
 @pytest.mark.asyncio
