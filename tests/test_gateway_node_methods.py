@@ -17467,6 +17467,112 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_private_qa_bundled_env_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    package_root = tmp_path / "source-openclaw"
+    (package_root / ".git").mkdir(parents=True)
+    (package_root / "src").mkdir()
+    extensions_dir = package_root / "extensions"
+    extensions_dir.mkdir()
+    runtime_entry = tmp_path / "runtime-plugin-private-qa-bundled-env.cjs"
+    runtime_entry.write_text(
+        f"""
+const qa = require("openclaw/plugin-sdk/private-qa-bundled-env");
+const scopedQa = require("@openclaw/plugin-sdk/private-qa-bundled-env");
+const sourceRoot = {json.dumps(str(package_root))};
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.private_qa_bundled_env",
+      description: "Use OpenClaw private QA bundled env SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        process.chdir(sourceRoot);
+        const disabled = qa.resolvePrivateQaBundledPluginsEnv({{
+          OPENCLAW_ENABLE_PRIVATE_QA_CLI: "0"
+        }});
+        const enabled = qa.resolvePrivateQaBundledPluginsEnv({{
+          OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1",
+          KEEP_ME: "yes"
+        }});
+        return {{
+          keys: Object.keys(qa).sort(),
+          scopedSame:
+            scopedQa.resolvePrivateQaBundledPluginsEnv ===
+            qa.resolvePrivateQaBundledPluginsEnv,
+          disabled: disabled === undefined,
+          keepMe: enabled && enabled.KEEP_ME,
+          bundledDir: enabled && enabled.OPENCLAW_BUNDLED_PLUGINS_DIR
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-private-qa-bundled-env-plugin",
+                    "name": "Runtime Private QA Bundled Env Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-private-qa-bundled-env.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.private_qa_bundled_env"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.private_qa_bundled_env"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolvePrivateQaBundledPluginsEnv"],
+        "scopedSame": True,
+        "disabled": True,
+        "keepMe": "yes",
+        "bundledDir": str(extensions_dir),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
     tmp_path,
 ) -> None:

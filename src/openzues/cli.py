@@ -27442,6 +27442,53 @@ function getQaRunnerRuntimeHost() {
   return globalThis.__openzuesQaRunnerRuntime || {};
 }
 
+function isPrivateQaSourceCheckoutRoot(candidate) {
+  if (!candidate) {
+    return false;
+  }
+  try {
+    return (
+      fs.existsSync(path.join(candidate, ".git")) &&
+      fs.existsSync(path.join(candidate, "src")) &&
+      fs.existsSync(path.join(candidate, "extensions"))
+    );
+  } catch (_error) {
+    return false;
+  }
+}
+
+function resolvePrivateQaSourceCheckoutRootFrom(startDir) {
+  if (!startDir) {
+    return undefined;
+  }
+  let current = path.resolve(startDir);
+  while (true) {
+    if (isPrivateQaSourceCheckoutRoot(current)) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (!parent || parent === current) {
+      return undefined;
+    }
+    current = parent;
+  }
+}
+
+function resolvePrivateQaBundledPluginsPackageRoot() {
+  const candidates = [process.cwd()];
+  if (process.argv[1]) {
+    candidates.push(path.dirname(process.argv[1]));
+  }
+  candidates.push(__dirname);
+  for (const candidate of candidates) {
+    const root = resolvePrivateQaSourceCheckoutRootFrom(candidate);
+    if (root) {
+      return root;
+    }
+  }
+  return undefined;
+}
+
 function resolvePrivateQaBundledPluginsEnv(env = process.env) {
   const host = getQaRunnerRuntimeHost();
   if (typeof host.resolvePrivateQaBundledPluginsEnv === "function") {
@@ -27451,12 +27498,19 @@ function resolvePrivateQaBundledPluginsEnv(env = process.env) {
     return undefined;
   }
   const bundledPluginsDir = host.privateQaBundledPluginsDir;
-  if (!bundledPluginsDir) {
+  if (bundledPluginsDir) {
+    return {
+      ...env,
+      OPENCLAW_BUNDLED_PLUGINS_DIR: bundledPluginsDir,
+    };
+  }
+  const packageRoot = resolvePrivateQaBundledPluginsPackageRoot();
+  if (!packageRoot) {
     return undefined;
   }
   return {
     ...env,
-    OPENCLAW_BUNDLED_PLUGINS_DIR: bundledPluginsDir,
+    OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(packageRoot, "extensions"),
   };
 }
 
@@ -64979,6 +65033,10 @@ const copilotProxyRuntime = {
   definePluginEntry,
 };
 
+const privateQaBundledEnvRuntime = {
+  resolvePrivateQaBundledPluginsEnv,
+};
+
 function filePathFromImportMetaUrl(importMetaUrl) {
   if (typeof importMetaUrl === "string" && importMetaUrl.startsWith("file:")) {
     return require("node:url").fileURLToPath(importMetaUrl);
@@ -85820,6 +85878,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/copilot-proxy"
   ) {
     return copilotProxyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/private-qa-bundled-env" ||
+    request === "@openclaw/plugin-sdk/private-qa-bundled-env"
+  ) {
+    return privateQaBundledEnvRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/config-mutation" ||
