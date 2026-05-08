@@ -703,6 +703,41 @@ def _read_package_dist_inventory_if_present(
     return inventory_files, None
 
 
+def _collect_package_dist_inventory(package_root: Path) -> list[str]:
+    dist_root = package_root / "dist"
+    if not _path_exists(dist_root):
+        return []
+    files: list[str] = []
+    for path in dist_root.rglob("*"):
+        try:
+            if not path.is_file() or path.is_symlink():
+                continue
+        except OSError:
+            continue
+        relative_path = path.relative_to(package_root).as_posix()
+        if relative_path == _PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix():
+            continue
+        files.append(relative_path)
+    return sorted(set(files))
+
+
+def _collect_package_dist_inventory_file_errors(
+    package_root: Path,
+    inventory_files: Sequence[str],
+) -> list[str]:
+    actual_files = _collect_package_dist_inventory(package_root)
+    actual_set = set(actual_files)
+    inventory_set = set(inventory_files)
+    errors: list[str] = []
+    for relative_path in inventory_files:
+        if relative_path not in actual_set:
+            errors.append(f"missing packaged dist file {relative_path}")
+    for relative_path in actual_files:
+        if relative_path not in inventory_set:
+            errors.append(f"unexpected packaged dist file {relative_path}")
+    return errors
+
+
 def _collect_package_update_verify_errors(
     package_root: Path,
     *,
@@ -722,14 +757,16 @@ def _collect_package_update_verify_errors(
         found = installed_version or "<missing>"
         errors.append(f"expected installed version {expected_version}, found {found}")
     inventory_files, inventory_error = _read_package_dist_inventory_if_present(package_root)
-    del inventory_files
     if inventory_error is not None:
         errors.append(inventory_error)
-        return errors
-    if (
+    elif inventory_files is not None:
+        errors.extend(
+            _collect_package_dist_inventory_file_errors(package_root, inventory_files)
+        )
+    elif (
         _should_require_packaged_dist_inventory(installed_version)
         or _should_require_packaged_dist_inventory(expected_version)
-    ) and not _path_exists(package_root / _PACKAGE_DIST_INVENTORY_RELATIVE_PATH):
+    ):
         errors.append(
             "missing package dist inventory "
             f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
