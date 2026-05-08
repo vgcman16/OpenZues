@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999995% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -5156,6 +5156,20 @@ may lag behind this tracker.
     method proof (`10 passed, 1118 deselected`), adjacent OpsMesh lifecycle
     proof (`5 passed, 401 deselected`), adjacent API proof (`4 passed, 424
     deselected`), `ruff check`, and `mypy`.
+
+- [x] LINE `channels.logout` runtime config cleanup.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
+    `openclaw-main/extensions/line/src/gateway.ts`,
+    `openclaw-main/extensions/line/src/accounts.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `9674493d`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused LINE red-green proof (`1 failed`
+    before implementation, then `1 passed`), paired Telegram regression proof
+    (`1 passed`), adjacent OpsMesh lifecycle proof (`4 passed, 403
+    deselected`), adjacent gateway method proof (`5 passed, 1123 deselected`),
+    adjacent API proof (`4 passed, 424 deselected`), `ruff check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.
