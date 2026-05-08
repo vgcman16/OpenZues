@@ -6728,6 +6728,23 @@ may lag behind this tracker.
     passed`), adjacent optional setup proof (`4 passed, 1183 deselected`),
     `ruff check`, `mypy`, and focused `git diff --check`.
 
+- [x] Imported plugin SDK tlon setup shim.
+  - Source: `openclaw-main/src/plugin-sdk/tlon.ts`,
+    `openclaw-main/src/plugin-sdk/channel-setup.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `tlon` imports expose root
+    `tlonSetupAdapter` and `tlonSetupWizard` optional-channel setup surfaces
+    while inherited generic SDK helper exports remain reachable.
+  - Evidence required: focused Tlon import test, adjacent optional setup proof,
+    ruff, mypy
+  - Status: checkpointed in `2c3feae2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Tlon red/green proof (exact root import
+    returned generic placeholders before implementation, then `1 passed`),
+    adjacent optional setup proof (`4 passed, 1184 deselected`), `ruff check`,
+    `mypy`, and focused `git diff --check`.
+
 ## Update Rule
 
 Only move a row to `[x]` when implementation, focused proof, adjacent proof,
