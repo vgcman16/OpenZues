@@ -30,6 +30,55 @@ _NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS = (
 )
 _PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.json"
 _FIRST_PACKAGED_DIST_INVENTORY_VERSION = (2026, 4, 15)
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_BUNDLED_PLUGIN_ROOTS = {
+    "dist/extensions/qa-channel",
+    "dist/extensions/qa-lab",
+    "dist/extensions/qa-matrix",
+}
+_PACKAGE_DIST_BUNDLED_RUNTIME_SIDECAR_PATHS = (
+    "dist/extensions/acpx/runtime-api.js",
+    "dist/extensions/bluebubbles/runtime-api.js",
+    "dist/extensions/browser/runtime-api.js",
+    "dist/extensions/copilot-proxy/runtime-api.js",
+    "dist/extensions/diffs/runtime-api.js",
+    "dist/extensions/discord/runtime-api.js",
+    "dist/extensions/discord/runtime-setter-api.js",
+    "dist/extensions/feishu/runtime-api.js",
+    "dist/extensions/google/runtime-api.js",
+    "dist/extensions/googlechat/runtime-api.js",
+    "dist/extensions/imessage/runtime-api.js",
+    "dist/extensions/irc/runtime-api.js",
+    "dist/extensions/line/runtime-api.js",
+    "dist/extensions/lmstudio/runtime-api.js",
+    "dist/extensions/lobster/runtime-api.js",
+    "dist/extensions/matrix/helper-api.js",
+    "dist/extensions/matrix/runtime-api.js",
+    "dist/extensions/matrix/runtime-setter-api.js",
+    "dist/extensions/matrix/thread-bindings-runtime.js",
+    "dist/extensions/mattermost/runtime-api.js",
+    "dist/extensions/memory-core/runtime-api.js",
+    "dist/extensions/msteams/runtime-api.js",
+    "dist/extensions/nextcloud-talk/runtime-api.js",
+    "dist/extensions/nostr/runtime-api.js",
+    "dist/extensions/ollama/runtime-api.js",
+    "dist/extensions/open-prose/runtime-api.js",
+    "dist/extensions/qqbot/runtime-api.js",
+    "dist/extensions/signal/runtime-api.js",
+    "dist/extensions/slack/runtime-api.js",
+    "dist/extensions/slack/runtime-setter-api.js",
+    "dist/extensions/telegram/runtime-api.js",
+    "dist/extensions/telegram/runtime-setter-api.js",
+    "dist/extensions/tlon/runtime-api.js",
+    "dist/extensions/tokenjuice/runtime-api.js",
+    "dist/extensions/twitch/runtime-api.js",
+    "dist/extensions/voice-call/runtime-api.js",
+    "dist/extensions/webhooks/runtime-api.js",
+    "dist/extensions/whatsapp/light-runtime-api.js",
+    "dist/extensions/whatsapp/runtime-api.js",
+    "dist/extensions/zai/runtime-api.js",
+    "dist/extensions/zalo/runtime-api.js",
+    "dist/extensions/zalouser/runtime-api.js",
+)
 
 
 RuntimeUpdateCommandRunner = Callable[
@@ -738,6 +787,44 @@ def _collect_package_dist_inventory_file_errors(
     return errors
 
 
+def _package_dist_plugin_root(relative_path: str) -> str | None:
+    parts = relative_path.split("/")
+    if len(parts) < 3 or parts[0] != "dist" or parts[1] != "extensions":
+        return None
+    return "/".join(parts[:3])
+
+
+def _collect_critical_bundled_runtime_sidecars(package_root: Path) -> list[str]:
+    expected: list[str] = []
+    for relative_path in _PACKAGE_DIST_BUNDLED_RUNTIME_SIDECAR_PATHS:
+        plugin_root = _package_dist_plugin_root(relative_path)
+        if plugin_root is None:
+            continue
+        if plugin_root in _PACKAGE_DIST_OMITTED_PRIVATE_QA_BUNDLED_PLUGIN_ROOTS:
+            continue
+        plugin_path = package_root / Path(plugin_root)
+        if _path_exists(plugin_path / "package.json") or _path_exists(
+            plugin_path / "openclaw.plugin.json"
+        ):
+            expected.append(relative_path)
+    return sorted(set(expected))
+
+
+def _collect_missing_bundled_runtime_sidecar_errors(
+    package_root: Path,
+    inventory_files: Sequence[str] | None,
+) -> list[str]:
+    expected = _collect_critical_bundled_runtime_sidecars(package_root)
+    if inventory_files is not None:
+        inventory_set = set(inventory_files)
+        expected = [path for path in expected if path not in inventory_set]
+    errors: list[str] = []
+    for relative_path in expected:
+        if not _path_exists(package_root / Path(relative_path)):
+            errors.append(f"missing bundled runtime sidecar {relative_path}")
+    return errors
+
+
 def _collect_package_update_verify_errors(
     package_root: Path,
     *,
@@ -763,6 +850,12 @@ def _collect_package_update_verify_errors(
         errors.extend(
             _collect_package_dist_inventory_file_errors(package_root, inventory_files)
         )
+        errors.extend(
+            _collect_missing_bundled_runtime_sidecar_errors(
+                package_root,
+                inventory_files,
+            )
+        )
     elif (
         _should_require_packaged_dist_inventory(installed_version)
         or _should_require_packaged_dist_inventory(expected_version)
@@ -771,6 +864,7 @@ def _collect_package_update_verify_errors(
             "missing package dist inventory "
             f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
         )
+        errors.extend(_collect_missing_bundled_runtime_sidecar_errors(package_root, None))
     return errors
 
 
