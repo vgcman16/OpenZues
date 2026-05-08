@@ -13018,7 +13018,158 @@ class OpsMeshService:
                 env_var="NEXTCLOUD_TALK_BOT_SECRET",
                 env_result_key="envSecret",
             )
+        if normalized_channel == "whatsapp":
+            return await self._logout_whatsapp_channel_account(normalized_account_id)
         raise RuntimeError(f"channel {normalized_channel} does not support logout")
+
+    async def _logout_whatsapp_channel_account(self, account_id: str) -> dict[str, object]:
+        await self.stop_channel_runtime_account("whatsapp", account_id)
+        auth_dir, is_legacy_auth_dir, oauth_dir = self._resolve_whatsapp_auth_dir(account_id)
+        cleared = self._clear_whatsapp_auth_dir(
+            auth_dir=auth_dir,
+            oauth_dir=oauth_dir,
+            is_legacy_auth_dir=is_legacy_auth_dir,
+        )
+        return {
+            "channel": "whatsapp",
+            "accountId": account_id,
+            "cleared": cleared,
+            "loggedOut": cleared,
+        }
+
+    def _resolve_whatsapp_auth_dir(self, account_id: str) -> tuple[Path, bool, Path]:
+        configured_auth_dir = self._whatsapp_account_auth_dir_from_config(account_id)
+        oauth_dir = self._resolve_openclaw_oauth_dir()
+        if configured_auth_dir:
+            return configured_auth_dir, False, oauth_dir
+
+        auth_dir = oauth_dir / "whatsapp" / self._safe_whatsapp_account_dir_name(account_id)
+        legacy_auth_dir = oauth_dir
+        if (
+            account_id == DEFAULT_ACCOUNT_ID
+            and (legacy_auth_dir / "creds.json").exists()
+            and not (auth_dir / "creds.json").exists()
+        ):
+            return legacy_auth_dir, True, oauth_dir
+        return auth_dir, False, oauth_dir
+
+    def _whatsapp_account_auth_dir_from_config(self, account_id: str) -> Path | None:
+        if self.gateway_config_service is None:
+            return None
+        snapshot = self.gateway_config_service.build_snapshot()
+        channels = snapshot.get("channels")
+        section = channels.get("whatsapp") if isinstance(channels, dict) else None
+        if not isinstance(section, dict):
+            return None
+        account_config: dict[str, object] = dict(section)
+        accounts = section.get("accounts")
+        account_section = accounts.get(account_id) if isinstance(accounts, dict) else None
+        if isinstance(account_section, dict):
+            account_config.update(account_section)
+        raw_auth_dir = account_config.get("authDir")
+        if not isinstance(raw_auth_dir, str) or not raw_auth_dir.strip():
+            return None
+        return Path(os.path.expandvars(os.path.expanduser(raw_auth_dir.strip()))).resolve()
+
+    def _resolve_openclaw_oauth_dir(self) -> Path:
+        explicit_oauth_dir = os.environ.get("OPENCLAW_OAUTH_DIR", "").strip()
+        if explicit_oauth_dir:
+            return Path(os.path.expandvars(os.path.expanduser(explicit_oauth_dir))).resolve()
+        state_dir = os.environ.get("OPENCLAW_STATE_DIR", "").strip()
+        if state_dir:
+            return (
+                Path(os.path.expandvars(os.path.expanduser(state_dir))).resolve()
+                / "credentials"
+            )
+        data_dir = getattr(self.gateway_config_service, "_data_dir", None)
+        if isinstance(data_dir, Path):
+            return (data_dir / "settings" / "oauth").resolve()
+        return (Path.home() / ".openclaw" / "credentials").resolve()
+
+    @staticmethod
+    def _safe_whatsapp_account_dir_name(account_id: str) -> str:
+        safe = re.sub(r'[\\/:*?"<>|]+', "_", account_id.strip() or DEFAULT_ACCOUNT_ID)
+        safe = safe.replace("..", "_").strip(" .")
+        return safe or DEFAULT_ACCOUNT_ID
+
+    @staticmethod
+    def _is_baileys_auth_filename(name: str) -> bool:
+        if name == "oauth.json":
+            return False
+        if name in {"creds.json", "creds.json.bak"}:
+            return True
+        return name.endswith(".json") and bool(
+            re.match(r"^(app-state-sync|session|sender-key|pre-key)-", name)
+        )
+
+    @staticmethod
+    def _is_relative_to_path(path: Path, base_dir: Path) -> bool:
+        try:
+            path.relative_to(base_dir)
+            return True
+        except ValueError:
+            return False
+
+    def _path_has_symlink_component(self, base_dir: Path, target_path: Path) -> bool:
+        try:
+            relative = target_path.relative_to(base_dir)
+        except ValueError:
+            return True
+        current = base_dir
+        for segment in relative.parts:
+            current = current / segment
+            if current.exists() and current.is_symlink():
+                return True
+        return False
+
+    def _whatsapp_managed_auth_dir(self, *, auth_dir: Path, oauth_dir: Path) -> Path | None:
+        whatsapp_auth_base = (oauth_dir / "whatsapp").resolve()
+        resolved_auth_dir = auth_dir.resolve()
+        if not self._is_relative_to_path(resolved_auth_dir, whatsapp_auth_base):
+            return None
+        if self._path_has_symlink_component(whatsapp_auth_base, resolved_auth_dir):
+            return None
+        try:
+            base_real = whatsapp_auth_base.resolve(strict=True)
+            auth_real = resolved_auth_dir.resolve(strict=True)
+        except OSError:
+            return None
+        if not self._is_relative_to_path(auth_real, base_real):
+            return None
+        return auth_real
+
+    def _clear_whatsapp_auth_dir(
+        self,
+        *,
+        auth_dir: Path,
+        oauth_dir: Path,
+        is_legacy_auth_dir: bool,
+    ) -> bool:
+        if not auth_dir.exists() or not auth_dir.is_dir() or auth_dir.is_symlink():
+            return False
+        if is_legacy_auth_dir:
+            if auth_dir.resolve() != oauth_dir.resolve():
+                return False
+            cleared_any = False
+            for child in auth_dir.iterdir():
+                if child.is_file() and self._is_baileys_auth_filename(child.name):
+                    child.unlink(missing_ok=True)
+                    cleared_any = True
+            return cleared_any
+
+        if not (
+            (auth_dir / "creds.json").is_file()
+            or (auth_dir / "creds.json.bak").is_file()
+        ):
+            return False
+        managed_auth_dir = self._whatsapp_managed_auth_dir(
+            auth_dir=auth_dir,
+            oauth_dir=oauth_dir,
+        )
+        if managed_auth_dir is None:
+            return False
+        shutil.rmtree(managed_auth_dir, ignore_errors=True)
+        return True
 
     async def _logout_secret_backed_channel_account(
         self,

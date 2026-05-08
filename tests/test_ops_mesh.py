@@ -9112,6 +9112,50 @@ async def test_ops_mesh_service_channels_logout_clears_nextcloud_talk_bot_secret
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_channels_logout_clears_whatsapp_managed_auth_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-whatsapp-channel-logout"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    oauth_dir = tmp_path / "oauth"
+    auth_dir = oauth_dir / "whatsapp" / "default"
+    auth_dir.mkdir(parents=True)
+    (auth_dir / "creds.json").write_text('{"me":{"id":"15551234567@s.whatsapp.net"}}')
+    (auth_dir / "creds.json.bak").write_text('{"me":{"id":"15551234567@s.whatsapp.net"}}')
+    monkeypatch.setenv("OPENCLAW_OAUTH_DIR", str(oauth_dir))
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=config_service,
+    )
+
+    logout_result = await service.logout_channel_runtime_account("whatsapp", "default")
+
+    assert logout_result == {
+        "channel": "whatsapp",
+        "accountId": "default",
+        "cleared": True,
+        "loggedOut": True,
+    }
+    assert not auth_dir.exists()
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_tlon_native_monitor_streams_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
