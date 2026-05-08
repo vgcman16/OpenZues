@@ -16803,7 +16803,7 @@ def _project_control_chat_messages(
             max_chars=max_chars,
         )
         if structured_content is not None:
-            if role == "user" and _chat_history_is_empty_text_only_content(
+            if role == "user" and _chat_history_should_hide_structured_user_content(
                 structured_content
             ):
                 continue
@@ -16923,6 +16923,20 @@ def _chat_history_is_empty_text_only_content(content: list[dict[str, Any]]) -> b
         if not isinstance(text, str) or text.strip():
             return False
     return saw_text
+
+
+def _chat_history_should_hide_structured_user_content(
+    content: list[dict[str, Any]],
+) -> bool:
+    if _chat_history_is_empty_text_only_content(content):
+        return True
+    parts: list[str] = []
+    for block in content:
+        value = block.get("text")
+        if isinstance(value, str):
+            parts.append(value)
+    text = "".join(parts)
+    return bool(text.strip()) and _chat_history_should_hide_user_text(text)
 
 
 def _chat_history_structured_content(
