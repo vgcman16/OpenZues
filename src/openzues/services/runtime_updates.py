@@ -1170,8 +1170,47 @@ class RuntimeUpdateService:
                 started_at=started_at,
             )
 
+        fetch_step = await self._run_update_command_step(
+            "git fetch",
+            ["git", "fetch", "--all", "--prune", "--tags"],
+            timeout_ms=timeout_ms,
+        )
+        steps.append(fetch_step)
+        if _update_step_exit_code(fetch_step) != 0:
+            return self._build_update_command_result(
+                status="error",
+                reason="fetch-failed",
+                root=root,
+                before=before,
+                after=None,
+                steps=steps,
+                started_at=started_at,
+            )
+
+        upstream_step = await self._run_update_command_step(
+            "upstream check",
+            [
+                "git",
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ],
+            timeout_ms=timeout_ms,
+        )
+        steps.append(upstream_step)
+        if _update_step_exit_code(upstream_step) != 0:
+            return self._build_update_command_result(
+                status="skipped",
+                reason="no-upstream",
+                root=root,
+                before=before,
+                after=before,
+                steps=steps,
+                started_at=started_at,
+            )
+
         for name, argv, reason in (
-            ("git fetch", ["git", "fetch", "--all", "--prune", "--tags"], "fetch-failed"),
             ("git pull", ["git", "pull", "--ff-only"], "pull-failed"),
             (
                 "deps install",

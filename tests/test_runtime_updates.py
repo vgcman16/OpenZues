@@ -209,6 +209,7 @@ async def test_runtime_update_run_update_executes_native_git_install_build_steps
     assert [step["name"] for step in result["steps"]] == [
         "git status",
         "git fetch",
+        "upstream check",
         "git pull",
         "deps install",
         "build",
@@ -216,6 +217,17 @@ async def test_runtime_update_run_update_executes_native_git_install_build_steps
     assert command_calls == [
         (["git", "status", "--porcelain", "--", ":!dist/control-ui/"], tmp_path, 1000),
         (["git", "fetch", "--all", "--prune", "--tags"], tmp_path, 1000),
+        (
+            [
+                "git",
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ],
+            tmp_path,
+            1000,
+        ),
         (["git", "pull", "--ff-only"], tmp_path, 1000),
         ([sys.executable, "-m", "pip", "install", "-e", "."], tmp_path, 1000),
         ([sys.executable, "-m", "compileall", "-q", "src"], tmp_path, 1000),
@@ -262,6 +274,7 @@ async def test_runtime_update_run_update_ignores_control_ui_dist_dirty_files(
     assert [step["name"] for step in result["steps"]] == [
         "git status",
         "git fetch",
+        "upstream check",
         "git pull",
         "deps install",
         "build",
@@ -271,6 +284,64 @@ async def test_runtime_update_run_update_ignores_control_ui_dist_dirty_files(
         tmp_path,
         1000,
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_reports_no_upstream_without_pull(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        command_calls.append((argv, cwd, timeout_ms))
+        if argv[:2] == ["git", "rev-parse"]:
+            return {"stdout": "", "stderr": "no upstream\n", "exitCode": 1}
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("no-upstream update should not schedule immediate restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "no-upstream"
+    assert result["after"] == {"sha": "rev-a", "version": None}
+    assert [step["name"] for step in result["steps"]] == [
+        "git status",
+        "git fetch",
+        "upstream check",
+    ]
+    assert command_calls == [
+        (["git", "status", "--porcelain", "--", ":!dist/control-ui/"], tmp_path, 1000),
+        (["git", "fetch", "--all", "--prune", "--tags"], tmp_path, 1000),
+        (
+            [
+                "git",
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ],
+            tmp_path,
+            1000,
+        ),
+    ]
 
 
 @pytest.mark.asyncio
