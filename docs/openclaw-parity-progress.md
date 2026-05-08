@@ -18072,6 +18072,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_cli.py`, `mypy
   src\openzues\services\ops_mesh.py`, and `git diff --check`. Source/test
   checkpointed in `816d97c4`.
+- Feishu/Lark route-backed account probes now mirror OpenClaw's
+  `probeFeishu` status hook: `channels status --probe --json` treats native
+  Feishu routes as probeable, posts `needBotInfo=true` to
+  `bot/v1/openclaw_bot/ping` through the saved route bearer token, supports
+  Feishu and Lark Open API bases, and returns the native-provider-backed probe
+  envelope with account, timeout, bot name, and bot open-id metadata. This
+  closes `OZ-PROV-001CT`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.99997%. The next channel-probe queue
+  rotates to remaining provider-specific account probes such as Mattermost,
+  IRC, Signal, Twitch, BlueBubbles, iMessage, and Tlon.
+- Verified the Feishu/Lark probe slice with
+  `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_feishu_probe -q`
+  (`1 passed`), adjacent channel-probe proof
+  `python -m pytest tests\test_cli.py -q -k "route_backed_feishu_probe or route_backed_googlechat_probe or route_backed_line_probe or route_backed_zalo_probe or route_backed_matrix_probe or route_backed_discord_probe or route_backed_telegram_probe or route_backed_slack_probe or keeps_whatsapp_no_hook_probe or msteams_native_probe"`
+  (`10 passed, 506 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_cli.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `bf1d1d3c`.
 
 ## References
 
