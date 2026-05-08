@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99998% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1979,6 +1979,11 @@ may lag behind this tracker.
   `probeMattermost` status hook over `/api/v4/users/me` with bot user
   projection.
   - Status: checkpointed in `ba0205fc`
+
+- [x] Signal route-backed account probe support, preserving OpenClaw's
+  `probeSignal` status hook over `/api/v1/check` plus JSON-RPC `version`,
+  without requiring a route secret.
+  - Status: checkpointed in `1af31a04`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -4887,6 +4892,18 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused
     `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_mattermost_probe -q`
     (`1 passed`), adjacent channel-probe proof (`11 passed, 506 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Signal route-backed account probe.
+  - Source: `openclaw-main/extensions/signal/src/probe.ts`,
+    `openclaw-main/extensions/signal/src/channel.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `1af31a04`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_signal_probe -q`
+    (`1 passed`), adjacent channel-probe proof (`12 passed, 506 deselected`),
     `ruff check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
