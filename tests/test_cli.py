@@ -24995,6 +24995,61 @@ def test_update_status_json_projects_git_behind_availability(
     }
 
 
+def test_update_status_json_config_channel_overrides_git_tag(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    tag_sha = "2222222222222222222222222222222222222222"
+    git_dir.mkdir(parents=True)
+    (git_dir / "HEAD").write_text(f"{tag_sha}\n", encoding="utf-8")
+    refs_tags = git_dir / "refs" / "tags"
+    refs_tags.mkdir(parents=True)
+    (refs_tags / "v3.0.0-beta.1").write_text(f"{tag_sha}\n", encoding="utf-8")
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"update": {"channel": "stable"}}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["channel"] == {
+        "value": "stable",
+        "source": "config",
+        "label": "stable (config)",
+        "config": "stable",
+    }
+    assert payload["update"]["git"]["tag"] == "v3.0.0-beta.1"
+
+
 def test_doctor_json_warns_when_sandbox_enabled_without_docker(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
