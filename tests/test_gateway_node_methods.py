@@ -53863,6 +53863,131 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_qa_lab_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-qa-lab.cjs"
+    runtime_entry.write_text(
+        """
+const qaLab = require("openclaw/plugin-sdk/qa-lab");
+const scopedQaLab = require("@openclaw/plugin-sdk/qa-lab");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.qa_lab",
+      description: "Use OpenClaw qa-lab SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const calls = [];
+        const registrations = [];
+        globalThis.__openzuesQaRunnerRuntime = {
+          loadBundledPluginPublicSurfaceModuleSync(params) {
+            calls.push(params);
+            return {
+              isQaLabCliAvailable: () => true,
+              registerQaLabCli: (program) => {
+                registrations.push(program);
+                return { registered: program.name };
+              }
+            };
+          }
+        };
+
+        const keys = Object.keys(qaLab).sort();
+        const beforeCalls = calls.length;
+        const registered = qaLab.registerQaLabCli({ name: "qa" });
+        const available = scopedQaLab.isQaLabCliAvailable();
+        globalThis.__openzuesQaRunnerRuntime.loadBundledPluginPublicSurfaceModuleSync = () => {
+          throw new Error("Unable to resolve bundled plugin public surface qa-lab/cli.js");
+        };
+        const unavailable = qaLab.isQaLabCliAvailable();
+
+        return {
+          keys,
+          scopedSame:
+            scopedQaLab.registerQaLabCli === qaLab.registerQaLabCli &&
+            scopedQaLab.isQaLabCliAvailable === qaLab.isQaLabCliAvailable,
+          beforeCalls,
+          registered,
+          available,
+          unavailable,
+          registrations,
+          callSummary: calls.map((call) => ({
+            dirName: call.dirName,
+            artifact: call.artifactBasename
+          }))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-qa-lab-plugin",
+                    "name": "Runtime QA Lab Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-qa-lab.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.qa_lab"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.qa_lab"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["isQaLabCliAvailable", "registerQaLabCli"],
+        "scopedSame": True,
+        "beforeCalls": 0,
+        "registered": {"registered": "qa"},
+        "available": True,
+        "unavailable": False,
+        "registrations": [{"name": "qa"}],
+        "callSummary": [
+            {"dirName": "qa-lab", "artifact": "cli.js"},
+            {"dirName": "qa-lab", "artifact": "cli.js"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_qa_runtime_helpers(
     tmp_path,
 ) -> None:

@@ -27563,6 +27563,38 @@ function loadQaRuntimeModule() {
   });
 }
 
+function loadQaLabCliFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "qa-lab",
+    artifactBasename: "cli.js",
+  });
+}
+
+function isMissingQaLabFacadeError(error) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.message === "Unable to resolve bundled plugin public surface qa-lab/cli.js" ||
+    error.message.startsWith("Unable to open bundled plugin public surface ")
+  );
+}
+
+function registerQaLabCli(...args) {
+  return loadQaLabCliFacadeModule().registerQaLabCli(...args);
+}
+
+function isQaLabCliAvailable() {
+  try {
+    return !!loadQaLabCliFacadeModule().isQaLabCliAvailable();
+  } catch (error) {
+    if (isMissingQaLabFacadeError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 function loadQaRunnerBundledPluginTestApi(pluginId) {
   const env = resolvePrivateQaBundledPluginsEnv();
   return loadBundledPluginPublicSurfaceModuleSync({
@@ -68281,6 +68313,11 @@ const skillsRuntime = {
   shouldRefreshSnapshotForVersion,
 };
 
+const qaLabRuntime = {
+  isQaLabCliAvailable,
+  registerQaLabCli,
+};
+
 const qaRuntimeRuntime = {
   isQaRuntimeAvailable,
   loadQaRuntimeModule,
@@ -89127,6 +89164,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/agent-harness"
   ) {
     return agentHarnessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/qa-lab" ||
+    request === "@openclaw/plugin-sdk/qa-lab"
+  ) {
+    return qaLabRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/qa-runtime" ||
