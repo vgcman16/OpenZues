@@ -18963,6 +18963,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`12 passed, 530 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `912aee5e`.
+- `openzues doctor --json` package distribution diagnostics now enforce
+  OpenClaw's critical bundled runtime sidecar contract when the inventory omits
+  a sidecar path, reporting `missing bundled runtime sidecar ...` for
+  installed bundled plugins. This closes `OZ-PKG-001X`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999997%.
+- Verified the bundled runtime sidecar slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_enforces_missing_bundled_runtime_sidecar -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory or omits_local_build_metadata or unsafe_package_dist_symlink or externalized_bundled_extension or private_qa_package_dist or package_root_resolving_to_source_checkout or missing_bundled_runtime_sidecar"`
+  (`13 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `07b17ad0`.
 
 ## References
 

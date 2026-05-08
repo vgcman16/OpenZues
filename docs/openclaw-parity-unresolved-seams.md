@@ -9969,3 +9969,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Source/test checkpointed in `912aee5e`; repo-wide parity remains estimated
   at ~99.9%, with the evidence band tightened to ~80-99.9999999999996%.
   Rotate to installed bundled runtime sidecar enforcement next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  enforce OpenClaw's critical bundled runtime sidecar contract for installed
+  bundled plugins and report `missing bundled runtime sidecar ...` when an
+  inventory omits a required sidecar. Source/test checkpointed in `07b17ad0`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999997%. Rotate to private-QA sidecar no-warning
+  proof next.

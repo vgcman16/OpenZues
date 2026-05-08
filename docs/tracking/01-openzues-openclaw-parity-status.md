@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999996% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999997% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1705,6 +1705,10 @@ may lag behind this tracker.
 - [x] Package root resolves to source checkout warning, preserving OpenClaw's
   global install source-checkout guard.
   - Status: checkpointed in `912aee5e`
+
+- [x] Bundled runtime sidecar enforcement, preserving OpenClaw's critical
+  sidecar checks for installed bundled plugins.
+  - Status: checkpointed in `07b17ad0`
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
@@ -4253,6 +4257,20 @@ may lag behind this tracker.
     tests\test_cli.py::test_doctor_json_flags_package_root_resolving_to_source_checkout
     -q` (`1 failed` before implementation, then `1 passed`), adjacent package
     doctor proof (`12 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Bundled runtime sidecar enforcement.
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`,
+    `openclaw-main/scripts/lib/bundled-runtime-sidecar-paths.json`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `07b17ad0`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_enforces_missing_bundled_runtime_sidecar
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`13 passed, 530 deselected`), `ruff check`, `mypy`, and
     `git diff --check`.
 
 - [x] Companion node presence alive lifecycle.
