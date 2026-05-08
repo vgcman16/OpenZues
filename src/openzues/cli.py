@@ -8238,6 +8238,74 @@ def _doctor_collect_package_dist_files(root: Path) -> list[str]:
     return sorted(set(files))
 
 
+def _doctor_is_install_stage_dir_name(value: str) -> bool:
+    lower = value.lower()
+    return lower == ".openclaw-install-stage" or lower.startswith(
+        ".openclaw-install-stage-"
+    )
+
+
+def _doctor_collect_legacy_package_dist_staging_debris(root: Path) -> list[str]:
+    try:
+        package_root_entries = list(root.iterdir())
+    except OSError:
+        return []
+    debris: list[str] = []
+    for dist_dir in package_root_entries:
+        try:
+            if (
+                not dist_dir.is_dir()
+                or dist_dir.is_symlink()
+                or dist_dir.name.lower() != "dist"
+            ):
+                continue
+            dist_entries = list(dist_dir.iterdir())
+        except OSError:
+            continue
+        for dist_entry in dist_entries:
+            try:
+                if (
+                    not dist_entry.is_dir()
+                    or dist_entry.is_symlink()
+                    or dist_entry.name.lower() != "extensions"
+                ):
+                    continue
+                extension_entries = list(dist_entry.iterdir())
+            except OSError:
+                continue
+            for extension_entry in extension_entries:
+                try:
+                    if not extension_entry.is_dir() or extension_entry.is_symlink():
+                        continue
+                    staging_entries = list(extension_entry.iterdir())
+                except OSError:
+                    continue
+                for staging_entry in staging_entries:
+                    try:
+                        if (
+                            staging_entry.is_dir()
+                            and not staging_entry.is_symlink()
+                            and _doctor_is_install_stage_dir_name(staging_entry.name)
+                        ):
+                            debris.append(
+                                _doctor_normalize_package_dist_path(
+                                    staging_entry.relative_to(root).as_posix()
+                                )
+                            )
+                    except OSError:
+                        continue
+    return sorted(set(debris))
+
+
+def _doctor_package_dist_staging_debris_warning(debris: Sequence[str]) -> str | None:
+    if not debris:
+        return None
+    return (
+        "unexpected legacy plugin dependency staging debris in package dist: "
+        f"{', '.join(debris)}"
+    )
+
+
 def _doctor_package_dist_inventory_file_warnings(
     root: Path,
     expected_files: Sequence[str] | None,
@@ -8378,6 +8446,16 @@ def _build_doctor_package_distribution_payload(
         )
     if inventory_required and inventory_warning is not None:
         warnings.append(inventory_warning)
+    staging_debris = (
+        _doctor_collect_legacy_package_dist_staging_debris(root)
+        if inventory_required and dist_present
+        else []
+    )
+    staging_debris_warning = _doctor_package_dist_staging_debris_warning(
+        staging_debris
+    )
+    if staging_debris_warning is not None:
+        warnings.append(staging_debris_warning)
     inventory_file_warnings: list[str] = []
     if inventory_required and inventory_present and inventory_warning is None:
         inventory_file_warnings = _doctor_package_dist_inventory_file_warnings(
@@ -8461,6 +8539,17 @@ def _build_doctor_package_distribution_payload(
                 detail="; ".join(inventory_file_warnings)
                 if inventory_file_warnings
                 else "Package dist inventory matches packaged files.",
+            )
+        )
+    if inventory_required and dist_present:
+        checks.append(
+            _doctor_package_distribution_check(
+                key="legacy_plugin_dependency_staging_debris",
+                status="warning" if staging_debris_warning is not None else "ok",
+                path=dist_path / "extensions",
+                detail=staging_debris_warning
+                if staging_debris_warning is not None
+                else "No legacy plugin dependency staging debris found.",
             )
         )
     payload: dict[str, object] = {
