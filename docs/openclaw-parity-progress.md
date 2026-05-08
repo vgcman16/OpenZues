@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999995%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19191,6 +19191,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
   Source/test checkpointed in `5a31c97f`.
+- Native package updates now run OpenClaw-shaped low-disk advisory checks near
+  the package update target, keep the update non-fatal when free space is
+  below 1 GiB, carry warning metadata in the result, and print JSON-mode
+  update warnings to stderr. This closes `OZ-PKG-001AO`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999995%.
+- Verified low-disk package update warnings with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_low_disk_warning -q`
+  (`1 failed` before implementation, then `1 passed`), focused CLI proof
+  `python -m pytest tests\test_cli.py::test_update_json_dispatches_package_update_service -q`
+  (`1 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`12 passed`),
+  adjacent update CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_package_update_service or post_update_plugin_sync or update_json_dispatches_runtime_update_service or update_status"`
+  (`18 passed, 535 deselected`), `ruff check
+  src\openzues\services\runtime_updates.py src\openzues\cli.py
+  tests\test_runtime_updates.py tests\test_cli.py`, `mypy
+  src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `3083362b`.
 
 ## References
 
