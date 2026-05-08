@@ -1528,6 +1528,107 @@ def test_channels_status_json_uses_route_backed_googlechat_probe(
     ]
 
 
+def test_channels_status_json_uses_route_backed_feishu_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Feishu Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Feishu Native Probe Route",
+            kind="feishu",
+            target="https://open.larksuite.com/open-apis",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "feishu",
+                "account_id": "feishu-bot",
+                "peer_kind": "channel",
+                "peer_id": "feishu:chat:oc_chat_1",
+                "summary": "feishu-bot channel oc_chat_1",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="tenant-access-token",
+            vault_secret_id=None,
+        )
+    )
+    feishu_posts: list[
+        tuple[str, str, object | None, str | None, str | None, float]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, extra_headers
+        feishu_posts.append(
+            (target, method, payload, secret_header_name, secret_token, timeout_seconds)
+        )
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "pingBotInfo": {
+                    "botID": "ou_bot_openid",
+                    "botName": "OpenZues Lark",
+                }
+            },
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["feishu"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "feishu",
+        "runtime": "native-provider-backed",
+        "accountId": "feishu-bot",
+        "botName": "OpenZues Lark",
+        "botOpenId": "ou_bot_openid",
+        "timeoutMs": 2500,
+    }
+    assert feishu_posts == [
+        (
+            "https://open.larksuite.com/open-apis/bot/v1/openclaw_bot/ping",
+            "POST",
+            {"needBotInfo": True},
+            "Authorization",
+            "Bearer tenant-access-token",
+            2.5,
+        )
+    ]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,

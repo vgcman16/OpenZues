@@ -387,6 +387,7 @@ PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
     "telegram",
     "discord",
+    "feishu",
     "googlechat",
     "line",
     "matrix",
@@ -14583,6 +14584,24 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "feishu":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_feishu_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         if route_kind == "line":
             try:
                 return await asyncio.to_thread(
@@ -15490,6 +15509,62 @@ class OpsMeshService:
             "runtime": "native-provider-backed",
             "accountId": account_id,
             "timeoutMs": timeout_ms,
+        }
+
+    def _probe_feishu_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        result = self._request_json_provider_url(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                "bot/v1/openclaw_bot/ping",
+            ),
+            method="POST",
+            payload={"needBotInfo": True},
+            secret_header_name="Authorization",
+            secret_token=_feishu_bearer_token(secret_token),
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Feishu API returned a non-JSON probe response.")
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "feishu",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "timeoutMs": timeout_ms,
+        }
+        if result.get("code") != 0:
+            error = str(result.get("msg") or f"code {result.get('code')}").strip()
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": f"API error: {error}",
+            }
+        data = result.get("data")
+        bot_info = data.get("pingBotInfo") if isinstance(data, dict) else None
+        if isinstance(bot_info, dict):
+            bot_name = str(bot_info.get("botName") or "").strip()
+            bot_open_id = str(
+                bot_info.get("botID") or bot_info.get("botOpenId") or ""
+            ).strip()
+            if bot_name:
+                payload["botName"] = bot_name
+            if bot_open_id:
+                payload["botOpenId"] = bot_open_id
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
         }
 
     def _probe_matrix_provider_route(
