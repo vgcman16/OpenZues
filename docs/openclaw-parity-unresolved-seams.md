@@ -10539,3 +10539,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.9999999999999999999999999996%. Continue remaining provider/channel
   facade and broad repo parity seams.
+- Current queue-head adjustment: imported plugin SDK `mattermost-policy` now
+  exposes exact scoped/unscoped `isMattermostSenderAllowed` with native
+  Mattermost allowlist normalization for `mattermost:`/`user:` prefixes,
+  leading `@` IDs, wildcard allow, empty allowlist denial, and optional name
+  matching instead of generic passthrough. Source/test checkpointed in
+  `f18197d2`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999999999999997%. Continue remaining
+  Matrix/provider/channel facade and broad repo parity seams.

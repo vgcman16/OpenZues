@@ -20261,6 +20261,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1145 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `a2edff86`.
+- Imported plugin SDK `mattermost-policy` now exposes the exact
+  scoped/unscoped `isMattermostSenderAllowed` facade with upstream-shaped
+  Mattermost allowlist normalization for `mattermost:`/`user:` prefixes,
+  `@`-prefixed IDs, wildcard allowlists, empty allowlist denial, and optional
+  dangerous name matching. This closes `OZ-PLUGIN-00319`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999997%.
+- Verified the mattermost-policy helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_mattermost_policy_helper -q`
+  (the exact subpath returned generic passthrough data before implementation,
+  then `1 passed`), adjacent provider/channel policy proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "mattermost_policy or bluebubbles_policy or irc_surface or channel_config_helpers"`
+  (`4 passed, 1146 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `f18197d2`.
 
 ## References
 
