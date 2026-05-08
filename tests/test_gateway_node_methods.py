@@ -17798,6 +17798,120 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_bluebubbles_policy_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-bluebubbles-policy.cjs"
+    runtime_entry.write_text(
+        """
+const policy = require("openclaw/plugin-sdk/bluebubbles-policy");
+const scopedPolicy = require("@openclaw/plugin-sdk/bluebubbles-policy");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.bluebubbles_policy",
+      description: "Use OpenClaw bluebubbles-policy SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(policy).sort(),
+          scopedSame:
+            scopedPolicy.isAllowedBlueBubblesSender ===
+            policy.isAllowedBlueBubblesSender,
+          sender: [
+            policy.isAllowedBlueBubblesSender({
+              allowFrom: [" +15551234567 "],
+              sender: "+15551234567"
+            }),
+            policy.isAllowedBlueBubblesSender({
+              allowFrom: ["chat_guid:chat-guid-1"],
+              sender: "other",
+              chatGuid: "chat-guid-1"
+            }),
+            policy.isAllowedBlueBubblesSender({
+              allowFrom: ["different"],
+              sender: "+15551234567"
+            })
+          ],
+          groupDefaults: {
+            mention: policy.resolveBlueBubblesGroupRequireMention({
+              cfg: {},
+              groupId: "chat-1"
+            }),
+            tools: policy.resolveBlueBubblesGroupToolPolicy({
+              cfg: {},
+              groupId: "chat-1"
+            }) || null
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-bluebubbles-policy-plugin",
+                    "name": "Runtime BlueBubbles Policy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-bluebubbles-policy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.bluebubbles_policy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.bluebubbles_policy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "isAllowedBlueBubblesSender",
+            "resolveBlueBubblesGroupRequireMention",
+            "resolveBlueBubblesGroupToolPolicy",
+        ],
+        "scopedSame": True,
+        "sender": [True, True, False],
+        "groupDefaults": {"mention": True, "tools": None},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
     tmp_path,
 ) -> None:

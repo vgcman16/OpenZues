@@ -36185,6 +36185,34 @@ function resolveBlueBubblesGroupToolPolicy(params = {}) {
   });
 }
 
+function parseBlueBubblesAllowTarget(entry) {
+  const trimmed = String(entry || "").trim();
+  const lower = trimmed.toLowerCase();
+  const chatTarget = parseChatAllowTargetPrefixes({
+    trimmed,
+    lower,
+    chatIdPrefixes: ["chat_id:", "chat:"],
+    chatGuidPrefixes: ["chat_guid:", "guid:"],
+    chatIdentifierPrefixes: ["chat_identifier:", "identifier:"],
+  });
+  if (chatTarget) {
+    return chatTarget;
+  }
+  return { kind: "handle", handle: normalizeOptionalLowercaseString(trimmed) };
+}
+
+function isAllowedBlueBubblesSender(params = {}) {
+  return isAllowedParsedChatSender({
+    allowFrom: params.allowFrom,
+    sender: params.sender,
+    chatId: params.chatId,
+    chatGuid: params.chatGuid,
+    chatIdentifier: params.chatIdentifier,
+    normalizeSender: (sender) => normalizeOptionalLowercaseString(sender),
+    parseAllowTarget: parseBlueBubblesAllowTarget,
+  });
+}
+
 function collectBlueBubblesStatusIssues(accounts) {
   return Array.isArray(accounts) ? [] : [];
 }
@@ -84169,6 +84197,12 @@ const compatRuntime = {
   writeOAuthCredentials: providerAuthFacadeRuntime.writeOAuthCredentials,
 };
 
+const blueBubblesPolicyRuntime = {
+  isAllowedBlueBubblesSender,
+  resolveBlueBubblesGroupRequireMention,
+  resolveBlueBubblesGroupToolPolicy,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -86234,6 +86268,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/compat"
   ) {
     return compatRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/bluebubbles-policy" ||
+    request === "@openclaw/plugin-sdk/bluebubbles-policy"
+  ) {
+    return blueBubblesPolicyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/discord" ||
