@@ -264,6 +264,73 @@ async def test_runtime_update_run_package_update_executes_global_install_step(
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_package_update_cleans_stale_global_rename_dirs(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    prefix = tmp_path / "prefix"
+    global_root = prefix / "lib" / "node_modules"
+    package_root = global_root / "openzues"
+    _write_package_root(package_root, "2026.5.1")
+    stale_dir = global_root / ".openzues-previous"
+    stale_dir.mkdir()
+    (stale_dir / "marker.txt").write_text("old backup\n", encoding="utf-8")
+    matching_file = global_root / ".openzues-file"
+    matching_file.write_text("not a directory\n", encoding="utf-8")
+    unrelated_dir = global_root / ".other-previous"
+    unrelated_dir.mkdir()
+    cleanup_seen: list[bool] = []
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        command_calls.append((argv, cwd, timeout_ms))
+        if len(command_calls) == 1:
+            cleanup_seen.append(
+                not stale_dir.exists()
+                and matching_file.exists()
+                and unrelated_dir.exists()
+            )
+        if argv == _post_update_doctor_args():
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@latest",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "ok"
+    assert cleanup_seen == [True]
+    assert not stale_dir.exists()
+    assert matching_file.exists()
+    assert unrelated_dir.exists()
+    assert command_calls == [
+        (["pnpm", "add", "-g", "openzues@latest"], package_root, 1000),
+        (_post_update_doctor_args(), package_root, 1000),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_package_update_retries_npm_without_optional_deps(
     tmp_path,
 ) -> None:

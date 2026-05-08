@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -245,6 +246,30 @@ def _cleanup_staged_npm_install(stage: _StagedNpmInstall | None) -> None:
     if stage is None:
         return
     shutil.rmtree(stage.prefix, ignore_errors=True)
+
+
+def _cleanup_global_rename_dirs(package_root: Path, package_name: str) -> list[str]:
+    cleaned_name = package_name.strip()
+    if not cleaned_name:
+        return []
+    global_root = _global_root_from_package_root(package_root, cleaned_name)
+    prefix = f".{cleaned_name}-"
+    try:
+        entries = list(global_root.iterdir())
+    except OSError:
+        return []
+    removed: list[str] = []
+    for entry in entries:
+        if not entry.name.startswith(prefix):
+            continue
+        try:
+            if not stat.S_ISDIR(entry.lstat().st_mode):
+                continue
+            shutil.rmtree(entry)
+        except OSError:
+            continue
+        removed.append(entry.name)
+    return removed
 
 
 def _path_exists(path: Path) -> bool:
@@ -664,6 +689,7 @@ class RuntimeUpdateService:
         steps: list[dict[str, object]] = []
         before = {"sha": None, "version": _read_package_version(package_root)}
         package_name = _read_package_name(package_root)
+        _cleanup_global_rename_dirs(package_root, package_name)
         manager = package_manager.strip().lower()
         staged_install: _StagedNpmInstall | None = None
         if manager == "npm":
