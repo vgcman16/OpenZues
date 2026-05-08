@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999996% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999997% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -5243,6 +5243,18 @@ may lag behind this tracker.
     failed` before implementation, then `1 passed`), paired package
     distribution regressions (`2 passed`), adjacent update/package doctor proof
     (`7 passed, 517 deselected`), `ruff check`, and `mypy`.
+
+- [x] Update-status git-tag channel projection.
+  - Source: `openclaw-main/src/infra/update-channels.ts`,
+    `openclaw-main/src/cli/update-cli/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `dce24b5e`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused git-tag update-status red-green proof
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    update/package doctor proof (`7 passed, 518 deselected`), `ruff check`,
+    and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.

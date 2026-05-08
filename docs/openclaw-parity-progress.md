@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999996%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999997%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18717,6 +18717,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`7 passed, 517 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `4c1d7a2a`.
+- `openzues update status --json` now mirrors OpenClaw's git-tag channel
+  projection from `src/infra/update-channels.ts`: detached git installs whose
+  `HEAD` matches a tag under `.git/refs/tags` report `channel.source` as
+  `git-tag`, derive `stable` vs `beta` from the tag text, and keep config
+  channels higher precedence than tag/branch/default inference. This closes
+  `OZ-PKG-001G`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999997%.
+- Verified the update-status git-tag channel slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_json_uses_git_tag_channel_label -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update/package
+  doctor proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_json_uses_git_tag_channel_label or update_status_json_uses_git_branch_channel_label or update_status_json_includes_openclaw_channel_projection or update_status_json_detects_package_manager_deps or source_install_pnpm_workspace_warnings or package_distribution_diagnostics or invalid_package_dist_inventory"`
+  (`7 passed, 518 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `dce24b5e`.
 
 ## References
 
