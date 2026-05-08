@@ -21163,6 +21163,143 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_feishu_setup_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-feishu-setup.cjs"
+    runtime_entry.write_text(
+        """
+const feishuSetup = require("openclaw/plugin-sdk/feishu-setup");
+const scopedFeishuSetup = require("@openclaw/plugin-sdk/feishu-setup");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.feishu_setup",
+      description: "Use OpenClaw feishu-setup SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const calls = [];
+        globalThis.__openzuesQaRunnerRuntime = {
+          loadBundledPluginPublicSurfaceModuleSync(params) {
+            calls.push(params);
+            return {
+              feishuSetupAdapter: {
+                channel: "feishu",
+                resolveAccountId: ({ cfg }) => cfg.accountId || "default",
+                validateInput: ({ accountId }) => ({ ok: !!accountId })
+              },
+              feishuSetupWizard: {
+                channel: "feishu",
+                status: { unconfiguredHint: "Connect Feishu" },
+                credentials: [{ key: "appId" }]
+              }
+            };
+          }
+        };
+
+        const keys = Object.keys(feishuSetup).sort();
+        const beforeCalls = calls.length;
+        const adapter = feishuSetup.feishuSetupAdapter;
+        const wizard = scopedFeishuSetup.feishuSetupWizard;
+        return {
+          keys,
+          scopedSame:
+            scopedFeishuSetup.feishuSetupAdapter === feishuSetup.feishuSetupAdapter,
+          beforeCalls,
+          adapter: {
+            channel: adapter.channel,
+            defaultAccount: adapter.resolveAccountId({ cfg: {} }),
+            configuredAccount: adapter.resolveAccountId({ cfg: { accountId: "ops" } }),
+            validation: adapter.validateInput({ accountId: "ops" })
+          },
+          wizard: {
+            channel: wizard.channel,
+            hint: wizard.status.unconfiguredHint,
+            credentialKeys: wizard.credentials.map((item) => item.key)
+          },
+          callSummary: calls.map((call) => ({
+            dirName: call.dirName,
+            artifact: call.artifactBasename
+          }))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-feishu-setup-plugin",
+                    "name": "Runtime Feishu Setup Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-feishu-setup.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.feishu_setup"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.feishu_setup"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["feishuSetupAdapter", "feishuSetupWizard"],
+        "scopedSame": True,
+        "beforeCalls": 0,
+        "adapter": {
+            "channel": "feishu",
+            "defaultAccount": "default",
+            "configuredAccount": "ops",
+            "validation": {"ok": True},
+        },
+        "wizard": {
+            "channel": "feishu",
+            "hint": "Connect Feishu",
+            "credentialKeys": ["appId"],
+        },
+        "callSummary": [
+            {"dirName": "feishu", "artifact": "setup-api.js"},
+            {"dirName": "feishu", "artifact": "setup-api.js"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_synology_chat_helpers(
     tmp_path,
 ) -> None:

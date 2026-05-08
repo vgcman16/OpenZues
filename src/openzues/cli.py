@@ -87575,6 +87575,22 @@ const feishuSecurityRuntime = {
   collectFeishuSecurityAuditFindings,
 };
 
+function loadFeishuSetupFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "feishu",
+    artifactBasename: "setup-api.js",
+  });
+}
+
+const feishuSetupRuntime = {
+  feishuSetupAdapter: createLazyFacadeObjectValue(
+    () => loadFeishuSetupFacadeModule().feishuSetupAdapter || {},
+  ),
+  feishuSetupWizard: createLazyFacadeObjectValue(
+    () => loadFeishuSetupFacadeModule().feishuSetupWizard || {},
+  ),
+};
+
 function collectSynologyChatSecurityAuditFindings(params = {}) {
   const account = isRecord(params.account) ? params.account : {};
   if (!account.dangerouslyAllowNameMatching) {
@@ -89882,6 +89898,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/feishu-security"
   ) {
     return feishuSecurityRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/feishu-setup" ||
+    request === "@openclaw/plugin-sdk/feishu-setup"
+  ) {
+    return feishuSetupRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/synology-chat" ||
