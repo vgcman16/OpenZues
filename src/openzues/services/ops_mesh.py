@@ -560,6 +560,28 @@ GatewayTlonInboundMediaFetchService = Callable[
 
 
 @dataclass(frozen=True, slots=True)
+class GatewayTlonApprovalQueueRequest:
+    approval_type: Literal["dm", "channel"]
+    requesting_ship: str
+    owner_ship: str
+    message_preview: str
+    message_id: str
+    message_text: str
+    message_content: object | None
+    timestamp: int | None
+    account_id: str | None
+    channel_nest: str | None = None
+    parent_id: str | None = None
+    is_thread_reply: bool = False
+
+
+GatewayTlonApprovalQueueService = Callable[
+    [GatewayTlonApprovalQueueRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
 class GatewayMSTeamsFeedbackReflectionRequest:
     prompt: str
     session_key: str
@@ -7208,6 +7230,233 @@ def _tlon_extract_dm_partner_ship(whom: object) -> str | None:
     return _tlon_normalize_target_ship(str(raw_ship)) if raw_ship is not None else None
 
 
+def _tlon_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    entries: list[str] = []
+    for item in value:
+        normalized = str(item or "").strip()
+        if normalized:
+            entries.append(normalized)
+    return entries
+
+
+def _tlon_ship_list(value: object) -> list[str]:
+    ships: list[str] = []
+    for entry in _tlon_string_list(value):
+        normalized = _tlon_normalize_target_ship(entry)
+        if normalized is not None:
+            ships.append(normalized)
+    return ships
+
+
+def _tlon_channel_authorization(
+    channel_config: Mapping[str, Any],
+    channel_nest: str,
+) -> tuple[str, list[str]] | None:
+    authorization = _msteams_inbound_mapping(channel_config.get("authorization"))
+    if not authorization and "defaultAuthorizedShips" not in channel_config:
+        return None
+    channel_rules = _msteams_inbound_mapping(authorization.get("channelRules"))
+    rule = _msteams_inbound_mapping(channel_rules.get(channel_nest))
+    mode = (
+        _msteams_inbound_optional_string(rule.get("mode"))
+        or "restricted"
+    ).lower()
+    if mode != "open":
+        mode = "restricted"
+    allowed_value = (
+        rule.get("allowedShips")
+        if "allowedShips" in rule
+        else channel_config.get("defaultAuthorizedShips")
+    )
+    return mode, _tlon_ship_list(allowed_value)
+
+
+def _tlon_owner_ship(channel_config: Mapping[str, Any]) -> str | None:
+    return _tlon_normalize_target_ship(
+        _msteams_inbound_optional_string(channel_config.get("ownerShip"))
+    )
+
+
+def _tlon_channel_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> Mapping[str, Any]:
+    channels = _msteams_inbound_mapping(snapshot.get("channels"))
+    channel_config = _msteams_inbound_mapping(channels.get("tlon"))
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    accounts = _msteams_inbound_mapping(channel_config.get("accounts"))
+    account_config: Mapping[str, Any] = {}
+    if accounts:
+        account_config = _msteams_inbound_mapping(
+            accounts.get(normalized_account_id)
+            or accounts.get(DEFAULT_ACCOUNT_ID)
+            or {}
+        )
+    if not account_config:
+        return channel_config
+    merged = dict(channel_config)
+    merged.update(account_config)
+    return merged
+
+
+def _tlon_inbound_pending_approval_request(
+    message: _TlonInboundMessage,
+    *,
+    channel_config: Mapping[str, Any],
+    account_id: str | None,
+) -> GatewayTlonApprovalQueueRequest | None:
+    if not channel_config:
+        return None
+    sender_ship = _tlon_normalize_target_ship(message.sender_ship)
+    owner_ship = _tlon_owner_ship(channel_config)
+    if sender_ship is None or owner_ship is None or sender_ship == owner_ship:
+        return None
+    if message.channel_nest is None:
+        if "dmAllowlist" not in channel_config:
+            return None
+        if sender_ship in _tlon_ship_list(channel_config.get("dmAllowlist")):
+            return None
+        return GatewayTlonApprovalQueueRequest(
+            approval_type="dm",
+            requesting_ship=sender_ship,
+            owner_ship=owner_ship,
+            message_preview=message.text[:100],
+            message_id=message.message_id,
+            message_text=message.text,
+            message_content=message.content,
+            timestamp=message.timestamp,
+            account_id=account_id,
+        )
+    channel_authorization = _tlon_channel_authorization(
+        channel_config,
+        message.channel_nest,
+    )
+    if channel_authorization is None:
+        return None
+    mode, allowed_ships = channel_authorization
+    if mode == "open" or sender_ship in allowed_ships:
+        return None
+    return GatewayTlonApprovalQueueRequest(
+        approval_type="channel",
+        requesting_ship=sender_ship,
+        owner_ship=owner_ship,
+        message_preview=message.text[:100],
+        message_id=message.message_id,
+        message_text=message.text,
+        message_content=message.content,
+        timestamp=message.timestamp,
+        account_id=account_id,
+        channel_nest=message.channel_nest,
+        parent_id=message.thread_id,
+        is_thread_reply=message.thread_id is not None,
+    )
+
+
+def _tlon_pending_approval_metadata(
+    request: GatewayTlonApprovalQueueRequest,
+    queue_result: object,
+) -> dict[str, object]:
+    result = _msteams_inbound_mapping(queue_result)
+    approval_id = _msteams_inbound_optional_string(result.get("approvalId"))
+    metadata: dict[str, object] = {
+        "ok": False,
+        "channel": "tlon",
+        "eventType": "channels" if request.approval_type == "channel" else "chat",
+        "skipped": True,
+        "status": "approval_pending",
+        "reason": (
+            "tlon_channel_sender_pending_approval"
+            if request.approval_type == "channel"
+            else "tlon_dm_sender_pending_approval"
+        ),
+        "approval": {
+            "type": request.approval_type,
+            "requestingShip": request.requesting_ship,
+            "ownerShip": request.owner_ship,
+            "notified": bool(result.get("notified")),
+        },
+        "inboundMessageId": request.message_id,
+        "senderId": request.requesting_ship,
+        "conversationId": request.channel_nest or request.requesting_ship,
+        "conversationType": "group" if request.channel_nest else "direct",
+        "accountId": normalize_optional_account_id(request.account_id) or DEFAULT_ACCOUNT_ID,
+    }
+    if approval_id is not None:
+        metadata["approvalId"] = approval_id
+    if request.channel_nest is not None:
+        metadata["channelNest"] = request.channel_nest
+    if request.parent_id is not None:
+        metadata["threadId"] = request.parent_id
+    return metadata
+
+
+def _tlon_inbound_authorization_block_metadata(
+    message: _TlonInboundMessage,
+    *,
+    channel_config: Mapping[str, Any],
+    account_id: str | None,
+) -> dict[str, object] | None:
+    if not channel_config:
+        return None
+    sender_ship = _tlon_normalize_target_ship(message.sender_ship)
+    if sender_ship is None:
+        return None
+    owner_ship = _tlon_normalize_target_ship(
+        _msteams_inbound_optional_string(channel_config.get("ownerShip"))
+    )
+    if owner_ship is not None:
+        return None
+    if message.channel_nest is None:
+        if "dmAllowlist" not in channel_config:
+            return None
+        if sender_ship in _tlon_ship_list(channel_config.get("dmAllowlist")):
+            return None
+        return {
+            "ok": False,
+            "channel": "tlon",
+            "eventType": message.event_type,
+            "skipped": True,
+            "status": "blocked",
+            "reason": "tlon_dm_sender_not_allowlisted",
+            "inboundMessageId": message.message_id,
+            "senderId": sender_ship,
+            "conversationId": sender_ship,
+            "conversationType": "direct",
+            "accountId": normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID,
+        }
+    channel_authorization = _tlon_channel_authorization(
+        channel_config,
+        message.channel_nest,
+    )
+    if channel_authorization is None:
+        return None
+    mode, allowed_ships = channel_authorization
+    if mode == "open" or sender_ship in allowed_ships:
+        return None
+    return {
+        "ok": False,
+        "channel": "tlon",
+        "eventType": message.event_type,
+        "skipped": True,
+        "status": "blocked",
+        "reason": "tlon_channel_sender_not_authorized",
+        "inboundMessageId": message.message_id,
+        "senderId": sender_ship,
+        "conversationId": message.channel_nest,
+        "conversationType": "group",
+        "accountId": normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID,
+        "channelNest": message.channel_nest,
+        "authorization": {
+            "mode": mode,
+            "allowedShips": allowed_ships,
+        },
+    }
+    return None
+
+
 def _tlon_extract_inline_text(items: object) -> str:
     if not isinstance(items, list):
         return ""
@@ -11987,6 +12236,7 @@ class OpsMeshService:
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
     msteams_inbound_media_fetch_service: GatewayMSTeamsInboundMediaFetchService | None = None
     tlon_inbound_media_fetch_service: GatewayTlonInboundMediaFetchService | None = None
+    tlon_approval_queue_service: GatewayTlonApprovalQueueService | None = None
     msteams_feedback_reflection_service: GatewayMSTeamsFeedbackReflectionService | None = None
     discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
     gateway_config_service: GatewayConfigService | None = None
@@ -12051,6 +12301,96 @@ class OpsMeshService:
     def _session_outbound_runtime_available(self) -> bool:
         runtime = self._resolve_outbound_runtime_service()
         return runtime is not None and runtime.has_session_deliverer()
+
+    def _tlon_channel_config(
+        self,
+        *,
+        account_id: str | None,
+    ) -> Mapping[str, Any]:
+        if self.gateway_config_service is None:
+            return {}
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return {}
+        if not isinstance(snapshot, Mapping):
+            return {}
+        return _tlon_channel_config_from_snapshot(snapshot, account_id=account_id)
+
+    async def _queue_tlon_approval_request(
+        self,
+        request: GatewayTlonApprovalQueueRequest,
+    ) -> object:
+        if self.tlon_approval_queue_service is not None:
+            return await self.tlon_approval_queue_service(request)
+        return self._persist_tlon_pending_approval(request)
+
+    def _persist_tlon_pending_approval(
+        self,
+        request: GatewayTlonApprovalQueueRequest,
+    ) -> dict[str, object]:
+        if self.gateway_config_service is None:
+            return {"approvalId": None, "notified": False, "persisted": False}
+        snapshot = self.gateway_config_service.build_snapshot()
+        channel_config = _tlon_channel_config_from_snapshot(
+            snapshot,
+            account_id=request.account_id,
+        )
+        pending = list(_msteams_inbound_mapping(channel_config).get("pendingApprovals") or [])
+        approval_id = (
+            f"{request.approval_type}-{int(time.time() * 1000)}-{secrets.token_hex(3)}"
+        )
+        approval: dict[str, object] = {
+            "id": approval_id,
+            "type": request.approval_type,
+            "requestingShip": request.requesting_ship,
+            "messagePreview": request.message_preview,
+            "timestamp": int(time.time() * 1000),
+            "originalMessage": {
+                "messageId": request.message_id,
+                "messageText": request.message_text,
+                "messageContent": request.message_content,
+                "timestamp": request.timestamp or int(time.time() * 1000),
+            },
+        }
+        if request.channel_nest is not None:
+            approval["channelNest"] = request.channel_nest
+        if request.parent_id is not None:
+            cast(dict[str, object], approval["originalMessage"])["parentId"] = (
+                request.parent_id
+            )
+            cast(dict[str, object], approval["originalMessage"])["isThreadReply"] = (
+                request.is_thread_reply
+            )
+        next_pending = [
+            item
+            for item in pending
+            if not (
+                isinstance(item, Mapping)
+                and item.get("type") == request.approval_type
+                and item.get("requestingShip") == request.requesting_ship
+                and item.get("channelNest") == request.channel_nest
+            )
+        ]
+        next_pending.append(approval)
+        account_id = normalize_optional_account_id(request.account_id)
+        patch: dict[str, Any]
+        if account_id and account_id != DEFAULT_ACCOUNT_ID:
+            patch = {
+                "channels": {
+                    "tlon": {
+                        "accounts": {
+                            account_id: {
+                                "pendingApprovals": next_pending,
+                            }
+                        }
+                    }
+                }
+            }
+        else:
+            patch = {"channels": {"tlon": {"pendingApprovals": next_pending}}}
+        self.gateway_config_service.patch_object(patch)
+        return {"approvalId": approval_id, "notified": False, "persisted": True}
 
     def _msteams_sso_config(
         self,
@@ -13651,6 +13991,22 @@ class OpsMeshService:
                 "skipped": True,
                 "reason": "tlon_inbound_event_without_message_text",
             }
+        channel_config = self._tlon_channel_config(account_id=account_id)
+        approval_request = _tlon_inbound_pending_approval_request(
+            message,
+            channel_config=channel_config,
+            account_id=account_id,
+        )
+        if approval_request is not None:
+            queue_result = await self._queue_tlon_approval_request(approval_request)
+            return _tlon_pending_approval_metadata(approval_request, queue_result)
+        authorization_block = _tlon_inbound_authorization_block_metadata(
+            message,
+            channel_config=channel_config,
+            account_id=account_id,
+        )
+        if authorization_block is not None:
+            return authorization_block
         if self.session_delivery_service is None:
             raise GatewayOutboundRuntimeUnavailableError(
                 "Tlon inbound session delivery is unavailable."
