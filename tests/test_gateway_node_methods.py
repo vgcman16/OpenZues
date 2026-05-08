@@ -79183,6 +79183,31 @@ async def test_channels_start_allows_blank_account_id_and_fails_runtime_boundary
 
 
 @pytest.mark.asyncio
+async def test_channels_start_dispatches_runtime_start_service_with_default_account() -> None:
+    starts: list[tuple[str, str]] = []
+
+    async def fake_channel_start(channel: str, account_id: str) -> dict[str, object]:
+        starts.append((channel, account_id))
+        return {"channel": channel, "accountId": account_id, "started": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        channel_start_service=fake_channel_start,
+    )
+
+    result = await service.call(
+        "channels.start",
+        {
+            "channel": "Tlon",
+            "accountId": "   ",
+        },
+    )
+
+    assert starts == [("tlon", "default")]
+    assert result == {"channel": "tlon", "accountId": "default", "started": True}
+
+
+@pytest.mark.asyncio
 async def test_channels_logout_rejects_blank_channel_as_invalid_params() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 

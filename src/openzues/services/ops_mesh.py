@@ -12757,8 +12757,18 @@ class OpsMeshService:
     def _tlon_monitor_handle_key(route_id: int, account_id: str) -> str:
         return f"{route_id}:{account_id}"
 
-    async def _start_tlon_provider_monitors(self) -> None:
+    async def _start_tlon_provider_monitors(
+        self,
+        *,
+        account_id_filter: str | None = None,
+    ) -> list[str]:
         runtime = self._tlon_monitor_runtime()
+        started_handles: list[str] = []
+        requested_account_id = (
+            normalize_optional_account_id(str(account_id_filter or "").strip())
+            if account_id_filter is not None
+            else None
+        )
         for route in await self.database.list_notification_routes():
             if not bool(route.get("enabled")):
                 continue
@@ -12775,8 +12785,11 @@ class OpsMeshService:
                 )
                 or DEFAULT_ACCOUNT_ID
             )
+            if requested_account_id is not None and account_id != requested_account_id:
+                continue
             handle_key = self._tlon_monitor_handle_key(route_id, account_id)
             if handle_key in self._tlon_monitor_handles:
+                started_handles.append(handle_key)
                 continue
             secret_token = await self._notification_route_secret_token(route)
             if not str(secret_token or "").strip():
@@ -12825,6 +12838,8 @@ class OpsMeshService:
                 )
                 continue
             self._tlon_monitor_handles[handle_key] = handle
+            started_handles.append(handle_key)
+        return started_handles
 
     async def _stop_tlon_provider_monitors(self) -> None:
         handles = list(self._tlon_monitor_handles.items())
@@ -12834,6 +12849,27 @@ class OpsMeshService:
                 await handle.close()
             except Exception:
                 logger.exception("Failed to stop Tlon monitor %s", handle_key)
+
+    async def start_channel_runtime_account(
+        self,
+        channel: str,
+        account_id: str,
+    ) -> dict[str, object]:
+        normalized_channel = _canonical_native_provider_channel(channel)
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        if normalized_channel != "tlon":
+            raise RuntimeError(f"channel {normalized_channel} does not support runtime start")
+        started_handles = await self._start_tlon_provider_monitors(
+            account_id_filter=normalized_account_id,
+        )
+        return {
+            "channel": normalized_channel,
+            "accountId": normalized_account_id,
+            "started": bool(started_handles),
+        }
 
     async def _queue_tlon_approval_request(
         self,
