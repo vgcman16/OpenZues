@@ -7314,6 +7314,8 @@ def _tlon_inbound_pending_approval_request(
     owner_ship = _tlon_owner_ship(channel_config)
     if sender_ship is None or owner_ship is None or sender_ship == owner_ship:
         return None
+    if sender_ship in _tlon_ship_list(channel_config.get("blockedShips")):
+        return None
     if message.channel_nest is None:
         if "dmAllowlist" not in channel_config:
             return None
@@ -7393,12 +7395,49 @@ def _tlon_pending_approval_metadata(
     return metadata
 
 
+def _tlon_inbound_blocked_sender_metadata(
+    message: _TlonInboundMessage,
+    *,
+    channel_config: Mapping[str, Any],
+    account_id: str | None,
+) -> dict[str, object] | None:
+    sender_ship = _tlon_normalize_target_ship(message.sender_ship)
+    if sender_ship is None:
+        return None
+    if sender_ship not in _tlon_ship_list(channel_config.get("blockedShips")):
+        return None
+    return {
+        "ok": False,
+        "channel": "tlon",
+        "eventType": message.event_type,
+        "skipped": True,
+        "status": "blocked",
+        "reason": "tlon_sender_blocked",
+        "inboundMessageId": message.message_id,
+        "senderId": sender_ship,
+        "conversationId": message.channel_nest or sender_ship,
+        "conversationType": "group" if message.channel_nest else "direct",
+        "accountId": normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID,
+    }
+
+
 def _tlon_parse_approval_response(text: str) -> tuple[str, str | None] | None:
     match = re.match(r"^\s*(approve|deny|block)(?:\s+(.+?))?\s*$", text, flags=re.I)
     if match is None:
         return None
     approval_id = match.group(2).strip() if match.group(2) else None
     return match.group(1).lower(), approval_id or None
+
+
+def _tlon_parse_admin_command(text: str) -> tuple[str, str | None] | None:
+    normalized = text.strip().lower()
+    if normalized in {"blocked", "pending"}:
+        return normalized, None
+    match = re.match(r"^unblock\s+(~?[a-z-]+)\s*$", normalized, flags=re.I)
+    if match is None:
+        return None
+    ship = _tlon_normalize_target_ship(match.group(1))
+    return ("unblock", ship) if ship is not None else None
 
 
 def _tlon_pending_approval_matches(
@@ -12417,6 +12456,7 @@ class OpsMeshService:
         pending_approvals: list[object],
         dm_allowlist: list[str] | None = None,
         channel_rules: Mapping[str, object] | None = None,
+        blocked_ships: list[str] | None = None,
     ) -> None:
         if self.gateway_config_service is None:
             return
@@ -12426,6 +12466,8 @@ class OpsMeshService:
             tlon_patch["dmAllowlist"] = dm_allowlist
         if channel_rules is not None:
             tlon_patch["authorization"] = {"channelRules": dict(channel_rules)}
+        if blocked_ships is not None:
+            tlon_patch["blockedShips"] = blocked_ships
         if account and account != DEFAULT_ACCOUNT_ID:
             patch: dict[str, Any] = {
                 "channels": {"tlon": {"accounts": {account: tlon_patch}}}
@@ -12599,10 +12641,20 @@ class OpsMeshService:
                 )
                 processed_original = True
         else:
-            self._patch_tlon_approval_state(
-                account_id=account_id,
-                pending_approvals=remaining,
-            )
+            if action == "block":
+                blocked = _tlon_ship_list(channel_config.get("blockedShips"))
+                if requesting_ship not in blocked:
+                    blocked.append(requesting_ship)
+                self._patch_tlon_approval_state(
+                    account_id=account_id,
+                    pending_approvals=remaining,
+                    blocked_ships=blocked,
+                )
+            else:
+                self._patch_tlon_approval_state(
+                    account_id=account_id,
+                    pending_approvals=remaining,
+                )
         result: dict[str, object] = {
             "ok": True,
             "channel": "tlon",
@@ -12624,6 +12676,53 @@ class OpsMeshService:
             if "sessionKey" in delivery_result:
                 result["sessionKey"] = delivery_result["sessionKey"]
         return result
+
+    async def _handle_tlon_admin_command(
+        self,
+        message: _TlonInboundMessage,
+        *,
+        channel_config: Mapping[str, Any],
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        sender_ship = _tlon_normalize_target_ship(message.sender_ship)
+        owner_ship = _tlon_owner_ship(channel_config)
+        if sender_ship is None or owner_ship is None or sender_ship != owner_ship:
+            return None
+        parsed = _tlon_parse_admin_command(message.text)
+        if parsed is None:
+            return None
+        command, ship = parsed
+        blocked = _tlon_ship_list(channel_config.get("blockedShips"))
+        pending_raw = channel_config.get("pendingApprovals")
+        pending = list(pending_raw) if isinstance(pending_raw, list) else []
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "tlon",
+            "eventType": message.event_type,
+            "status": "admin_command",
+            "adminCommand": command,
+            "inboundMessageId": message.message_id,
+        }
+        if command == "pending":
+            result["pendingApprovals"] = pending
+            result["pendingCount"] = len(pending)
+            return result
+        if command == "blocked":
+            result["blockedShips"] = blocked
+            result["blockedCount"] = len(blocked)
+            return result
+        if command == "unblock" and ship is not None:
+            next_blocked = [entry for entry in blocked if entry != ship]
+            self._patch_tlon_approval_state(
+                account_id=account_id,
+                pending_approvals=pending,
+                blocked_ships=next_blocked,
+            )
+            result["ship"] = ship
+            result["unblocked"] = len(next_blocked) != len(blocked)
+            result["blockedShips"] = next_blocked
+            return result
+        return None
 
     def _msteams_sso_config(
         self,
@@ -14232,6 +14331,20 @@ class OpsMeshService:
         )
         if approval_response is not None:
             return approval_response
+        admin_response = await self._handle_tlon_admin_command(
+            message,
+            channel_config=channel_config,
+            account_id=account_id,
+        )
+        if admin_response is not None:
+            return admin_response
+        blocked_sender = _tlon_inbound_blocked_sender_metadata(
+            message,
+            channel_config=channel_config,
+            account_id=account_id,
+        )
+        if blocked_sender is not None:
+            return blocked_sender
         approval_request = _tlon_inbound_pending_approval_request(
             message,
             channel_config=channel_config,

@@ -8150,6 +8150,263 @@ async def test_ops_mesh_service_approves_tlon_dm_pending_request_from_owner() ->
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_tlon_pending_request_from_owner() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-approval-block"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    pending_approval = {
+        "id": "dm-1713980000123-blocked",
+        "type": "dm",
+        "requestingShip": "~sampel-palnet",
+        "messagePreview": "block me",
+        "timestamp": 1713980000123,
+        "originalMessage": {
+            "messageId": "tlon-dm-block-original-1",
+            "messageText": "block me",
+            "messageContent": [{"inline": ["block me"]}],
+            "timestamp": 1713980000123,
+        },
+    }
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="",
+        assistant_agent_id="main",
+        server_version=None,
+        data_dir=tmp_path / "config",
+    )
+    config_service.patch_object(
+        {
+            "channels": {
+                "tlon": {
+                    "dmAllowlist": [],
+                    "ownerShip": "~zod",
+                    "pendingApprovals": [pending_approval],
+                }
+            }
+        }
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "tlon-blocked-session-message"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=config_service,
+    )
+
+    result = await service.handle_tlon_inbound_event(
+        {
+            "id": "tlon-owner-block-1",
+            "whom": "~zod",
+            "response": {
+                "add": {
+                    "essay": {
+                        "author": "~zod",
+                        "sent": 1713980000999,
+                        "content": [{"inline": ["block dm-1713980000123-blocked"]}],
+                    }
+                }
+            },
+        },
+        account_id="default",
+    )
+
+    assert session_deliveries == []
+    assert result == {
+        "ok": True,
+        "channel": "tlon",
+        "eventType": "chat",
+        "status": "approval_resolved",
+        "approvalAction": "block",
+        "approvalId": "dm-1713980000123-blocked",
+        "approval": {
+            "type": "dm",
+            "requestingShip": "~sampel-palnet",
+            "ownerShip": "~zod",
+            "processedOriginalMessage": False,
+        },
+        "inboundMessageId": "tlon-owner-block-1",
+    }
+    snapshot = config_service.build_snapshot()
+    assert snapshot["channels"]["tlon"]["pendingApprovals"] == []
+    assert snapshot["channels"]["tlon"]["blockedShips"] == ["~sampel-palnet"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_ignores_tlon_inbound_from_blocked_ship() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-blocked-inbound"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="",
+        assistant_agent_id="main",
+        server_version=None,
+        data_dir=tmp_path / "config",
+    )
+    config_service.patch_object(
+        {
+            "channels": {
+                "tlon": {
+                    "dmAllowlist": [],
+                    "ownerShip": "~zod",
+                    "blockedShips": ["~sampel-palnet"],
+                }
+            }
+        }
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+    approval_requests: list[object] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "tlon-blocked-inbound-session-message"}
+
+    async def fake_approval_queue(request: object) -> dict[str, object]:
+        approval_requests.append(request)
+        return {"approvalId": "dm-should-not-queue", "notified": True}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=config_service,
+        tlon_approval_queue_service=fake_approval_queue,
+    )
+
+    result = await service.handle_tlon_inbound_event(
+        {
+            "id": "tlon-dm-blocked-ship-1",
+            "whom": "~sampel-palnet",
+            "response": {
+                "add": {
+                    "essay": {
+                        "author": "~sampel-palnet",
+                        "sent": 1713980000123,
+                        "content": [{"inline": ["still blocked"]}],
+                    }
+                }
+            },
+        },
+        account_id="default",
+    )
+
+    assert session_deliveries == []
+    assert approval_requests == []
+    assert result == {
+        "ok": False,
+        "channel": "tlon",
+        "eventType": "chat",
+        "skipped": True,
+        "status": "blocked",
+        "reason": "tlon_sender_blocked",
+        "inboundMessageId": "tlon-dm-blocked-ship-1",
+        "senderId": "~sampel-palnet",
+        "conversationId": "~sampel-palnet",
+        "conversationType": "direct",
+        "accountId": "default",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_unblocks_tlon_ship_from_owner_admin_command() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-admin-unblock"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="",
+        assistant_agent_id="main",
+        server_version=None,
+        data_dir=tmp_path / "config",
+    )
+    config_service.patch_object(
+        {
+            "channels": {
+                "tlon": {
+                    "ownerShip": "~zod",
+                    "blockedShips": ["~sampel-palnet", "~bus"],
+                }
+            }
+        }
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "tlon-admin-session-message"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=config_service,
+    )
+
+    result = await service.handle_tlon_inbound_event(
+        {
+            "id": "tlon-owner-unblock-1",
+            "whom": "~zod",
+            "response": {
+                "add": {
+                    "essay": {
+                        "author": "~zod",
+                        "sent": 1713980000999,
+                        "content": [{"inline": ["unblock ~sampel-palnet"]}],
+                    }
+                }
+            },
+        },
+        account_id="default",
+    )
+
+    assert session_deliveries == []
+    assert result == {
+        "ok": True,
+        "channel": "tlon",
+        "eventType": "chat",
+        "status": "admin_command",
+        "adminCommand": "unblock",
+        "ship": "~sampel-palnet",
+        "unblocked": True,
+        "blockedShips": ["~bus"],
+        "inboundMessageId": "tlon-owner-unblock-1",
+    }
+    assert config_service.build_snapshot()["channels"]["tlon"]["blockedShips"] == ["~bus"]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_routes_tlon_group_thread_firehose_event_to_session() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-group-inbound"
     shutil.rmtree(tmp_path, ignore_errors=True)
