@@ -2020,6 +2020,83 @@ def test_channels_status_json_uses_route_backed_twitch_probe(
     ]
 
 
+def test_channels_status_json_uses_route_backed_bluebubbles_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI BlueBubbles Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="BlueBubbles Native Probe Route",
+            kind="bluebubbles",
+            target="http://127.0.0.1:1234",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "bluebubbles",
+                "account_id": "personal",
+                "peer_kind": "direct",
+                "peer_id": "bluebubbles:chat:+15551234567",
+                "summary": "personal BlueBubbles direct",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="bluebubbles-password",
+            vault_secret_id=None,
+        )
+    )
+    bluebubbles_probes: list[tuple[str, str, float]] = []
+
+    def fake_probe_bluebubbles_ping(
+        self: object,
+        target: str,
+        secret_token: str,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        bluebubbles_probes.append((target, secret_token, timeout_seconds))
+        return 200
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._probe_bluebubbles_ping",
+        fake_probe_bluebubbles_ping,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["bluebubbles"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "bluebubbles",
+        "runtime": "native-provider-backed",
+        "accountId": "personal",
+        "baseUrl": "http://127.0.0.1:1234",
+        "httpStatus": 200,
+        "timeoutMs": 2500,
+    }
+    assert bluebubbles_probes == [
+        ("http://127.0.0.1:1234", "bluebubbles-password", 2.5)
+    ]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,

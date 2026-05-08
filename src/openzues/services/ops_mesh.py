@@ -385,6 +385,7 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
 }
 SLACK_THREAD_TS_PATTERN = re.compile(r"^\d+\.\d+$")
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
+    "bluebubbles",
     "slack",
     "telegram",
     "discord",
@@ -14581,6 +14582,24 @@ class OpsMeshService:
                 "timeoutMs": timeout_ms,
             }
         secret_token_value = str(secret_token or "")
+        if route_kind == "bluebubbles":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_bluebubbles_provider_route,
+                    route,
+                    secret_token_value,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         if route_kind == "telegram":
             try:
                 return await asyncio.to_thread(
@@ -15787,6 +15806,52 @@ class OpsMeshService:
             "ok": True,
             "status": "ok",
             "latencyMs": latency_ms,
+        }
+
+    def _probe_bluebubbles_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        base_url = str(route.get("target") or "").strip().rstrip("/")
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "bluebubbles",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "baseUrl": base_url,
+            "timeoutMs": timeout_ms,
+        }
+        try:
+            http_status = self._probe_bluebubbles_ping(
+                base_url,
+                secret_token,
+                timeout_seconds=max(float(timeout_ms) / 1000.0, 0.001),
+            )
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        payload["httpStatus"] = http_status
+        if http_status < 200 or http_status >= 300:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": f"HTTP {http_status}",
+            }
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
         }
 
     def _probe_twitch_provider_route(
@@ -24609,6 +24674,26 @@ class OpsMeshService:
             raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
+    def _probe_bluebubbles_ping(
+        self,
+        target: str,
+        secret_token: str,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        request = Request(
+            _bluebubbles_api_endpoint(target, "api/v1/ping", password=secret_token),
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                return int(response.status)
+        except HTTPError as exc:
+            return int(exc.code)
+        except URLError as exc:
+            raise RuntimeError(f"BlueBubbles provider request failed: {exc.reason}") from exc
 
     def _request_bytes_provider_url(
         self,

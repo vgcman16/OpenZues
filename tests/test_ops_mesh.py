@@ -7060,6 +7060,39 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_nat
     assert route["last_result"] == "Delivered gateway/send provider runtime"
 
 
+def test_ops_mesh_service_bluebubbles_probe_preserves_http_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, float]] = []
+
+    def fake_urlopen(request: Request, timeout: float) -> object:
+        requests.append((request.full_url, request.get_method(), timeout))
+        raise HTTPError(
+            request.full_url,
+            503,
+            "Service Unavailable",
+            {},
+            io.BytesIO(b"not ready"),
+        )
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    status = OpsMeshService.__new__(OpsMeshService)._probe_bluebubbles_ping(
+        "http://127.0.0.1:1234",
+        "bluebubbles-password",
+        timeout_seconds=2.5,
+    )
+
+    assert status == 503
+    assert requests == [
+        (
+            "http://127.0.0.1:1234/api/v1/ping?password=bluebubbles-password",
+            "GET",
+            2.5,
+        )
+    ]
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_native_media_route(
     monkeypatch: pytest.MonkeyPatch,
