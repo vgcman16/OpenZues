@@ -16803,6 +16803,10 @@ def _project_control_chat_messages(
             max_chars=max_chars,
         )
         if structured_content is not None:
+            if role == "user" and _chat_history_is_empty_text_only_content(
+                structured_content
+            ):
+                continue
             if not structured_content:
                 continue
             messages.append(
@@ -16901,6 +16905,20 @@ def _chat_history_is_tool_block_type(value: object) -> bool:
         "toolresult",
         "tool_result",
     }
+
+
+def _chat_history_is_empty_text_only_content(content: list[dict[str, Any]]) -> bool:
+    if not content:
+        return True
+    saw_text = False
+    for block in content:
+        if block.get("type") != "text":
+            return False
+        saw_text = True
+        text = block.get("text")
+        if not isinstance(text, str) or text.strip():
+            return False
+    return saw_text
 
 
 def _chat_history_structured_content(
