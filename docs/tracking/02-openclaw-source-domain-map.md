@@ -548,6 +548,9 @@ is checkpointed in `2938b03a`.
 `1e9b65f5`.
 `test-helpers/string-utils` from
 `src/plugin-sdk/test-helpers/string-utils.ts` is checkpointed in `e2ba3082`.
+`test-helpers/envelope-timestamp` from
+`src/plugin-sdk/test-helpers/envelope-timestamp.ts` is checkpointed in
+`54b47a45`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
