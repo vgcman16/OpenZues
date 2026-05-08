@@ -60115,6 +60115,11 @@ const testHelpersEnvelopeTimestampRuntime = {
   formatLocalEnvelopeTimestamp,
 };
 
+const testHelpersPairingReplyRuntime = {
+  expectPairingReplyText,
+  extractPairingCode,
+};
+
 function formatImportSideEffectCall(args) {
   if (!Array.isArray(args) || args.length === 0) {
     return "(no args)";
@@ -86206,6 +86211,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/test-helpers/envelope-timestamp"
   ) {
     return testHelpersEnvelopeTimestampRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-helpers/pairing-reply" ||
+    request === "@openclaw/plugin-sdk/test-helpers/pairing-reply"
+  ) {
+    return testHelpersPairingReplyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/plugin-test-api" ||

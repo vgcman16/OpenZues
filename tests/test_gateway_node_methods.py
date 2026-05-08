@@ -67451,6 +67451,102 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_helpers_pairing_reply(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-helpers-pairing-reply.cjs"
+    runtime_entry.write_text(
+        """
+const pairing = require("openclaw/plugin-sdk/test-helpers/pairing-reply");
+const scopedPairing = require("@openclaw/plugin-sdk/test-helpers/pairing-reply");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_helpers_pairing_reply",
+      description: "Use OpenClaw test-helpers/pairing-reply SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const text =
+          "OpenClaw: access not configured.\\nUser: Ada\\n" +
+          "Pairing code:\\n```\\nABC234\\n```\\n" +
+          "Run pairing approve demo ABC234";
+        return {
+          keys: Object.keys(pairing).sort(),
+          scopedType: typeof scopedPairing.expectPairingReplyText,
+          extracted: pairing.extractPairingCode(text),
+          expected: pairing.expectPairingReplyText(text, {
+            channel: "demo",
+            idLine: "User: Ada"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-helpers-pairing-reply-plugin",
+                    "name": "Runtime Test Helpers Pairing Reply Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-test-helpers-pairing-reply-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_helpers_pairing_reply"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.test_helpers_pairing_reply"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["expectPairingReplyText", "extractPairingCode"],
+        "scopedType": "function",
+        "extracted": "ABC234",
+        "expected": "ABC234",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_web_media_helpers(
     tmp_path,
 ) -> None:
