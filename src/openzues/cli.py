@@ -74231,8 +74231,379 @@ function resolveMemoryCacheSummary(cache) {
   return { tone: "ok", text: `cache on${suffix}` };
 }
 
+const DEFAULT_MEMORY_DREAMING_FREQUENCY = "0 3 * * *";
+const DEFAULT_MEMORY_DREAMING_PLUGIN_ID = "memory-core";
+const DEFAULT_MEMORY_DREAMING_SPEED = "balanced";
+const DEFAULT_MEMORY_DREAMING_THINKING = "medium";
+const DEFAULT_MEMORY_DREAMING_BUDGET = "medium";
+const DEFAULT_MEMORY_DREAMING_STORAGE_MODE = "separate";
+const DEFAULT_MEMORY_LIGHT_DREAMING_SOURCES = ["daily", "sessions", "recall"];
+const DEFAULT_MEMORY_DEEP_DREAMING_SOURCES = ["daily", "memory", "sessions", "logs", "recall"];
+const DEFAULT_MEMORY_REM_DREAMING_SOURCES = ["memory", "daily", "deep"];
+
+function memoryDreamingTrimmedString(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function memoryDreamingNonNegativeInt(value, fallback) {
+  const normalized = normalizeStringifiedOptionalString(value);
+  if (typeof value === "string" && !normalized) {
+    return fallback;
+  }
+  const numeric = typeof value === "string" ? Number(normalized) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  const floored = Math.floor(numeric);
+  return floored >= 0 ? floored : fallback;
+}
+
+function memoryDreamingOptionalPositiveInt(value) {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const normalized = normalizeStringifiedOptionalString(value);
+  if (typeof value === "string" && !normalized) {
+    return undefined;
+  }
+  const numeric = typeof value === "string" ? Number(normalized) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return undefined;
+  }
+  const floored = Math.floor(numeric);
+  return floored > 0 ? floored : undefined;
+}
+
+function memoryDreamingBoolean(value, fallback) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const normalized = typeof value === "string" ? normalizeLowercaseStringOrEmpty(value) : "";
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  return fallback;
+}
+
+function memoryDreamingScore(value, fallback) {
+  const normalized = normalizeStringifiedOptionalString(value);
+  if (typeof value === "string" && !normalized) {
+    return fallback;
+  }
+  const numeric = typeof value === "string" ? Number(normalized) : Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 && numeric <= 1 ? numeric : fallback;
+}
+
+function memoryDreamingStringArray(value, allowed, fallback) {
+  if (!Array.isArray(value)) {
+    return [...fallback];
+  }
+  const allowedSet = new Set(allowed);
+  const normalized = [];
+  for (const entry of value) {
+    const candidate = normalizeOptionalLowercaseString(entry);
+    if (!candidate || !allowedSet.has(candidate) || normalized.includes(candidate)) {
+      continue;
+    }
+    normalized.push(candidate);
+  }
+  return normalized.length > 0 ? normalized : [...fallback];
+}
+
+function memoryDreamingStorageMode(value) {
+  const normalized = normalizeOptionalLowercaseString(value);
+  return normalized === "inline" || normalized === "separate" || normalized === "both"
+    ? normalized
+    : DEFAULT_MEMORY_DREAMING_STORAGE_MODE;
+}
+
+function memoryDreamingOneOf(value, allowed, fallback) {
+  const normalized = normalizeOptionalLowercaseString(value);
+  return allowed.includes(normalized) ? normalized : fallback;
+}
+
+function resolveMemoryDreamingExecutionConfig(value, fallback) {
+  const record = asNullableRecord(value);
+  const model = memoryDreamingTrimmedString(record && record.model) || fallback.model;
+  const maxOutputTokens = memoryDreamingOptionalPositiveInt(record && record.maxOutputTokens);
+  const timeoutMs = memoryDreamingOptionalPositiveInt(record && record.timeoutMs);
+  const temperatureRaw = record && record.temperature;
+  const temperature =
+    typeof temperatureRaw === "number" &&
+    Number.isFinite(temperatureRaw) &&
+    temperatureRaw >= 0
+      ? Math.min(2, temperatureRaw)
+      : undefined;
+  return {
+    speed: memoryDreamingOneOf(
+      record && record.speed,
+      ["fast", "balanced", "slow"],
+      fallback.speed,
+    ),
+    thinking: memoryDreamingOneOf(
+      record && record.thinking,
+      ["low", "medium", "high"],
+      fallback.thinking,
+    ),
+    budget: memoryDreamingOneOf(
+      record && record.budget,
+      ["cheap", "medium", "expensive"],
+      fallback.budget,
+    ),
+    ...(model ? { model } : {}),
+    ...(typeof maxOutputTokens === "number" ? { maxOutputTokens } : {}),
+    ...(typeof temperature === "number" ? { temperature } : {}),
+    ...(typeof timeoutMs === "number" ? { timeoutMs } : {}),
+  };
+}
+
+function resolveMemoryDreamingPluginId(cfg = {}) {
+  const slots = asNullableRecord(asNullableRecord(cfg.plugins)?.slots);
+  const configuredSlot = memoryDreamingTrimmedString(slots && slots.memory);
+  if (configuredSlot && normalizeLowercaseStringOrEmpty(configuredSlot) !== "none") {
+    return configuredSlot;
+  }
+  return DEFAULT_MEMORY_DREAMING_PLUGIN_ID;
+}
+
+function resolveMemoryCorePluginConfig(cfg = {}) {
+  const entries = asNullableRecord(asNullableRecord(cfg.plugins)?.entries);
+  const pluginId = resolveMemoryDreamingPluginId(cfg);
+  const plugin = asNullableRecord(entries && entries[pluginId]);
+  return asNullableRecord(plugin && plugin.config) || undefined;
+}
+
+function resolveMemoryDreamingConfig(params = {}) {
+  const dreaming = asNullableRecord(asNullableRecord(params.pluginConfig)?.dreaming);
+  const frequency =
+    memoryDreamingTrimmedString(dreaming && dreaming.frequency) ||
+    DEFAULT_MEMORY_DREAMING_FREQUENCY;
+  const timezone =
+    memoryDreamingTrimmedString(dreaming && dreaming.timezone) ||
+    memoryDreamingTrimmedString(
+      params.cfg && params.cfg.agents && params.cfg.agents.defaults &&
+        params.cfg.agents.defaults.userTimezone,
+    );
+  const storage = asNullableRecord(dreaming && dreaming.storage);
+  const execution = asNullableRecord(dreaming && dreaming.execution);
+  const phases = asNullableRecord(dreaming && dreaming.phases);
+  const light = asNullableRecord(phases && phases.light);
+  const deep = asNullableRecord(phases && phases.deep);
+  const rem = asNullableRecord(phases && phases.rem);
+  const deepRecovery = asNullableRecord(deep && deep.recovery);
+  const topLevelModel = memoryDreamingTrimmedString(dreaming && dreaming.model);
+  const defaultExecution = resolveMemoryDreamingExecutionConfig(
+    execution && execution.defaults,
+    {
+      speed: DEFAULT_MEMORY_DREAMING_SPEED,
+      thinking: DEFAULT_MEMORY_DREAMING_THINKING,
+      budget: DEFAULT_MEMORY_DREAMING_BUDGET,
+      ...(topLevelModel ? { model: topLevelModel } : {}),
+    },
+  );
+  return {
+    enabled: memoryDreamingBoolean(dreaming && dreaming.enabled, false),
+    frequency,
+    ...(timezone ? { timezone } : {}),
+    verboseLogging: memoryDreamingBoolean(dreaming && dreaming.verboseLogging, false),
+    storage: {
+      mode: memoryDreamingStorageMode(storage && storage.mode),
+      separateReports: memoryDreamingBoolean(storage && storage.separateReports, false),
+    },
+    execution: { defaults: defaultExecution },
+    phases: {
+      light: {
+        enabled: memoryDreamingBoolean(light && light.enabled, true),
+        cron: frequency,
+        lookbackDays: memoryDreamingNonNegativeInt(light && light.lookbackDays, 2),
+        limit: memoryDreamingNonNegativeInt(light && light.limit, 100),
+        dedupeSimilarity: memoryDreamingScore(light && light.dedupeSimilarity, 0.9),
+        sources: memoryDreamingStringArray(
+          light && light.sources,
+          ["daily", "sessions", "recall"],
+          DEFAULT_MEMORY_LIGHT_DREAMING_SOURCES,
+        ),
+        execution: resolveMemoryDreamingExecutionConfig(light && light.execution, {
+          ...defaultExecution,
+          speed: "fast",
+          thinking: "low",
+          budget: "cheap",
+        }),
+      },
+      deep: {
+        enabled: memoryDreamingBoolean(deep && deep.enabled, true),
+        cron: frequency,
+        limit: memoryDreamingNonNegativeInt(deep && deep.limit, 10),
+        minScore: memoryDreamingScore(deep && deep.minScore, 0.8),
+        minRecallCount: memoryDreamingNonNegativeInt(deep && deep.minRecallCount, 3),
+        minUniqueQueries: memoryDreamingNonNegativeInt(deep && deep.minUniqueQueries, 3),
+        recencyHalfLifeDays: memoryDreamingNonNegativeInt(
+          deep && deep.recencyHalfLifeDays,
+          14,
+        ),
+        maxAgeDays: memoryDreamingOptionalPositiveInt(deep && deep.maxAgeDays) || 30,
+        sources: memoryDreamingStringArray(
+          deep && deep.sources,
+          ["daily", "memory", "sessions", "logs", "recall"],
+          DEFAULT_MEMORY_DEEP_DREAMING_SOURCES,
+        ),
+        recovery: {
+          enabled: memoryDreamingBoolean(deepRecovery && deepRecovery.enabled, true),
+          triggerBelowHealth: memoryDreamingScore(
+            deepRecovery && deepRecovery.triggerBelowHealth,
+            0.35,
+          ),
+          lookbackDays: memoryDreamingNonNegativeInt(
+            deepRecovery && deepRecovery.lookbackDays,
+            30,
+          ),
+          maxRecoveredCandidates: memoryDreamingNonNegativeInt(
+            deepRecovery && deepRecovery.maxRecoveredCandidates,
+            20,
+          ),
+          minRecoveryConfidence: memoryDreamingScore(
+            deepRecovery && deepRecovery.minRecoveryConfidence,
+            0.9,
+          ),
+          autoWriteMinConfidence: memoryDreamingScore(
+            deepRecovery && deepRecovery.autoWriteMinConfidence,
+            0.97,
+          ),
+        },
+        execution: resolveMemoryDreamingExecutionConfig(deep && deep.execution, {
+          ...defaultExecution,
+          speed: "balanced",
+          thinking: "high",
+          budget: "medium",
+        }),
+      },
+      rem: {
+        enabled: memoryDreamingBoolean(rem && rem.enabled, true),
+        cron: frequency,
+        lookbackDays: memoryDreamingNonNegativeInt(rem && rem.lookbackDays, 7),
+        limit: memoryDreamingNonNegativeInt(rem && rem.limit, 10),
+        minPatternStrength: memoryDreamingScore(rem && rem.minPatternStrength, 0.75),
+        sources: memoryDreamingStringArray(
+          rem && rem.sources,
+          ["memory", "daily", "deep"],
+          DEFAULT_MEMORY_REM_DREAMING_SOURCES,
+        ),
+        execution: resolveMemoryDreamingExecutionConfig(rem && rem.execution, {
+          ...defaultExecution,
+          speed: "slow",
+          thinking: "high",
+          budget: "expensive",
+        }),
+      },
+    },
+  };
+}
+
+function resolveMemoryDeepDreamingConfig(params = {}) {
+  const resolved = resolveMemoryDreamingConfig(params);
+  return {
+    ...resolved.phases.deep,
+    enabled: resolved.enabled && resolved.phases.deep.enabled,
+    ...(resolved.timezone ? { timezone: resolved.timezone } : {}),
+    verboseLogging: resolved.verboseLogging,
+    storage: resolved.storage,
+  };
+}
+
+function formatMemoryDreamingLocalIsoDay(epochMs) {
+  const date = new Date(epochMs);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatMemoryDreamingDay(epochMs, timezone) {
+  if (!timezone) {
+    return formatMemoryDreamingLocalIsoDay(epochMs);
+  }
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date(epochMs));
+    const values = new Map(parts.map((part) => [part.type, part.value]));
+    const year = values.get("year");
+    const month = values.get("month");
+    const day = values.get("day");
+    if (year && month && day) {
+      return `${year}-${month}-${day}`;
+    }
+  } catch (_error) {
+    // Fall through to host-local formatting for invalid timezones.
+  }
+  return formatMemoryDreamingLocalIsoDay(epochMs);
+}
+
+function isSameMemoryDreamingDay(firstEpochMs, secondEpochMs, timezone) {
+  return (
+    formatMemoryDreamingDay(firstEpochMs, timezone) ===
+    formatMemoryDreamingDay(secondEpochMs, timezone)
+  );
+}
+
+function resolveMemoryDreamingWorkspaces(cfg = {}, options = {}) {
+  const configured = Array.isArray(cfg.agents && cfg.agents.list) ? cfg.agents.list : [];
+  const agentIds = [];
+  const seenAgents = new Set();
+  for (const entry of configured) {
+    const id = normalizeOptionalLowercaseString(entry && entry.id);
+    if (!id || seenAgents.has(id)) {
+      continue;
+    }
+    seenAgents.add(id);
+    agentIds.push(id);
+  }
+  if (agentIds.length === 0) {
+    agentIds.push(resolveDefaultAgentId(cfg));
+  }
+  const byWorkspace = new Map();
+  const addWorkspace = (workspaceDirRaw, agentIdRaw) => {
+    const workspaceDir = normalizeOptionalString(workspaceDirRaw);
+    if (!workspaceDir) {
+      return;
+    }
+    const agentId = normalizeOptionalLowercaseString(agentIdRaw) || resolveDefaultAgentId(cfg);
+    const resolved = path.resolve(workspaceDir);
+    const key = process.platform === "win32" ? lowercasePreservingWhitespace(resolved) : resolved;
+    const existing = byWorkspace.get(key);
+    if (existing) {
+      if (!existing.agentIds.includes(agentId)) {
+        existing.agentIds.push(agentId);
+      }
+      return;
+    }
+    byWorkspace.set(key, { workspaceDir, agentIds: [agentId] });
+  };
+  for (const agentId of agentIds) {
+    addWorkspace(memoryRuntimeResolveAgentWorkspaceDir(cfg, agentId), agentId);
+  }
+  addWorkspace(options.primaryWorkspaceDir, options.primaryAgentId || resolveDefaultAgentId(cfg));
+  return Array.from(byWorkspace.values());
+}
+
 const memoryCoreHostStatusRuntime = {
+  formatMemoryDreamingDay,
+  isSameMemoryDreamingDay,
+  resolveMemoryCorePluginConfig,
   resolveMemoryCacheSummary,
+  resolveMemoryDeepDreamingConfig,
+  resolveMemoryDreamingConfig,
+  resolveMemoryDreamingWorkspaces,
   resolveMemoryFtsState,
   resolveMemoryVectorState,
 };
@@ -79033,6 +79404,15 @@ const memoryCoreEngineRuntime = {
   },
   repairDreamingArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
   repairShortTermPromotionArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
+};
+
+const memoryCoreRootRuntime = {
+  ...memoryCoreEngineRuntime,
+  ...memoryCoreHostRuntimeCoreRuntime,
+  ...memoryCoreHostRuntimeCliRuntime,
+  ...memoryCoreHostEventsRuntime,
+  ...memoryCoreHostStatusRuntime,
+  ...memoryCoreHostRuntimeFilesRuntime,
 };
 
 function loadMemoryCoreBundledApiFacadeModule() {
@@ -90054,6 +90434,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-secret-resolution"
   ) {
     return runtimeSecretResolutionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core" ||
+    request === "@openclaw/plugin-sdk/memory-core"
+  ) {
+    return memoryCoreRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-multimodal" ||

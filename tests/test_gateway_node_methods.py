@@ -46711,7 +46711,13 @@ module.exports = {
     assert payload["ok"] is True
     assert payload["result"] == {
         "keys": [
+            "formatMemoryDreamingDay",
+            "isSameMemoryDreamingDay",
             "resolveMemoryCacheSummary",
+            "resolveMemoryCorePluginConfig",
+            "resolveMemoryDeepDreamingConfig",
+            "resolveMemoryDreamingConfig",
+            "resolveMemoryDreamingWorkspaces",
             "resolveMemoryFtsState",
             "resolveMemoryVectorState",
         ],
@@ -46732,6 +46738,251 @@ module.exports = {
             {"tone": "ok", "text": "cache on (3)"},
             {"tone": "ok", "text": "cache on"},
         ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_root_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    primary_workspace = tmp_path / "primary-workspace"
+    alpha_workspace = tmp_path / "alpha-workspace"
+    beta_workspace = tmp_path / "beta-workspace"
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-root.cjs"
+    runtime_entry.write_text(
+        f"""
+const memoryCore = require("openclaw/plugin-sdk/memory-core");
+const scopedMemoryCore = require("@openclaw/plugin-sdk/memory-core");
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.memory_core_root",
+      description: "Use OpenClaw memory-core root SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const cfg = {{
+          agents: {{
+            defaults: {{
+              userTimezone: "America/Chicago",
+              workspace: {json.dumps(str(primary_workspace))}
+            }},
+            list: [
+              {{
+                id: "Alpha",
+                default: true,
+                workspace: {json.dumps(str(alpha_workspace))}
+              }},
+              {{
+                id: "Beta",
+                workspace: {json.dumps(str(beta_workspace))}
+              }}
+            ]
+          }},
+          plugins: {{
+            slots: {{ memory: "memory-core" }},
+            entries: {{
+              "memory-core": {{
+                config: {{
+                  dreaming: {{
+                    enabled: true,
+                    frequency: "30 4 * * *",
+                    timezone: "UTC",
+                    verboseLogging: true,
+                    storage: {{ mode: "both", separateReports: true }},
+                    execution: {{
+                      defaults: {{
+                        speed: "slow",
+                        thinking: "high",
+                        budget: "expensive",
+                        model: "gpt-test",
+                        maxOutputTokens: 1234
+                      }}
+                    }},
+                    phases: {{
+                      light: {{
+                        sources: ["daily", "bogus", "recall"],
+                        limit: "12"
+                      }},
+                      deep: {{
+                        limit: "7",
+                        minScore: 0.7,
+                        recovery: {{ enabled: false }}
+                      }}
+                    }}
+                  }}
+                }}
+              }}
+            }}
+          }}
+        }};
+        const pluginConfig = memoryCore.resolveMemoryCorePluginConfig(cfg);
+        const dreaming = memoryCore.resolveMemoryDreamingConfig({{ pluginConfig, cfg }});
+        const deep = memoryCore.resolveMemoryDeepDreamingConfig({{ pluginConfig, cfg }});
+        const workspaces = memoryCore.resolveMemoryDreamingWorkspaces(cfg, {{
+          primaryWorkspaceDir: {json.dumps(str(primary_workspace))},
+          primaryAgentId: "Beta"
+        }});
+        const search = await memoryCore.getMemorySearchManager({{
+          cfg,
+          agentId: "Alpha",
+          purpose: "root-test"
+        }});
+        return {{
+          hasRootKeys: [
+            "MemoryIndexManager",
+            "getMemorySearchManager",
+            "parseNonNegativeByteSize",
+            "formatDocsLink",
+            "appendMemoryHostEvent",
+            "resolveMemoryCorePluginConfig",
+            "resolveMemoryDeepDreamingConfig",
+            "resolveMemoryDreamingConfig",
+            "resolveMemoryDreamingWorkspaces",
+            "listMemoryFiles"
+          ].every((key) => Object.prototype.hasOwnProperty.call(memoryCore, key)),
+          scopedSame:
+            scopedMemoryCore.getMemorySearchManager === memoryCore.getMemorySearchManager &&
+            scopedMemoryCore.resolveMemoryDreamingConfig ===
+              memoryCore.resolveMemoryDreamingConfig,
+          bytes: [
+            memoryCore.parseNonNegativeByteSize("2kb"),
+            memoryCore.parseNonNegativeByteSize("1.5mb"),
+            memoryCore.parseNonNegativeByteSize("-1")
+          ],
+          pluginFrequency: pluginConfig.dreaming.frequency,
+          dreaming: {{
+            enabled: dreaming.enabled,
+            frequency: dreaming.frequency,
+            timezone: dreaming.timezone,
+            storage: dreaming.storage,
+            model: dreaming.execution.defaults.model,
+            lightSources: dreaming.phases.light.sources,
+            lightLimit: dreaming.phases.light.limit,
+            deepLimit: dreaming.phases.deep.limit,
+            deepMinScore: dreaming.phases.deep.minScore,
+            deepRecoveryEnabled: dreaming.phases.deep.recovery.enabled
+          }},
+          deep: {{
+            enabled: deep.enabled,
+            timezone: deep.timezone,
+            storage: deep.storage,
+            limit: deep.limit,
+            minScore: deep.minScore,
+            recoveryEnabled: deep.recovery.enabled
+          }},
+          day: memoryCore.formatMemoryDreamingDay(
+            Date.UTC(2026, 0, 2, 5, 0, 0),
+            "America/Chicago"
+          ),
+          sameDay: [
+            memoryCore.isSameMemoryDreamingDay(
+              Date.UTC(2026, 0, 2, 5, 0, 0),
+              Date.UTC(2026, 0, 2, 5, 30, 0),
+              "America/Chicago"
+            ),
+            memoryCore.isSameMemoryDreamingDay(
+              Date.UTC(2026, 0, 2, 5, 0, 0),
+              Date.UTC(2026, 0, 3, 8, 0, 0),
+              "America/Chicago"
+            )
+          ],
+          workspaces: workspaces.map((entry) => ({{
+            agentIds: entry.agentIds,
+            hasWorkspace: typeof entry.workspaceDir === "string" && entry.workspaceDir.length > 0
+          }})),
+          search
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-core-root-plugin",
+                    "name": "Memory Core Root Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-core-root.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_root"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_core_root"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "hasRootKeys": True,
+        "scopedSame": True,
+        "bytes": [2048, 1572864, None],
+        "pluginFrequency": "30 4 * * *",
+        "dreaming": {
+            "enabled": True,
+            "frequency": "30 4 * * *",
+            "timezone": "UTC",
+            "storage": {"mode": "both", "separateReports": True},
+            "model": "gpt-test",
+            "lightSources": ["daily", "recall"],
+            "lightLimit": 12,
+            "deepLimit": 7,
+            "deepMinScore": 0.7,
+            "deepRecoveryEnabled": False,
+        },
+        "deep": {
+            "enabled": True,
+            "timezone": "UTC",
+            "storage": {"mode": "both", "separateReports": True},
+            "limit": 7,
+            "minScore": 0.7,
+            "recoveryEnabled": False,
+        },
+        "day": "2026-01-01",
+        "sameDay": [True, False],
+        "workspaces": [
+            {"agentIds": ["alpha"], "hasWorkspace": True},
+            {"agentIds": ["beta"], "hasWorkspace": True},
+            {"agentIds": ["beta"], "hasWorkspace": True},
+        ],
+        "search": {
+            "manager": None,
+            "error": "memory-core engine runtime unavailable",
+        },
     }
 
 
