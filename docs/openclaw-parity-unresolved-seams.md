@@ -10121,3 +10121,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, with the evidence band tightened to
   ~80-99.9999999999999996%. Continue broader release/update packaging breadth
   next.
+- Current queue-head adjustment: native package-update global install commands
+  now apply OpenClaw's Windows package install env, disabling npm notifier,
+  fund, and audit prompts and setting `NODE_LLAMA_CPP_SKIP_DOWNLOAD=1` only for
+  command dispatch before restoring parent env values. Source/test
+  checkpointed in `80e49178`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999999997%. Continue
+  broader release/update packaging breadth next.

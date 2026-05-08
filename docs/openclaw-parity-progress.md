@@ -19293,6 +19293,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Test checkpointed in `9fd00cad`.
+- Native package updates now apply OpenClaw's Windows global-install env during
+  package-manager dispatch, forcing npm update notifier/fund/audit prompts off
+  and `NODE_LLAMA_CPP_SKIP_DOWNLOAD=1` while restoring caller env values after
+  the command. This closes `OZ-PKG-001AU`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999997%.
+- Verified Windows package install env with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_windows_install_env -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package env
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_disables_corepack_download_prompt tests\test_runtime_updates.py::test_runtime_update_run_package_update_preserves_corepack_download_prompt tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_windows_install_env -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`16 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `80e49178`.
 
 ## References
 
