@@ -61497,6 +61497,15 @@ const OPENZUES_CHAT_CHANNEL_META = Object.freeze({
     detailLabel: "Discord Bot",
     systemImage: "gamecontroller",
   },
+  irc: {
+    id: "irc",
+    label: "IRC",
+    selectionLabel: "IRC (Server + Nick)",
+    docsPath: "/channels/irc",
+    docsLabel: "irc",
+    detailLabel: "IRC",
+    systemImage: "network",
+  },
   matrix: {
     id: "matrix",
     label: "Matrix",
@@ -89270,6 +89279,60 @@ const nextcloudTalkRootRuntime = Object.assign(Object.create(genericSdk), {
   warnMissingProviderGroupPolicyFallbackOnce,
 });
 
+const ircRootRuntime = Object.assign(Object.create(genericSdk), {
+  BlockStreamingCoalesceSchema,
+  DEFAULT_ACCOUNT_ID,
+  DmConfigSchema,
+  DmPolicySchema,
+  GROUP_POLICY_BLOCKED_LABEL,
+  GroupPolicySchema,
+  MarkdownConfigSchema,
+  PAIRING_APPROVED_MESSAGE,
+  ReplyRuntimeConfigSchemaShape,
+  ToolPolicySchema,
+  addWildcardAllowFrom,
+  buildBaseAccountStatusSnapshot,
+  buildBaseChannelStatusSummary,
+  buildChannelConfigSchema,
+  chunkTextForOutbound,
+  createAccountListHelpers,
+  createAccountStatusSink,
+  createChannelPairingController,
+  createChannelReplyPipeline,
+  createLoggerBackedRuntime,
+  createNormalizedOutboundDeliverer,
+  deleteAccountFromConfigSection,
+  deliverFormattedTextWithAttachments,
+  dispatchInboundReplyWithBase,
+  emptyPluginConfigSchema,
+  formatDocsLink,
+  formatPairingApproveHint,
+  formatTextWithAttachmentLinks,
+  getChatChannelMeta,
+  ircSetupAdapter: ircSurfaceRuntime.ircSetupAdapter,
+  ircSetupWizard: ircSurfaceRuntime.ircSetupWizard,
+  isDangerousNameMatchingEnabled,
+  listIrcAccountIds,
+  logInboundDrop,
+  normalizeResolvedSecretInputString,
+  parseOptionalDelimitedEntries,
+  patchScopedAccountConfig,
+  readStoreAllowFromForDmPolicy,
+  requireOpenAllowFrom,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveControlCommandGate,
+  resolveDefaultGroupPolicy,
+  resolveDefaultIrcAccountId,
+  resolveEffectiveAllowFromLists,
+  resolveIrcAccount,
+  resolveOutboundMediaUrls,
+  runPassiveAccountLifecycle,
+  setAccountEnabledInConfigSection,
+  setTopLevelChannelAllowFrom,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  warnMissingProviderGroupPolicyFallbackOnce,
+});
+
 const originalLoad = Module._load;
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
@@ -90740,6 +90803,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/telegram-account"
   ) {
     return telegramAccountRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/irc" ||
+    request === "@openclaw/plugin-sdk/irc"
+  ) {
+    return ircRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/irc-surface" ||

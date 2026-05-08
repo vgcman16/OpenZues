@@ -24551,6 +24551,161 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_irc_root_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-irc-root.cjs"
+    runtime_entry.write_text(
+        """
+const irc = require("openclaw/plugin-sdk/irc");
+const scopedIrc = require("@openclaw/plugin-sdk/irc");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.irc_root",
+      description: "Use OpenClaw IRC root SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            irc: {
+              defaultAccount: "work",
+              accounts: {
+                work: {
+                  enabled: true,
+                  host: "irc.work.test",
+                  nick: "workbot",
+                  tls: true,
+                  name: "Work IRC"
+                }
+              }
+            }
+          }
+        };
+        const account = irc.resolveIrcAccount({ cfg, accountId: "work" });
+        const enabledCfg = irc.setAccountEnabledInConfigSection({
+          cfg: {},
+          sectionKey: "irc",
+          accountId: "work",
+          enabled: false
+        });
+        return {
+          keyCount: Object.keys(irc).length,
+          hasCoreHelpers: [
+            "resolveControlCommandGate",
+            "createAccountListHelpers",
+            "createChannelReplyPipeline",
+            "dispatchInboundReplyWithBase",
+            "createLoggerBackedRuntime",
+            "buildBaseAccountStatusSnapshot"
+          ].every((key) => typeof irc[key] === "function"),
+          scopedSame:
+            scopedIrc.resolveIrcAccount === irc.resolveIrcAccount &&
+            scopedIrc.createChannelReplyPipeline === irc.createChannelReplyPipeline,
+          account: {
+            accountId: account.accountId,
+            configured: account.configured,
+            host: account.host,
+            nick: account.nick,
+            port: account.port,
+            tls: account.tls,
+            name: account.name
+          },
+          ids: irc.listIrcAccountIds(cfg),
+          defaultId: irc.resolveDefaultIrcAccountId(cfg),
+          enabledPatch: enabledCfg.channels.irc.accounts.work.enabled,
+          meta: irc.getChatChannelMeta("irc").id,
+          docsLink: irc.formatDocsLink("/channels/irc", "IRC"),
+          pairingApproved: irc.PAIRING_APPROVED_MESSAGE.includes("OpenClaw"),
+          schemaTypes: {
+            toolPolicy: typeof irc.ToolPolicySchema.safeParse,
+            dmPolicy: typeof irc.DmPolicySchema.safeParse,
+            replyRuntimeShape: typeof irc.ReplyRuntimeConfigSchemaShape
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-irc-root-plugin",
+                    "name": "Runtime IRC Root Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-irc-root.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.irc_root"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.irc_root"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keyCount": 51,
+        "hasCoreHelpers": True,
+        "scopedSame": True,
+        "account": {
+            "accountId": "work",
+            "configured": True,
+            "host": "irc.work.test",
+            "nick": "workbot",
+            "port": 6697,
+            "tls": True,
+            "name": "Work IRC",
+        },
+        "ids": ["work"],
+        "defaultId": "work",
+        "enabledPatch": False,
+        "meta": "irc",
+        "docsLink": "IRC (https://docs.openclaw.ai/channels/irc)",
+        "pairingApproved": True,
+        "schemaTypes": {
+            "toolPolicy": "function",
+            "dmPolicy": "function",
+            "replyRuntimeShape": "object",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
     tmp_path,
 ) -> None:
