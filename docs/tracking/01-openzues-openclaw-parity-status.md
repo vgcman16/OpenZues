@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999997% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999998% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6421,6 +6421,22 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused memory-lancedb red/green proof (exact
     import returned the generic SDK facade before implementation, then `1
     passed`), adjacent state-paths/plugin-entry proof (`3 passed, 1167
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK phone-control shim.
+  - Source: `openclaw-main/src/plugin-sdk/phone-control.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `phone-control` imports expose only the
+    bundled phone-control `definePluginEntry` helper facade, preserving plugin
+    registration and `nodeHostCommands` projection.
+  - Evidence required: focused phone-control import test, adjacent plugin-entry
+    facade proof, ruff, mypy
+  - Status: checkpointed in `93b139e3`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused phone-control red/green proof (exact
+    import returned the generic SDK facade before implementation, then `1
+    passed`), adjacent plugin-entry facade proof (`3 passed, 1168
     deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
