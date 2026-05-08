@@ -563,6 +563,8 @@ checkpointed in `fc6c72d4`.
 in `1bc4c0f9`.
 `thread-ownership` from `src/plugin-sdk/thread-ownership.ts` is checkpointed
 in `41dad57f`.
+`ssrf-dispatcher` from `src/plugin-sdk/ssrf-dispatcher.ts` is checkpointed in
+`7b283bdc`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
