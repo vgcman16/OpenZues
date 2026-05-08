@@ -9743,19 +9743,43 @@ def _openclaw_update_git_tag(root: Path) -> str | None:
     if head_sha is None:
         return None
     refs_tags = root / ".git" / "refs" / "tags"
-    if not _doctor_path_exists(refs_tags):
+    if _doctor_path_exists(refs_tags):
+        try:
+            tag_refs = sorted(path for path in refs_tags.rglob("*") if path.is_file())
+        except OSError:
+            tag_refs = []
+        for tag_ref in tag_refs:
+            try:
+                tag_sha = tag_ref.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if tag_sha == head_sha:
+                return tag_ref.relative_to(refs_tags).as_posix()
+    packed_tag = _openclaw_update_packed_git_tag(root, head_sha)
+    if packed_tag is not None:
+        return packed_tag
+    return None
+
+
+def _openclaw_update_packed_git_tag(root: Path, head_sha: str) -> str | None:
+    packed_refs_path = root / ".git" / "packed-refs"
+    if not _doctor_path_exists(packed_refs_path):
         return None
     try:
-        tag_refs = sorted(path for path in refs_tags.rglob("*") if path.is_file())
+        lines = packed_refs_path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
-    for tag_ref in tag_refs:
-        try:
-            tag_sha = tag_ref.read_text(encoding="utf-8").strip()
-        except OSError:
+    tag_prefix = "refs/tags/"
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("^"):
             continue
-        if tag_sha == head_sha:
-            return tag_ref.relative_to(refs_tags).as_posix()
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        sha, ref = parts[0], parts[1]
+        if sha == head_sha and ref.startswith(tag_prefix):
+            return ref.removeprefix(tag_prefix)
     return None
 
 

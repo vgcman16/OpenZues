@@ -24733,6 +24733,62 @@ def test_update_status_json_uses_git_tag_channel_label(
     }
 
 
+def test_update_status_json_uses_packed_git_tag_channel_label(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    tag_sha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+    git_dir.mkdir(parents=True)
+    (git_dir / "HEAD").write_text(f"{tag_sha}\n", encoding="utf-8")
+    (git_dir / "packed-refs").write_text(
+        "# pack-refs with: peeled fully-peeled sorted\n"
+        f"{tag_sha} refs/tags/v1.2.3\n",
+        encoding="utf-8",
+    )
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["channel"] == {
+        "value": "stable",
+        "source": "git-tag",
+        "label": "stable (v1.2.3)",
+        "config": None,
+    }
+
+
 def test_doctor_json_warns_when_sandbox_enabled_without_docker(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
