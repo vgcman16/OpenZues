@@ -20236,6 +20236,127 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_lancedb_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-lancedb.cjs"
+    runtime_entry.write_text(
+        """
+const memory = require("openclaw/plugin-sdk/memory-lancedb");
+const scopedMemory = require("@openclaw/plugin-sdk/memory-lancedb");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_lancedb",
+      description: "Use OpenClaw memory-lancedb SDK shim",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const entry = memory.definePluginEntry({
+          id: "memory-lancedb-test",
+          name: "Memory LanceDB Test",
+          description: "Memory LanceDB helper",
+          register(runtimeApi) {
+            runtimeApi.registeredByMemory = true;
+          }
+        });
+        const runtimeApi = {};
+        entry.register(runtimeApi);
+        const stateDir = memory
+          .resolveStateDir({
+            OPENCLAW_STATE_DIR: "~/memory-state",
+            OPENCLAW_HOME: args.homeDir
+          })
+          .replace(/\\\\/g, "/");
+        return {
+          keys: Object.keys(memory).sort(),
+          scopedSame:
+            scopedMemory.definePluginEntry === memory.definePluginEntry &&
+            scopedMemory.resolveStateDir === memory.resolveStateDir,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            registerType: typeof entry.register
+          },
+          stateDir,
+          runtimeApi
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-memory-lancedb-plugin",
+                    "name": "Runtime Memory LanceDB Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-lancedb.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_lancedb"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.memory_lancedb", "args": {"homeDir": str(home_dir)}},
+    )
+
+    expected_home = str(home_dir).replace("\\", "/")
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["definePluginEntry", "resolveStateDir"],
+        "scopedSame": True,
+        "entry": {
+            "id": "memory-lancedb-test",
+            "name": "Memory LanceDB Test",
+            "description": "Memory LanceDB helper",
+            "registerType": "function",
+        },
+        "stateDir": f"{expected_home}/memory-state",
+        "runtimeApi": {"registeredByMemory": True},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
     tmp_path,
 ) -> None:

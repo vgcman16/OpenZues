@@ -67947,6 +67947,11 @@ const talkVoiceRuntime = {
   definePluginEntry,
 };
 
+const memoryLancedbRuntime = {
+  definePluginEntry,
+  resolveStateDir,
+};
+
 const copilotProxyRuntime = {
   definePluginEntry,
 };
@@ -89193,6 +89198,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/talk-voice"
   ) {
     return talkVoiceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-lancedb" ||
+    request === "@openclaw/plugin-sdk/memory-lancedb"
+  ) {
+    return memoryLancedbRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/copilot-proxy" ||
