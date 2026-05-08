@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999995%.
+  band of ~80-99.9999996%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1754,9 +1754,11 @@ Custom S3 upload signing now resolves configured credentials, presigns a
 path-style S3-compatible PUT, uploads bytes, and returns the configured public
 URL. Tlon DM inbound firehose session routing now parses upstream chat events,
 renders rich inline content, builds the direct conversation target/session key,
-and dispatches through the session-backed delivery service. Remaining Tlon
-runtime parity is now group/thread channel firehose handling,
-approval/allowlist/media-download depth, and production SSE monitor lifecycle.
+and dispatches through the session-backed delivery service. Tlon group/thread
+channel firehose session routing now parses upstream channel posts/replies,
+extracts thread parent ids, builds the group conversation target, and dispatches
+through thread-scoped session keys. Remaining Tlon runtime parity is now
+approval/allowlist/media-download depth and production SSE monitor lifecycle.
 iMessage config-backed account probes now mirror OpenClaw's `probeIMessage`
 status hook: `channels status --probe --json` discovers configured
 `channels.imessage` accounts from the Gateway config snapshot, checks the
@@ -9774,8 +9776,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   media upload-hook checkpointed in `0c18844d`; hosted Memex media upload
   checkpointed in `f742ba8a`; custom S3 media upload checkpointed in
   `dc999418`; DM inbound firehose session routing checkpointed in `51e6b618`;
+  group/thread inbound firehose session routing checkpointed in `b3b06972`;
   repo-wide parity remains estimated at ~99.9%, with the evidence band
-  tightened to ~80-99.9999995%. Remaining Tlon-specific gaps are group/thread
-  channel firehose handling, approval/allowlist/media-download depth, and
-  production SSE monitor lifecycle before rotating through broader provider,
-  packaging, and companion seams.
+  tightened to ~80-99.9999996%. Remaining Tlon-specific gaps are
+  approval/allowlist/media-download depth and production SSE monitor lifecycle
+  before rotating through broader provider, packaging, and companion seams.
