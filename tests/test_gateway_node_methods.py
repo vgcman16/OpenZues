@@ -83360,6 +83360,48 @@ async def test_chat_history_preserves_assistant_usage_and_cost_metadata() -> Non
 
 
 @pytest.mark.asyncio
+async def test_chat_history_sanitizes_assistant_usage_and_cost_metadata(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-chat-history-usage-cost-sanitized.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Usage metadata is bounded.",
+        session_key=session_key,
+        usage={
+            "input": 12,
+            "output": "5",
+            "totalTokens": 17,
+            "cacheRead": 2,
+            "unknown": 99,
+            "cost": {"total": 0.25, "input": 1},
+        },
+        cost={"total": 0.5, "output": 9, "unknown": 4},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Usage metadata is bounded."}],
+            "usage": {
+                "input": 12,
+                "totalTokens": 17,
+                "cacheRead": 2,
+                "cost": {"total": 0.25},
+            },
+            "cost": {"total": 0.5},
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sessions_history_returns_redacted_agent_tool_projection(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-history.db")
     await database.initialize()

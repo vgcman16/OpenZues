@@ -16792,8 +16792,8 @@ def _project_control_chat_messages(
             continue
         if role == "assistant" and _chat_history_is_heartbeat_ok_text(text):
             continue
-        usage = _chat_history_json_object(row.get("usage_json")) if role == "assistant" else None
-        cost = _chat_history_json_object(row.get("cost_json")) if role == "assistant" else None
+        usage = _chat_history_usage_object(row.get("usage_json")) if role == "assistant" else None
+        cost = _chat_history_cost_object(row.get("cost_json")) if role == "assistant" else None
         metadata = (
             _chat_history_json_object(row.get("metadata_json")) if role == "assistant" else None
         )
@@ -17465,6 +17465,49 @@ def _chat_history_json_object(value: object) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _chat_history_finite_number(value: object) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(float(value)):
+        return None
+    return value
+
+
+def _chat_history_cost_object(value: object) -> dict[str, Any] | None:
+    parsed = _chat_history_json_object(value)
+    if parsed is None:
+        return None
+    total = _chat_history_finite_number(parsed.get("total"))
+    return {"total": total} if total is not None else None
+
+
+def _chat_history_usage_object(value: object) -> dict[str, Any] | None:
+    parsed = _chat_history_json_object(value)
+    if parsed is None:
+        return None
+    payload: dict[str, Any] = {}
+    for key in (
+        "input",
+        "output",
+        "totalTokens",
+        "inputTokens",
+        "outputTokens",
+        "cacheRead",
+        "cacheWrite",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    ):
+        number = _chat_history_finite_number(parsed.get(key))
+        if number is not None:
+            payload[key] = number
+    nested_cost = parsed.get("cost")
+    if isinstance(nested_cost, Mapping):
+        total = _chat_history_finite_number(nested_cost.get("total"))
+        if total is not None:
+            payload["cost"] = {"total": total}
+    return payload or None
 
 
 def _project_session_preview_items(
