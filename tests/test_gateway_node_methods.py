@@ -21163,6 +21163,270 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_bundled_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-bundled.cjs"
+    runtime_entry.write_text(
+        """
+globalThis.__openzuesQaRunnerRuntime = {
+  calls: [],
+  loadBundledPluginPublicSurfaceModuleSync(params) {
+    this.calls.push(params);
+    if (params.artifactBasename === "runtime-api.js") {
+      return {
+        createEmbeddingProvider: async ({ provider, fallback }) => ({
+          provider: { id: provider },
+          requestedProvider: provider,
+          fallbackFrom: fallback
+        }),
+        registerBuiltInMemoryEmbeddingProviders: (registry) => {
+          registry.registerMemoryEmbeddingProvider({ id: "openai" });
+          registry.registerMemoryEmbeddingProvider({ id: "local" });
+        },
+        removeGroundedShortTermCandidates: async ({ workspaceDir }) => ({
+          removed: 2,
+          storePath: `${workspaceDir}/grounded.json`
+        }),
+        repairDreamingArtifacts: async ({ archiveDiary }) => ({
+          changed: true,
+          archivedDreamsDiary: !!archiveDiary,
+          archivedSessionCorpus: false,
+          archivedSessionIngestion: false,
+          archivedPaths: [],
+          warnings: []
+        })
+      };
+    }
+    return {
+      previewGroundedRemMarkdown: async ({ workspaceDir, inputPaths }) => ({
+        workspaceDir,
+        scannedFiles: inputPaths.length,
+        files: []
+      }),
+      dedupeDreamDiaryEntries: async ({ workspaceDir }) => ({
+        dreamsPath: `${workspaceDir}/dreams.md`,
+        removed: 1,
+        kept: 2
+      }),
+      writeBackfillDiaryEntries: async ({ workspaceDir, entries }) => ({
+        dreamsPath: `${workspaceDir}/dreams.md`,
+        written: entries.length,
+        replaced: 0
+      }),
+      removeBackfillDiaryEntries: async ({ workspaceDir }) => ({
+        dreamsPath: `${workspaceDir}/dreams.md`,
+        removed: 3
+      }),
+      filterRecallEntriesWithinLookback: ({ entries, lookbackDays }) =>
+        entries.filter((entry) => entry.ageDays <= lookbackDays),
+      previewRemHarness: async ({ workspaceDir }) => ({
+        workspaceDir,
+        nowMs: 123,
+        remSkipped: false,
+        recallEntryCount: 0
+      })
+    };
+  }
+};
+
+const memoryCore = require("openclaw/plugin-sdk/memory-core-bundled-runtime");
+const scopedMemoryCore = require("@openclaw/plugin-sdk/memory-core-bundled-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_bundled",
+      description: "Use OpenClaw memory-core-bundled-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const keys = Object.keys(memoryCore).sort();
+        const beforeCalls = globalThis.__openzuesQaRunnerRuntime.calls.length;
+        const provider = await memoryCore.createEmbeddingProvider({
+          provider: "openai",
+          fallback: "local"
+        });
+        const registered = [];
+        scopedMemoryCore.registerBuiltInMemoryEmbeddingProviders({
+          registerMemoryEmbeddingProvider: (adapter) => registered.push(adapter.id)
+        });
+        const removedGrounded = await memoryCore.removeGroundedShortTermCandidates({
+          workspaceDir: "workspace"
+        });
+        const repaired = await scopedMemoryCore.repairDreamingArtifacts({
+          workspaceDir: "workspace",
+          archiveDiary: true
+        });
+        const preview = await memoryCore.previewGroundedRemMarkdown({
+          workspaceDir: "workspace",
+          inputPaths: ["a.md", "b.md"]
+        });
+        const deduped = await scopedMemoryCore.dedupeDreamDiaryEntries({
+          workspaceDir: "workspace"
+        });
+        const written = await memoryCore.writeBackfillDiaryEntries({
+          workspaceDir: "workspace",
+          entries: [{ isoDay: "2026-05-08", bodyLines: ["line"] }]
+        });
+        const removedBackfill = await memoryCore.removeBackfillDiaryEntries({
+          workspaceDir: "workspace"
+        });
+        const filtered = scopedMemoryCore.filterRecallEntriesWithinLookback({
+          entries: [{ id: "old", ageDays: 9 }, { id: "new", ageDays: 2 }],
+          nowMs: 123,
+          lookbackDays: 7
+        });
+        const harness = await memoryCore.previewRemHarness({
+          workspaceDir: "workspace"
+        });
+        return {
+          keys,
+          scopedSame:
+            scopedMemoryCore.createEmbeddingProvider === memoryCore.createEmbeddingProvider,
+          beforeCalls,
+          provider,
+          registered,
+          removedGrounded,
+          repaired,
+          preview,
+          deduped,
+          written,
+          removedBackfill,
+          filtered,
+          harness,
+          callSummary: globalThis.__openzuesQaRunnerRuntime.calls.map((call) => ({
+            dirName: call.dirName,
+            artifact: call.artifactBasename
+          }))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-memory-core-bundled-plugin",
+                    "name": "Runtime Memory Core Bundled Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-core-bundled.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_bundled"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.memory_core_bundled"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createEmbeddingProvider",
+            "dedupeDreamDiaryEntries",
+            "filterRecallEntriesWithinLookback",
+            "previewGroundedRemMarkdown",
+            "previewRemHarness",
+            "registerBuiltInMemoryEmbeddingProviders",
+            "removeBackfillDiaryEntries",
+            "removeGroundedShortTermCandidates",
+            "repairDreamingArtifacts",
+            "writeBackfillDiaryEntries",
+        ],
+        "scopedSame": True,
+        "beforeCalls": 0,
+        "provider": {
+            "provider": {"id": "openai"},
+            "requestedProvider": "openai",
+            "fallbackFrom": "local",
+        },
+        "registered": ["openai", "local"],
+        "removedGrounded": {
+            "removed": 2,
+            "storePath": "workspace/grounded.json",
+        },
+        "repaired": {
+            "changed": True,
+            "archivedDreamsDiary": True,
+            "archivedSessionCorpus": False,
+            "archivedSessionIngestion": False,
+            "archivedPaths": [],
+            "warnings": [],
+        },
+        "preview": {"workspaceDir": "workspace", "scannedFiles": 2, "files": []},
+        "deduped": {
+            "dreamsPath": "workspace/dreams.md",
+            "removed": 1,
+            "kept": 2,
+        },
+        "written": {
+            "dreamsPath": "workspace/dreams.md",
+            "written": 1,
+            "replaced": 0,
+        },
+        "removedBackfill": {
+            "dreamsPath": "workspace/dreams.md",
+            "removed": 3,
+        },
+        "filtered": [{"id": "new", "ageDays": 2}],
+        "harness": {
+            "workspaceDir": "workspace",
+            "nowMs": 123,
+            "remSkipped": False,
+            "recallEntryCount": 0,
+        },
+        "callSummary": [
+            {"dirName": "memory-core", "artifact": "runtime-api.js"},
+            {"dirName": "memory-core", "artifact": "runtime-api.js"},
+            {"dirName": "memory-core", "artifact": "runtime-api.js"},
+            {"dirName": "memory-core", "artifact": "runtime-api.js"},
+            {"dirName": "memory-core", "artifact": "api.js"},
+            {"dirName": "memory-core", "artifact": "api.js"},
+            {"dirName": "memory-core", "artifact": "api.js"},
+            {"dirName": "memory-core", "artifact": "api.js"},
+            {"dirName": "memory-core", "artifact": "api.js"},
+            {"dirName": "memory-core", "artifact": "api.js"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_matrix_runtime_heavy_helpers(
     tmp_path,
 ) -> None:

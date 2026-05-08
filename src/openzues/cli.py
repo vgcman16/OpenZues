@@ -78597,6 +78597,75 @@ const memoryCoreEngineRuntime = {
   repairShortTermPromotionArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
 };
 
+function loadMemoryCoreBundledApiFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "memory-core",
+    artifactBasename: "api.js",
+  });
+}
+
+function loadMemoryCoreBundledRuntimeFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "memory-core",
+    artifactBasename: "runtime-api.js",
+  });
+}
+
+function createEmbeddingProvider(...args) {
+  return loadMemoryCoreBundledRuntimeFacadeModule().createEmbeddingProvider(...args);
+}
+
+function registerBuiltInMemoryEmbeddingProviders(...args) {
+  return loadMemoryCoreBundledRuntimeFacadeModule()
+    .registerBuiltInMemoryEmbeddingProviders(...args);
+}
+
+function removeGroundedShortTermCandidates(...args) {
+  return loadMemoryCoreBundledRuntimeFacadeModule()
+    .removeGroundedShortTermCandidates(...args);
+}
+
+function repairMemoryCoreBundledDreamingArtifacts(...args) {
+  return loadMemoryCoreBundledRuntimeFacadeModule().repairDreamingArtifacts(...args);
+}
+
+function previewGroundedRemMarkdown(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().previewGroundedRemMarkdown(...args);
+}
+
+function dedupeDreamDiaryEntries(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().dedupeDreamDiaryEntries(...args);
+}
+
+function writeBackfillDiaryEntries(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().writeBackfillDiaryEntries(...args);
+}
+
+function removeBackfillDiaryEntries(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().removeBackfillDiaryEntries(...args);
+}
+
+function filterRecallEntriesWithinLookback(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().filterRecallEntriesWithinLookback(...args);
+}
+
+function previewRemHarness(...args) {
+  return loadMemoryCoreBundledApiFacadeModule().previewRemHarness(...args);
+}
+
+const memoryCoreBundledRuntime = {
+  createEmbeddingProvider,
+  dedupeDreamDiaryEntries,
+  filterRecallEntriesWithinLookback,
+  previewGroundedRemMarkdown,
+  previewRemHarness,
+  registerBuiltInMemoryEmbeddingProviders,
+  removeBackfillDiaryEntries,
+  removeGroundedShortTermCandidates,
+  repairDreamingArtifacts: repairMemoryCoreBundledDreamingArtifacts,
+  writeBackfillDiaryEntries,
+};
+
 const MEMORY_CORE_HOST_ENGINE_DEFAULT_LOCAL_MODEL =
   "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf";
 const MEMORY_CORE_HOST_ENGINE_BATCH_ENDPOINT = "/v1/embeddings";
@@ -88804,6 +88873,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-core-engine-runtime"
   ) {
     return memoryCoreEngineRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-bundled-runtime" ||
+    request === "@openclaw/plugin-sdk/memory-core-bundled-runtime"
+  ) {
+    return memoryCoreBundledRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-engine-embeddings" ||
