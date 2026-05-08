@@ -567,6 +567,53 @@ async def test_runtime_update_run_package_update_stages_npm_install_before_swap(
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_package_update_cleans_staged_prefix_when_install_raises(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    prefix = tmp_path / "prefix"
+    global_root = prefix / "lib" / "node_modules"
+    package_root = global_root / "openzues"
+    _write_package_root(package_root, "2026.5.1")
+    stage_prefixes: list[Path] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        prefix_index = argv.index("--prefix")
+        stage_prefixes.append(Path(argv[prefix_index + 1]))
+        raise RuntimeError("install crashed")
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    with pytest.raises(RuntimeError, match="install crashed"):
+        await service.run_package_update(
+            package_root=package_root,
+            package_manager="npm",
+            package_spec="openzues@2026.5.2",
+            timeout_ms=1000,
+        )
+
+    assert stage_prefixes
+    assert all(not stage_prefix.exists() for stage_prefix in stage_prefixes)
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_package_update_keeps_live_root_when_staged_verify_fails(
     tmp_path,
 ) -> None:
