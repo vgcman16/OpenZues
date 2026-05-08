@@ -19573,6 +19573,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Test checkpointed in `c83c2a72`.
+- Native package update verification now has focused proof that private QA
+  bundled plugin metadata does not require legacy runtime sidecars when an
+  older package has no inventory, and that stale private QA metadata is
+  ignored when a newer package has an inventory. This closes `OZ-PKG-001BL`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999%.
+- Verified private QA package update omissions with focused proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_legacy_private_qa_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_stale_private_qa_metadata_with_inventory -q`
+  (`2 passed`), adjacent private-QA/sidecar/omission proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_legacy_runtime_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_legacy_private_qa_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_stale_private_qa_metadata_with_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`34 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `b663e3e0`.
 
 ## References
 

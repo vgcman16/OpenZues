@@ -10239,3 +10239,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `c83c2a72`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.9999999999999999998%. Continue package update
   private QA sidecar omission proof next.
+- Current queue-head adjustment: native package update verification now has
+  focused proof for private-QA omission in both older installs without
+  inventory and newer installs with stale private QA metadata plus inventory,
+  matching OpenClaw's installed package verifier. Test checkpointed in
+  `b663e3e0`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999999%. Continue package update
+  runtime-created install staging debris verification next.
