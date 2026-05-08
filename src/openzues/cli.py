@@ -10294,6 +10294,13 @@ def _openclaw_update_normalize_channel(value: object) -> str | None:
     return channel if channel in _OPENCLAW_UPDATE_CHANNELS else None
 
 
+def _openclaw_update_dev_target_ref_for_channel(channel: str | None) -> str | None:
+    if channel != "dev":
+        return None
+    target_ref = os.environ.get("OPENCLAW_UPDATE_DEV_TARGET_REF", "").strip()
+    return target_ref or None
+
+
 def _openclaw_update_install_kind(root: Path) -> str:
     if _doctor_path_exists(root / ".git"):
         return "git"
@@ -98411,7 +98418,24 @@ def update_root(
         return
 
     async def run_git_update_with_plugins(services: CliServices) -> dict[str, object]:
-        payload = await services.runtime_updates.run_update(timeout_ms=timeout_ms)
+        config_snapshot: object = {}
+        config_service = getattr(services, "gateway_config", None)
+        build_snapshot = getattr(config_service, "build_snapshot", None)
+        if callable(build_snapshot):
+            config_snapshot = build_snapshot()
+        effective_channel = (
+            requested_channel
+            or _openclaw_update_config_channel(config_snapshot)
+            or "dev"
+        )
+        dev_target_ref = _openclaw_update_dev_target_ref_for_channel(effective_channel)
+        if dev_target_ref is not None:
+            payload = await services.runtime_updates.run_update(
+                timeout_ms=timeout_ms,
+                dev_target_ref=dev_target_ref,
+            )
+        else:
+            payload = await services.runtime_updates.run_update(timeout_ms=timeout_ms)
         payload = _openclaw_update_attach_requested_channel(
             services,
             payload,

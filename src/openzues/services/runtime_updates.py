@@ -201,6 +201,49 @@ def _update_step_stdout_tail(step: dict[str, object]) -> str | None:
     return stdout_tail.strip() or None
 
 
+def _normalize_dev_target_ref(value: str | None) -> str | None:
+    if value is None:
+        return None
+    target_ref = value.strip()
+    return target_ref or None
+
+
+def _looks_like_full_commit_sha(value: str) -> bool:
+    target = value.strip()
+    return len(target) == 40 and all(char in "0123456789abcdefABCDEF" for char in target)
+
+
+def _dev_target_ref_resolution_candidates(dev_target_ref: str) -> list[str]:
+    target_ref = dev_target_ref.strip()
+    candidates: list[str] = []
+
+    def add_candidate(candidate: str | None) -> None:
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    if _looks_like_full_commit_sha(target_ref):
+        add_candidate(target_ref)
+        return candidates
+    if target_ref.startswith("refs/remotes/"):
+        add_candidate(target_ref)
+        return candidates
+    if target_ref.startswith("refs/heads/"):
+        add_candidate(f"refs/remotes/origin/{target_ref[len('refs/heads/'):]}")
+        return candidates
+    if target_ref.startswith("origin/"):
+        add_candidate(f"refs/remotes/{target_ref}")
+        return candidates
+    if target_ref.startswith("refs/tags/"):
+        add_candidate(f"{target_ref}^{{}}")
+        add_candidate(target_ref)
+        return candidates
+
+    add_candidate(f"refs/remotes/origin/{target_ref}")
+    add_candidate(f"refs/tags/{target_ref}^{{}}")
+    add_candidate(f"refs/tags/{target_ref}")
+    return candidates
+
+
 def _first_failed_update_step(steps: list[dict[str, object]]) -> dict[str, object] | None:
     for step in steps:
         exit_code = _update_step_exit_code(step)
@@ -1128,10 +1171,16 @@ class RuntimeUpdateService:
     def snapshot(self) -> dict[str, object]:
         return self._snapshot.to_dict()
 
-    async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+    async def run_update(
+        self,
+        *,
+        timeout_ms: int | None = None,
+        dev_target_ref: str | None = None,
+    ) -> dict[str, object]:
         started_at = time.monotonic()
         steps: list[dict[str, object]] = []
         root = self.repo_root
+        normalized_dev_target_ref = _normalize_dev_target_ref(dev_target_ref)
         if root is None:
             return {
                 "status": "error",
@@ -1188,89 +1237,132 @@ class RuntimeUpdateService:
                 started_at=started_at,
             )
 
-        upstream_step = await self._run_update_command_step(
-            "upstream check",
-            [
-                "git",
-                "rev-parse",
-                "--abbrev-ref",
-                "--symbolic-full-name",
-                "@{upstream}",
-            ],
-            timeout_ms=timeout_ms,
-        )
-        steps.append(upstream_step)
-        if _update_step_exit_code(upstream_step) != 0:
-            return self._build_update_command_result(
-                status="skipped",
-                reason="no-upstream",
-                root=root,
-                before=before,
-                after=before,
-                steps=steps,
-                started_at=started_at,
+        preflight_base_sha: str | None = None
+        candidates: list[str]
+        if normalized_dev_target_ref is not None:
+            target_sha: str | None = None
+            for target_ref_candidate in _dev_target_ref_resolution_candidates(
+                normalized_dev_target_ref
+            ):
+                target_sha_step = await self._run_update_command_step(
+                    f"git rev-parse {target_ref_candidate}",
+                    ["git", "rev-parse", target_ref_candidate],
+                    timeout_ms=timeout_ms,
+                )
+                steps.append(target_sha_step)
+                resolved_target_sha = (
+                    _update_step_stdout_tail(target_sha_step) or ""
+                ).strip()
+                if _update_step_exit_code(target_sha_step) == 0 and resolved_target_sha:
+                    target_sha = resolved_target_sha
+                    break
+            if target_sha is None:
+                return self._build_update_command_result(
+                    status="error",
+                    reason="no-target-sha",
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+            preflight_base_sha = target_sha
+            candidates = [target_sha]
+        else:
+            upstream_step = await self._run_update_command_step(
+                "upstream check",
+                [
+                    "git",
+                    "rev-parse",
+                    "--abbrev-ref",
+                    "--symbolic-full-name",
+                    "@{upstream}",
+                ],
+                timeout_ms=timeout_ms,
             )
+            steps.append(upstream_step)
+            if _update_step_exit_code(upstream_step) != 0:
+                return self._build_update_command_result(
+                    status="skipped",
+                    reason="no-upstream",
+                    root=root,
+                    before=before,
+                    after=before,
+                    steps=steps,
+                    started_at=started_at,
+                )
 
-        upstream_sha_step = await self._run_update_command_step(
-            "git rev-parse @{upstream}",
-            ["git", "rev-parse", "@{upstream}"],
-            timeout_ms=timeout_ms,
-        )
-        steps.append(upstream_sha_step)
-        upstream_sha = (_update_step_stdout_tail(upstream_sha_step) or "").strip()
-        if _update_step_exit_code(upstream_sha_step) != 0 or not upstream_sha:
+            upstream_sha_step = await self._run_update_command_step(
+                "git rev-parse @{upstream}",
+                ["git", "rev-parse", "@{upstream}"],
+                timeout_ms=timeout_ms,
+            )
+            steps.append(upstream_sha_step)
+            upstream_sha = (_update_step_stdout_tail(upstream_sha_step) or "").strip()
+            if _update_step_exit_code(upstream_sha_step) != 0 or not upstream_sha:
+                return self._build_update_command_result(
+                    status="error",
+                    reason="no-upstream-sha",
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+
+            rev_list_step = await self._run_update_command_step(
+                "git rev-list",
+                [
+                    "git",
+                    "rev-list",
+                    f"--max-count={_UPDATE_PREFLIGHT_MAX_COMMITS}",
+                    upstream_sha,
+                ],
+                timeout_ms=timeout_ms,
+            )
+            steps.append(rev_list_step)
+            if _update_step_exit_code(rev_list_step) != 0:
+                return self._build_update_command_result(
+                    status="error",
+                    reason="preflight-revlist-failed",
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+            candidates = [
+                line.strip()
+                for line in (_update_step_stdout_tail(rev_list_step) or "").splitlines()
+                if line.strip()
+            ]
+            if not candidates:
+                return self._build_update_command_result(
+                    status="error",
+                    reason="preflight-no-candidates",
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+            preflight_base_sha = upstream_sha
+
+        if preflight_base_sha is None:
             return self._build_update_command_result(
                 status="error",
-                reason="no-upstream-sha",
+                reason="preflight-base-unavailable",
                 root=root,
                 before=before,
                 after=None,
                 steps=steps,
                 started_at=started_at,
             )
-
-        rev_list_step = await self._run_update_command_step(
-            "git rev-list",
-            [
-                "git",
-                "rev-list",
-                f"--max-count={_UPDATE_PREFLIGHT_MAX_COMMITS}",
-                upstream_sha,
-            ],
-            timeout_ms=timeout_ms,
-        )
-        steps.append(rev_list_step)
-        if _update_step_exit_code(rev_list_step) != 0:
-            return self._build_update_command_result(
-                status="error",
-                reason="preflight-revlist-failed",
-                root=root,
-                before=before,
-                after=None,
-                steps=steps,
-                started_at=started_at,
-            )
-        candidates = [
-            line.strip()
-            for line in (_update_step_stdout_tail(rev_list_step) or "").splitlines()
-            if line.strip()
-        ]
-        if not candidates:
-            return self._build_update_command_result(
-                status="error",
-                reason="preflight-no-candidates",
-                root=root,
-                before=before,
-                after=None,
-                steps=steps,
-                started_at=started_at,
-            )
-
         preflight_root = Path(tempfile.mkdtemp(prefix="openzues-update-preflight-"))
         worktree_dir = preflight_root / ("wt" if os.name == "nt" else "worktree")
         worktree_step = await self._run_update_command_step(
             "preflight worktree",
-            ["git", "worktree", "add", "--detach", str(worktree_dir), upstream_sha],
+            ["git", "worktree", "add", "--detach", str(worktree_dir), preflight_base_sha],
             timeout_ms=timeout_ms,
         )
         steps.append(worktree_step)
@@ -1359,28 +1451,46 @@ class RuntimeUpdateService:
                 started_at=started_at,
             )
 
-        rebase_step = await self._run_update_command_step(
-            "git rebase",
-            ["git", "rebase", selected_sha],
-            timeout_ms=timeout_ms,
-        )
-        steps.append(rebase_step)
-        if _update_step_exit_code(rebase_step) != 0:
-            abort_step = await self._run_update_command_step(
-                "git rebase --abort",
-                ["git", "rebase", "--abort"],
+        if normalized_dev_target_ref is not None:
+            checkout_step = await self._run_update_command_step(
+                f"git checkout {selected_sha}",
+                ["git", "checkout", "--detach", selected_sha],
                 timeout_ms=timeout_ms,
             )
-            steps.append(abort_step)
-            return self._build_update_command_result(
-                status="error",
-                reason="rebase-failed",
-                root=root,
-                before=before,
-                after=None,
-                steps=steps,
-                started_at=started_at,
+            steps.append(checkout_step)
+            if _update_step_exit_code(checkout_step) != 0:
+                return self._build_update_command_result(
+                    status="error",
+                    reason="checkout-failed",
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+        else:
+            rebase_step = await self._run_update_command_step(
+                "git rebase",
+                ["git", "rebase", selected_sha],
+                timeout_ms=timeout_ms,
             )
+            steps.append(rebase_step)
+            if _update_step_exit_code(rebase_step) != 0:
+                abort_step = await self._run_update_command_step(
+                    "git rebase --abort",
+                    ["git", "rebase", "--abort"],
+                    timeout_ms=timeout_ms,
+                )
+                steps.append(abort_step)
+                return self._build_update_command_result(
+                    status="error",
+                    reason="rebase-failed",
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
 
         for name, argv, reason in (
             (

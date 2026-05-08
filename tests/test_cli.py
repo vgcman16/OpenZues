@@ -25709,6 +25709,62 @@ def test_update_json_dispatches_runtime_update_service(
     assert payload["mode"] == "git"
 
 
+def test_update_json_passes_dev_target_ref_env_to_git_runtime(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    (package_root / ".git").mkdir(parents=True)
+    seen: dict[str, object] = {}
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    class FakeRuntimeUpdates:
+        async def run_update(
+            self,
+            *,
+            timeout_ms: int | None = None,
+            dev_target_ref: str | None = None,
+        ) -> dict[str, object]:
+            seen["timeout_ms"] = timeout_ms
+            seen["dev_target_ref"] = dev_target_ref
+            return {
+                "status": "ok",
+                "mode": "git",
+                "root": str(package_root),
+                "steps": [],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setenv("OPENCLAW_UPDATE_DEV_TARGET_REF", " origin/feature/dev ")
+
+    result = runner.invoke(app, ["update", "--json", "--timeout", "9", "--yes"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen == {
+        "timeout_ms": 9000,
+        "dev_target_ref": "origin/feature/dev",
+    }
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "git"
+
+
 def test_update_json_dispatches_package_update_service(
     tmp_path,
     monkeypatch,
