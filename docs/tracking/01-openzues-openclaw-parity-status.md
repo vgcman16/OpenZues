@@ -6779,6 +6779,25 @@ may lag behind this tracker.
     passed`), adjacent optional setup proof (`6 passed, 1184 deselected`),
     `ruff check`, `mypy`, and focused `git diff --check`.
 
+- [x] Imported plugin SDK googlechat root shim.
+  - Source: `openclaw-main/src/plugin-sdk/googlechat.ts`,
+    `openclaw-main/src/plugin-sdk/channel-setup.ts`,
+    `openclaw-main/src/plugin-sdk/channel-policy.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `googlechat` imports expose root
+    `googlechatSetupAdapter`, `googlechatSetupWizard`, and
+    `resolveGoogleChatGroupRequireMention`, while inherited generic SDK helper
+    exports remain reachable.
+  - Evidence required: focused Google Chat import test, adjacent setup/policy
+    proof, ruff, mypy
+  - Status: checkpointed in `37ec6cd2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Google Chat red/green proof (exact root
+    import returned generic placeholders before implementation, then `1
+    passed`), adjacent setup/policy proof (`4 passed, 1187 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
 ## Update Rule
 
 Only move a row to `[x]` when implementation, focused proof, adjacent proof,

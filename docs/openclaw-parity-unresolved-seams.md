@@ -10839,3 +10839,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.9999999999999999999999999999999999999%. Continue remaining exact SDK
   helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `googlechat` now exposes
+  the exact root optional setup adapter/wizard surface and Google Chat group
+  mention-gating helper while preserving inherited generic SDK helpers.
+  Source/test checkpointed in `37ec6cd2`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999995%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
