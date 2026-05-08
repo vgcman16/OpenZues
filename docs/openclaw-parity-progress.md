@@ -20880,6 +20880,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1187 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `37ec6cd2`.
+- Imported plugin SDK `telegram` now exposes the exact root helper facade for
+  topic conversation parsing, single-account migration keys, account-config
+  merging, and Telegram security audit findings instead of broad generic SDK
+  placeholders. This closes `OZ-PLUGIN-00363`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999997%.
+- Verified the Telegram root helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_telegram_helpers -q`
+  (the exact root import returned generic placeholder behavior before
+  implementation, then `1 passed`), adjacent Telegram proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "telegram_helpers or telegram_account_helpers or telegram_command_ui or telegram_command_config"`
+  (`3 passed, 1189 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `2723c527`.
 
 ## References
 

@@ -10846,3 +10846,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, with the evidence band tightened to
   ~80-99.99999999999999999999999999999999999995%. Continue remaining exact SDK
   helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `telegram` now exposes the
+  exact root helper facade for topic conversation parsing, single-account
+  migration keys, account-config merging, and Telegram security audit findings
+  instead of broad generic SDK placeholders. Source/test checkpointed in
+  `2723c527`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99999999999999999999999999999999999997%. Continue
+  remaining exact SDK helper seams and provider/runtime breadth.

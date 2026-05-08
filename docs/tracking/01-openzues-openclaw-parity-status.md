@@ -6798,6 +6798,24 @@ may lag behind this tracker.
     passed`), adjacent setup/policy proof (`4 passed, 1187 deselected`),
     `ruff check`, `mypy`, and focused `git diff --check`.
 
+- [x] Imported plugin SDK telegram root shim.
+  - Source: `openclaw-main/src/plugin-sdk/telegram.ts`,
+    `openclaw-main/extensions/telegram/contract-api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `telegram` imports expose
+    `parseTelegramTopicConversation`, `singleAccountKeysToMove`,
+    `mergeTelegramAccountConfig`, and `collectTelegramSecurityAuditFindings`
+    with OpenClaw-shaped parsed topic, merge, and audit result behavior.
+  - Evidence required: focused Telegram import test, adjacent Telegram proof,
+    ruff, mypy
+  - Status: checkpointed in `2723c527`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Telegram red/green proof (exact root
+    import returned generic placeholder behavior before implementation, then
+    `1 passed`), adjacent Telegram proof (`3 passed, 1189 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
+
 ## Update Rule
 
 Only move a row to `[x]` when implementation, focused proof, adjacent proof,
