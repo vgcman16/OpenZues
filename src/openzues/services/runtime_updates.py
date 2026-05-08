@@ -17,6 +17,10 @@ from openzues.database import Database
 logger = logging.getLogger(__name__)
 _UPDATE_LOG_TAIL_CHARS = 8000
 _NPM_GLOBAL_INSTALL_QUIET_FLAGS = ("--no-fund", "--no-audit", "--loglevel=error")
+_NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS = (
+    "--omit=optional",
+    *_NPM_GLOBAL_INSTALL_QUIET_FLAGS,
+)
 
 
 RuntimeUpdateCommandRunner = Callable[
@@ -112,6 +116,17 @@ def _global_package_update_args(package_manager: str, package_spec: str) -> list
     if manager == "npm":
         return ["npm", "i", "-g", spec, *_NPM_GLOBAL_INSTALL_QUIET_FLAGS]
     return None
+
+
+def _global_package_update_fallback_args(
+    package_manager: str,
+    package_spec: str,
+) -> list[str] | None:
+    manager = package_manager.strip().lower()
+    spec = package_spec.strip()
+    if manager != "npm" or not spec:
+        return None
+    return ["npm", "i", "-g", spec, *_NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS]
 
 
 async def _default_update_command_runner(
@@ -338,16 +353,27 @@ class RuntimeUpdateService:
         )
         steps.append(step)
         if _update_step_exit_code(step) != 0:
-            return self._build_package_update_result(
-                status="error",
-                reason="global-update-failed",
-                mode=package_manager,
-                root=package_root,
-                before=before,
-                after=None,
-                steps=steps,
-                started_at=started_at,
-            )
+            fallback_argv = _global_package_update_fallback_args(package_manager, package_spec)
+            if fallback_argv is not None:
+                fallback_step = await self._run_update_command_step_at(
+                    "global update (omit optional)",
+                    fallback_argv,
+                    cwd=package_root,
+                    timeout_ms=timeout_ms,
+                )
+                steps.append(fallback_step)
+                step = fallback_step
+            if _update_step_exit_code(step) != 0:
+                return self._build_package_update_result(
+                    status="error",
+                    reason="global-update-failed",
+                    mode=package_manager,
+                    root=package_root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
 
         after = {"sha": None, "version": _read_package_version(package_root)}
         return self._build_package_update_result(
