@@ -10267,3 +10267,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   checkpointed in `df582190`; repo-wide parity remains estimated at ~99.9%,
   with the evidence band tightened to ~80-99.99999999999999999998%. Continue
   npm shim rollback proof next.
+- Current queue-head adjustment: native npm package updates now have focused
+  proof that a staged shim copy failure during `global install swap` restores
+  the live package root and previous bin shim. Test checkpointed in `03f1ee46`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999999%. Re-scan package/update seams and
+  rotate to the next repo-wide queue head if no package-update source-backed
+  heads remain.

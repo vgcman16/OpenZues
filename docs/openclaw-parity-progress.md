@@ -19641,6 +19641,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`8 passed, 548 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `df582190`.
+- Native npm package updates now have Windows-stable focused proof that a
+  staged shim copy failure during `global install swap` restores the live
+  package root and previous bin shim, matching OpenClaw's staged shim rollback
+  contract. This closes `OZ-PKG-001BP`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999%.
+- Verified npm shim rollback during package swap with focused proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_restores_bin_shim_when_swap_fails -q`
+  (`1 passed`), adjacent staged-npm proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_stages_npm_install_before_swap tests\test_runtime_updates.py::test_runtime_update_run_package_update_restores_bin_shim_when_swap_fails tests\test_runtime_updates.py::test_runtime_update_run_package_update_cleans_staged_prefix_when_install_raises tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_live_root_when_staged_verify_fails -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`37 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `03f1ee46`.
 
 ## References
 
