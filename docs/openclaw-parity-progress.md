@@ -19474,6 +19474,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `e7d960e0`.
+- Native package update inventory verification now reports unsafe symlinked
+  `dist` entries as `Unsafe package dist path: <relative>` verifier errors
+  instead of silently skipping them, matching OpenClaw's package dist inventory
+  safety guard. This closes `OZ-PKG-001BF`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999998%.
+- Verified unsafe dist path rejection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent inventory
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory -q`
+  (`6 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`27 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `691fdabd`.
 
 ## References
 

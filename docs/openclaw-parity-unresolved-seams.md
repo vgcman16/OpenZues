@@ -10197,3 +10197,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   checkpointed in `e7d960e0`; repo-wide parity remains estimated at ~99.9%,
   with the evidence band tightened to ~80-99.999999999999999997%. Continue
   unsafe package dist path handling and externalized extension omission next.
+- Current queue-head adjustment: native package update inventory comparison now
+  reports unsafe symlinked `dist` entries as verifier errors instead of
+  silently skipping them, matching OpenClaw's package dist inventory safety
+  guard. Source/test checkpointed in `691fdabd`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999998%. Continue externalized bundled extension omission
+  in package update inventory collection next.
