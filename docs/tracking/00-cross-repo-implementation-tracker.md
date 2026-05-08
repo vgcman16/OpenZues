@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999996% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -98,7 +98,8 @@ checkpointed in `41dad57f`, and `OZ-PLUGIN-00314` ssrf-dispatcher is
 checkpointed in `7b283bdc`. `OZ-PLUGIN-00315` bluebubbles-policy is
 checkpointed in `0cfb2157`, and `OZ-PLUGIN-00316` telegram-command-ui is
 checkpointed in `185f5b52`. `OZ-PLUGIN-00317` telegram-account is
-checkpointed in `49838584`; continue remaining provider/channel facade and
+checkpointed in `49838584`, and `OZ-PLUGIN-00318` irc-surface is
+checkpointed in `a2edff86`; continue remaining provider/channel facade and
 broad repo parity seams.
 
 ## Active Slice Detail

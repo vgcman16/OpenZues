@@ -10531,3 +10531,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, with the evidence band tightened to
   ~80-99.9999999999999999999999999995%. Continue remaining provider/channel
   facade and broad repo parity seams.
+- Current queue-head adjustment: imported plugin SDK `irc-surface` now exposes
+  exact scoped/unscoped IRC setup facade placeholders plus native account list,
+  default-account, and resolved account metadata helpers with password
+  `config`/`passwordFile`/`env`/`none` source projection instead of generic
+  passthrough. Source/test checkpointed in `a2edff86`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999996%. Continue remaining provider/channel
+  facade and broad repo parity seams.

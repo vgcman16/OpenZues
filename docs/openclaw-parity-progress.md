@@ -20246,6 +20246,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 1145 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `49838584`.
+- Imported plugin SDK `irc-surface` now exposes the exact scoped/unscoped
+  IRC account facade for setup facade objects, account ID listing, default
+  account resolution, and resolved host/port/TLS/nick/username/realname/
+  password-source metadata without leaking the broad generic SDK passthrough.
+  This closes `OZ-PLUGIN-00318`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999996%.
+- Verified the irc-surface helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_irc_surface_helper -q`
+  (the exact subpath returned generic passthrough data before implementation,
+  then `1 passed`), adjacent provider/channel helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "irc_surface or telegram_account or telegram_command_ui or channel_config_helpers"`
+  (`4 passed, 1145 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `a2edff86`.
 
 ## References
 
