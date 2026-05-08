@@ -19913,6 +19913,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
   `mypy src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `a1bb5d30`.
+- Startup auto-update now honors OpenClaw's `lastCheckedAt` interval gate for
+  configured auto-update checks, skipping version lookup and command execution
+  while the beta/stable check interval is still fresh. This closes
+  `OZ-PKG-001CE`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999999999999999995%.
+- Verified startup update check-interval gating with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_skips_recent_check_interval -q`
+  (`1 failed` before implementation, then covered green), adjacent startup
+  update proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_skips_recent_check_interval tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_stable_until_rollout_window -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`56 passed`), `ruff
+  check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+  `mypy src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `392177e5`.
 
 ## References
 

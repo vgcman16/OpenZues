@@ -45,6 +45,10 @@ config-enabled package auto-update dispatch and `OPENCLAW_NO_AUTO_UPDATE`.
 `src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` is
 checkpointed in `a1bb5d30`; it covers stable first-seen delay/jitter and beta
 recent-attempt suppression.
+`OZ-PKG-001CE` startup auto-update check-interval gating from
+`src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` is
+checkpointed in `392177e5`; it covers persisted `lastCheckedAt` beta/stable
+interval skips before version lookup or command execution.
 
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is

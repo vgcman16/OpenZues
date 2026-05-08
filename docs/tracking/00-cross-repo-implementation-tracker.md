@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -74,8 +74,9 @@ Latest queue addendum: `OZ-PKG-001CA` stable/beta release-channel git updates
 are checkpointed in `1f45d307`, and `OZ-PKG-001CB` preflight edge-failure
 proof is checkpointed in `7b15fafc`. `OZ-PKG-001CC` startup auto-update
 dispatch is checkpointed in `822eb6a9`, and `OZ-PKG-001CD` startup throttling
-state is checkpointed in `a1bb5d30`; continue startup update availability
-hint/cache and check-interval behavior.
+state is checkpointed in `a1bb5d30`. `OZ-PKG-001CE` startup update
+check-interval gating is checkpointed in `392177e5`; continue startup update
+availability hint/cache projection.
 
 ## Active Slice Detail
 
@@ -11052,6 +11053,30 @@ hint/cache and check-interval behavior.
     `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_runtime_update_service or update_json_passes_effective_git_channel_to_runtime or update_dry_run_json_uses_stored_update_channel"`
     (`3 passed, 558 deselected`), `ruff check
     src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+    `mypy src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001CE` startup auto-update check interval
+  - Source: `openclaw-main/src/infra/update-startup.ts`,
+    `openclaw-main/src/infra/update-startup.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: startup auto-update reads persisted `lastCheckedAt` and skips
+    version lookup plus command execution while the configured beta/stable
+    check interval remains fresh, while preserving older attempt-throttle
+    behavior after stale checks proceed.
+  - Evidence required: focused check-interval and adjacent throttling tests,
+    full runtime update suite, ruff, mypy
+  - Status: checkpointed in `392177e5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_skips_recent_check_interval -q`
+    (`1 failed` before implementation, then covered green), adjacent proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_skips_recent_check_interval tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_stable_until_rollout_window -q`
+    (`3 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`56 passed`), `ruff
+    check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
     `mypy src\openzues\services\runtime_updates.py`, and focused
     `git diff --check`.
 
