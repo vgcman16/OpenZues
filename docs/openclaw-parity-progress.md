@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999999999999999998%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999999999999999999%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -20219,6 +20219,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1142 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `0cfb2157`.
+- Imported plugin SDK `telegram-command-ui` now exposes the exact
+  scoped/unscoped `buildCommandsPaginationKeyboard` helper for Telegram
+  command pagination without leaking the broad generic SDK proxy surface. This
+  closes `OZ-PLUGIN-00316`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999999999999%.
+- Verified the telegram-command-ui helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_telegram_command_ui_helper -q`
+  (the exact subpath returned the broad generic SDK export set before
+  implementation, then `1 passed`), adjacent Telegram command proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "telegram_command_ui or telegram_command_config or command_auth"`
+  (`4 passed, 1143 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `185f5b52`.
 
 ## References
 

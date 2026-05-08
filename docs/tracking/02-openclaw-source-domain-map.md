@@ -567,6 +567,8 @@ in `41dad57f`.
 `7b283bdc`.
 `bluebubbles-policy` from `src/plugin-sdk/bluebubbles-policy.ts` is
 checkpointed in `0cfb2157`.
+`telegram-command-ui` from `src/plugin-sdk/telegram-command-ui.ts` is
+checkpointed in `185f5b52`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map

@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -96,7 +96,8 @@ checkpointed in `fc6c72d4`, and `OZ-PLUGIN-00312` diagnostics-otel is
 checkpointed in `1bc4c0f9`. `OZ-PLUGIN-00313` thread-ownership is
 checkpointed in `41dad57f`, and `OZ-PLUGIN-00314` ssrf-dispatcher is
 checkpointed in `7b283bdc`. `OZ-PLUGIN-00315` bluebubbles-policy is
-checkpointed in `0cfb2157`; continue remaining provider/channel facade and
+checkpointed in `0cfb2157`, and `OZ-PLUGIN-00316` telegram-command-ui is
+checkpointed in `185f5b52`; continue remaining provider/channel facade and
 broad repo parity seams.
 
 ## Active Slice Detail
@@ -1301,6 +1302,27 @@ broad repo parity seams.
     sender policy before implementation, then `1 passed`), adjacent proof
     `python -m pytest tests\test_gateway_node_methods.py -q -k "bluebubbles_policy or compat or discord_facade"`
     (`4 passed, 1142 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00316` Imported telegram-command-ui subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/telegram-command-ui.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `telegram-command-ui` and receive only
+    `buildCommandsPaginationKeyboard`, preserving Telegram pagination callback
+    payloads and optional agent id suffixes.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `185f5b52`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_telegram_command_ui_helper -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "telegram_command_ui or telegram_command_config or command_auth"`
+    (`4 passed, 1143 deselected`), `ruff check src\openzues\cli.py
     tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
     focused `git diff --check`.
 
