@@ -516,6 +516,8 @@ def _global_package_update_args(
     package_spec: str,
     *,
     install_prefix: Path | None = None,
+    package_root: Path | None = None,
+    package_name: str | None = None,
 ) -> list[str] | None:
     manager = package_manager.strip().lower()
     spec = package_spec.strip()
@@ -526,8 +528,9 @@ def _global_package_update_args(
     if manager == "bun":
         return ["bun", "add", "-g", spec]
     if manager == "npm":
+        npm_command = _preferred_npm_command(package_root, package_name)
         prefix_args = ["--prefix", str(install_prefix)] if install_prefix is not None else []
-        return ["npm", "i", "-g", *prefix_args, spec, *_NPM_GLOBAL_INSTALL_QUIET_FLAGS]
+        return [npm_command, "i", "-g", *prefix_args, spec, *_NPM_GLOBAL_INSTALL_QUIET_FLAGS]
     return None
 
 
@@ -536,13 +539,27 @@ def _global_package_update_fallback_args(
     package_spec: str,
     *,
     install_prefix: Path | None = None,
+    package_root: Path | None = None,
+    package_name: str | None = None,
 ) -> list[str] | None:
     manager = package_manager.strip().lower()
     spec = package_spec.strip()
     if manager != "npm" or not spec:
         return None
+    npm_command = _preferred_npm_command(package_root, package_name)
     prefix_args = ["--prefix", str(install_prefix)] if install_prefix is not None else []
-    return ["npm", "i", "-g", *prefix_args, spec, *_NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS]
+    return [npm_command, "i", "-g", *prefix_args, spec, *_NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS]
+
+
+def _preferred_npm_command(package_root: Path | None, package_name: str | None) -> str:
+    if package_root is None or not package_name:
+        return "npm"
+    global_root = _global_root_from_package_root(package_root, package_name)
+    layout = _npm_prefix_layout_from_global_root(global_root)
+    if layout is None:
+        return "npm"
+    candidate = layout.prefix / "npm.cmd" if os.name == "nt" else layout.prefix / "bin" / "npm"
+    return str(candidate) if candidate.exists() else "npm"
 
 
 def _post_package_update_doctor_args() -> list[str]:
@@ -875,6 +892,8 @@ class RuntimeUpdateService:
             package_manager,
             package_spec,
             install_prefix=staged_install.prefix if staged_install is not None else None,
+            package_root=package_root,
+            package_name=package_name,
         )
         if argv is None:
             _cleanup_staged_npm_install(staged_install)
@@ -927,6 +946,8 @@ class RuntimeUpdateService:
                     package_manager,
                     package_spec,
                     install_prefix=fallback_prefix,
+                    package_root=package_root,
+                    package_name=package_name,
                 )
                 if fallback_argv is not None:
                     fallback_step = await self._run_update_command_step_at(

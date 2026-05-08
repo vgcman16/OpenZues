@@ -983,6 +983,60 @@ async def test_runtime_update_run_package_update_prepends_portable_git_paths(
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_package_update_prefers_owning_npm_cmd(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    prefix = tmp_path / "npm-prefix"
+    global_root = prefix / "node_modules"
+    package_root = global_root / "openzues"
+    _write_package_root(package_root, "2026.5.1")
+    npm_cmd = prefix / "npm.cmd"
+    npm_cmd.write_text("@echo off\n", encoding="utf-8")
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        command_calls.append((argv, cwd, timeout_ms))
+        if argv[:3] == [sys.executable, "-m", "openzues.cli"]:
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
+        prefix_index = argv.index("--prefix")
+        stage_prefix = Path(argv[prefix_index + 1])
+        _write_package_root(_staged_global_root(stage_prefix) / "openzues", "2026.5.2")
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="npm",
+        package_spec="openzues@2026.5.2",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "ok"
+    assert command_calls[0][0][0] == str(npm_cmd)
+    assert command_calls[0][0][:3] == [str(npm_cmd), "i", "-g"]
+    assert command_calls[0][1] == package_root
+    assert command_calls[0][2] == 1000
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_package_update_verifies_expected_version(
     tmp_path,
 ) -> None:
