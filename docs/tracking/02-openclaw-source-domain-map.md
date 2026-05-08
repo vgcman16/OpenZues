@@ -540,6 +540,8 @@ in `9c56ff39`.
 `29aa7956`.
 `session-transcript-hit` from `src/plugin-sdk/session-transcript-hit.ts` is
 checkpointed in `b294d317`.
+`pairing-access` from `src/plugin-sdk/pairing-access.ts` is checkpointed in
+`e04677d3`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map

@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999994% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -82,9 +82,10 @@ source-checkout availability clearing is checkpointed in `e66c5082`, and
 `OZ-PLUGIN-00300` resolution-notes subpath shim is checkpointed in
 `9c56ff39`, and `OZ-PKG-001CI` combined update hint formatting is
 checkpointed in `1d19a46c`. `OZ-PLUGIN-00301` facade-loader is checkpointed
-in `29aa7956`, and `OZ-PLUGIN-00302` session-transcript-hit is checkpointed
-in `b294d317`; continue `pairing-access`, facade-runtime, or remaining exact
-plugin SDK subpaths.
+in `29aa7956`, `OZ-PLUGIN-00302` session-transcript-hit is checkpointed
+in `b294d317`, and `OZ-PLUGIN-00303` pairing-access is checkpointed in
+`e04677d3`; continue `facade-resolution-shared`, facade-runtime, or remaining
+exact plugin SDK subpaths.
 
 ## Active Slice Detail
 
@@ -1010,6 +1011,29 @@ plugin SDK subpaths.
     passed`), adjacent proof
     `python -m pytest tests\test_gateway_node_methods.py -q -k "session_transcript_hit or session_store_runtime or session_visibility"`
     (`3 passed, 1130 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00303` Imported pairing-access subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/pairing-access.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `pairing-access` and receive `createScopedPairingAccess`, which
+    normalizes account ids and delegates allow-store reads, DM-policy reads,
+    and pairing-request upserts through `core.channel.pairing` with the
+    expected channel/account envelope.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `e04677d3`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_pairing_access_helpers -q`
+    (generic fallback returned raw params and failed with
+    `access.readAllowFromStore is not a function` before implementation, then
+    `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "pairing_access or channel_pairing or pairing_paths"`
+    (`3 passed, 1131 deselected`), `ruff check src\openzues\cli.py
     tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
     focused `git diff --check`.
 
