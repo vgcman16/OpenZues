@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999985%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999986%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19001,6 +19001,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`13 passed, 532 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `08e8f76f`.
+- `openzues update status --json --timeout 9` now accepts OpenClaw's status
+  timeout option and propagates it to the live update-status probe while
+  preserving the existing fallback Hermes update view. This closes
+  `OZ-PKG-001AA`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999986%.
+- Verified the update-status timeout slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_status_timeout_option_reaches_live_probe -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update CLI
+  proof `python -m pytest tests\test_cli.py -q -k "update_dry_run or update_status"`
+  (`14 passed, 532 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `6418d7f3`.
 
 ## References
 
