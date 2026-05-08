@@ -30,6 +30,42 @@ repo-wide percentage.
 | [~] | Packaging, distribution, release | packageDistribution doctor JSON, dist inventory validation, exact missing-inventory diagnostics, missing/unexpected file drift warnings, legacy `.openclaw-install-stage*` debris warnings, mixed-case staging path proof, local build metadata/dependency omission, unsafe symlinked dist path warnings, externalized bundled extension dist omission, private QA dist omission, source-checkout package-root warnings, bundled runtime sidecar enforcement, and private-QA sidecar omission verified; source-install pnpm workspace warnings, update-status channel projection, registry/git availability, human update-available hints, git metadata envelope, config channel precedence, git branch channel labeling, loose/packed git-tag stable/beta channel labeling, update-status timeout, update status inherited parent options, update package-spec env override, explicit update install-spec preservation, root update runtime dispatch, package update runtime path, npm omit-optional fallback, package update version verification, package update failedStep projection, staged npm package swap, staged npm crash cleanup, npm shim rollback, git update control-ui clean-check exclusion, git update no-upstream guard, git preflight candidate/worktree/selection/rebase-abort/cleanup-repair/dev-target-ref/dev-branch-normalization guards, beta package latest fallback, post-update plugin sync, package update doctor repair, non-interactive update doctor, stale global rename-dir cleanup, low package-update disk warning, requested update-channel persistence, post-update package doctor env, stored update-channel dry-run preview, Corepack prompt suppression/preservation, Windows package install env, portable Git PATH prepending, owning/ambient npm command resolution, missing-version verifier wording, source-checkout package update verifier, package update missing dist-inventory gate, package update invalid dist-inventory rejection, package update dist inventory file drift, package update runtime staging-debris verifier, package update supplemental sidecar enforcement, package update inventory omission filters, package update unsafe dist path rejection, package update externalized extension omission, package update includeInCore inventory guard, package update private QA omission proof, package update malformed extension manifest rejection, doctor malformed extension manifest warning, package update legacy sidecar fallback, package update omitted-subtree safety ordering, and update dry-run package-spec preview verified; plugin packages, Docker/Podman, macOS DMG/Sparkle, CI release workflows, broader update channels remain | `src/flows/doctor-health.ts`, `src/commands/doctor-install.ts`, `src/infra/update-global.ts`, `src/infra/package-update-steps.ts`, `src/cli/update-cli/update-command.ts`, `src/cli/update-cli/status.ts`, `src/cli/update-cli.option-collisions.test.ts`, `src/infra/update-runner.ts`, `scripts/openclaw-npm-publish.sh`, `scripts/package-mac-dist.sh`, `Dockerfile`, `.github/workflows` |
 | [ ] | Observability, diagnostics, ops | logging, OpenTelemetry/Prometheus, health/status, proxy capture, runtime reports | `src/logging`, `extensions/diagnostics-otel`, `extensions/diagnostics-prometheus`, `docs/logging.md` |
 
+Packaging row addendum: `OZ-PKG-001CA` release-channel git update coverage
+from `src/infra/update-runner.ts`, `src/infra/update-channels.ts`, and
+`src/infra/update-check.ts` is checkpointed in `1f45d307`; it covers stable
+tag selection, beta stable-fallback, detached checkout, and `no-release-tag`.
+`OZ-PKG-001CB` preflight edge-failure proof from
+`src/infra/update-runner.ts` is checkpointed in `7b15fafc`; it covers
+`no-target-sha` and `preflight-no-good-commit`.
+`OZ-PKG-001CC` startup auto-update dispatch from
+`src/infra/update-startup.ts`, `src/infra/update-startup.test.ts`, and
+`src/infra/update-check.ts` is checkpointed in `822eb6a9`; it covers
+config-enabled package auto-update dispatch and `OPENCLAW_NO_AUTO_UPDATE`.
+`OZ-PKG-001CD` startup auto-update throttling from
+`src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` is
+checkpointed in `a1bb5d30`; it covers stable first-seen delay/jitter and beta
+recent-attempt suppression.
+`OZ-PKG-001CE` startup auto-update check-interval gating from
+`src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` is
+checkpointed in `392177e5`; it covers persisted `lastCheckedAt` beta/stable
+interval skips before version lookup or command execution.
+`OZ-PKG-001CF` startup update availability hint state from
+`src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` is
+checkpointed in `087924f8`; it covers persisted available/notified version
+and tag fields, command-only `OPENCLAW_NO_AUTO_UPDATE` suppression, recent-check
+availability hydration, and up-to-date availability clearing.
+`OZ-PKG-001CG` startup update source-checkout availability clearing from
+`src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` is
+checkpointed in `e66c5082`; it covers non-package install `lastCheckedAt`
+refresh plus stale available/auto-first-seen state clearing before npm lookup.
+`OZ-PKG-001CH` recurring startup update runner checks from
+`src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` are
+checkpointed in `49150d76`; they cover repeated runner checks gated by
+persisted `lastCheckedAt`.
+`OZ-PKG-001CI` combined human update-status hint formatting from
+`src/commands/status.update.ts` is checkpointed in `1d19a46c`; it covers the
+OpenClaw ` · ` separator for combined git/npm availability details.
+
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is
 verified in `884c9afb`; `@openclaw/memory-host-sdk/engine` aggregate coverage
@@ -498,6 +534,43 @@ config schema contracts, and bundled Discord public-surface delegation for
 `src/infra/net/proxy-env.ts`, `src/secrets/ref-contract.ts`,
 `src/plugin-sdk/channel-lifecycle.core.ts`, and
 `src/plugin-sdk/runtime-logger.ts` is checkpointed in `b56d15d7`.
+`resolution-notes` from `src/plugin-sdk/resolution-notes.ts` is checkpointed
+in `9c56ff39`.
+`facade-loader` from `src/plugin-sdk/facade-loader.ts` is checkpointed in
+`29aa7956`.
+`session-transcript-hit` from `src/plugin-sdk/session-transcript-hit.ts` is
+checkpointed in `b294d317`.
+`pairing-access` from `src/plugin-sdk/pairing-access.ts` is checkpointed in
+`e04677d3`.
+`facade-resolution-shared` from `src/plugin-sdk/facade-resolution-shared.ts`
+is checkpointed in `2938b03a`.
+`facade-runtime` from `src/plugin-sdk/facade-runtime.ts` is checkpointed in
+`1e9b65f5`.
+`test-helpers/string-utils` from
+`src/plugin-sdk/test-helpers/string-utils.ts` is checkpointed in `e2ba3082`.
+`test-helpers/envelope-timestamp` from
+`src/plugin-sdk/test-helpers/envelope-timestamp.ts` is checkpointed in
+`54b47a45`.
+`test-helpers/pairing-reply` from
+`src/plugin-sdk/test-helpers/pairing-reply.ts` is checkpointed in `75ac3561`.
+`github-copilot-login` from `src/plugin-sdk/github-copilot-login.ts` is
+checkpointed in `0561baa6`.
+`copilot-proxy` from `src/plugin-sdk/copilot-proxy.ts` is checkpointed in
+`808c9260`.
+`private-qa-bundled-env` from `src/plugin-sdk/private-qa-bundled-env.ts` is
+checkpointed in `fc6c72d4`.
+`diagnostics-otel` from `src/plugin-sdk/diagnostics-otel.ts` is checkpointed
+in `1bc4c0f9`.
+`thread-ownership` from `src/plugin-sdk/thread-ownership.ts` is checkpointed
+in `41dad57f`.
+`ssrf-dispatcher` from `src/plugin-sdk/ssrf-dispatcher.ts` is checkpointed in
+`7b283bdc`.
+`bluebubbles-policy` from `src/plugin-sdk/bluebubbles-policy.ts` is
+checkpointed in `0cfb2157`.
+`telegram-command-ui` from `src/plugin-sdk/telegram-command-ui.ts` is
+checkpointed in `185f5b52`.
+`telegram-account` from `src/plugin-sdk/telegram-account.ts` is checkpointed
+in `49838584`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map

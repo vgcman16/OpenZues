@@ -1156,6 +1156,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         enabled=app_settings.auto_self_update_enabled,
         poll_interval_seconds=app_settings.auto_self_update_poll_interval_seconds,
         restart_callback=lambda: asyncio.sleep(0),
+        config_snapshot_loader=gateway_config.build_snapshot,
     )
 
     async def run_runtime_update(
@@ -10267,7 +10268,7 @@ def _openclaw_update_available_hint(payload: Mapping[str, object]) -> str | None
     latest_version = _optional_cli_string(availability.get("latestVersion"))
     if latest_version is not None:
         details.append(f"npm {latest_version}")
-    suffix = f" ({', '.join(details)})" if details else ""
+    suffix = f" ({' · '.join(details)})" if details else ""
     return f"Update available{suffix}. Run: openzues update"
 
 
@@ -27441,6 +27442,53 @@ function getQaRunnerRuntimeHost() {
   return globalThis.__openzuesQaRunnerRuntime || {};
 }
 
+function isPrivateQaSourceCheckoutRoot(candidate) {
+  if (!candidate) {
+    return false;
+  }
+  try {
+    return (
+      fs.existsSync(path.join(candidate, ".git")) &&
+      fs.existsSync(path.join(candidate, "src")) &&
+      fs.existsSync(path.join(candidate, "extensions"))
+    );
+  } catch (_error) {
+    return false;
+  }
+}
+
+function resolvePrivateQaSourceCheckoutRootFrom(startDir) {
+  if (!startDir) {
+    return undefined;
+  }
+  let current = path.resolve(startDir);
+  while (true) {
+    if (isPrivateQaSourceCheckoutRoot(current)) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (!parent || parent === current) {
+      return undefined;
+    }
+    current = parent;
+  }
+}
+
+function resolvePrivateQaBundledPluginsPackageRoot() {
+  const candidates = [process.cwd()];
+  if (process.argv[1]) {
+    candidates.push(path.dirname(process.argv[1]));
+  }
+  candidates.push(__dirname);
+  for (const candidate of candidates) {
+    const root = resolvePrivateQaSourceCheckoutRootFrom(candidate);
+    if (root) {
+      return root;
+    }
+  }
+  return undefined;
+}
+
 function resolvePrivateQaBundledPluginsEnv(env = process.env) {
   const host = getQaRunnerRuntimeHost();
   if (typeof host.resolvePrivateQaBundledPluginsEnv === "function") {
@@ -27450,12 +27498,19 @@ function resolvePrivateQaBundledPluginsEnv(env = process.env) {
     return undefined;
   }
   const bundledPluginsDir = host.privateQaBundledPluginsDir;
-  if (!bundledPluginsDir) {
+  if (bundledPluginsDir) {
+    return {
+      ...env,
+      OPENCLAW_BUNDLED_PLUGINS_DIR: bundledPluginsDir,
+    };
+  }
+  const packageRoot = resolvePrivateQaBundledPluginsPackageRoot();
+  if (!packageRoot) {
     return undefined;
   }
   return {
     ...env,
-    OPENCLAW_BUNDLED_PLUGINS_DIR: bundledPluginsDir,
+    OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(packageRoot, "extensions"),
   };
 }
 
@@ -36130,6 +36185,630 @@ function resolveBlueBubblesGroupToolPolicy(params = {}) {
   });
 }
 
+function parseBlueBubblesAllowTarget(entry) {
+  const trimmed = String(entry || "").trim();
+  const lower = trimmed.toLowerCase();
+  const chatTarget = parseChatAllowTargetPrefixes({
+    trimmed,
+    lower,
+    chatIdPrefixes: ["chat_id:", "chat:"],
+    chatGuidPrefixes: ["chat_guid:", "guid:"],
+    chatIdentifierPrefixes: ["chat_identifier:", "identifier:"],
+  });
+  if (chatTarget) {
+    return chatTarget;
+  }
+  return { kind: "handle", handle: normalizeOptionalLowercaseString(trimmed) };
+}
+
+function isAllowedBlueBubblesSender(params = {}) {
+  return isAllowedParsedChatSender({
+    allowFrom: params.allowFrom,
+    sender: params.sender,
+    chatId: params.chatId,
+    chatGuid: params.chatGuid,
+    chatIdentifier: params.chatIdentifier,
+    normalizeSender: (sender) => normalizeOptionalLowercaseString(sender),
+    parseAllowTarget: parseBlueBubblesAllowTarget,
+  });
+}
+
+function normalizeMattermostAllowEntry(entry) {
+  const trimmed = String(entry || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed === "*") {
+    return "*";
+  }
+  const stripped = trimmed
+    .replace(/^(mattermost|user):/i, "")
+    .replace(/^@/, "")
+    .trim();
+  return stripped ? normalizeLowercaseStringOrEmpty(stripped) : "";
+}
+
+function normalizeMattermostAllowList(entries) {
+  const normalized = (Array.isArray(entries) ? entries : [])
+    .map((entry) => normalizeMattermostAllowEntry(entry))
+    .filter(Boolean);
+  return Array.from(new Set(normalized));
+}
+
+function isMattermostSenderAllowed(params = {}) {
+  const allowFrom = normalizeMattermostAllowList(params.allowFrom);
+  if (allowFrom.length === 0) {
+    return false;
+  }
+  const match = resolveAllowlistMatchSimple({
+    allowFrom,
+    senderId: normalizeMattermostAllowEntry(params.senderId),
+    senderName: params.senderName
+      ? normalizeMattermostAllowEntry(params.senderName)
+      : undefined,
+    allowNameMatching: params.allowNameMatching,
+  });
+  return match.allowed;
+}
+
+const MATRIX_RESOLVED_STRING_FIELDS = [
+  "homeserver",
+  "userId",
+  "accessToken",
+  "password",
+  "deviceId",
+  "deviceName",
+];
+const MATRIX_SCOPED_ENV_SUFFIXES = [
+  "HOMESERVER",
+  "USER_ID",
+  "ACCESS_TOKEN",
+  "PASSWORD",
+  "DEVICE_ID",
+  "DEVICE_NAME",
+];
+const MATRIX_GLOBAL_ENV_KEYS = MATRIX_SCOPED_ENV_SUFFIXES.map((suffix) => `MATRIX_${suffix}`);
+const MATRIX_SCOPED_ENV_RE = new RegExp(
+  `^MATRIX_(.+)_(${MATRIX_SCOPED_ENV_SUFFIXES.join("|")})$`,
+);
+const MATRIX_DEFAULT_ACCOUNT_AUTH_ONLY_FIELDS = new Set([
+  "userId",
+  "accessToken",
+  "password",
+  "deviceId",
+]);
+
+function resolveMatrixStringSourceValue(value) {
+  return typeof value === "string" ? value : "";
+}
+
+function shouldAllowMatrixBaseAuthFallback(accountId, field) {
+  return (
+    normalizeAccountId(accountId) === DEFAULT_ACCOUNT_ID ||
+    !MATRIX_DEFAULT_ACCOUNT_AUTH_ONLY_FIELDS.has(field)
+  );
+}
+
+function resolveMatrixAccountStringValues(params = {}) {
+  const account = params.account || {};
+  const scopedEnv = params.scopedEnv || {};
+  const channel = params.channel || {};
+  const globalEnv = params.globalEnv || {};
+  const resolved = {};
+  for (const field of MATRIX_RESOLVED_STRING_FIELDS) {
+    resolved[field] =
+      resolveMatrixStringSourceValue(account[field]) ||
+      resolveMatrixStringSourceValue(scopedEnv[field]) ||
+      (shouldAllowMatrixBaseAuthFallback(params.accountId, field)
+        ? resolveMatrixStringSourceValue(channel[field]) ||
+          resolveMatrixStringSourceValue(globalEnv[field])
+        : "");
+  }
+  return resolved;
+}
+
+function resolveMatrixEnvAccountToken(accountId) {
+  return Array.from(normalizeAccountId(accountId))
+    .map((char) =>
+      /[a-z0-9]/.test(char)
+        ? char.toUpperCase()
+        : `_X${char.codePointAt(0).toString(16).toUpperCase()}_`,
+    )
+    .join("");
+}
+
+function getMatrixScopedEnvVarNames(accountId) {
+  const token = resolveMatrixEnvAccountToken(accountId);
+  return {
+    homeserver: `MATRIX_${token}_HOMESERVER`,
+    userId: `MATRIX_${token}_USER_ID`,
+    accessToken: `MATRIX_${token}_ACCESS_TOKEN`,
+    password: `MATRIX_${token}_PASSWORD`,
+    deviceId: `MATRIX_${token}_DEVICE_ID`,
+    deviceName: `MATRIX_${token}_DEVICE_NAME`,
+  };
+}
+
+function decodeMatrixEnvAccountToken(token) {
+  let decoded = "";
+  for (let index = 0; index < token.length; ) {
+    const hexEscape = /^_X([0-9A-F]+)_/.exec(token.slice(index));
+    if (hexEscape) {
+      const codePoint = Number.parseInt(hexEscape[1] || "", 16);
+      if (!Number.isFinite(codePoint)) {
+        return undefined;
+      }
+      decoded += String.fromCodePoint(codePoint);
+      index += hexEscape[0].length;
+      continue;
+    }
+    const char = token[index];
+    if (!char || !/[A-Z0-9]/.test(char)) {
+      return undefined;
+    }
+    decoded += char.toLowerCase();
+    index += 1;
+  }
+  const normalized = normalizeOptionalAccountId(decoded);
+  if (!normalized) {
+    return undefined;
+  }
+  return resolveMatrixEnvAccountToken(normalized) === token ? normalized : undefined;
+}
+
+function listMatrixEnvAccountIds(env = process.env) {
+  const ids = new Set();
+  const source = env || {};
+  for (const key of MATRIX_GLOBAL_ENV_KEYS) {
+    if (typeof source[key] === "string" && source[key].trim()) {
+      ids.add(DEFAULT_ACCOUNT_ID);
+      break;
+    }
+  }
+  for (const key of Object.keys(source)) {
+    const match = MATRIX_SCOPED_ENV_RE.exec(key);
+    if (!match) {
+      continue;
+    }
+    const accountId = decodeMatrixEnvAccountToken(match[1]);
+    if (accountId) {
+      ids.add(accountId);
+    }
+  }
+  return Array.from(ids).sort((left, right) => left.localeCompare(right));
+}
+
+function readConfiguredMatrixString(value) {
+  return normalizeOptionalString(value) || "";
+}
+
+function readConfiguredMatrixSecretSource(value) {
+  return hasConfiguredSecretInput(value) ? "configured" : "";
+}
+
+function resolveMatrixChannelStringSources(entry) {
+  if (!isRecord(entry)) {
+    return {};
+  }
+  return {
+    homeserver: readConfiguredMatrixString(entry.homeserver),
+    userId: readConfiguredMatrixString(entry.userId),
+    accessToken: readConfiguredMatrixSecretSource(entry.accessToken),
+    password: readConfiguredMatrixSecretSource(entry.password),
+    deviceId: readConfiguredMatrixString(entry.deviceId),
+    deviceName: readConfiguredMatrixString(entry.deviceName),
+  };
+}
+
+function readEnvMatrixString(env, key) {
+  const value = (env || {})[key];
+  return normalizeOptionalString(value) || "";
+}
+
+function resolveScopedMatrixEnvStringSources(accountId, env) {
+  const keys = getMatrixScopedEnvVarNames(accountId);
+  return {
+    homeserver: readEnvMatrixString(env, keys.homeserver),
+    userId: readEnvMatrixString(env, keys.userId),
+    accessToken: readEnvMatrixString(env, keys.accessToken),
+    password: readEnvMatrixString(env, keys.password),
+    deviceId: readEnvMatrixString(env, keys.deviceId),
+    deviceName: readEnvMatrixString(env, keys.deviceName),
+  };
+}
+
+function resolveGlobalMatrixEnvStringSources(env) {
+  return {
+    homeserver: readEnvMatrixString(env, "MATRIX_HOMESERVER"),
+    userId: readEnvMatrixString(env, "MATRIX_USER_ID"),
+    accessToken: readEnvMatrixString(env, "MATRIX_ACCESS_TOKEN"),
+    password: readEnvMatrixString(env, "MATRIX_PASSWORD"),
+    deviceId: readEnvMatrixString(env, "MATRIX_DEVICE_ID"),
+    deviceName: readEnvMatrixString(env, "MATRIX_DEVICE_NAME"),
+  };
+}
+
+function hasUsableResolvedMatrixAuth(values) {
+  return Boolean(values.homeserver && (values.accessToken || values.userId));
+}
+
+function hasFreshResolvedMatrixAuth(values) {
+  return Boolean(values.homeserver && (values.accessToken || (values.userId && values.password)));
+}
+
+function resolveEffectiveMatrixAccountSources(params = {}) {
+  const normalizedAccountId = normalizeAccountId(params.accountId);
+  return resolveMatrixAccountStringValues({
+    accountId: normalizedAccountId,
+    scopedEnv: resolveScopedMatrixEnvStringSources(normalizedAccountId, params.env || process.env),
+    channel: resolveMatrixChannelStringSources(params.channel),
+    globalEnv: resolveGlobalMatrixEnvStringSources(params.env || process.env),
+  });
+}
+
+function hasUsableEffectiveMatrixAccountSource(params = {}) {
+  return hasUsableResolvedMatrixAuth(resolveEffectiveMatrixAccountSources(params));
+}
+
+function hasFreshEffectiveMatrixAccountSource(params = {}) {
+  return hasFreshResolvedMatrixAuth(resolveEffectiveMatrixAccountSources(params));
+}
+
+function hasConfiguredDefaultMatrixAccountSource(params = {}) {
+  return hasFreshEffectiveMatrixAccountSource({
+    channel: params.channel,
+    accountId: DEFAULT_ACCOUNT_ID,
+    env: params.env || process.env,
+  });
+}
+
+function resolveMatrixChannelConfig(cfg = {}) {
+  const channels = isRecord(cfg.channels) ? cfg.channels : {};
+  return isRecord(channels.matrix) ? channels.matrix : null;
+}
+
+function findMatrixAccountEntry(cfg, accountId) {
+  const channel = resolveMatrixChannelConfig(cfg);
+  if (!channel || !isRecord(channel.accounts)) {
+    return null;
+  }
+  const entry = resolveNormalizedAccountEntry(channel.accounts, accountId, normalizeAccountId);
+  return isRecord(entry) ? entry : null;
+}
+
+function resolveConfiguredMatrixAccountIds(cfg, env = process.env) {
+  const channel = resolveMatrixChannelConfig(cfg);
+  const configuredAccountIds = listConfiguredAccountIds({
+    accounts: channel && isRecord(channel.accounts) ? channel.accounts : undefined,
+    normalizeAccountId,
+  });
+  if (hasConfiguredDefaultMatrixAccountSource({ channel, env })) {
+    configuredAccountIds.push(DEFAULT_ACCOUNT_ID);
+  }
+  const readyEnvAccountIds = listMatrixEnvAccountIds(env).filter((accountId) =>
+    normalizeAccountId(accountId) === DEFAULT_ACCOUNT_ID
+      ? hasConfiguredDefaultMatrixAccountSource({ channel, env })
+      : hasUsableEffectiveMatrixAccountSource({ channel, accountId, env }),
+  );
+  return listCombinedAccountIds({
+    configuredAccountIds,
+    additionalAccountIds: readyEnvAccountIds,
+    fallbackAccountIdWhenEmpty: channel ? DEFAULT_ACCOUNT_ID : undefined,
+  });
+}
+
+function resolveMatrixDefaultOrOnlyAccountId(cfg, env = process.env) {
+  const channel = resolveMatrixChannelConfig(cfg);
+  if (!channel) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  const configuredDefault = normalizeOptionalAccountId(
+    typeof channel.defaultAccount === "string" ? channel.defaultAccount : undefined,
+  );
+  return resolveListedDefaultAccountId({
+    accountIds: resolveConfiguredMatrixAccountIds(cfg, env),
+    configuredDefaultAccountId: configuredDefault,
+    ambiguousFallbackAccountId: DEFAULT_ACCOUNT_ID,
+  });
+}
+
+function requiresExplicitMatrixDefaultAccount(cfg, env = process.env) {
+  const channel = resolveMatrixChannelConfig(cfg);
+  if (!channel) {
+    return false;
+  }
+  const configuredAccountIds = resolveConfiguredMatrixAccountIds(cfg, env);
+  if (configuredAccountIds.length <= 1 || configuredAccountIds.includes(DEFAULT_ACCOUNT_ID)) {
+    return false;
+  }
+  const configuredDefault = normalizeOptionalAccountId(
+    typeof channel.defaultAccount === "string" ? channel.defaultAccount : undefined,
+  );
+  return !(configuredDefault && configuredAccountIds.includes(configuredDefault));
+}
+
+function sanitizeMatrixPathSegment(value) {
+  const cleaned = normalizeLowercaseStringOrEmpty(value)
+    .replace(/[^a-z0-9._-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return cleaned || "unknown";
+}
+
+function resolveMatrixHomeserverKey(homeserver) {
+  try {
+    const url = new URL(homeserver);
+    if (url.host) {
+      return sanitizeMatrixPathSegment(url.host);
+    }
+  } catch {
+  }
+  return sanitizeMatrixPathSegment(homeserver);
+}
+
+function hashMatrixAccessToken(accessToken) {
+  return crypto.createHash("sha256").update(accessToken).digest("hex").slice(0, 16);
+}
+
+function resolveMatrixCredentialsFilename(accountId) {
+  const normalized = normalizeAccountId(accountId);
+  return normalized === DEFAULT_ACCOUNT_ID ? "credentials.json" : `credentials-${normalized}.json`;
+}
+
+function resolveMatrixCredentialsDir(stateDir) {
+  return path.join(stateDir, "credentials", "matrix");
+}
+
+function resolveMatrixCredentialsPath(params = {}) {
+  return path.join(
+    resolveMatrixCredentialsDir(params.stateDir),
+    resolveMatrixCredentialsFilename(params.accountId),
+  );
+}
+
+function resolveMatrixLegacyFlatStoreRoot(stateDir) {
+  return path.join(stateDir, "matrix");
+}
+
+function resolveMatrixLegacyFlatStoragePaths(stateDir) {
+  const rootDir = resolveMatrixLegacyFlatStoreRoot(stateDir);
+  return {
+    rootDir,
+    storagePath: path.join(rootDir, "bot-storage.json"),
+    cryptoPath: path.join(rootDir, "crypto"),
+  };
+}
+
+function resolveMatrixAccountStorageRoot(params = {}) {
+  const accountKey = sanitizeMatrixPathSegment(params.accountId ?? DEFAULT_ACCOUNT_ID);
+  const userKey = sanitizeMatrixPathSegment(params.userId);
+  const serverKey = resolveMatrixHomeserverKey(params.homeserver);
+  const tokenHash = hashMatrixAccessToken(params.accessToken || "");
+  return {
+    rootDir: path.join(
+      params.stateDir,
+      "matrix",
+      "accounts",
+      accountKey,
+      `${serverKey}__${userKey}`,
+      tokenHash,
+    ),
+    accountKey,
+    tokenHash,
+  };
+}
+
+let currentMatrixRuntime = null;
+
+function setMatrixRuntime(runtime) {
+  currentMatrixRuntime = runtime || null;
+}
+
+const MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID = new Map();
+
+function resolveMatrixThreadBindingKey(record) {
+  return `${record.accountId}:${record.parentConversationId || "-"}:${record.conversationId}`;
+}
+
+function toMatrixSessionBindingTargetKind(targetKind) {
+  return targetKind === "subagent" ? "subagent" : "session";
+}
+
+function toMatrixSessionBindingRecord(record, defaults) {
+  const lifecycle = resolveThreadBindingLifecycle({
+    record,
+    defaultIdleTimeoutMs: defaults.idleTimeoutMs,
+    defaultMaxAgeMs: defaults.maxAgeMs,
+  });
+  const idleTimeoutMs =
+    typeof record.idleTimeoutMs === "number" ? record.idleTimeoutMs : defaults.idleTimeoutMs;
+  const maxAgeMs = typeof record.maxAgeMs === "number" ? record.maxAgeMs : defaults.maxAgeMs;
+  return {
+    bindingId: resolveMatrixThreadBindingKey(record),
+    targetSessionKey: record.targetSessionKey,
+    targetKind: toMatrixSessionBindingTargetKind(record.targetKind),
+    conversation: {
+      channel: "matrix",
+      accountId: record.accountId,
+      conversationId: record.conversationId,
+      ...(record.parentConversationId
+        ? { parentConversationId: record.parentConversationId }
+        : {}),
+    },
+    status: "active",
+    boundAt: record.boundAt,
+    ...(lifecycle.expiresAt !== undefined ? { expiresAt: lifecycle.expiresAt } : {}),
+    metadata: {
+      agentId: record.agentId,
+      label: record.label,
+      boundBy: record.boundBy,
+      lastActivityAt: record.lastActivityAt,
+      idleTimeoutMs,
+      maxAgeMs,
+    },
+  };
+}
+
+function setMatrixThreadBindingIdleTimeoutBySessionKey(params = {}) {
+  const accountId = normalizeAccountId(params.accountId);
+  const manager = MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.get(accountId);
+  if (!manager) {
+    return [];
+  }
+  return manager
+    .setIdleTimeoutBySessionKey({
+      targetSessionKey: params.targetSessionKey,
+      idleTimeoutMs: params.idleTimeoutMs,
+    })
+    .map((record) =>
+      toMatrixSessionBindingRecord(record, {
+        idleTimeoutMs: manager.getIdleTimeoutMs(),
+        maxAgeMs: manager.getMaxAgeMs(),
+      }),
+    );
+}
+
+function setMatrixThreadBindingMaxAgeBySessionKey(params = {}) {
+  const accountId = normalizeAccountId(params.accountId);
+  const manager = MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.get(accountId);
+  if (!manager) {
+    return [];
+  }
+  return manager
+    .setMaxAgeBySessionKey({
+      targetSessionKey: params.targetSessionKey,
+      maxAgeMs: params.maxAgeMs,
+    })
+    .map((record) =>
+      toMatrixSessionBindingRecord(record, {
+        idleTimeoutMs: manager.getIdleTimeoutMs(),
+        maxAgeMs: manager.getMaxAgeMs(),
+      }),
+    );
+}
+
+function normalizeMatrixThreadBindingDurationMs(value) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : 0;
+}
+
+async function createMatrixThreadBindingManager(params = {}) {
+  const accountId = normalizeAccountId(params.accountId);
+  const auth = params.auth || {};
+  if (auth.accountId !== params.accountId) {
+    throw new Error(
+      `Matrix thread binding account mismatch: requested ${params.accountId}, ` +
+        `auth resolved ${auth.accountId}`,
+    );
+  }
+  const existing = MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.get(accountId);
+  if (existing) {
+    return existing;
+  }
+  const bindingsByKey = new Map();
+  const manager = {
+    accountId,
+    getIdleTimeoutMs: () => normalizeMatrixThreadBindingDurationMs(params.idleTimeoutMs),
+    getMaxAgeMs: () => normalizeMatrixThreadBindingDurationMs(params.maxAgeMs),
+    getByConversation: ({ conversationId, parentConversationId } = {}) => {
+      const normalizedConversationId = normalizeOptionalString(conversationId);
+      const normalizedParentConversationId = normalizeOptionalString(parentConversationId);
+      return Array.from(bindingsByKey.values()).find((entry) => {
+        if (entry.conversationId !== normalizedConversationId) {
+          return false;
+        }
+        if (!normalizedParentConversationId) {
+          return true;
+        }
+        return (entry.parentConversationId || "") === normalizedParentConversationId;
+      });
+    },
+    listBySessionKey: (targetSessionKey) => {
+      const normalizedTargetSessionKey = normalizeOptionalString(targetSessionKey);
+      return Array.from(bindingsByKey.values()).filter(
+        (entry) => entry.targetSessionKey === normalizedTargetSessionKey,
+      );
+    },
+    listBindings: () => Array.from(bindingsByKey.values()),
+    touchBinding: (bindingId, at = Date.now()) => {
+      const normalizedBindingId = normalizeOptionalString(bindingId);
+      const existingRecord = Array.from(bindingsByKey.values()).find(
+        (entry) => resolveMatrixThreadBindingKey(entry) === normalizedBindingId,
+      );
+      if (!existingRecord) {
+        return null;
+      }
+      const lastActivityAt =
+        typeof at === "number" && Number.isFinite(at)
+          ? Math.max(existingRecord.lastActivityAt, Math.floor(at))
+          : Date.now();
+      const updated = { ...existingRecord, lastActivityAt };
+      bindingsByKey.set(resolveMatrixThreadBindingKey(updated), updated);
+      return updated;
+    },
+    setIdleTimeoutBySessionKey: ({ targetSessionKey, idleTimeoutMs } = {}) => {
+      const normalizedTargetSessionKey = normalizeOptionalString(targetSessionKey);
+      if (!normalizedTargetSessionKey) {
+        return [];
+      }
+      const now = Date.now();
+      const updated = [];
+      for (const entry of bindingsByKey.values()) {
+        if (entry.targetSessionKey !== normalizedTargetSessionKey) {
+          continue;
+        }
+        const next = {
+          ...entry,
+          idleTimeoutMs: normalizeMatrixThreadBindingDurationMs(idleTimeoutMs),
+          lastActivityAt: now,
+        };
+        bindingsByKey.set(resolveMatrixThreadBindingKey(next), next);
+        updated.push(next);
+      }
+      return updated;
+    },
+    setMaxAgeBySessionKey: ({ targetSessionKey, maxAgeMs } = {}) => {
+      const normalizedTargetSessionKey = normalizeOptionalString(targetSessionKey);
+      if (!normalizedTargetSessionKey) {
+        return [];
+      }
+      const now = Date.now();
+      const updated = [];
+      for (const entry of bindingsByKey.values()) {
+        if (entry.targetSessionKey !== normalizedTargetSessionKey) {
+          continue;
+        }
+        const next = {
+          ...entry,
+          maxAgeMs: normalizeMatrixThreadBindingDurationMs(maxAgeMs),
+          lastActivityAt: now,
+        };
+        bindingsByKey.set(resolveMatrixThreadBindingKey(next), next);
+        updated.push(next);
+      }
+      return updated;
+    },
+    persist: async () => {},
+    stop: () => {
+      bindingsByKey.clear();
+      if (MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.get(accountId) === manager) {
+        MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.delete(accountId);
+      }
+    },
+  };
+  MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.set(accountId, manager);
+  return manager;
+}
+
+function resetMatrixThreadBindingsForTests() {
+  for (const manager of MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.values()) {
+    if (manager && typeof manager.stop === "function") {
+      manager.stop();
+    }
+  }
+  MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.clear();
+}
+
 function collectBlueBubblesStatusIssues(accounts) {
   return Array.isArray(accounts) ? [] : [];
 }
@@ -41068,6 +41747,14 @@ const diagnosticRuntime = {
   resetDiagnosticEventsForTest,
 };
 
+const diagnosticsOtelRuntime = {
+  emitDiagnosticEvent,
+  emptyPluginConfigSchema,
+  onDiagnosticEvent,
+  redactSensitiveText,
+  registerLogTransport,
+};
+
 const systemEventRuntime = {
   enqueueSystemEvent,
   peekSystemEventEntries,
@@ -45036,6 +45723,444 @@ const providerModelSharedRuntime = {
   sanitizeGoogleGeminiReplayHistory,
 };
 
+const VOLC_MODEL_KIMI_K2_5 = {
+  id: "kimi-k2-5-260127",
+  name: "Kimi K2.5",
+  reasoning: false,
+  input: ["text", "image"],
+  contextWindow: 256000,
+  maxTokens: 4096,
+};
+
+const VOLC_MODEL_GLM_4_7 = {
+  id: "glm-4-7-251222",
+  name: "GLM 4.7",
+  reasoning: false,
+  input: ["text", "image"],
+  contextWindow: 200000,
+  maxTokens: 4096,
+};
+
+const VOLC_SHARED_CODING_MODEL_CATALOG = [
+  {
+    id: "ark-code-latest",
+    name: "Ark Coding Plan",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 256000,
+    maxTokens: 4096,
+  },
+  {
+    id: "doubao-seed-code",
+    name: "Doubao Seed Code",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 256000,
+    maxTokens: 4096,
+  },
+  {
+    id: "glm-4.7",
+    name: "GLM 4.7 Coding",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 200000,
+    maxTokens: 4096,
+  },
+  {
+    id: "kimi-k2-thinking",
+    name: "Kimi K2 Thinking",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 256000,
+    maxTokens: 4096,
+  },
+  {
+    id: "kimi-k2.5",
+    name: "Kimi K2.5 Coding",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 256000,
+    maxTokens: 4096,
+  },
+];
+
+function buildVolcModelDefinition(entry, cost) {
+  return {
+    id: entry.id,
+    name: entry.name,
+    reasoning: entry.reasoning,
+    input: [...entry.input],
+    cost,
+    contextWindow: entry.contextWindow,
+    maxTokens: entry.maxTokens,
+  };
+}
+
+const volcModelCatalogSharedRuntime = {
+  VOLC_MODEL_GLM_4_7,
+  VOLC_MODEL_KIMI_K2_5,
+  VOLC_SHARED_CODING_MODEL_CATALOG,
+  buildVolcModelDefinition,
+};
+
+const VERCEL_AI_GATEWAY_PROVIDER_ID = "vercel-ai-gateway";
+const VERCEL_AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
+const VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID = "anthropic/claude-opus-4.6";
+const VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF =
+  `${VERCEL_AI_GATEWAY_PROVIDER_ID}/${VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID}`;
+const VERCEL_AI_GATEWAY_DEFAULT_CONTEXT_WINDOW = 200000;
+const VERCEL_AI_GATEWAY_DEFAULT_MAX_TOKENS = 128000;
+const VERCEL_AI_GATEWAY_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
+const STATIC_VERCEL_AI_GATEWAY_MODEL_CATALOG = [
+  {
+    id: "anthropic/claude-opus-4.6",
+    name: "Claude Opus 4.6",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    cost: {
+      input: 5,
+      output: 25,
+      cacheRead: 0.5,
+      cacheWrite: 6.25,
+    },
+  },
+  {
+    id: "openai/gpt-5.4",
+    name: "GPT 5.4",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 200000,
+    maxTokens: 128000,
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+    },
+  },
+  {
+    id: "openai/gpt-5.4-pro",
+    name: "GPT 5.4 Pro",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 200000,
+    maxTokens: 128000,
+    cost: {
+      input: 30,
+      output: 180,
+      cacheRead: 0,
+    },
+  },
+  {
+    id: "moonshotai/kimi-k2.6",
+    name: "Kimi K2.6",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 262144,
+    maxTokens: 262144,
+    cost: {
+      input: 0.95,
+      output: 4,
+      cacheRead: 0.16,
+    },
+  },
+];
+
+function buildStaticVercelAiGatewayModelDefinition(model) {
+  return {
+    id: model.id,
+    name: model.name,
+    reasoning: model.reasoning,
+    input: [...model.input],
+    contextWindow: model.contextWindow,
+    maxTokens: model.maxTokens,
+    cost: {
+      ...VERCEL_AI_GATEWAY_DEFAULT_COST,
+      ...(model.cost || {}),
+    },
+  };
+}
+
+function getStaticVercelAiGatewayModelCatalog() {
+  return STATIC_VERCEL_AI_GATEWAY_MODEL_CATALOG.map(
+    buildStaticVercelAiGatewayModelDefinition,
+  );
+}
+
+async function discoverVercelAiGatewayModels() {
+  return getStaticVercelAiGatewayModelCatalog();
+}
+
+async function buildVercelAiGatewayProvider() {
+  return {
+    baseUrl: VERCEL_AI_GATEWAY_BASE_URL,
+    api: "anthropic-messages",
+    models: await discoverVercelAiGatewayModels(),
+  };
+}
+
+const vercelAiGatewayRuntime = {
+  VERCEL_AI_GATEWAY_BASE_URL,
+  VERCEL_AI_GATEWAY_DEFAULT_CONTEXT_WINDOW,
+  VERCEL_AI_GATEWAY_DEFAULT_COST,
+  VERCEL_AI_GATEWAY_DEFAULT_MAX_TOKENS,
+  VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID,
+  VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF,
+  VERCEL_AI_GATEWAY_PROVIDER_ID,
+  buildVercelAiGatewayProvider,
+  discoverVercelAiGatewayModels,
+  getStaticVercelAiGatewayModelCatalog,
+};
+
+const MINIMAX_DEFAULT_MODEL_ID = "MiniMax-M2.7";
+const MINIMAX_DEFAULT_MODEL_REF = `minimax/${MINIMAX_DEFAULT_MODEL_ID}`;
+const MINIMAX_TEXT_MODEL_REFS = [
+  "minimax/MiniMax-M2.7",
+  "minimax/MiniMax-M2.7-highspeed",
+];
+
+const minimaxRuntime = {
+  MINIMAX_DEFAULT_MODEL_ID,
+  MINIMAX_DEFAULT_MODEL_REF,
+  MINIMAX_TEXT_MODEL_REFS,
+};
+
+const OPENROUTER_DEFAULT_MODEL_REF = "openrouter/auto";
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const OPENROUTER_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+const OPENROUTER_KIMI_K2_6_COST = {
+  input: 0.8,
+  output: 3.5,
+  cacheRead: 0.2,
+  cacheWrite: 0,
+};
+
+function buildOpenrouterProvider() {
+  return {
+    baseUrl: OPENROUTER_BASE_URL,
+    api: "openai-completions",
+    models: [
+      {
+        id: "auto",
+        name: "OpenRouter Auto",
+        reasoning: false,
+        input: ["text", "image"],
+        cost: { ...OPENROUTER_DEFAULT_COST },
+        contextWindow: 200000,
+        maxTokens: 8192,
+      },
+      {
+        id: "moonshotai/kimi-k2.6",
+        name: "MoonshotAI: Kimi K2.6",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { ...OPENROUTER_KIMI_K2_6_COST },
+        contextWindow: 262144,
+        maxTokens: 262144,
+      },
+    ],
+  };
+}
+
+function applyOpenrouterProviderConfig(cfg = {}) {
+  const currentAgents = cfg.agents || {};
+  const currentDefaults = currentAgents.defaults || {};
+  const currentModels = currentDefaults.models || {};
+  const modelEntry = currentModels[OPENROUTER_DEFAULT_MODEL_REF] || {};
+  return {
+    ...cfg,
+    agents: {
+      ...currentAgents,
+      defaults: {
+        ...currentDefaults,
+        models: {
+          ...currentModels,
+          [OPENROUTER_DEFAULT_MODEL_REF]: {
+            ...modelEntry,
+            alias: modelEntry.alias || "OpenRouter",
+          },
+        },
+      },
+    },
+  };
+}
+
+function applyOpenrouterConfig(cfg = {}) {
+  return applyAgentDefaultModelPrimary(
+    applyOpenrouterProviderConfig(cfg),
+    OPENROUTER_DEFAULT_MODEL_REF,
+  );
+}
+
+const openrouterRuntime = {
+  OPENROUTER_DEFAULT_MODEL_REF,
+  applyOpenrouterConfig,
+  applyOpenrouterProviderConfig,
+  buildOpenrouterProvider,
+};
+
+const LITELLM_BASE_URL = "http://localhost:4000";
+const LITELLM_DEFAULT_MODEL_ID = "claude-opus-4-6";
+const LITELLM_DEFAULT_MODEL_REF = `litellm/${LITELLM_DEFAULT_MODEL_ID}`;
+
+function buildLitellmModelDefinition() {
+  return {
+    id: LITELLM_DEFAULT_MODEL_ID,
+    name: "Claude Opus 4.6",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    contextWindow: 128000,
+    maxTokens: 8192,
+  };
+}
+
+function resolveLitellmBaseUrlForConfig(cfg = {}) {
+  const existingProvider =
+    cfg.models && cfg.models.providers && cfg.models.providers.litellm;
+  const resolved =
+    existingProvider && typeof existingProvider.baseUrl === "string"
+      ? existingProvider.baseUrl.trim()
+      : "";
+  return resolved || LITELLM_BASE_URL;
+}
+
+function applyLitellmProviderConfig(cfg = {}) {
+  return applyProviderConfigWithDefaultModelPreset(cfg, {
+    providerId: "litellm",
+    api: "openai-completions",
+    baseUrl: resolveLitellmBaseUrlForConfig(cfg),
+    defaultModel: buildLitellmModelDefinition(),
+    defaultModelId: LITELLM_DEFAULT_MODEL_ID,
+    aliases: [{ modelRef: LITELLM_DEFAULT_MODEL_REF, alias: "LiteLLM" }],
+  });
+}
+
+function applyLitellmConfig(cfg = {}) {
+  return applyProviderConfigWithDefaultModelPreset(cfg, {
+    providerId: "litellm",
+    api: "openai-completions",
+    baseUrl: resolveLitellmBaseUrlForConfig(cfg),
+    defaultModel: buildLitellmModelDefinition(),
+    defaultModelId: LITELLM_DEFAULT_MODEL_ID,
+    aliases: [{ modelRef: LITELLM_DEFAULT_MODEL_REF, alias: "LiteLLM" }],
+    primaryModelRef: LITELLM_DEFAULT_MODEL_REF,
+  });
+}
+
+const litellmRuntime = {
+  LITELLM_BASE_URL,
+  LITELLM_DEFAULT_MODEL_ID,
+  LITELLM_DEFAULT_MODEL_REF,
+  applyLitellmConfig,
+  applyLitellmProviderConfig,
+  buildLitellmModelDefinition,
+};
+
+const LLM_TASK_BASE_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"];
+
+function normalizeThinkLevel(raw) {
+  const key = normalizeLowercaseStringOrEmpty(raw);
+  if (!key) {
+    return undefined;
+  }
+  const collapsed = key.replace(/[\s_-]+/gu, "");
+  if (collapsed === "adaptive" || collapsed === "auto") {
+    return "adaptive";
+  }
+  if (collapsed === "max") {
+    return "max";
+  }
+  if (collapsed === "xhigh" || collapsed === "extrahigh") {
+    return "xhigh";
+  }
+  if (key === "off") {
+    return "off";
+  }
+  if (["on", "enable", "enabled"].includes(key)) {
+    return "low";
+  }
+  if (["min", "minimal"].includes(key)) {
+    return "minimal";
+  }
+  if (["low", "thinkhard", "think-hard", "think_hard"].includes(key)) {
+    return "low";
+  }
+  if (["mid", "med", "medium", "thinkharder", "think-harder", "harder"].includes(key)) {
+    return "medium";
+  }
+  if (["high", "ultra", "ultrathink", "think-hard", "thinkhardest", "highest"].includes(key)) {
+    return "high";
+  }
+  if (key === "think") {
+    return "minimal";
+  }
+  return undefined;
+}
+
+function formatXHighModelHint() {
+  return "provider models that advertise xhigh reasoning";
+}
+
+function llmTaskCatalogSupportsXHigh(compat) {
+  const efforts = compat && compat.supportedReasoningEfforts;
+  return (
+    Array.isArray(efforts) &&
+    efforts.some((effort) => normalizeThinkLevel(effort) === "xhigh")
+  );
+}
+
+function llmTaskThinkingLevels(provider, model, catalog) {
+  const levels = [...LLM_TASK_BASE_THINKING_LEVELS];
+  const providerKey = normalizeLowercaseStringOrEmpty(provider);
+  const modelId = normalizeOptionalString(model) || "";
+  const candidate = Array.isArray(catalog)
+    ? catalog.find(
+        (entry) =>
+          normalizeLowercaseStringOrEmpty(entry && entry.provider) === providerKey &&
+          normalizeOptionalString(entry && entry.id) === modelId,
+      )
+    : undefined;
+  if (candidate && llmTaskCatalogSupportsXHigh(candidate.compat)) {
+    levels.push("xhigh");
+  }
+  return levels;
+}
+
+function formatThinkingLevels(provider, model, separator = ", ", catalog) {
+  return llmTaskThinkingLevels(provider, model, catalog).join(separator);
+}
+
+function supportsXHighThinking(provider, model) {
+  return llmTaskThinkingLevels(provider, model).includes("xhigh");
+}
+
+const llmTaskRuntime = {
+  definePluginEntry,
+  formatThinkingLevels,
+  formatXHighModelHint,
+  normalizeThinkLevel,
+  resolvePreferredOpenClawTmpDir,
+  supportsXHighThinking,
+};
+
 const providerCatalogSharedRuntime = {
   applyProviderNativeStreamingUsageCompat,
   buildManifestModelProviderConfig,
@@ -45174,6 +46299,12 @@ const providerCatalogRuntime = {
 };
 
 const OPENCODE_ZEN_DEFAULT_MODEL = "opencode/claude-opus-4-6";
+const OPENCODE_SHARED_HINT = "Shared API key for Zen + Go catalogs";
+const OPENCODE_SHARED_WIZARD_GROUP = {
+  groupId: "opencode",
+  groupLabel: "OpenCode",
+  groupHint: OPENCODE_SHARED_HINT,
+};
 const LEGACY_OPENCODE_ZEN_DEFAULT_MODELS = new Set([
   "opencode/claude-opus-4-5",
   "opencode-zen/claude-opus-4-5",
@@ -45275,6 +46406,30 @@ function applyOpencodeZenModelDefault(cfg = {}) {
     next: applyAgentDefaultModelPrimary(cfg, OPENCODE_ZEN_DEFAULT_MODEL),
     changed: true,
   };
+}
+
+function createOpencodeCatalogApiKeyAuthMethod(params = {}) {
+  return createProviderApiKeyAuthMethod({
+    providerId: params.providerId,
+    methodId: "api-key",
+    label: params.label,
+    hint: OPENCODE_SHARED_HINT,
+    optionKey: params.optionKey,
+    flagName: params.flagName,
+    envVar: "OPENCODE_API_KEY",
+    promptMessage: "Enter OpenCode API key",
+    profileIds: ["opencode:default", "opencode-go:default"],
+    defaultModel: params.defaultModel,
+    expectedProviders: ["opencode", "opencode-go"],
+    applyConfig: params.applyConfig,
+    noteMessage: params.noteMessage,
+    noteTitle: "OpenCode",
+    wizard: {
+      choiceId: params.choiceId,
+      choiceLabel: params.choiceLabel,
+      ...OPENCODE_SHARED_WIZARD_GROUP,
+    },
+  });
 }
 
 function findNormalizedProviderKeyForOnboard(providers, providerId) {
@@ -45562,6 +46717,1152 @@ const providerOnboardRuntime = {
   resolveAgentModelFallbackValues,
   resolveAgentModelPrimaryValue,
   withAgentModelAliases,
+};
+
+const opencodeRuntime = {
+  OPENCODE_ZEN_DEFAULT_MODEL,
+  applyOpencodeZenModelDefault,
+  createOpencodeCatalogApiKeyAuthMethod,
+};
+
+const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_EMBEDDING_MODEL = "nomic-embed-text";
+
+function resolveOllamaApiBase(configuredBaseUrl) {
+  if (!configuredBaseUrl) {
+    return OLLAMA_DEFAULT_BASE_URL;
+  }
+  const trimmed = String(configuredBaseUrl).replace(/\/+$/, "");
+  return trimmed.replace(/\/v1$/i, "");
+}
+
+function uniqueOllamaModelPrefixCandidates(providerId) {
+  const candidates = [providerId, normalizeProviderId(providerId || ""), "ollama"]
+    .map((candidate) =>
+      candidate === undefined || candidate === null ? "" : String(candidate).trim(),
+    )
+    .filter(Boolean);
+  return Array.from(new Set(candidates));
+}
+
+function normalizeOllamaWireModelId(modelId, providerId) {
+  const trimmed = String(modelId || "").trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  for (const candidate of uniqueOllamaModelPrefixCandidates(providerId)) {
+    const prefix = `${candidate}/`;
+    if (trimmed.startsWith(prefix)) {
+      return trimmed.slice(prefix.length);
+    }
+  }
+  return trimmed;
+}
+
+function buildOllamaChatRequest(params = {}) {
+  const requestParams =
+    params.requestParams && typeof params.requestParams === "object" ? params.requestParams : {};
+  return {
+    model: normalizeOllamaWireModelId(params.modelId, params.providerId),
+    messages: Array.isArray(params.messages) ? params.messages : [],
+    stream: params.stream ?? true,
+    ...(Array.isArray(params.tools) && params.tools.length > 0 ? { tools: params.tools } : {}),
+    ...(params.options ? { options: params.options } : {}),
+    ...requestParams,
+  };
+}
+
+function resolveOllamaBaseUrlForRun(params = {}) {
+  const providerBaseUrl = normalizeOptionalString(params.providerBaseUrl);
+  if (providerBaseUrl) {
+    return providerBaseUrl;
+  }
+  const modelBaseUrl = normalizeOptionalString(params.modelBaseUrl);
+  if (modelBaseUrl) {
+    return modelBaseUrl;
+  }
+  return OLLAMA_DEFAULT_BASE_URL;
+}
+
+function resolveConfiguredOllamaProviderConfig(params = {}) {
+  const providerId = normalizeOptionalString(params.providerId);
+  if (!providerId) {
+    return undefined;
+  }
+  const providers =
+    params.config &&
+    params.config.models &&
+    params.config.models.providers &&
+    typeof params.config.models.providers === "object"
+      ? params.config.models.providers
+      : undefined;
+  if (!providers) {
+    return undefined;
+  }
+  if (providers[providerId]) {
+    return providers[providerId];
+  }
+  const normalized = normalizeProviderId(providerId);
+  for (const [candidateId, candidate] of Object.entries(providers)) {
+    if (normalizeProviderId(candidateId) === normalized) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function isOllamaCompatProvider(model = {}) {
+  const providerId = normalizeProviderId(model.provider || "");
+  if (providerId === "ollama") {
+    return true;
+  }
+  if (!model.baseUrl) {
+    return false;
+  }
+  try {
+    const parsed = new URL(String(model.baseUrl));
+    const hostname = normalizeLowercaseStringOrEmpty(parsed.hostname);
+    const isLocalhost =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname === "[::1]";
+    if (isLocalhost && parsed.port === "11434") {
+      return true;
+    }
+    const providerHintsOllama = providerId.includes("ollama");
+    const isOllamaPort = parsed.port === "11434";
+    const isOllamaCompatPath = parsed.pathname === "/" || /^\/v1\/?$/i.test(parsed.pathname);
+    return providerHintsOllama && isOllamaPort && isOllamaCompatPath;
+  } catch {
+    return false;
+  }
+}
+
+function resolveOllamaCompatNumCtxEnabled(params = {}) {
+  const providerConfig = resolveConfiguredOllamaProviderConfig(params);
+  return providerConfig && providerConfig.injectNumCtxForOpenAICompat !== undefined
+    ? providerConfig.injectNumCtxForOpenAICompat !== false
+    : true;
+}
+
+function shouldInjectOllamaCompatNumCtx(params = {}) {
+  if (!params.model || params.model.api !== "openai-completions") {
+    return false;
+  }
+  if (!isOllamaCompatProvider(params.model)) {
+    return false;
+  }
+  return resolveOllamaCompatNumCtxEnabled({
+    config: params.config,
+    providerId: params.providerId,
+  });
+}
+
+function parseJsonObjectPreservingUnsafeIntegers(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return {};
+  }
+  const patched = value.replace(/(:|,|\[)\s*(-?\d{16,})(?=\s*[,}\]])/g, '$1"$2"');
+  try {
+    const parsed = JSON.parse(patched);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function extractOllamaTextContent(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .filter((part) => part && part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("");
+}
+
+function extractOllamaImages(content) {
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  return content
+    .filter((part) => part && part.type === "image" && typeof part.data === "string")
+    .map((part) => part.data);
+}
+
+function normalizeOllamaToolCallName(rawName, options = {}) {
+  const trimmed = String(rawName || "").trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  const availableToolNames = options.availableToolNames;
+  if (availableToolNames && availableToolNames.has(trimmed)) {
+    return trimmed;
+  }
+  const strippedAnySeparator = trimmed.replace(/^(?:functions?|tools?)[./_-]+/iu, "").trim();
+  if (
+    availableToolNames &&
+    strippedAnySeparator !== trimmed &&
+    availableToolNames.has(strippedAnySeparator)
+  ) {
+    return strippedAnySeparator;
+  }
+  if (availableToolNames) {
+    return trimmed;
+  }
+  return trimmed.replace(/^(?:functions?|tools?)[./]+/iu, "").trim();
+}
+
+function extractOllamaToolCalls(content, options = {}) {
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  const result = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") {
+      continue;
+    }
+    if (part.type === "toolCall") {
+      result.push({
+        function: {
+          name: normalizeOllamaToolCallName(part.name, options),
+          arguments: parseJsonObjectPreservingUnsafeIntegers(part.arguments),
+        },
+      });
+    } else if (part.type === "tool_use") {
+      result.push({
+        function: {
+          name: normalizeOllamaToolCallName(part.name, options),
+          arguments: parseJsonObjectPreservingUnsafeIntegers(part.input),
+        },
+      });
+    }
+  }
+  return result;
+}
+
+function convertToOllamaMessages(messages, system, options = {}) {
+  const result = [];
+  if (system) {
+    result.push({ role: "system", content: system });
+  }
+  for (const msg of Array.isArray(messages) ? messages : []) {
+    if (msg.role === "user") {
+      const text = extractOllamaTextContent(msg.content);
+      const images = extractOllamaImages(msg.content);
+      result.push({
+        role: "user",
+        content: text,
+        ...(images.length > 0 ? { images } : {}),
+      });
+      continue;
+    }
+    if (msg.role === "assistant") {
+      const text = extractOllamaTextContent(msg.content);
+      const toolCalls = extractOllamaToolCalls(msg.content, options);
+      result.push({
+        role: "assistant",
+        content: text,
+        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+      });
+      continue;
+    }
+    if (msg.role === "tool" || msg.role === "toolResult") {
+      const text = extractOllamaTextContent(msg.content);
+      const toolName = typeof msg.toolName === "string" ? msg.toolName : undefined;
+      result.push({
+        role: "tool",
+        content: text,
+        ...(toolName ? { tool_name: toolName } : {}),
+      });
+    }
+  }
+  return result;
+}
+
+function buildOllamaUsageWithNoCost(params = {}) {
+  const input = params.input ?? 0;
+  const output = params.output ?? 0;
+  const cacheRead = params.cacheRead ?? 0;
+  const cacheWrite = params.cacheWrite ?? 0;
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    totalTokens: params.totalTokens ?? input + output,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+function resolveOllamaUsageCount(value, fallback) {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  if (typeof fallback === "number" && Number.isFinite(fallback) && fallback > 0) {
+    return fallback;
+  }
+  return 0;
+}
+
+function buildAssistantMessage(response, modelInfo, usageFallback = {}, options = {}) {
+  const content = [];
+  const message = response && response.message ? response.message : {};
+  const thinking = message.thinking || message.reasoning || "";
+  if (thinking) {
+    content.push({ type: "thinking", thinking });
+  }
+  const text = message.content || "";
+  if (text) {
+    content.push({ type: "text", text });
+  }
+  const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+  for (const toolCall of toolCalls) {
+    const fn = toolCall && toolCall.function ? toolCall.function : {};
+    const callId = crypto.randomUUID
+      ? crypto.randomUUID()
+      : crypto.randomBytes(16).toString("hex");
+    content.push({
+      type: "toolCall",
+      id: `ollama_call_${callId}`,
+      name: normalizeOllamaToolCallName(fn.name, options),
+      arguments: parseJsonObjectPreservingUnsafeIntegers(fn.arguments),
+    });
+  }
+  const model = modelInfo || {};
+  return {
+    role: "assistant",
+    content,
+    stopReason: toolCalls.length > 0 ? "toolUse" : "stop",
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: buildOllamaUsageWithNoCost({
+      input: resolveOllamaUsageCount(response && response.prompt_eval_count, usageFallback.input),
+      output: resolveOllamaUsageCount(response && response.eval_count, usageFallback.output),
+    }),
+    timestamp: Date.now(),
+  };
+}
+
+async function* parseNdjsonStream(reader) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      try {
+        yield JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+    }
+  }
+  const trailing = buffer.trim();
+  if (trailing) {
+    try {
+      yield JSON.parse(trailing);
+    } catch {
+      // Match OpenClaw's tolerant parser: malformed trailing bytes are skipped.
+    }
+  }
+}
+
+function createOllamaStreamFn() {
+  return async function* openzuesUnavailableOllamaStream() {
+    throw new Error("Ollama streaming is not available in the native shim.");
+  };
+}
+
+function patchOllamaCompatPayload(payloadRecord, numCtx) {
+  if (!payloadRecord || typeof payloadRecord !== "object" || Array.isArray(payloadRecord)) {
+    return;
+  }
+  if (!payloadRecord.options || typeof payloadRecord.options !== "object") {
+    payloadRecord.options = {};
+  }
+  payloadRecord.options.num_ctx = numCtx;
+  const messages = payloadRecord.messages;
+  if (!Array.isArray(messages)) {
+    return;
+  }
+  for (const message of messages) {
+    if (!message || typeof message !== "object" || Array.isArray(message)) {
+      continue;
+    }
+    const functionCall = message.function_call;
+    if (functionCall && typeof functionCall === "object" && "arguments" in functionCall) {
+      functionCall.arguments = parseJsonObjectPreservingUnsafeIntegers(functionCall.arguments);
+    }
+    const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+    for (const toolCall of toolCalls) {
+      const fn = toolCall && toolCall.function;
+      if (fn && typeof fn === "object" && "arguments" in fn) {
+        fn.arguments = parseJsonObjectPreservingUnsafeIntegers(fn.arguments);
+      }
+    }
+  }
+}
+
+function wrapOllamaCompatNumCtx(baseFn, numCtx) {
+  const streamFn = typeof baseFn === "function" ? baseFn : createOllamaStreamFn();
+  return (model, context, options = {}) => {
+    const originalOnPayload = options.onPayload;
+    const nextOptions = {
+      ...options,
+      onPayload(payloadRecord) {
+        patchOllamaCompatPayload(payloadRecord, numCtx);
+        if (typeof originalOnPayload === "function") {
+          originalOnPayload(payloadRecord);
+        }
+      },
+    };
+    return streamFn(model, context, nextOptions);
+  };
+}
+
+function resolveOllamaNumCtx(model = {}) {
+  const params = model.params && typeof model.params === "object" ? model.params : {};
+  const value = params.num_ctx ?? model.contextWindow;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : 128000;
+}
+
+function createConfiguredOllamaCompatStreamWrapper(params = {}) {
+  const baseFn = params.baseFn || params.streamFn;
+  const model = params.model || {};
+  if (
+    shouldInjectOllamaCompatNumCtx({
+      model,
+      config: params.config,
+      providerId: params.provider || params.providerId,
+    })
+  ) {
+    return wrapOllamaCompatNumCtx(baseFn, resolveOllamaNumCtx(model));
+  }
+  return typeof baseFn === "function" ? baseFn : createOllamaStreamFn();
+}
+
+const createConfiguredOllamaCompatNumCtxWrapper = createConfiguredOllamaCompatStreamWrapper;
+
+function createConfiguredOllamaStreamFn() {
+  return createOllamaStreamFn();
+}
+
+async function createOllamaEmbeddingProvider(options = {}) {
+  const providerId = normalizeOptionalString(options.provider) || "ollama";
+  const providerConfig =
+    options.config &&
+    options.config.models &&
+    options.config.models.providers &&
+    options.config.models.providers[providerId]
+      ? options.config.models.providers[providerId]
+      : {};
+  const baseUrl = resolveOllamaApiBase(
+    (options.remote && options.remote.baseUrl) ||
+      providerConfig.baseUrl ||
+      providerConfig.baseURL ||
+      OLLAMA_DEFAULT_BASE_URL,
+  );
+  const model = normalizeOllamaWireModelId(
+    normalizeOptionalString(options.model) || DEFAULT_OLLAMA_EMBEDDING_MODEL,
+    providerId,
+  );
+  const headers = {
+    "Content-Type": "application/json",
+    ...(providerConfig.headers || {}),
+    ...((options.remote && options.remote.headers) || {}),
+  };
+  const provider = {
+    id: "ollama",
+    model,
+    embedQuery: async () => {
+      throw new Error("Ollama embedding HTTP execution is not available in the native shim.");
+    },
+    embedBatch: async (texts) => {
+      if (Array.isArray(texts) && texts.length === 0) {
+        return [];
+      }
+      throw new Error("Ollama embedding HTTP execution is not available in the native shim.");
+    },
+  };
+  return {
+    provider,
+    client: {
+      baseUrl,
+      headers,
+      model,
+      embedBatch: provider.embedBatch,
+    },
+  };
+}
+
+const ollamaRuntime = {
+  resolveOllamaApiBase,
+};
+
+const ollamaRuntimeRuntime = {
+  DEFAULT_OLLAMA_EMBEDDING_MODEL,
+  buildAssistantMessage,
+  buildOllamaChatRequest,
+  convertToOllamaMessages,
+  createConfiguredOllamaCompatNumCtxWrapper,
+  createConfiguredOllamaCompatStreamWrapper,
+  createConfiguredOllamaStreamFn,
+  createOllamaEmbeddingProvider,
+  createOllamaStreamFn,
+  isOllamaCompatProvider,
+  parseNdjsonStream,
+  resolveOllamaBaseUrlForRun,
+  resolveOllamaCompatNumCtxEnabled,
+  shouldInjectOllamaCompatNumCtx,
+  wrapOllamaCompatNumCtx,
+};
+
+const LineConfigSchema = {
+  type: "object",
+  additionalProperties: true,
+};
+
+function resolveLineConfig(cfg = {}) {
+  return (cfg.channels && cfg.channels.line) || {};
+}
+
+function resolveLineAccountEntry(accounts, accountId) {
+  if (!accounts || typeof accounts !== "object") {
+    return undefined;
+  }
+  if (accounts[accountId]) {
+    return accounts[accountId];
+  }
+  const normalized = normalizeAccountId(accountId);
+  for (const [candidateId, candidate] of Object.entries(accounts)) {
+    if (normalizeAccountId(candidateId) === normalized) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function listLineAccountIds(cfg = {}) {
+  const lineConfig = resolveLineConfig(cfg);
+  const accounts =
+    lineConfig.accounts && typeof lineConfig.accounts === "object" ? lineConfig.accounts : {};
+  const ids = new Set();
+  if (
+    normalizeOptionalString(lineConfig.channelAccessToken) ||
+    lineConfig.tokenFile ||
+    normalizeOptionalString(process.env.LINE_CHANNEL_ACCESS_TOKEN)
+  ) {
+    ids.add(DEFAULT_ACCOUNT_ID);
+  }
+  for (const id of Object.keys(accounts)) {
+    ids.add(id);
+  }
+  return Array.from(ids);
+}
+
+function resolveDefaultLineAccountId(cfg = {}) {
+  const lineConfig = resolveLineConfig(cfg);
+  const preferred = normalizeOptionalAccountId(lineConfig.defaultAccount);
+  const ids = listLineAccountIds(cfg);
+  if (preferred && ids.some((accountId) => normalizeAccountId(accountId) === preferred)) {
+    return preferred;
+  }
+  if (ids.includes(DEFAULT_ACCOUNT_ID)) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  return ids[0] || DEFAULT_ACCOUNT_ID;
+}
+
+function resolveLineCredential(params = {}) {
+  const accountId = params.accountId || DEFAULT_ACCOUNT_ID;
+  const accountConfig = params.accountConfig || {};
+  const baseConfig = params.baseConfig || {};
+  const key = params.key;
+  const envKey = params.envKey;
+  const value = normalizeOptionalString(accountConfig[key]);
+  if (value) {
+    return { value, source: "config" };
+  }
+  if (accountId === DEFAULT_ACCOUNT_ID) {
+    const baseValue = normalizeOptionalString(baseConfig[key]);
+    if (baseValue) {
+      return { value: baseValue, source: "config" };
+    }
+    const envValue = normalizeOptionalString(process.env[envKey]);
+    if (envValue) {
+      return { value: envValue, source: "env" };
+    }
+  }
+  return { value: "", source: "none" };
+}
+
+function resolveLineAccount(params = {}) {
+  const cfg = params.cfg || {};
+  const lineConfig = resolveLineConfig(cfg);
+  const accountId = normalizeAccountId(params.accountId || resolveDefaultLineAccountId(cfg));
+  const accountConfig =
+    accountId !== DEFAULT_ACCOUNT_ID
+      ? resolveLineAccountEntry(lineConfig.accounts, accountId) || {}
+      : {};
+  const token = resolveLineCredential({
+    accountId,
+    baseConfig: lineConfig,
+    accountConfig,
+    key: "channelAccessToken",
+    envKey: "LINE_CHANNEL_ACCESS_TOKEN",
+  });
+  const secret = resolveLineCredential({
+    accountId,
+    baseConfig: lineConfig,
+    accountConfig,
+    key: "channelSecret",
+    envKey: "LINE_CHANNEL_SECRET",
+  });
+  const { accounts, defaultAccount, ...lineBase } = lineConfig || {};
+  const mergedConfig = {
+    ...lineBase,
+    ...accountConfig,
+  };
+  const enabled =
+    accountConfig.enabled !== undefined
+      ? accountConfig.enabled
+      : accountId === DEFAULT_ACCOUNT_ID
+        ? lineConfig.enabled ?? true
+        : false;
+  const name =
+    accountConfig.name ||
+    (accountId === DEFAULT_ACCOUNT_ID ? lineConfig.name || undefined : undefined);
+  return {
+    accountId,
+    ...(name ? { name } : {}),
+    enabled,
+    channelAccessToken: token.value,
+    channelSecret: secret.value,
+    tokenSource: token.source,
+    config: mergedConfig,
+  };
+}
+
+function resolveLineGroupLookupIds(groupId) {
+  const normalized = normalizeOptionalString(groupId);
+  if (!normalized) {
+    return [];
+  }
+  if (normalized.startsWith("group:") || normalized.startsWith("room:")) {
+    const rawId = normalized.split(":").slice(1).join(":");
+    return rawId ? [rawId, normalized] : [normalized];
+  }
+  return [normalized, `group:${normalized}`, `room:${normalized}`];
+}
+
+function resolveExactLineGroupConfigKey(params = {}) {
+  const lineConfig = resolveLineConfig(params.cfg || {});
+  const accountId = params.accountId ? normalizeAccountId(params.accountId) : undefined;
+  const accountConfig = accountId
+    ? resolveLineAccountEntry(lineConfig.accounts, accountId)
+    : undefined;
+  const groups =
+    (accountConfig && accountConfig.groups) || lineConfig.groups || undefined;
+  if (!groups || typeof groups !== "object") {
+    return undefined;
+  }
+  return resolveLineGroupLookupIds(params.groupId).find((candidate) =>
+    Object.prototype.hasOwnProperty.call(groups, candidate),
+  );
+}
+
+function attachLineFooterText(bubble, footer) {
+  bubble.footer = {
+    type: "box",
+    layout: "vertical",
+    contents: [
+      {
+        type: "text",
+        text: footer,
+        size: "sm",
+        color: "#888888",
+        wrap: true,
+      },
+    ],
+    paddingAll: "lg",
+  };
+}
+
+function createInfoCard(title, body, footer) {
+  const bubble = {
+    type: "bubble",
+    size: "mega",
+    body: {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        {
+          type: "box",
+          layout: "horizontal",
+          contents: [
+            {
+              type: "box",
+              layout: "vertical",
+              contents: [],
+              width: "4px",
+              backgroundColor: "#06C755",
+              cornerRadius: "2px",
+            },
+            {
+              type: "text",
+              text: title,
+              weight: "bold",
+              size: "xl",
+              color: "#111111",
+              wrap: true,
+              flex: 1,
+              margin: "lg",
+            },
+          ],
+        },
+        {
+          type: "box",
+          layout: "vertical",
+          contents: [
+            {
+              type: "text",
+              text: body,
+              size: "md",
+              color: "#444444",
+              wrap: true,
+              lineSpacing: "6px",
+            },
+          ],
+          margin: "xl",
+          paddingAll: "lg",
+          backgroundColor: "#F8F9FA",
+          cornerRadius: "lg",
+        },
+      ],
+      paddingAll: "xl",
+      backgroundColor: "#FFFFFF",
+    },
+  };
+  if (footer) {
+    attachLineFooterText(bubble, footer);
+  }
+  return bubble;
+}
+
+function createListCard(title, items = []) {
+  const itemContents = items.slice(0, 8).map((item, index) => {
+    const textContents = [
+      {
+        type: "text",
+        text: item.title,
+        size: "md",
+        weight: "bold",
+        color: "#1a1a1a",
+        wrap: true,
+      },
+    ];
+    if (item.subtitle) {
+      textContents.push({
+        type: "text",
+        text: item.subtitle,
+        size: "sm",
+        color: "#888888",
+        wrap: true,
+        margin: "xs",
+      });
+    }
+    return {
+      type: "box",
+      layout: "horizontal",
+      contents: [
+        {
+          type: "box",
+          layout: "vertical",
+          contents: [
+            {
+              type: "box",
+              layout: "vertical",
+              contents: [],
+              width: "8px",
+              height: "8px",
+              backgroundColor: index === 0 ? "#06C755" : "#DDDDDD",
+              cornerRadius: "4px",
+            },
+          ],
+          width: "20px",
+          alignItems: "center",
+          paddingTop: "sm",
+        },
+        {
+          type: "box",
+          layout: "vertical",
+          contents: textContents,
+          flex: 1,
+        },
+      ],
+      ...(index > 0 ? { margin: "lg" } : {}),
+      ...(item.action ? { action: item.action } : {}),
+    };
+  });
+  return {
+    type: "bubble",
+    size: "mega",
+    body: {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        {
+          type: "text",
+          text: title,
+          weight: "bold",
+          size: "xl",
+          color: "#111111",
+          wrap: true,
+        },
+        { type: "separator", margin: "lg", color: "#EEEEEE" },
+        {
+          type: "box",
+          layout: "vertical",
+          contents: itemContents,
+          margin: "lg",
+        },
+      ],
+      paddingAll: "xl",
+      backgroundColor: "#FFFFFF",
+    },
+  };
+}
+
+function createImageCard(imageUrl, title, body, options = {}) {
+  const bubble = {
+    type: "bubble",
+    hero: {
+      type: "image",
+      url: imageUrl,
+      size: "full",
+      aspectRatio: options.aspectRatio || "20:13",
+      aspectMode: options.aspectMode || "cover",
+      ...(options.action ? { action: options.action } : {}),
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        {
+          type: "text",
+          text: title,
+          weight: "bold",
+          size: "xl",
+          wrap: true,
+        },
+      ],
+      paddingAll: "lg",
+    },
+  };
+  if (body) {
+    bubble.body.contents.push({
+      type: "text",
+      text: body,
+      size: "md",
+      wrap: true,
+      margin: "md",
+      color: "#666666",
+    });
+  }
+  return bubble;
+}
+
+function createActionCard(title, body, actions = [], options = {}) {
+  const bubble = {
+    type: "bubble",
+    body: {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        { type: "text", text: title, weight: "bold", size: "xl", wrap: true },
+        { type: "text", text: body, size: "md", wrap: true, margin: "md", color: "#666666" },
+      ],
+      paddingAll: "lg",
+    },
+    footer: {
+      type: "box",
+      layout: "vertical",
+      contents: actions.slice(0, 4).map((action, index) => ({
+        type: "button",
+        action: action.action,
+        style: index === 0 ? "primary" : "secondary",
+        ...(index > 0 ? { margin: "sm" } : {}),
+      })),
+      paddingAll: "md",
+    },
+  };
+  if (options.imageUrl) {
+    bubble.hero = {
+      type: "image",
+      url: options.imageUrl,
+      size: "full",
+      aspectRatio: options.aspectRatio || "20:13",
+      aspectMode: "cover",
+    };
+  }
+  return bubble;
+}
+
+function createReceiptCard(title, items = [], total) {
+  return createListCard(
+    title,
+    [
+      ...items.map((item) => ({
+        title: item.label || item.title || "",
+        subtitle: item.value || item.subtitle || "",
+      })),
+      ...(total ? [{ title: "Total", subtitle: total }] : []),
+    ],
+  );
+}
+
+function createAgendaCard(title, items = []) {
+  return createListCard(title, items);
+}
+
+function createEventCard(title, date, body) {
+  return createInfoCard(title, [date, body].filter(Boolean).join("\n"));
+}
+
+function createDeviceControlCard(name, status, actions = []) {
+  return createActionCard(name, status || "", actions);
+}
+
+function createMediaPlayerCard(title, artist, actions = []) {
+  return createActionCard(title, artist || "", actions);
+}
+
+function createAppleTvRemoteCard(name, status) {
+  return createInfoCard(name || "Apple TV", status || "");
+}
+
+function toFlexMessage(altText, contents) {
+  return { type: "flex", altText, contents };
+}
+
+function processLineMessage(text = "") {
+  const flexMessages = [];
+  let processedText = String(text);
+  processedText = processedText.replace(/```[^\n]*\n([\s\S]*?)```/g, (_match, code) => {
+    flexMessages.push(toFlexMessage("Code", createInfoCard("Code", String(code).trim())));
+    return "";
+  });
+  processedText = processedText
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return { text: processedText, flexMessages };
+}
+
+function messageAction(label, text) {
+  return {
+    type: "message",
+    label: String(label).slice(0, 20),
+    text: text ?? label,
+  };
+}
+
+function uriAction(label, uri) {
+  return {
+    type: "uri",
+    label: String(label).slice(0, 20),
+    uri,
+  };
+}
+
+function postbackAction(label, data, displayText) {
+  return {
+    type: "postback",
+    label: String(label).slice(0, 20),
+    data: String(data).slice(0, 300),
+    ...(displayText !== undefined ? { displayText: String(displayText).slice(0, 300) } : {}),
+  };
+}
+
+function datetimePickerAction(label, data, mode, options = {}) {
+  return {
+    type: "datetimepicker",
+    label: String(label).slice(0, 20),
+    data: String(data).slice(0, 300),
+    mode,
+    ...(options.initial ? { initial: options.initial } : {}),
+    ...(options.max ? { max: options.max } : {}),
+    ...(options.min ? { min: options.min } : {}),
+  };
+}
+
+function createQuickReplyItems(labels = []) {
+  return {
+    items: labels.slice(0, 13).map((label) => ({
+      type: "action",
+      action: messageAction(String(label).slice(0, 20), label),
+    })),
+  };
+}
+
+const LINE_DIRECTIVE_RE = new RegExp(
+  String.raw`\[\[(quick_replies|location|confirm|buttons|media_player|event|agenda|device|` +
+    String.raw`appletv_remote):`,
+  "i",
+);
+
+function hasLineDirectives(text = "") {
+  return LINE_DIRECTIVE_RE.test(String(text));
+}
+
+function parseLineDirectives(payload = {}) {
+  let text = payload.text;
+  if (!text) {
+    return payload;
+  }
+  const result = { ...payload };
+  const lineData = {
+    ...((result.channelData && result.channelData.line) || {}),
+  };
+  const quickRepliesMatch = text.match(/\[\[quick_replies:\s*([^\]]+)\]\]/i);
+  if (quickRepliesMatch) {
+    const options = quickRepliesMatch[1]
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (options.length > 0) {
+      lineData.quickReplies = [...(lineData.quickReplies || []), ...options];
+    }
+    text = text.replace(quickRepliesMatch[0], "").trim();
+  }
+  result.text = text || undefined;
+  if (Object.keys(lineData).length > 0) {
+    result.channelData = { ...result.channelData, line: lineData };
+  }
+  return result;
+}
+
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
+function normalizeAllowFrom(values) {
+  return Array.isArray(values)
+    ? values.map((value) => String(value).trim()).filter(Boolean)
+    : [];
+}
+
+function isSenderAllowed(senderId, allowFrom = []) {
+  const normalized = normalizeAllowFrom(allowFrom);
+  return normalized.includes("*") || normalized.includes(String(senderId || "").trim());
+}
+
+const lineSurfaceRuntime = {
+  LineConfigSchema,
+  createActionCard,
+  createAgendaCard,
+  createAppleTvRemoteCard,
+  createDeviceControlCard,
+  createEventCard,
+  createImageCard,
+  createInfoCard,
+  createListCard,
+  createMediaPlayerCard,
+  createReceiptCard,
+  listLineAccountIds,
+  normalizeAccountId,
+  processLineMessage,
+  resolveDefaultLineAccountId,
+  resolveExactLineGroupConfigKey,
+  resolveLineAccount,
+};
+
+const lineRuntimeRuntime = {
+  ...lineSurfaceRuntime,
+  buildTemplateMessageFromPayload: (payload) => payload,
+  createDefaultMenuConfig: () => ({}),
+  createQuickReplyItems,
+  datetimePickerAction,
+  firstDefined,
+  hasLineDirectives,
+  isSenderAllowed,
+  messageAction,
+  normalizeAllowFrom,
+  normalizeDmAllowFromWithStore: (values) => normalizeAllowFrom(values),
+  parseLineDirectives,
+  postbackAction,
+  toFlexMessage,
+  uriAction,
+};
+
+const lineRootRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  LineConfigSchema,
+  buildChannelConfigSchema,
+  buildComputedAccountStatusSnapshot,
+  buildTokenChannelStatusSummary,
+  clearAccountEntryFields,
+  createActionCard,
+  createAgendaCard,
+  createAppleTvRemoteCard,
+  createDeviceControlCard,
+  createEventCard,
+  createImageCard,
+  createInfoCard,
+  createListCard,
+  createMediaPlayerCard,
+  createReceiptCard,
+  emptyPluginConfigSchema,
+  listLineAccountIds,
+  normalizeAccountId,
+  processLineMessage,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveDefaultGroupPolicy,
+  resolveDefaultLineAccountId,
+  resolveLineAccount,
+};
+
+const lineCoreRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  LineConfigSchema,
+  createActionCard,
+  createImageCard,
+  createInfoCard,
+  createListCard,
+  createReceiptCard,
+  createTopLevelChannelDmPolicy,
+  formatDocsLink,
+  listLineAccountIds,
+  normalizeAccountId,
+  processLineMessage,
+  resolveDefaultLineAccountId,
+  resolveExactLineGroupConfigKey,
+  resolveLineAccount,
+  setSetupChannelEnabled,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  splitSetupEntries,
 };
 
 const PROVIDER_USAGE_DEFAULT_TIMEOUT_MS = 5000;
@@ -46464,6 +48765,10 @@ const toolSendRuntime = {
   extractToolSend,
 };
 
+const resolutionNotesRuntime = {
+  formatResolvedUnresolvedNote,
+};
+
 const providerEntryRuntime = {
   buildSingleProviderApiKeyCatalog,
   createProviderApiKeyAuthMethod,
@@ -46959,6 +49264,18 @@ function redactSensitiveText(text) {
       `Bearer ${maskSensitiveToken(token)}`,
     )
     .replace(/\b(sk-[A-Za-z0-9_-]{8,})\b/g, (_m, token) => maskSensitiveToken(token));
+}
+
+const registeredLogTransports = new Set();
+
+function registerLogTransport(transport) {
+  if (typeof transport !== "function" && (!transport || typeof transport !== "object")) {
+    throw new TypeError("registerLogTransport requires a transport function or object");
+  }
+  registeredLogTransports.add(transport);
+  return () => {
+    registeredLogTransports.delete(transport);
+  };
 }
 
 function runtimeForLogger(logger) {
@@ -49506,6 +51823,51 @@ const sessionStoreRuntime = {
   resolveSessionResetPolicy,
   resolveSessionResetType,
   resolveThreadFlag,
+};
+
+function extractTranscriptStemFromSessionsMemoryHit(hitPath) {
+  const normalized = String(hitPath || "").replace(/\\/g, "/");
+  const trimmed = normalized.startsWith("sessions/")
+    ? normalized.slice("sessions/".length)
+    : normalized;
+  const base = path.basename(trimmed);
+  if (base.endsWith(".jsonl")) {
+    const stem = base.slice(0, -".jsonl".length);
+    return stem || null;
+  }
+  if (base.endsWith(".md")) {
+    const stem = base.slice(0, -".md".length);
+    return stem || null;
+  }
+  return null;
+}
+
+function resolveTranscriptStemToSessionKeys(params = {}) {
+  const store = params.store && typeof params.store === "object" ? params.store : {};
+  const stem = String(params.stem || "");
+  const stemAsFile = stem.endsWith(".jsonl") ? stem : `${stem}.jsonl`;
+  const parsedStemId = parseUsageCountedSessionIdFromFileName(stemAsFile);
+  const matches = [];
+  for (const [sessionKey, entry] of Object.entries(store)) {
+    const sessionFile = normalizeOptionalString(entry && entry.sessionFile);
+    if (sessionFile) {
+      const base = path.basename(sessionFile);
+      const fileStem = base.endsWith(".jsonl") ? base.slice(0, -".jsonl".length) : base;
+      if (fileStem === stem) {
+        matches.push(sessionKey);
+        continue;
+      }
+    }
+    if (entry && (entry.sessionId === stem || (parsedStemId && entry.sessionId === parsedStemId))) {
+      matches.push(sessionKey);
+    }
+  }
+  return Array.from(new Set(matches));
+}
+
+const sessionTranscriptHitRuntime = {
+  extractTranscriptStemFromSessionsMemoryHit,
+  resolveTranscriptStemToSessionKeys,
 };
 
 async function resolveForwardedRuntimeMethod(params) {
@@ -54217,6 +56579,292 @@ const videoGenerationCoreRuntime = {
   throwCapabilityGenerationFailure,
 };
 
+const DEFAULT_DASHSCOPE_WAN_VIDEO_MODEL = "wan2.6-t2v";
+const DASHSCOPE_WAN_VIDEO_MODELS = [
+  DEFAULT_DASHSCOPE_WAN_VIDEO_MODEL,
+  "wan2.6-i2v",
+  "wan2.6-r2v",
+  "wan2.6-r2v-flash",
+  "wan2.7-r2v",
+];
+const DASHSCOPE_WAN_VIDEO_CAPABILITIES = {
+  generate: {
+    maxVideos: 1,
+    maxDurationSeconds: 10,
+    supportsSize: true,
+    supportsAspectRatio: true,
+    supportsResolution: true,
+    supportsAudio: true,
+    supportsWatermark: true,
+  },
+  imageToVideo: {
+    enabled: true,
+    maxVideos: 1,
+    maxInputImages: 1,
+    maxDurationSeconds: 10,
+    supportsSize: true,
+    supportsAspectRatio: true,
+    supportsResolution: true,
+    supportsAudio: true,
+    supportsWatermark: true,
+  },
+  videoToVideo: {
+    enabled: true,
+    maxVideos: 1,
+    maxInputVideos: 4,
+    maxDurationSeconds: 10,
+    supportsSize: true,
+    supportsAspectRatio: true,
+    supportsResolution: true,
+    supportsAudio: true,
+    supportsWatermark: true,
+  },
+};
+const DEFAULT_VIDEO_GENERATION_DURATION_SECONDS = 5;
+const DEFAULT_VIDEO_GENERATION_TIMEOUT_MS = 120000;
+const DEFAULT_VIDEO_RESOLUTION_TO_SIZE = {
+  "480P": "832*480",
+  "720P": "1280*720",
+  "1080P": "1920*1080",
+};
+const DEFAULT_VIDEO_GENERATION_POLL_INTERVAL_MS = 2500;
+const DEFAULT_VIDEO_GENERATION_MAX_POLL_ATTEMPTS = 120;
+
+function videoGenerationSourceAssets(...groups) {
+  return groups.flatMap((group) => (Array.isArray(group) ? group : []));
+}
+
+function resolveVideoGenerationReferenceUrls(inputImages, inputVideos) {
+  return videoGenerationSourceAssets(inputImages, inputVideos)
+    .map((asset) => normalizeOptionalString(asset && asset.url))
+    .filter((value) => Boolean(value));
+}
+
+function buildDashscopeVideoGenerationInput(params = {}) {
+  const req = params.req || {};
+  const unsupported = videoGenerationSourceAssets(req.inputImages, req.inputVideos).some(
+    (asset) => !normalizeOptionalString(asset && asset.url) && asset && asset.buffer,
+  );
+  if (unsupported) {
+    throw new Error(
+      `${params.providerLabel} video generation currently requires remote http(s) URLs ` +
+        "for reference images/videos.",
+    );
+  }
+  const input = { prompt: req.prompt };
+  const referenceUrls = resolveVideoGenerationReferenceUrls(req.inputImages, req.inputVideos);
+  if (
+    referenceUrls.length === 1 &&
+    (Array.isArray(req.inputImages) ? req.inputImages.length : 0) === 1 &&
+    !(Array.isArray(req.inputVideos) && req.inputVideos.length)
+  ) {
+    input.img_url = referenceUrls[0];
+  } else if (referenceUrls.length > 0) {
+    input.reference_urls = referenceUrls;
+  }
+  return input;
+}
+
+function buildDashscopeVideoGenerationParameters(
+  req = {},
+  resolutionToSize = DEFAULT_VIDEO_RESOLUTION_TO_SIZE,
+) {
+  const parameters = {};
+  const size =
+    normalizeOptionalString(req.size) ||
+    (req.resolution ? resolutionToSize[req.resolution] : undefined);
+  if (size) {
+    parameters.size = size;
+  }
+  const aspectRatio = normalizeOptionalString(req.aspectRatio);
+  if (aspectRatio) {
+    parameters.aspect_ratio = aspectRatio;
+  }
+  if (typeof req.durationSeconds === "number" && Number.isFinite(req.durationSeconds)) {
+    parameters.duration = Math.max(1, Math.round(req.durationSeconds));
+  }
+  if (typeof req.audio === "boolean") {
+    parameters.enable_audio = req.audio;
+  }
+  if (typeof req.watermark === "boolean") {
+    parameters.watermark = req.watermark;
+  }
+  return Object.keys(parameters).length > 0 ? parameters : undefined;
+}
+
+function extractDashscopeVideoUrls(payload = {}) {
+  const output = payload.output || {};
+  const resultUrls = Array.isArray(output.results)
+    ? output.results.map((entry) => entry && entry.video_url)
+    : [];
+  const urls = [...resultUrls, output.video_url]
+    .map((value) => normalizeOptionalString(value))
+    .filter((value) => Boolean(value));
+  return [...new Set(urls)];
+}
+
+async function pollDashscopeVideoTaskUntilComplete(params = {}) {
+  const defaultTimeoutMs = params.defaultTimeoutMs || DEFAULT_VIDEO_GENERATION_TIMEOUT_MS;
+  const deadline = createProviderOperationDeadline({
+    timeoutMs: params.timeoutMs,
+    label: `${params.providerLabel} video generation task ${params.taskId}`,
+  });
+  for (let attempt = 0; attempt < DEFAULT_VIDEO_GENERATION_MAX_POLL_ATTEMPTS; attempt += 1) {
+    const response = await fetchWithTimeout(
+      `${params.baseUrl}/api/v1/tasks/${params.taskId}`,
+      {
+        method: "GET",
+        headers: params.headers,
+      },
+      resolveProviderOperationTimeoutMs({ deadline, defaultTimeoutMs }),
+      params.fetchFn,
+    );
+    await assertOkOrThrowHttpError(
+      response,
+      `${params.providerLabel} video-generation task poll failed`,
+    );
+    const payload = await response.json();
+    const status = normalizeOptionalString(payload && payload.output && payload.output.task_status)
+      ?.toUpperCase();
+    if (status === "SUCCEEDED") {
+      return payload;
+    }
+    if (status === "FAILED" || status === "CANCELED") {
+      throw new Error(
+        normalizeOptionalString(payload && payload.output && payload.output.message) ||
+          normalizeOptionalString(payload && payload.message) ||
+          `${params.providerLabel} video generation task ${
+            params.taskId
+          } ${normalizeLowercaseStringOrEmpty(status)}`,
+      );
+    }
+    await waitProviderOperationPollInterval({
+      deadline,
+      pollIntervalMs: DEFAULT_VIDEO_GENERATION_POLL_INTERVAL_MS,
+    });
+  }
+  throw new Error(
+    `${params.providerLabel} video generation task ${params.taskId} did not finish in time`,
+  );
+}
+
+async function downloadDashscopeGeneratedVideos(params = {}) {
+  const videos = [];
+  for (const [index, url] of (Array.isArray(params.urls) ? params.urls : []).entries()) {
+    const response = await fetchWithTimeout(
+      url,
+      { method: "GET" },
+      params.timeoutMs || params.defaultTimeoutMs || DEFAULT_VIDEO_GENERATION_TIMEOUT_MS,
+      params.fetchFn,
+    );
+    await assertOkOrThrowHttpError(
+      response,
+      `${params.providerLabel} generated video download failed`,
+    );
+    const arrayBuffer = await response.arrayBuffer();
+    videos.push({
+      buffer: Buffer.from(arrayBuffer),
+      mimeType: normalizeOptionalString(response.headers.get("content-type")) || "video/mp4",
+      fileName: `video-${index + 1}.mp4`,
+      metadata: { sourceUrl: url },
+    });
+  }
+  return videos;
+}
+
+async function runDashscopeVideoGenerationTask(params = {}) {
+  const defaultTimeoutMs = params.defaultTimeoutMs || DEFAULT_VIDEO_GENERATION_TIMEOUT_MS;
+  const deadline = createProviderOperationDeadline({
+    timeoutMs: params.timeoutMs,
+    label: `${params.providerLabel} video generation`,
+  });
+  const postResult = await postJsonRequest({
+    url: params.url,
+    headers: params.headers,
+    body: {
+      model: params.model,
+      input: buildDashscopeVideoGenerationInput({
+        providerLabel: params.providerLabel,
+        req: params.req,
+      }),
+      parameters: buildDashscopeVideoGenerationParameters(
+        {
+          ...(params.req || {}),
+          durationSeconds:
+            (params.req && params.req.durationSeconds) ?? DEFAULT_VIDEO_GENERATION_DURATION_SECONDS,
+        },
+        DEFAULT_VIDEO_RESOLUTION_TO_SIZE,
+      ),
+    },
+    timeoutMs: resolveProviderOperationTimeoutMs({ deadline, defaultTimeoutMs }),
+    fetchFn: params.fetchFn,
+    allowPrivateNetwork: params.allowPrivateNetwork,
+    dispatcherPolicy: params.dispatcherPolicy,
+  });
+  try {
+    await assertOkOrThrowHttpError(
+      postResult.response,
+      `${params.providerLabel} video generation failed`,
+    );
+    const submitted = await postResult.response.json();
+    const taskId = normalizeOptionalString(
+      submitted && submitted.output && submitted.output.task_id,
+    );
+    if (!taskId) {
+      throw new Error(`${params.providerLabel} video generation response missing task_id`);
+    }
+    const completed = await pollDashscopeVideoTaskUntilComplete({
+      providerLabel: params.providerLabel,
+      taskId,
+      headers: params.headers,
+      timeoutMs: resolveProviderOperationTimeoutMs({ deadline, defaultTimeoutMs }),
+      fetchFn: params.fetchFn,
+      baseUrl: params.baseUrl,
+      defaultTimeoutMs,
+    });
+    const urls = extractDashscopeVideoUrls(completed);
+    if (urls.length === 0) {
+      throw new Error(
+        `${params.providerLabel} video generation completed without output video URLs`,
+      );
+    }
+    const videos = await downloadDashscopeGeneratedVideos({
+      providerLabel: params.providerLabel,
+      urls,
+      timeoutMs: resolveProviderOperationTimeoutMs({ deadline, defaultTimeoutMs }),
+      fetchFn: params.fetchFn,
+      defaultTimeoutMs,
+    });
+    return {
+      videos,
+      model: params.model,
+      metadata: {
+        requestId: submitted.request_id,
+        taskId,
+        taskStatus: completed.output && completed.output.task_status,
+      },
+    };
+  } finally {
+    await postResult.release();
+  }
+}
+
+const videoGenerationProviderRuntime = {
+  DASHSCOPE_WAN_VIDEO_CAPABILITIES,
+  DASHSCOPE_WAN_VIDEO_MODELS,
+  DEFAULT_DASHSCOPE_WAN_VIDEO_MODEL,
+  DEFAULT_VIDEO_GENERATION_DURATION_SECONDS,
+  DEFAULT_VIDEO_GENERATION_TIMEOUT_MS,
+  DEFAULT_VIDEO_RESOLUTION_TO_SIZE,
+  buildDashscopeVideoGenerationInput,
+  buildDashscopeVideoGenerationParameters,
+  downloadDashscopeGeneratedVideos,
+  extractDashscopeVideoUrls,
+  pollDashscopeVideoTaskUntilComplete,
+  resolveVideoGenerationReferenceUrls,
+  runDashscopeVideoGenerationTask,
+};
+
 function parseImageGenerationModelRef(raw) {
   return parseGenerationModelRef(raw);
 }
@@ -54458,6 +57106,354 @@ function buildNoImageGenerationModelConfiguredMessage(cfg, deps = {}) {
   });
 }
 
+const DEFAULT_IMAGE_MIME_TYPE = "image/png";
+const DEFAULT_IMAGE_FILE_PREFIX = "image";
+
+function imageFileExtensionForMimeType(mimeType, fallback = "png") {
+  const normalized = normalizeOptionalLowercaseString(mimeType)?.split(";")[0]?.trim();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized.includes("jpeg") || normalized.includes("jpg")) {
+    return "jpg";
+  }
+  if (normalized.includes("svg")) {
+    return "svg";
+  }
+  const slashIndex = normalized.indexOf("/");
+  return slashIndex >= 0 ? normalized.slice(slashIndex + 1) || fallback : fallback;
+}
+
+function coerceImageBuffer(value) {
+  return Buffer.isBuffer(value) ? value : Buffer.from(value || []);
+}
+
+function sniffImageMimeType(buffer, fallbackMimeType = DEFAULT_IMAGE_MIME_TYPE) {
+  const bytes = coerceImageBuffer(buffer);
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { mimeType: "image/jpeg", extension: "jpg" };
+  }
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return { mimeType: "image/png", extension: "png" };
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes.toString("ascii", 0, 4) === "RIFF" &&
+    bytes.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return { mimeType: "image/webp", extension: "webp" };
+  }
+  return {
+    mimeType: fallbackMimeType,
+    extension: imageFileExtensionForMimeType(fallbackMimeType),
+  };
+}
+
+function toImageDataUrl(params = {}) {
+  const mimeType =
+    normalizeOptionalString(params.mimeType) ||
+    normalizeOptionalString(params.defaultMimeType) ||
+    DEFAULT_IMAGE_MIME_TYPE;
+  return `data:${mimeType};base64,${coerceImageBuffer(params.buffer).toString("base64")}`;
+}
+
+function parseImageDataUrl(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:(image\/[^;,]+)(?:;[^,]*)?;base64,(.+)$/is);
+  if (!match) {
+    return undefined;
+  }
+  const mimeType = normalizeOptionalString(match[1]);
+  const base64 = normalizeOptionalString(match[2]);
+  if (!mimeType || !base64) {
+    return undefined;
+  }
+  return { mimeType, base64 };
+}
+
+function generatedImageAssetFromBase64(params = {}) {
+  const base64 = normalizeOptionalString(params.base64);
+  if (!base64) {
+    return undefined;
+  }
+  const buffer = Buffer.from(base64, "base64");
+  const explicitMimeType = normalizeOptionalString(params.mimeType);
+  const defaultMimeType =
+    normalizeOptionalString(params.defaultMimeType) || DEFAULT_IMAGE_MIME_TYPE;
+  const detected =
+    params.sniffMimeType && !explicitMimeType
+      ? sniffImageMimeType(buffer, defaultMimeType)
+      : undefined;
+  const mimeType = explicitMimeType || detected?.mimeType || defaultMimeType;
+  const prefix = normalizeOptionalString(params.fileNamePrefix) || DEFAULT_IMAGE_FILE_PREFIX;
+  const image = {
+    buffer,
+    mimeType,
+    fileName: `${prefix}-${params.index + 1}.${
+      detected?.extension || imageFileExtensionForMimeType(mimeType)
+    }`,
+  };
+  const revisedPrompt = normalizeOptionalString(params.revisedPrompt);
+  if (revisedPrompt) {
+    image.revisedPrompt = revisedPrompt;
+  }
+  return image;
+}
+
+function generatedImageAssetFromDataUrl(params = {}) {
+  const parsed = parseImageDataUrl(params.dataUrl);
+  if (!parsed) {
+    return undefined;
+  }
+  return generatedImageAssetFromBase64({
+    base64: parsed.base64,
+    index: params.index,
+    mimeType: parsed.mimeType,
+    fileNamePrefix: params.fileNamePrefix,
+  });
+}
+
+function generatedImageAssetFromOpenAiCompatibleEntry(entry = {}, index, options = {}) {
+  return generatedImageAssetFromBase64({
+    base64: normalizeOptionalString(entry.b64_json),
+    index,
+    mimeType: normalizeOptionalString(entry.mime_type),
+    revisedPrompt: normalizeOptionalString(entry.revised_prompt),
+    defaultMimeType: options.defaultMimeType,
+    fileNamePrefix: options.fileNamePrefix,
+    sniffMimeType: options.sniffMimeType,
+  });
+}
+
+function parseOpenAiCompatibleImageResponse(payload = {}, options = {}) {
+  return (Array.isArray(payload.data) ? payload.data : [])
+    .map((entry, index) => generatedImageAssetFromOpenAiCompatibleEntry(entry, index, options))
+    .filter((entry) => entry !== undefined);
+}
+
+function imageSourceUploadFileName(params = {}) {
+  const fileName = normalizeOptionalString(params.image && params.image.fileName);
+  if (fileName) {
+    return fileName;
+  }
+  const mimeType =
+    normalizeOptionalString(params.image && params.image.mimeType) ||
+    normalizeOptionalString(params.defaultMimeType) ||
+    DEFAULT_IMAGE_MIME_TYPE;
+  const prefix = normalizeOptionalString(params.fileNamePrefix) || DEFAULT_IMAGE_FILE_PREFIX;
+  return `${prefix}-${params.index + 1}.${imageFileExtensionForMimeType(mimeType)}`;
+}
+
+function readOpenAiCompatibleImageProviderConfig(cfg, providerConfigKey) {
+  return (
+    cfg &&
+    cfg.models &&
+    cfg.models.providers &&
+    providerConfigKey &&
+    cfg.models.providers[providerConfigKey]
+  );
+}
+
+function resolveDefaultOpenAiCompatibleImageModel(model, fallback) {
+  return normalizeOptionalString(model) || fallback;
+}
+
+function trimTrailingSlash(value) {
+  return String(value || "").replace(/\/+$/u, "");
+}
+
+function appendOpenAiCompatibleImagesPath(baseUrl, mode) {
+  return `${trimTrailingSlash(baseUrl)}/images/${mode === "edit" ? "edits" : "generations"}`;
+}
+
+function resolveOpenAiCompatibleImageRequestTimeoutMs(params = {}) {
+  if (params.options.defaultTimeoutMs === undefined) {
+    return params.req.timeoutMs;
+  }
+  const label =
+    params.mode === "edit"
+      ? params.options.failureLabels?.edit || `${params.options.label} image edit`
+      : params.options.failureLabels?.generate || `${params.options.label} image generation`;
+  const deadline = createProviderOperationDeadline({
+    timeoutMs: params.req.timeoutMs,
+    label,
+  });
+  return resolveProviderOperationTimeoutMs({
+    deadline,
+    defaultTimeoutMs: params.options.defaultTimeoutMs,
+  });
+}
+
+function createOpenAiCompatibleImageGenerationProvider(options = {}) {
+  const providerConfigKey = options.providerConfigKey || options.id;
+  const normalizeModel =
+    typeof options.normalizeModel === "function"
+      ? options.normalizeModel
+      : resolveDefaultOpenAiCompatibleImageModel;
+  const resolveCount =
+    typeof options.resolveCount === "function"
+      ? options.resolveCount
+      : ({ req }) => req.count ?? 1;
+  const capabilities = options.capabilities || {
+    generate: {},
+    edit: { enabled: false },
+  };
+  return {
+    id: options.id,
+    label: options.label,
+    defaultModel: options.defaultModel,
+    models: [...(Array.isArray(options.models) ? options.models : [])],
+    isConfigured: ({ agentDir } = {}) =>
+      isProviderApiKeyConfigured({
+        provider: options.id,
+        agentDir,
+      }),
+    capabilities,
+    async generateImage(req = {}) {
+      const inputImages = Array.isArray(req.inputImages) ? req.inputImages : [];
+      const mode = inputImages.length > 0 ? "edit" : "generate";
+      const maxInputImages = capabilities.edit && capabilities.edit.maxInputImages;
+      if (mode === "edit" && !(capabilities.edit && capabilities.edit.enabled)) {
+        throw new Error(`${options.label} image editing is not supported.`);
+      }
+      if (mode === "edit" && maxInputImages !== undefined && inputImages.length > maxInputImages) {
+        throw new Error(
+          options.tooManyInputImagesError ||
+            `${options.label} image editing supports up to ${maxInputImages} reference image${
+              maxInputImages === 1 ? "" : "s"
+            }.`,
+        );
+      }
+      if (mode === "edit" && inputImages.length === 0) {
+        throw new Error(
+          options.missingInputImageError || `${options.label} image edit missing reference image.`,
+        );
+      }
+
+      const auth = await resolveApiKeyForProvider({
+        provider: options.id,
+        cfg: req.cfg,
+        agentDir: req.agentDir,
+        store: req.authStore,
+      });
+      if (!auth || !auth.apiKey) {
+        throw new Error(options.missingApiKeyError || `${options.label} API key missing`);
+      }
+
+      const providerConfig = readOpenAiCompatibleImageProviderConfig(req.cfg, providerConfigKey);
+      const resolvedBaseUrl =
+        (typeof options.resolveBaseUrl === "function"
+          ? options.resolveBaseUrl({
+              req,
+              providerConfig,
+              defaultBaseUrl: options.defaultBaseUrl,
+            })
+          : undefined) ||
+        normalizeOptionalString(providerConfig && providerConfig.baseUrl) ||
+        options.defaultBaseUrl;
+      const allowPrivateNetwork =
+        typeof options.resolveAllowPrivateNetwork === "function"
+          ? options.resolveAllowPrivateNetwork({
+              baseUrl: resolvedBaseUrl,
+              req,
+              providerConfig,
+            })
+          : undefined;
+      const requestConfig = resolveProviderHttpRequestConfig({
+        baseUrl: resolvedBaseUrl,
+        defaultBaseUrl: options.defaultBaseUrl,
+        allowPrivateNetwork,
+        request: options.useConfiguredRequest
+          ? sanitizeConfiguredModelProviderRequest(providerConfig && providerConfig.request)
+          : undefined,
+        defaultHeaders: {
+          Authorization: `Bearer ${auth.apiKey}`,
+        },
+        provider: options.id,
+        capability: "image",
+        transport: "http",
+      });
+
+      const model = normalizeModel(req.model, options.defaultModel);
+      const count = resolveCount({ req, mode });
+      const requestParams = { req, inputImages, model, count, mode };
+      const requestBody =
+        mode === "edit"
+          ? options.buildEditRequest({ ...requestParams, mode })
+          : options.buildGenerateRequest({ ...requestParams, mode });
+      const timeoutMs = resolveOpenAiCompatibleImageRequestTimeoutMs({
+        options,
+        req,
+        mode,
+      });
+      const postResult =
+        requestBody.kind === "multipart"
+          ? await postMultipartRequest({
+              url: appendOpenAiCompatibleImagesPath(requestConfig.baseUrl, mode),
+              headers: (() => {
+                const multipartHeaders = new Headers(requestConfig.headers);
+                multipartHeaders.delete("Content-Type");
+                return multipartHeaders;
+              })(),
+              body: requestBody.form,
+              timeoutMs,
+              fetchFn: globalThis.fetch,
+              allowPrivateNetwork: requestConfig.allowPrivateNetwork,
+              dispatcherPolicy: requestConfig.dispatcherPolicy,
+            })
+          : await postJsonRequest({
+              url: appendOpenAiCompatibleImagesPath(requestConfig.baseUrl, mode),
+              headers: (() => {
+                const jsonHeaders = new Headers(requestConfig.headers);
+                jsonHeaders.set("Content-Type", "application/json");
+                return jsonHeaders;
+              })(),
+              body: requestBody.body,
+              timeoutMs,
+              fetchFn: globalThis.fetch,
+              allowPrivateNetwork: requestConfig.allowPrivateNetwork,
+              dispatcherPolicy: requestConfig.dispatcherPolicy,
+            });
+      try {
+        await assertOkOrThrowHttpError(
+          postResult.response,
+          mode === "edit"
+            ? options.failureLabels?.edit || `${options.label} image edit failed`
+            : options.failureLabels?.generate || `${options.label} image generation failed`,
+        );
+        const images = parseOpenAiCompatibleImageResponse(
+          await postResult.response.json(),
+          options.response,
+        );
+        if (options.emptyResponseError && images.length === 0) {
+          throw new Error(options.emptyResponseError);
+        }
+        return { images, model };
+      } finally {
+        await postResult.release();
+      }
+    },
+  };
+}
+
+const imageGenerationProviderRuntime = {
+  createOpenAiCompatibleImageGenerationProvider,
+  generatedImageAssetFromBase64,
+  generatedImageAssetFromDataUrl,
+  generatedImageAssetFromOpenAiCompatibleEntry,
+  imageFileExtensionForMimeType,
+  imageSourceUploadFileName,
+  parseImageDataUrl,
+  parseOpenAiCompatibleImageResponse,
+  sniffImageMimeType,
+  toImageDataUrl,
+};
+
 function listRuntimeImageGenerationProviders(params = {}, deps = {}) {
   const listProviders =
     typeof deps.listProviders === "function" ? deps.listProviders : listImageGenerationProviders;
@@ -54674,6 +57670,10 @@ const providerAuthLoginRuntime = {
   githubCopilotLoginCommand: providerAuthLoginUnavailable,
   loginChutes: providerAuthLoginUnavailable,
   loginOpenAICodexOAuth: providerAuthLoginUnavailable,
+};
+
+const githubCopilotLoginRuntime = {
+  githubCopilotLoginCommand: providerAuthLoginUnavailable,
 };
 
 const ZAI_CODING_GLOBAL_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
@@ -60055,6 +63055,21 @@ function uniqueSortedStrings(values) {
   );
 }
 
+const testHelpersStringUtilsRuntime = {
+  uniqueSortedStrings,
+};
+
+const testHelpersEnvelopeTimestampRuntime = {
+  escapeRegExp,
+  formatEnvelopeTimestamp,
+  formatLocalEnvelopeTimestamp,
+};
+
+const testHelpersPairingReplyRuntime = {
+  expectPairingReplyText,
+  extractPairingCode,
+};
+
 function formatImportSideEffectCall(args) {
   if (!Array.isArray(args) || args.length === 0) {
     return "(no args)";
@@ -60831,11 +63846,548 @@ function resolveBundledExplicitWebSearchProvidersFromPublicArtifacts(_params = {
   );
 }
 
-function listImportedBundledPluginFacadeIds() {
-  return [];
+const loadedFacadeModules = new Map();
+const loadedFacadePluginIds = new Set();
+
+function createLazyFacadeValueLoader(load) {
+  let loaded = false;
+  let value;
+  return () => {
+    if (!loaded) {
+      value = load();
+      loaded = true;
+    }
+    return value;
+  };
 }
 
-function resetFacadeRuntimeStateForTest() {}
+function createLazyFacadeProxyValue(params = {}) {
+  const resolve = createLazyFacadeValueLoader(params.load || (() => params.target || {}));
+  return new Proxy(params.target || {}, {
+    defineProperty(_target, property, descriptor) {
+      return Reflect.defineProperty(resolve(), property, descriptor);
+    },
+    deleteProperty(_target, property) {
+      return Reflect.deleteProperty(resolve(), property);
+    },
+    get(_target, property, receiver) {
+      return Reflect.get(resolve(), property, receiver);
+    },
+    getOwnPropertyDescriptor(_target, property) {
+      return Reflect.getOwnPropertyDescriptor(resolve(), property);
+    },
+    getPrototypeOf() {
+      return Reflect.getPrototypeOf(resolve());
+    },
+    has(_target, property) {
+      return Reflect.has(resolve(), property);
+    },
+    isExtensible() {
+      return Reflect.isExtensible(resolve());
+    },
+    ownKeys() {
+      return Reflect.ownKeys(resolve());
+    },
+    preventExtensions() {
+      return Reflect.preventExtensions(resolve());
+    },
+    set(_target, property, value, receiver) {
+      return Reflect.set(resolve(), property, value, receiver);
+    },
+    setPrototypeOf(_target, prototype) {
+      return Reflect.setPrototypeOf(resolve(), prototype);
+    },
+  });
+}
+
+function createLazyFacadeObjectValue(load) {
+  return createLazyFacadeProxyValue({ load, target: {} });
+}
+
+function createLazyFacadeArrayValue(load) {
+  return createLazyFacadeProxyValue({ load, target: [] });
+}
+
+function loadFacadeModuleAtLocationSync(params = {}) {
+  const location = params.location || {};
+  const modulePath = location.modulePath;
+  if (!modulePath) {
+    throw new Error("Unable to load facade module without a modulePath");
+  }
+  const cached = loadedFacadeModules.get(modulePath);
+  if (cached) {
+    return cached;
+  }
+  const sentinel = {};
+  loadedFacadeModules.set(modulePath, sentinel);
+  try {
+    const loaded =
+      typeof params.loadModule === "function" ? params.loadModule(modulePath) : require(modulePath);
+    Object.assign(sentinel, loaded || {});
+    const trackedPluginId =
+      typeof params.trackedPluginId === "function"
+        ? params.trackedPluginId()
+        : params.trackedPluginId;
+    if (trackedPluginId) {
+      loadedFacadePluginIds.add(String(trackedPluginId));
+    }
+    return sentinel;
+  } catch (error) {
+    loadedFacadeModules.delete(modulePath);
+    throw error;
+  }
+}
+
+function listImportedBundledPluginFacadeIds() {
+  return Array.from(loadedFacadePluginIds).sort((left, right) => left.localeCompare(right));
+}
+
+function resetFacadeLoaderStateForTest() {
+  loadedFacadeModules.clear();
+  loadedFacadePluginIds.clear();
+}
+
+function resetFacadeRuntimeStateForTest() {
+  resetFacadeLoaderStateForTest();
+}
+
+const FACADE_PUBLIC_SURFACE_SOURCE_EXTENSIONS = [".ts", ".mts", ".js", ".mjs", ".cts", ".cjs"];
+
+function areBundledPluginsDisabledForFacade(env = process.env) {
+  const raw = normalizeOptionalLowercaseString(env && env.OPENCLAW_DISABLE_BUNDLED_PLUGINS);
+  return raw === "1" || raw === "true";
+}
+
+function normalizeBundledPluginArtifactSubpathForFacade(artifactBasename) {
+  const value = String(artifactBasename || "");
+  if (path.posix.isAbsolute(value) || path.win32.isAbsolute(value) || value.includes("\\")) {
+    throw new Error(`Bundled plugin artifact path must stay plugin-local: ${value}`);
+  }
+  const normalized = value.replace(/^\.\//u, "");
+  if (!normalized) {
+    throw new Error("Bundled plugin artifact path must not be empty");
+  }
+  const segments = normalized.split("/");
+  if (
+    segments.some(
+      (segment) =>
+        segment.length === 0 || segment === "." || segment === ".." || segment.includes(":"),
+    )
+  ) {
+    throw new Error(`Bundled plugin artifact path must stay plugin-local: ${value}`);
+  }
+  return normalized;
+}
+
+function normalizeBundledPluginDirNameForFacade(dirName) {
+  const normalized = String(dirName || "").trim();
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.includes("/") ||
+    normalized.includes("\\") ||
+    normalized.includes(":")
+  ) {
+    throw new Error(`Bundled plugin dirName must be a single directory: ${dirName}`);
+  }
+  return normalized;
+}
+
+function resolveBundledPluginSourcePublicSurfacePathForFacade(params = {}) {
+  const artifactBasename = normalizeBundledPluginArtifactSubpathForFacade(params.artifactBasename);
+  const dirName = normalizeBundledPluginDirNameForFacade(params.dirName);
+  const sourceBaseName = artifactBasename.replace(/\.js$/u, "");
+  for (const ext of FACADE_PUBLIC_SURFACE_SOURCE_EXTENSIONS) {
+    const sourceCandidate = path.resolve(
+      String(params.sourceRoot || ""),
+      dirName,
+      `${sourceBaseName}${ext}`,
+    );
+    if (fs.existsSync(sourceCandidate)) {
+      return sourceCandidate;
+    }
+  }
+  return null;
+}
+
+function resolvePackageSourceFallbackForBundledDirForFacade(params = {}) {
+  const normalizedBundledDir = path.resolve(String(params.bundledPluginsDir || ""));
+  const normalizedRootDir = path.resolve(String(params.rootDir || ""));
+  const packageBundledDirs = [
+    path.join(normalizedRootDir, "dist", "extensions"),
+    path.join(normalizedRootDir, "dist-runtime", "extensions"),
+  ];
+  if (!packageBundledDirs.includes(normalizedBundledDir)) {
+    return null;
+  }
+  return resolveBundledPluginSourcePublicSurfacePathForFacade({
+    sourceRoot: path.join(normalizedRootDir, "extensions"),
+    dirName: params.dirName,
+    artifactBasename: params.artifactBasename,
+  });
+}
+
+function resolveBundledPluginPublicSurfacePathForFacade(params = {}) {
+  const artifactBasename = normalizeBundledPluginArtifactSubpathForFacade(params.artifactBasename);
+  const dirName = normalizeBundledPluginDirNameForFacade(params.dirName);
+  const explicitBundledPluginsDir = params.bundledPluginsDir;
+  if (explicitBundledPluginsDir) {
+    const explicitPluginDir = path.resolve(String(explicitBundledPluginsDir), dirName);
+    const explicitBuiltCandidate = path.join(explicitPluginDir, artifactBasename);
+    if (fs.existsSync(explicitBuiltCandidate)) {
+      return explicitBuiltCandidate;
+    }
+    return (
+      resolveBundledPluginSourcePublicSurfacePathForFacade({
+        sourceRoot: explicitBundledPluginsDir,
+        dirName,
+        artifactBasename,
+      }) ??
+      resolvePackageSourceFallbackForBundledDirForFacade({
+        rootDir: params.rootDir,
+        bundledPluginsDir: explicitBundledPluginsDir,
+        dirName,
+        artifactBasename,
+      })
+    );
+  }
+  const rootDir = path.resolve(String(params.rootDir || ""));
+  for (const candidate of [
+    path.resolve(rootDir, "dist", "extensions", dirName, artifactBasename),
+    path.resolve(rootDir, "dist-runtime", "extensions", dirName, artifactBasename),
+  ]) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return resolveBundledPluginSourcePublicSurfacePathForFacade({
+    sourceRoot: path.resolve(rootDir, "extensions"),
+    dirName,
+    artifactBasename,
+  });
+}
+
+function createFacadeResolutionKey(params = {}) {
+  const disabledKey = areBundledPluginsDisabledForFacade(params.env || process.env)
+    ? "disabled"
+    : "enabled";
+  const bundledPluginsDir = params.bundledPluginsDir
+    ? path.resolve(String(params.bundledPluginsDir))
+    : "<default>";
+  return `${params.dirName}::${params.artifactBasename}::${bundledPluginsDir}::${disabledKey}`;
+}
+
+function resolveFacadeBoundaryRoot(params = {}) {
+  if (!params.bundledPluginsDir) {
+    return params.packageRoot;
+  }
+  const resolvedBundledPluginsDir = path.resolve(String(params.bundledPluginsDir));
+  return String(params.modulePath || "").startsWith(`${resolvedBundledPluginsDir}${path.sep}`)
+    ? resolvedBundledPluginsDir
+    : params.packageRoot;
+}
+
+function resolveBundledFacadeModuleLocation(params = {}) {
+  const preferSource = !String(params.currentModulePath || "").includes(
+    `${path.sep}dist${path.sep}`,
+  );
+  const env = params.env || process.env;
+  const packageRoot = String(params.packageRoot || "");
+  const packageSourceRoot = path.resolve(packageRoot, "extensions");
+  const publicSurfaceParams = {
+    rootDir: packageRoot,
+    env,
+    ...(params.bundledPluginsDir ? { bundledPluginsDir: params.bundledPluginsDir } : {}),
+    dirName: params.dirName,
+    artifactBasename: params.artifactBasename,
+  };
+  const modulePath = preferSource
+    ? (resolveBundledPluginSourcePublicSurfacePathForFacade({
+        dirName: params.dirName,
+        artifactBasename: params.artifactBasename,
+        sourceRoot: params.bundledPluginsDir || packageSourceRoot,
+      }) ??
+      (params.bundledPluginsDir && !areBundledPluginsDisabledForFacade(env)
+        ? resolveBundledPluginSourcePublicSurfacePathForFacade({
+            dirName: params.dirName,
+            artifactBasename: params.artifactBasename,
+            sourceRoot: packageSourceRoot,
+          })
+        : null) ??
+      resolveBundledPluginPublicSurfacePathForFacade(publicSurfaceParams))
+    : resolveBundledPluginPublicSurfacePathForFacade(publicSurfaceParams);
+  return modulePath
+    ? {
+        modulePath,
+        boundaryRoot: resolveFacadeBoundaryRoot({
+          modulePath,
+          bundledPluginsDir: params.bundledPluginsDir,
+          packageRoot,
+        }),
+      }
+    : null;
+}
+
+function resolveRegistryPluginModuleLocationFromRecords(params = {}) {
+  const registry = Array.isArray(params.registry) ? params.registry : [];
+  const tiers = [
+    (plugin) => plugin && plugin.id === params.dirName,
+    (plugin) => plugin && path.basename(String(plugin.rootDir || "")) === params.dirName,
+    (plugin) =>
+      plugin && Array.isArray(plugin.channels) && plugin.channels.includes(params.dirName),
+  ];
+  const artifactBasename = normalizeBundledPluginArtifactSubpathForFacade(
+    params.artifactBasename,
+  );
+  const sourceBaseName = artifactBasename.replace(/\.js$/u, "");
+  for (const matchFn of tiers) {
+    for (const record of registry.filter(matchFn)) {
+      const rootDir = path.resolve(String(record.rootDir || ""));
+      const builtCandidate = path.join(rootDir, artifactBasename);
+      if (fs.existsSync(builtCandidate)) {
+        return { modulePath: builtCandidate, boundaryRoot: rootDir };
+      }
+      for (const ext of FACADE_PUBLIC_SURFACE_SOURCE_EXTENSIONS) {
+        const sourceCandidate = path.join(rootDir, `${sourceBaseName}${ext}`);
+        if (fs.existsSync(sourceCandidate)) {
+          return { modulePath: sourceCandidate, boundaryRoot: rootDir };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+const facadeLoaderRuntime = {
+  createLazyFacadeArrayValue,
+  createLazyFacadeObjectValue,
+  listImportedBundledPluginFacadeIds,
+  loadFacadeModuleAtLocationSync,
+  resetFacadeLoaderStateForTest,
+};
+
+const facadeResolutionSharedRuntime = {
+  createFacadeResolutionKey,
+  resolveBundledFacadeModuleLocation,
+  resolveFacadeBoundaryRoot,
+  resolveRegistryPluginModuleLocationFromRecords,
+};
+
+function createLazyFacadeValue(loadFacadeModule, key) {
+  return (...args) => {
+    const value = loadFacadeModule()[key];
+    if (typeof value !== "function") {
+      return value;
+    }
+    return value(...args);
+  };
+}
+
+const FACADE_ALWAYS_ALLOWED_RUNTIME_DIR_NAMES = new Set([
+  "image-generation-core",
+  "media-understanding-core",
+  "speech-core",
+]);
+
+function resolveFacadeRuntimeBundledPluginsDir(env = process.env) {
+  if (areBundledPluginsDisabledForFacade(env)) {
+    return undefined;
+  }
+  const configured = normalizeOptionalString(env && env.OPENCLAW_BUNDLED_PLUGINS_DIR);
+  return configured || undefined;
+}
+
+function resolveFacadeRuntimePackageRoot() {
+  return path.resolve(process.cwd());
+}
+
+function createFacadeRuntimeResolutionKey(params = {}) {
+  const env = params.env || process.env;
+  return createFacadeResolutionKey({
+    ...params,
+    bundledPluginsDir: resolveFacadeRuntimeBundledPluginsDir(env),
+    env,
+  });
+}
+
+function resolveFacadeRuntimeModuleLocation(params = {}) {
+  const env = params.env || process.env;
+  const bundledPluginsDir = resolveFacadeRuntimeBundledPluginsDir(env);
+  const packageRoot = resolveFacadeRuntimePackageRoot();
+  return resolveBundledFacadeModuleLocation({
+    ...params,
+    currentModulePath: typeof __filename === "string" ? __filename : "",
+    packageRoot,
+    bundledPluginsDir,
+    env,
+  });
+}
+
+function buildFacadeRuntimeActivationCheckParams(params = {}, location) {
+  const resolvedLocation =
+    location === undefined ? resolveFacadeRuntimeModuleLocation(params) : location;
+  const packageRoot = resolveFacadeRuntimePackageRoot();
+  return {
+    ...params,
+    location: resolvedLocation,
+    sourceExtensionsRoot: path.resolve(packageRoot, "extensions"),
+    resolutionKey: createFacadeRuntimeResolutionKey(params),
+  };
+}
+
+function resolveTrackedFacadePluginId(params = {}) {
+  return String(params.dirName || "");
+}
+
+function resolveRegistryPluginModuleLocationForFacadeRuntime(params = {}) {
+  return resolveRegistryPluginModuleLocationFromRecords({
+    registry: Array.isArray(params.registry) ? params.registry : [],
+    dirName: params.dirName,
+    artifactBasename: params.artifactBasename,
+  });
+}
+
+function evaluateBundledPluginPublicSurfaceAccessForFacadeRuntime(params = {}) {
+  const manifestRecord = params.manifestRecord || {};
+  if (manifestRecord.enabledByDefault === true) {
+    return { allowed: true, pluginId: manifestRecord.id || params.params?.dirName };
+  }
+  const pluginId = manifestRecord.id || params.params?.dirName;
+  return {
+    allowed: false,
+    ...(pluginId ? { pluginId } : {}),
+    reason: "plugin runtime is not activated",
+  };
+}
+
+function resolveBundledPluginPublicSurfaceAccessForFacadeRuntime(params = {}) {
+  if (
+    params.artifactBasename === "runtime-api.js" &&
+    FACADE_ALWAYS_ALLOWED_RUNTIME_DIR_NAMES.has(params.dirName)
+  ) {
+    return {
+      allowed: true,
+      pluginId: params.dirName,
+    };
+  }
+  return {
+    allowed: false,
+    reason: `no bundled plugin manifest found for ${params.dirName}`,
+  };
+}
+
+function throwForBundledPluginPublicSurfaceAccessForFacadeRuntime(params = {}) {
+  const access = params.access || {};
+  const request = params.request || {};
+  const pluginLabel = access.pluginId || request.dirName;
+  const reason = access.reason || "plugin runtime is not activated";
+  throw new Error(
+    `Bundled plugin public surface access blocked for "${pluginLabel}" via ` +
+      `${request.dirName}/${request.artifactBasename}: ${reason}`,
+  );
+}
+
+function resolveActivatedBundledPluginPublicSurfaceAccessOrThrowForFacadeRuntime(params = {}) {
+  const access = resolveBundledPluginPublicSurfaceAccessForFacadeRuntime(params);
+  if (!access.allowed) {
+    throwForBundledPluginPublicSurfaceAccessForFacadeRuntime({
+      access,
+      request: params,
+    });
+  }
+  return access;
+}
+
+function canLoadActivatedBundledPluginPublicSurfaceForFacadeRuntime(params = {}) {
+  return resolveBundledPluginPublicSurfaceAccessForFacadeRuntime(
+    buildFacadeRuntimeActivationCheckParams(params),
+  ).allowed;
+}
+
+function loadBundledPluginPublicSurfaceModuleSyncForFacadeRuntime(params = {}) {
+  const location = resolveFacadeRuntimeModuleLocation(params);
+  const trackedPluginId = () =>
+    resolveTrackedFacadePluginId(buildFacadeRuntimeActivationCheckParams(params, location));
+  if (!location) {
+    throw new Error(
+      `Unable to open bundled plugin public surface ${params.dirName}/${params.artifactBasename}`,
+    );
+  }
+  return loadFacadeModuleAtLocationSync({
+    location,
+    trackedPluginId,
+    runtimeDeps: {
+      pluginId: params.dirName,
+      ...(params.env ? { env: params.env } : {}),
+    },
+    ...(typeof params.loadModule === "function" ? { loadModule: params.loadModule } : {}),
+  });
+}
+
+function loadActivatedBundledPluginPublicSurfaceModuleSyncForFacadeRuntime(params = {}) {
+  resolveActivatedBundledPluginPublicSurfaceAccessOrThrowForFacadeRuntime(
+    buildFacadeRuntimeActivationCheckParams(params),
+  );
+  return loadBundledPluginPublicSurfaceModuleSyncForFacadeRuntime(params);
+}
+
+function tryLoadActivatedBundledPluginPublicSurfaceModuleSyncForFacadeRuntime(params = {}) {
+  const access = resolveBundledPluginPublicSurfaceAccessForFacadeRuntime(
+    buildFacadeRuntimeActivationCheckParams(params),
+  );
+  if (!access.allowed) {
+    return null;
+  }
+  return loadBundledPluginPublicSurfaceModuleSyncForFacadeRuntime(params);
+}
+
+const facadeRuntimeTesting = {
+  loadFacadeModuleAtLocationSync,
+  resolveRegistryPluginModuleLocationFromRegistry:
+    resolveRegistryPluginModuleLocationFromRecords,
+  resolveFacadeModuleLocation: resolveFacadeRuntimeModuleLocation,
+  evaluateBundledPluginPublicSurfaceAccess:
+    evaluateBundledPluginPublicSurfaceAccessForFacadeRuntime,
+  throwForBundledPluginPublicSurfaceAccess:
+    throwForBundledPluginPublicSurfaceAccessForFacadeRuntime,
+  resolveActivatedBundledPluginPublicSurfaceAccessOrThrow:
+    resolveActivatedBundledPluginPublicSurfaceAccessOrThrowForFacadeRuntime,
+  resolveBundledPluginPublicSurfaceAccess:
+    resolveBundledPluginPublicSurfaceAccessForFacadeRuntime,
+  resolveTrackedFacadePluginId,
+};
+
+const facadeActivationCheckRuntime = {
+  evaluateBundledPluginPublicSurfaceAccess:
+    evaluateBundledPluginPublicSurfaceAccessForFacadeRuntime,
+  resolveActivatedBundledPluginPublicSurfaceAccessOrThrow:
+    resolveActivatedBundledPluginPublicSurfaceAccessOrThrowForFacadeRuntime,
+  resolveBundledPluginPublicSurfaceAccess:
+    resolveBundledPluginPublicSurfaceAccessForFacadeRuntime,
+  resolveRegistryPluginModuleLocation:
+    resolveRegistryPluginModuleLocationForFacadeRuntime,
+  resolveTrackedFacadePluginId,
+  throwForBundledPluginPublicSurfaceAccess:
+    throwForBundledPluginPublicSurfaceAccessForFacadeRuntime,
+};
+
+const facadeRuntime = {
+  createLazyFacadeArrayValue,
+  createLazyFacadeObjectValue,
+  createLazyFacadeValue,
+  listImportedBundledPluginFacadeIds,
+  loadBundledPluginPublicSurfaceModuleSync:
+    loadBundledPluginPublicSurfaceModuleSyncForFacadeRuntime,
+  canLoadActivatedBundledPluginPublicSurface:
+    canLoadActivatedBundledPluginPublicSurfaceForFacadeRuntime,
+  loadActivatedBundledPluginPublicSurfaceModuleSync:
+    loadActivatedBundledPluginPublicSurfaceModuleSyncForFacadeRuntime,
+  tryLoadActivatedBundledPluginPublicSurfaceModuleSync:
+    tryLoadActivatedBundledPluginPublicSurfaceModuleSyncForFacadeRuntime,
+  resetFacadeRuntimeStateForTest,
+  __testing: facadeRuntimeTesting,
+};
 
 function buildPluginApi(params = {}) {
   const handlers = params.handlers || {};
@@ -64391,6 +67943,27 @@ const pluginEntryRuntime = {
   emptyPluginConfigSchema,
 };
 
+const copilotProxyRuntime = {
+  definePluginEntry,
+};
+
+const privateQaBundledEnvRuntime = {
+  resolvePrivateQaBundledPluginsEnv,
+};
+
+const threadOwnershipRuntime = {
+  definePluginEntry,
+  fetchWithSsrFGuard,
+  ssrfPolicyFromAllowPrivateNetwork,
+  ssrfPolicyFromDangerouslyAllowPrivateNetwork,
+};
+
+const ssrfDispatcherRuntime = {
+  closeDispatcher,
+  createPinnedDispatcher: passthrough,
+  resolvePinnedHostnameWithPolicy,
+};
+
 function filePathFromImportMetaUrl(importMetaUrl) {
   if (typeof importMetaUrl === "string" && importMetaUrl.startsWith("file:")) {
     return require("node:url").fileURLToPath(importMetaUrl);
@@ -64851,6 +68424,10 @@ const channelSendResultRuntime = {
   createRawChannelSendResultAdapter,
 };
 
+const pairingAccessRuntime = {
+  createScopedPairingAccess,
+};
+
 const channelPairingRuntime = {
   createChannelPairingChallengeIssuer,
   createChannelPairingController,
@@ -65047,6 +68624,215 @@ const telegramCommandConfigRuntime = {
   normalizeTelegramCommandDescription: normalizeCommandDescription,
   normalizeTelegramCommandName: normalizeSlashCommandName,
   resolveTelegramCustomCommands,
+};
+
+const telegramCommandUiRuntime = {
+  buildCommandsPaginationKeyboard,
+};
+
+function readTelegramTokenFile(filePath) {
+  const resolved = normalizeOptionalString(filePath);
+  if (!resolved) {
+    return "";
+  }
+  try {
+    return fs.readFileSync(resolved, "utf8").trim();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function resolveTelegramToken(params = {}) {
+  const accountConfig = params.accountConfig || {};
+  const channelConfig = params.channelConfig || {};
+  const accountToken = asString(accountConfig.token ?? accountConfig.botToken);
+  if (accountToken) {
+    return { token: accountToken, tokenSource: "config" };
+  }
+  const accountTokenFile = normalizeOptionalString(accountConfig.tokenFile);
+  if (accountTokenFile) {
+    return { token: readTelegramTokenFile(accountTokenFile), tokenSource: "tokenFile" };
+  }
+  const channelToken = asString(channelConfig.token ?? channelConfig.botToken);
+  if (channelToken) {
+    return { token: channelToken, tokenSource: "config" };
+  }
+  const channelTokenFile = normalizeOptionalString(channelConfig.tokenFile);
+  if (channelTokenFile) {
+    return { token: readTelegramTokenFile(channelTokenFile), tokenSource: "tokenFile" };
+  }
+  const envToken = asString(process.env.TELEGRAM_BOT_TOKEN);
+  if (envToken) {
+    return { token: envToken, tokenSource: "env" };
+  }
+  return { token: "", tokenSource: "none" };
+}
+
+function resolveTelegramAccount(params = {}) {
+  const cfg = params.cfg || {};
+  const channelConfig = (cfg.channels && cfg.channels.telegram) || {};
+  const accounts =
+    channelConfig.accounts && typeof channelConfig.accounts === "object"
+      ? channelConfig.accounts
+      : {};
+  const requestedAccountId = normalizeAccountId(
+    params.accountId || channelConfig.defaultAccount || DEFAULT_ACCOUNT_ID,
+  );
+  const accountConfig =
+    accounts[requestedAccountId] ||
+    (requestedAccountId === DEFAULT_ACCOUNT_ID ? accounts[DEFAULT_ACCOUNT_ID] : undefined) ||
+    {};
+  const hasAccountConfig = Object.keys(accountConfig).length > 0;
+  const mergedConfig = hasAccountConfig
+    ? { ...channelConfig, ...accountConfig, accounts: channelConfig.accounts }
+    : channelConfig;
+  const token = resolveTelegramToken({
+    accountConfig: hasAccountConfig ? accountConfig : {},
+    channelConfig,
+  });
+  const name = normalizeOptionalString(mergedConfig.name);
+  return {
+    accountId: hasAccountConfig ? requestedAccountId : DEFAULT_ACCOUNT_ID,
+    enabled: mergedConfig.enabled !== false,
+    ...(name ? { name } : {}),
+    token: token.token,
+    tokenSource: token.tokenSource,
+    config: mergedConfig,
+  };
+}
+
+const telegramAccountRuntime = {
+  resolveTelegramAccount,
+};
+
+function listIrcAccountIds(cfg = {}) {
+  const channelConfig = (cfg.channels && cfg.channels.irc) || {};
+  const accounts =
+    channelConfig.accounts && typeof channelConfig.accounts === "object"
+      ? channelConfig.accounts
+      : {};
+  return Object.keys(accounts).map(normalizeAccountId).sort();
+}
+
+function resolveDefaultIrcAccountId(cfg = {}) {
+  const channelConfig = (cfg.channels && cfg.channels.irc) || {};
+  const accounts =
+    channelConfig.accounts && typeof channelConfig.accounts === "object"
+      ? channelConfig.accounts
+      : {};
+  const configuredDefault = normalizeOptionalString(channelConfig.defaultAccount);
+  if (configuredDefault) {
+    const normalizedDefault = normalizeAccountId(configuredDefault);
+    if (accounts[normalizedDefault]) {
+      return normalizedDefault;
+    }
+  }
+  if (accounts[DEFAULT_ACCOUNT_ID]) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  return listIrcAccountIds(cfg)[0] || DEFAULT_ACCOUNT_ID;
+}
+
+function readIrcPasswordFile(filePath) {
+  const resolved = normalizeOptionalString(filePath);
+  if (!resolved) {
+    return "";
+  }
+  try {
+    return fs.readFileSync(resolved, "utf8").trim();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function resolveIrcPassword(params = {}) {
+  const accountConfig = params.accountConfig || {};
+  const channelConfig = params.channelConfig || {};
+  const accountPassword = asString(accountConfig.password);
+  if (accountPassword) {
+    return { password: accountPassword, passwordSource: "config" };
+  }
+  const accountPasswordFile = normalizeOptionalString(accountConfig.passwordFile);
+  if (accountPasswordFile) {
+    return {
+      password: readIrcPasswordFile(accountPasswordFile),
+      passwordSource: "passwordFile",
+    };
+  }
+  const channelPassword = asString(channelConfig.password);
+  if (channelPassword) {
+    return { password: channelPassword, passwordSource: "config" };
+  }
+  const channelPasswordFile = normalizeOptionalString(channelConfig.passwordFile);
+  if (channelPasswordFile) {
+    return {
+      password: readIrcPasswordFile(channelPasswordFile),
+      passwordSource: "passwordFile",
+    };
+  }
+  const envPassword = asString(process.env.IRC_PASSWORD);
+  if (envPassword) {
+    return { password: envPassword, passwordSource: "env" };
+  }
+  return { password: "", passwordSource: "none" };
+}
+
+function resolveIrcAccount(params = {}) {
+  const cfg = params.cfg || {};
+  const channelConfig = (cfg.channels && cfg.channels.irc) || {};
+  const accounts =
+    channelConfig.accounts && typeof channelConfig.accounts === "object"
+      ? channelConfig.accounts
+      : {};
+  const requestedAccountId = normalizeAccountId(
+    params.accountId || resolveDefaultIrcAccountId(cfg),
+  );
+  const accountConfig =
+    accounts[requestedAccountId] ||
+    (requestedAccountId === DEFAULT_ACCOUNT_ID ? accounts[DEFAULT_ACCOUNT_ID] : undefined) ||
+    {};
+  const hasAccountConfig = Object.keys(accountConfig).length > 0;
+  const mergedConfig = hasAccountConfig
+    ? { ...channelConfig, ...accountConfig, accounts: channelConfig.accounts }
+    : channelConfig;
+  const password = resolveIrcPassword({
+    accountConfig: hasAccountConfig ? accountConfig : {},
+    channelConfig,
+  });
+  const accountId = hasAccountConfig ? requestedAccountId : DEFAULT_ACCOUNT_ID;
+  const tls = Boolean(mergedConfig.tls);
+  const host = asString(mergedConfig.host) || "";
+  const nick = asString(mergedConfig.nick) || accountId;
+  const username = asString(mergedConfig.username) || nick;
+  const realname = asString(mergedConfig.realname) || username;
+  const name = normalizeOptionalString(mergedConfig.name);
+  return {
+    accountId,
+    enabled: mergedConfig.enabled !== false,
+    ...(name ? { name } : {}),
+    configured: Boolean(host && nick),
+    host,
+    port: Number.isFinite(Number(mergedConfig.port))
+      ? Number(mergedConfig.port)
+      : tls
+        ? 6697
+        : 6667,
+    tls,
+    nick,
+    username,
+    realname,
+    password: password.password,
+    passwordSource: password.passwordSource,
+    config: mergedConfig,
+  };
+}
+
+const ircSurfaceRuntime = {
+  ircSetupAdapter: {},
+  ircSetupWizard: {},
+  listIrcAccountIds,
+  resolveDefaultIrcAccountId,
+  resolveIrcAccount,
 };
 
 const commandAuthRuntime = {
@@ -74631,9 +78417,23 @@ async function closeActiveMemorySearchManagers(_cfg) {
   }
 }
 
+function resolveActiveMemoryBackendConfig(params = {}) {
+  const runtime = getMemoryHostSearchRuntime();
+  if (runtime && typeof runtime.resolveMemoryBackendConfig === "function") {
+    return runtime.resolveMemoryBackendConfig(params);
+  }
+  return null;
+}
+
 const memoryHostSearchRuntime = {
   closeActiveMemorySearchManagers,
   getActiveMemorySearchManager,
+};
+
+const memoryHostSearchRuntimeRuntime = {
+  closeActiveMemorySearchManagers,
+  getActiveMemorySearchManager,
+  resolveActiveMemoryBackendConfig,
 };
 
 function memoryCoreEngineRuntimeUnavailableError() {
@@ -83486,6 +87286,45 @@ const compatRuntime = {
   writeOAuthCredentials: providerAuthFacadeRuntime.writeOAuthCredentials,
 };
 
+const blueBubblesPolicyRuntime = {
+  isAllowedBlueBubblesSender,
+  resolveBlueBubblesGroupRequireMention,
+  resolveBlueBubblesGroupToolPolicy,
+};
+
+const mattermostPolicyRuntime = {
+  isMattermostSenderAllowed,
+};
+
+const matrixRuntimeSurfaceRuntime = {
+  resolveMatrixAccountStringValues,
+  setMatrixRuntime,
+};
+
+const matrixThreadBindingsRuntime = {
+  setMatrixThreadBindingIdleTimeoutBySessionKey,
+  setMatrixThreadBindingMaxAgeBySessionKey,
+};
+
+const matrixSurfaceRuntime = {
+  createMatrixThreadBindingManager,
+  matrixSessionBindingAdapterChannels: ["matrix"],
+  resetMatrixThreadBindingsForTests,
+};
+
+const matrixHelperRuntime = {
+  findMatrixAccountEntry,
+  getMatrixScopedEnvVarNames,
+  requiresExplicitMatrixDefaultAccount,
+  resolveConfiguredMatrixAccountIds,
+  resolveMatrixAccountStorageRoot,
+  resolveMatrixChannelConfig,
+  resolveMatrixCredentialsDir,
+  resolveMatrixCredentialsPath,
+  resolveMatrixDefaultOrOnlyAccountId,
+  resolveMatrixLegacyFlatStoragePaths,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -83954,6 +87793,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return diagnosticRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/diagnostics-otel" ||
+    request === "@openclaw/plugin-sdk/diagnostics-otel"
+  ) {
+    return diagnosticsOtelRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/system-event-runtime" ||
     request === "@openclaw/plugin-sdk/system-event-runtime"
   ) {
@@ -84255,6 +88100,42 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return providerModelSharedRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/volc-model-catalog-shared" ||
+    request === "@openclaw/plugin-sdk/volc-model-catalog-shared"
+  ) {
+    return volcModelCatalogSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/vercel-ai-gateway" ||
+    request === "@openclaw/plugin-sdk/vercel-ai-gateway"
+  ) {
+    return vercelAiGatewayRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/minimax" ||
+    request === "@openclaw/plugin-sdk/minimax"
+  ) {
+    return minimaxRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/openrouter" ||
+    request === "@openclaw/plugin-sdk/openrouter"
+  ) {
+    return openrouterRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/litellm" ||
+    request === "@openclaw/plugin-sdk/litellm"
+  ) {
+    return litellmRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/llm-task" ||
+    request === "@openclaw/plugin-sdk/llm-task"
+  ) {
+    return llmTaskRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/provider-catalog-shared" ||
     request === "@openclaw/plugin-sdk/provider-catalog-shared"
   ) {
@@ -84271,6 +88152,48 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-onboard"
   ) {
     return providerOnboardRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/opencode" ||
+    request === "@openclaw/plugin-sdk/opencode"
+  ) {
+    return opencodeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/ollama" ||
+    request === "@openclaw/plugin-sdk/ollama"
+  ) {
+    return ollamaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/ollama-runtime" ||
+    request === "@openclaw/plugin-sdk/ollama-runtime"
+  ) {
+    return ollamaRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/line-surface" ||
+    request === "@openclaw/plugin-sdk/line-surface"
+  ) {
+    return lineSurfaceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/line" ||
+    request === "@openclaw/plugin-sdk/line"
+  ) {
+    return lineRootRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/line-core" ||
+    request === "@openclaw/plugin-sdk/line-core"
+  ) {
+    return lineCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/line-runtime" ||
+    request === "@openclaw/plugin-sdk/line-runtime"
+  ) {
+    return lineRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-usage" ||
@@ -84390,6 +88313,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-host-search"
   ) {
     return memoryHostSearchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-host-search.runtime" ||
+    request === "@openclaw/plugin-sdk/memory-host-search.runtime"
+  ) {
+    return memoryHostSearchRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-engine-runtime" ||
@@ -84670,6 +88599,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return sessionStoreRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/session-transcript-hit" ||
+    request === "@openclaw/plugin-sdk/session-transcript-hit"
+  ) {
+    return sessionTranscriptHitRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/session-visibility" ||
     request === "@openclaw/plugin-sdk/session-visibility"
   ) {
@@ -84745,6 +88680,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return providerAuthRuntimeRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/image-generation" ||
+    request === "@openclaw/plugin-sdk/image-generation"
+  ) {
+    return imageGenerationProviderRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/image-generation-core.auth.runtime" ||
     request === "@openclaw/plugin-sdk/image-generation-core.auth.runtime"
   ) {
@@ -84811,6 +88752,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return videoGenerationCoreRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/video-generation" ||
+    request === "@openclaw/plugin-sdk/video-generation"
+  ) {
+    return videoGenerationProviderRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/video-generation-runtime" ||
     request === "@openclaw/plugin-sdk/video-generation-runtime"
   ) {
@@ -84851,6 +88798,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-auth-login.runtime"
   ) {
     return providerAuthLoginRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/github-copilot-login" ||
+    request === "@openclaw/plugin-sdk/github-copilot-login"
+  ) {
+    return githubCopilotLoginRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-zai-endpoint" ||
@@ -85059,6 +89012,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return channelSendResultRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/pairing-access" ||
+    request === "@openclaw/plugin-sdk/pairing-access"
+  ) {
+    return pairingAccessRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/channel-pairing" ||
     request === "@openclaw/plugin-sdk/channel-pairing"
   ) {
@@ -85128,6 +89087,24 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return telegramCommandConfigRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/telegram-command-ui" ||
+    request === "@openclaw/plugin-sdk/telegram-command-ui"
+  ) {
+    return telegramCommandUiRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/telegram-account" ||
+    request === "@openclaw/plugin-sdk/telegram-account"
+  ) {
+    return telegramAccountRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/irc-surface" ||
+    request === "@openclaw/plugin-sdk/irc-surface"
+  ) {
+    return ircSurfaceRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/command-status" ||
     request === "@openclaw/plugin-sdk/command-status"
   ) {
@@ -85135,7 +89112,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   }
   if (
     request === "openclaw/plugin-sdk/command-status-runtime" ||
-    request === "@openclaw/plugin-sdk/command-status-runtime"
+    request === "@openclaw/plugin-sdk/command-status-runtime" ||
+    request === "openclaw/plugin-sdk/command-status.runtime" ||
+    request === "@openclaw/plugin-sdk/command-status.runtime"
   ) {
     return commandStatusSessionRuntime;
   }
@@ -85204,6 +89183,30 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-entry"
   ) {
     return pluginEntryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/copilot-proxy" ||
+    request === "@openclaw/plugin-sdk/copilot-proxy"
+  ) {
+    return copilotProxyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/private-qa-bundled-env" ||
+    request === "@openclaw/plugin-sdk/private-qa-bundled-env"
+  ) {
+    return privateQaBundledEnvRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/thread-ownership" ||
+    request === "@openclaw/plugin-sdk/thread-ownership"
+  ) {
+    return threadOwnershipRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/ssrf-dispatcher" ||
+    request === "@openclaw/plugin-sdk/ssrf-dispatcher"
+  ) {
+    return ssrfDispatcherRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/config-mutation" ||
@@ -85505,6 +89508,42 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return compatRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/mattermost-policy" ||
+    request === "@openclaw/plugin-sdk/mattermost-policy"
+  ) {
+    return mattermostPolicyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-runtime-surface" ||
+    request === "@openclaw/plugin-sdk/matrix-runtime-surface"
+  ) {
+    return matrixRuntimeSurfaceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-thread-bindings" ||
+    request === "@openclaw/plugin-sdk/matrix-thread-bindings"
+  ) {
+    return matrixThreadBindingsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-surface" ||
+    request === "@openclaw/plugin-sdk/matrix-surface"
+  ) {
+    return matrixSurfaceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-helper" ||
+    request === "@openclaw/plugin-sdk/matrix-helper"
+  ) {
+    return matrixHelperRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/bluebubbles-policy" ||
+    request === "@openclaw/plugin-sdk/bluebubbles-policy"
+  ) {
+    return blueBubblesPolicyRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/discord" ||
     request === "@openclaw/plugin-sdk/discord"
   ) {
@@ -85605,6 +89644,24 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return channelTestHelpersRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/test-helpers/string-utils" ||
+    request === "@openclaw/plugin-sdk/test-helpers/string-utils"
+  ) {
+    return testHelpersStringUtilsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-helpers/envelope-timestamp" ||
+    request === "@openclaw/plugin-sdk/test-helpers/envelope-timestamp"
+  ) {
+    return testHelpersEnvelopeTimestampRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-helpers/pairing-reply" ||
+    request === "@openclaw/plugin-sdk/test-helpers/pairing-reply"
+  ) {
+    return testHelpersPairingReplyRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/plugin-test-api" ||
     request === "@openclaw/plugin-sdk/plugin-test-api"
   ) {
@@ -85621,6 +89678,30 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-test-runtime"
   ) {
     return pluginTestRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/facade-runtime" ||
+    request === "@openclaw/plugin-sdk/facade-runtime"
+  ) {
+    return facadeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/facade-activation-check.runtime" ||
+    request === "@openclaw/plugin-sdk/facade-activation-check.runtime"
+  ) {
+    return facadeActivationCheckRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/facade-resolution-shared" ||
+    request === "@openclaw/plugin-sdk/facade-resolution-shared"
+  ) {
+    return facadeResolutionSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/facade-loader" ||
+    request === "@openclaw/plugin-sdk/facade-loader"
+  ) {
+    return facadeLoaderRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-http-test-mocks" ||
@@ -85656,6 +89737,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
     request === "openclaw/plugin-sdk/testing" ||
     request === "@openclaw/plugin-sdk/testing"
+  ) {
+    return testingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-utils" ||
+    request === "@openclaw/plugin-sdk/test-utils"
   ) {
     return testingRuntime;
   }
@@ -85768,6 +89855,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/tool-send"
   ) {
     return toolSendRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/resolution-notes" ||
+    request === "@openclaw/plugin-sdk/resolution-notes"
+  ) {
+    return resolutionNotesRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/boolean-param" ||

@@ -13673,6 +13673,864 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_volc_model_catalog_shared_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-volc-model-catalog-shared.cjs"
+    runtime_entry.write_text(
+        """
+const volc = require("openclaw/plugin-sdk/volc-model-catalog-shared");
+const scopedVolc = require("@openclaw/plugin-sdk/volc-model-catalog-shared");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.volc_model_catalog_shared",
+      description: "Use OpenClaw volc-model-catalog-shared SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const built = volc.buildVolcModelDefinition(
+          volc.VOLC_MODEL_KIMI_K2_5,
+          { input: 0.15, output: 0.6 }
+        );
+        return {
+          keys: Object.keys(volc).sort(),
+          scopedSame:
+            scopedVolc.buildVolcModelDefinition === volc.buildVolcModelDefinition,
+          kimi: volc.VOLC_MODEL_KIMI_K2_5,
+          glm: volc.VOLC_MODEL_GLM_4_7,
+          catalogIds: volc.VOLC_SHARED_CODING_MODEL_CATALOG.map((entry) => entry.id),
+          built
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-volc-model-catalog-shared-plugin",
+                    "name": "Runtime Volc Model Catalog Shared Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-volc-model-catalog.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.volc_model_catalog_shared"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.volc_model_catalog_shared"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "VOLC_MODEL_GLM_4_7",
+            "VOLC_MODEL_KIMI_K2_5",
+            "VOLC_SHARED_CODING_MODEL_CATALOG",
+            "buildVolcModelDefinition",
+        ],
+        "scopedSame": True,
+        "kimi": {
+            "id": "kimi-k2-5-260127",
+            "name": "Kimi K2.5",
+            "reasoning": False,
+            "input": ["text", "image"],
+            "contextWindow": 256000,
+            "maxTokens": 4096,
+        },
+        "glm": {
+            "id": "glm-4-7-251222",
+            "name": "GLM 4.7",
+            "reasoning": False,
+            "input": ["text", "image"],
+            "contextWindow": 200000,
+            "maxTokens": 4096,
+        },
+        "catalogIds": [
+            "ark-code-latest",
+            "doubao-seed-code",
+            "glm-4.7",
+            "kimi-k2-thinking",
+            "kimi-k2.5",
+        ],
+        "built": {
+            "id": "kimi-k2-5-260127",
+            "name": "Kimi K2.5",
+            "reasoning": False,
+            "input": ["text", "image"],
+            "cost": {"input": 0.15, "output": 0.6},
+            "contextWindow": 256000,
+            "maxTokens": 4096,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_vercel_ai_gateway_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-vercel-ai-gateway.cjs"
+    runtime_entry.write_text(
+        """
+const gateway = require("openclaw/plugin-sdk/vercel-ai-gateway");
+const scopedGateway = require("@openclaw/plugin-sdk/vercel-ai-gateway");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.vercel_ai_gateway",
+      description: "Use OpenClaw vercel-ai-gateway SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const staticCatalog = gateway.getStaticVercelAiGatewayModelCatalog();
+        const discovered = await gateway.discoverVercelAiGatewayModels();
+        const provider = await gateway.buildVercelAiGatewayProvider();
+        return {
+          keys: Object.keys(gateway).sort(),
+          scopedSame:
+            scopedGateway.buildVercelAiGatewayProvider ===
+            gateway.buildVercelAiGatewayProvider,
+          constants: {
+            providerId: gateway.VERCEL_AI_GATEWAY_PROVIDER_ID,
+            baseUrl: gateway.VERCEL_AI_GATEWAY_BASE_URL,
+            defaultModelId: gateway.VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID,
+            defaultModelRef: gateway.VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF,
+            contextWindow: gateway.VERCEL_AI_GATEWAY_DEFAULT_CONTEXT_WINDOW,
+            maxTokens: gateway.VERCEL_AI_GATEWAY_DEFAULT_MAX_TOKENS,
+            cost: gateway.VERCEL_AI_GATEWAY_DEFAULT_COST
+          },
+          staticIds: staticCatalog.map((model) => model.id),
+          opusCost: staticCatalog.find(
+            (model) => model.id === "anthropic/claude-opus-4.6"
+          ).cost,
+          discoveredIds: discovered.map((model) => model.id),
+          provider: {
+            baseUrl: provider.baseUrl,
+            api: provider.api,
+            modelIds: provider.models.map((model) => model.id)
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-vercel-ai-gateway-plugin",
+                    "name": "Runtime Vercel AI Gateway Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-vercel-ai-gateway.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.vercel_ai_gateway"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.vercel_ai_gateway"})
+
+    assert payload["ok"] is True
+    expected_ids = [
+        "anthropic/claude-opus-4.6",
+        "openai/gpt-5.4",
+        "openai/gpt-5.4-pro",
+        "moonshotai/kimi-k2.6",
+    ]
+    assert payload["result"] == {
+        "keys": [
+            "VERCEL_AI_GATEWAY_BASE_URL",
+            "VERCEL_AI_GATEWAY_DEFAULT_CONTEXT_WINDOW",
+            "VERCEL_AI_GATEWAY_DEFAULT_COST",
+            "VERCEL_AI_GATEWAY_DEFAULT_MAX_TOKENS",
+            "VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID",
+            "VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF",
+            "VERCEL_AI_GATEWAY_PROVIDER_ID",
+            "buildVercelAiGatewayProvider",
+            "discoverVercelAiGatewayModels",
+            "getStaticVercelAiGatewayModelCatalog",
+        ],
+        "scopedSame": True,
+        "constants": {
+            "providerId": "vercel-ai-gateway",
+            "baseUrl": "https://ai-gateway.vercel.sh",
+            "defaultModelId": "anthropic/claude-opus-4.6",
+            "defaultModelRef": "vercel-ai-gateway/anthropic/claude-opus-4.6",
+            "contextWindow": 200000,
+            "maxTokens": 128000,
+            "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+            },
+        },
+        "staticIds": expected_ids,
+        "opusCost": {
+            "input": 5,
+            "output": 25,
+            "cacheRead": 0.5,
+            "cacheWrite": 6.25,
+        },
+        "discoveredIds": expected_ids,
+        "provider": {
+            "baseUrl": "https://ai-gateway.vercel.sh",
+            "api": "anthropic-messages",
+            "modelIds": expected_ids,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_minimax_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-minimax.cjs"
+    runtime_entry.write_text(
+        """
+const minimax = require("openclaw/plugin-sdk/minimax");
+const scopedMinimax = require("@openclaw/plugin-sdk/minimax");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.minimax",
+      description: "Use OpenClaw minimax SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(minimax).sort(),
+          scopedSame:
+            scopedMinimax.MINIMAX_TEXT_MODEL_REFS ===
+            minimax.MINIMAX_TEXT_MODEL_REFS,
+          defaultModelId: minimax.MINIMAX_DEFAULT_MODEL_ID,
+          defaultModelRef: minimax.MINIMAX_DEFAULT_MODEL_REF,
+          modelRefs: minimax.MINIMAX_TEXT_MODEL_REFS
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-minimax-plugin",
+                    "name": "Runtime Minimax Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-minimax.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.minimax"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.minimax"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "MINIMAX_DEFAULT_MODEL_ID",
+            "MINIMAX_DEFAULT_MODEL_REF",
+            "MINIMAX_TEXT_MODEL_REFS",
+        ],
+        "scopedSame": True,
+        "defaultModelId": "MiniMax-M2.7",
+        "defaultModelRef": "minimax/MiniMax-M2.7",
+        "modelRefs": ["minimax/MiniMax-M2.7", "minimax/MiniMax-M2.7-highspeed"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_openrouter_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-openrouter.cjs"
+    runtime_entry.write_text(
+        """
+const openrouter = require("openclaw/plugin-sdk/openrouter");
+const scopedOpenrouter = require("@openclaw/plugin-sdk/openrouter");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.openrouter",
+      description: "Use OpenClaw OpenRouter SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const provider = openrouter.buildOpenrouterProvider();
+        const providerConfig = openrouter.applyOpenrouterProviderConfig({
+          agents: {
+            defaults: {
+              models: {
+                "openrouter/auto": { alias: "Router" },
+                "demo/model": { alias: "Demo" }
+              }
+            }
+          },
+          models: {
+            providers: {
+              openrouter: {
+                apiKey: "keep-key",
+                models: [{ id: "custom", name: "Custom" }]
+              }
+            }
+          }
+        });
+        const fullConfig = openrouter.applyOpenrouterConfig({
+          agents: {
+            defaults: {
+              model: { primary: "old/model", fallbacks: ["fallback/model"] }
+            }
+          }
+        });
+        return {
+          keys: Object.keys(openrouter).sort(),
+          scopedSame:
+            scopedOpenrouter.buildOpenrouterProvider ===
+            openrouter.buildOpenrouterProvider,
+          defaultModelRef: openrouter.OPENROUTER_DEFAULT_MODEL_REF,
+          provider: {
+            baseUrl: provider.baseUrl,
+            api: provider.api,
+            models: provider.models
+          },
+          providerConfig,
+          fullConfig
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-openrouter-plugin",
+                    "name": "Runtime OpenRouter Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-openrouter.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.openrouter"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.openrouter"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "OPENROUTER_DEFAULT_MODEL_REF",
+            "applyOpenrouterConfig",
+            "applyOpenrouterProviderConfig",
+            "buildOpenrouterProvider",
+        ],
+        "scopedSame": True,
+        "defaultModelRef": "openrouter/auto",
+        "provider": {
+            "baseUrl": "https://openrouter.ai/api/v1",
+            "api": "openai-completions",
+            "models": [
+                {
+                    "id": "auto",
+                    "name": "OpenRouter Auto",
+                    "reasoning": False,
+                    "input": ["text", "image"],
+                    "cost": {
+                        "input": 0,
+                        "output": 0,
+                        "cacheRead": 0,
+                        "cacheWrite": 0,
+                    },
+                    "contextWindow": 200000,
+                    "maxTokens": 8192,
+                },
+                {
+                    "id": "moonshotai/kimi-k2.6",
+                    "name": "MoonshotAI: Kimi K2.6",
+                    "reasoning": True,
+                    "input": ["text", "image"],
+                    "cost": {
+                        "input": 0.8,
+                        "output": 3.5,
+                        "cacheRead": 0.2,
+                        "cacheWrite": 0,
+                    },
+                    "contextWindow": 262144,
+                    "maxTokens": 262144,
+                },
+            ],
+        },
+        "providerConfig": {
+            "agents": {
+                "defaults": {
+                    "models": {
+                        "openrouter/auto": {"alias": "Router"},
+                        "demo/model": {"alias": "Demo"},
+                    }
+                }
+            },
+            "models": {
+                "providers": {
+                    "openrouter": {
+                        "apiKey": "keep-key",
+                        "models": [{"id": "custom", "name": "Custom"}],
+                    }
+                }
+            },
+        },
+        "fullConfig": {
+            "agents": {
+                "defaults": {
+                    "model": {
+                        "primary": "openrouter/auto",
+                        "fallbacks": ["fallback/model"],
+                    },
+                    "models": {"openrouter/auto": {"alias": "OpenRouter"}},
+                }
+            }
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_litellm_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-litellm.cjs"
+    runtime_entry.write_text(
+        """
+const litellm = require("openclaw/plugin-sdk/litellm");
+const scopedLitellm = require("@openclaw/plugin-sdk/litellm");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.litellm",
+      description: "Use OpenClaw LiteLLM SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const model = litellm.buildLitellmModelDefinition();
+        const providerConfig = litellm.applyLitellmProviderConfig({
+          models: {
+            providers: {
+              litellm: {
+                baseUrl: " https://litellm.example/v1 ",
+                apiKey: " old-key ",
+                models: [{ id: "custom-model", name: "Custom" }]
+              }
+            }
+          }
+        });
+        const fullConfig = litellm.applyLitellmConfig({
+          agents: {
+            defaults: {
+              model: { fallbacks: ["fallback/model"] }
+            }
+          }
+        });
+        return {
+          keys: Object.keys(litellm).sort(),
+          scopedSame:
+            scopedLitellm.buildLitellmModelDefinition ===
+            litellm.buildLitellmModelDefinition,
+          constants: {
+            baseUrl: litellm.LITELLM_BASE_URL,
+            defaultModelId: litellm.LITELLM_DEFAULT_MODEL_ID,
+            defaultModelRef: litellm.LITELLM_DEFAULT_MODEL_REF
+          },
+          model,
+          providerConfig,
+          fullConfig
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-litellm-plugin",
+                    "name": "Runtime LiteLLM Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-litellm.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.litellm"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.litellm"})
+
+    assert payload["ok"] is True
+    default_model = {
+        "id": "claude-opus-4-6",
+        "name": "Claude Opus 4.6",
+        "reasoning": True,
+        "input": ["text", "image"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 128000,
+        "maxTokens": 8192,
+    }
+    expected_provider = {
+        "baseUrl": "https://litellm.example/v1",
+        "api": "openai-completions",
+        "apiKey": "old-key",
+        "models": [{"id": "custom-model", "name": "Custom"}, default_model],
+    }
+    assert payload["result"] == {
+        "keys": [
+            "LITELLM_BASE_URL",
+            "LITELLM_DEFAULT_MODEL_ID",
+            "LITELLM_DEFAULT_MODEL_REF",
+            "applyLitellmConfig",
+            "applyLitellmProviderConfig",
+            "buildLitellmModelDefinition",
+        ],
+        "scopedSame": True,
+        "constants": {
+            "baseUrl": "http://localhost:4000",
+            "defaultModelId": "claude-opus-4-6",
+            "defaultModelRef": "litellm/claude-opus-4-6",
+        },
+        "model": default_model,
+        "providerConfig": {
+            "models": {"mode": "merge", "providers": {"litellm": expected_provider}},
+            "agents": {
+                "defaults": {
+                    "models": {
+                        "litellm/claude-opus-4-6": {"alias": "LiteLLM"}
+                    }
+                }
+            },
+        },
+        "fullConfig": {
+            "agents": {
+                "defaults": {
+                    "model": {
+                        "fallbacks": ["fallback/model"],
+                        "primary": "litellm/claude-opus-4-6",
+                    },
+                    "models": {
+                        "litellm/claude-opus-4-6": {"alias": "LiteLLM"}
+                    },
+                }
+            },
+            "models": {
+                "mode": "merge",
+                "providers": {
+                    "litellm": {
+                        "baseUrl": "http://localhost:4000",
+                        "api": "openai-completions",
+                        "models": [default_model],
+                    }
+                },
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_llm_task_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-llm-task.cjs"
+    runtime_entry.write_text(
+        """
+const llmTask = require("openclaw/plugin-sdk/llm-task");
+const scopedLlmTask = require("@openclaw/plugin-sdk/llm-task");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.llm_task",
+      description: "Use OpenClaw llm-task SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const entry = llmTask.definePluginEntry({
+          id: "llm-task-demo",
+          name: "LLM Task Demo",
+          register: () => undefined
+        });
+        const catalog = [
+          {
+            provider: "demo",
+            id: "model-x",
+            reasoning: true,
+            compat: { supportedReasoningEfforts: ["x-high"] }
+          }
+        ];
+        return {
+          keys: Object.keys(llmTask).sort(),
+          scopedSame:
+            scopedLlmTask.normalizeThinkLevel === llmTask.normalizeThinkLevel,
+          entry: { id: entry.id, name: entry.name, registerType: typeof entry.register },
+          tmpDirType: typeof llmTask.resolvePreferredOpenClawTmpDir(),
+          thinking: {
+            normalized: [
+              llmTask.normalizeThinkLevel("on"),
+              llmTask.normalizeThinkLevel("x-high"),
+              llmTask.normalizeThinkLevel("extra-highest") || null,
+              llmTask.normalizeThinkLevel("adaptive")
+            ],
+            levels: llmTask.formatThinkingLevels("demo", "model-x", "|", catalog),
+            xhighSupportedWithoutCatalog:
+              llmTask.supportsXHighThinking("demo", "model-x"),
+            hint: llmTask.formatXHighModelHint()
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-llm-task-plugin",
+                    "name": "Runtime LLM Task Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-llm-task.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.llm_task"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.llm_task"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "definePluginEntry",
+            "formatThinkingLevels",
+            "formatXHighModelHint",
+            "normalizeThinkLevel",
+            "resolvePreferredOpenClawTmpDir",
+            "supportsXHighThinking",
+        ],
+        "scopedSame": True,
+        "entry": {
+            "id": "llm-task-demo",
+            "name": "LLM Task Demo",
+            "registerType": "function",
+        },
+        "tmpDirType": "string",
+        "thinking": {
+            "normalized": ["low", "xhigh", None, "adaptive"],
+            "levels": "off|minimal|low|medium|high|xhigh",
+            "xhighSupportedWithoutCatalog": False,
+            "hint": "provider models that advertise xhigh reasoning",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_xai_model_id_helper(
     tmp_path,
 ) -> None:
@@ -14621,6 +15479,608 @@ module.exports = {
             },
         },
         "loggerType": "function",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_image_generation_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-image-generation.cjs"
+    runtime_entry.write_text(
+        """
+const image = require("openclaw/plugin-sdk/image-generation");
+const scopedImage = require("@openclaw/plugin-sdk/image-generation");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.image_generation",
+      description: "Use OpenClaw image-generation SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const pngBytes = Buffer.from([
+          0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
+        ]);
+        const jpegBase64 = Buffer.from([0xff, 0xd8, 0xff, 0x00]).toString("base64");
+        const dataUrl = image.toImageDataUrl({
+          buffer: Buffer.from("hello"),
+          mimeType: " image/webp "
+        });
+        const parsedDataUrl = image.parseImageDataUrl(dataUrl);
+        const parsedImageAssets = image.parseOpenAiCompatibleImageResponse(
+          {
+            data: [
+              {
+                b64_json: pngBytes.toString("base64"),
+                mime_type: " ",
+                revised_prompt: " revised "
+              },
+              { b64_json: " " },
+              { b64_json: jpegBase64 }
+            ]
+          },
+          {
+            defaultMimeType: "image/png",
+            fileNamePrefix: "gen",
+            sniffMimeType: true
+          }
+        );
+        const parsedImages = Array.isArray(parsedImageAssets)
+          ? parsedImageAssets.map((asset) => ({
+              fileName: asset.fileName,
+              mimeType: asset.mimeType,
+              revisedPrompt: asset.revisedPrompt,
+              hex: asset.buffer.toString("hex")
+            }))
+          : parsedImageAssets;
+        const dataUrlAsset = image.generatedImageAssetFromDataUrl({
+          dataUrl: `data:image/svg+xml;base64,${Buffer.from("<svg/>").toString("base64")}`,
+          index: 0,
+          fileNamePrefix: "icon"
+        });
+        const providerOptions = {
+          id: "demo-image",
+          label: "Demo Image",
+          defaultModel: "demo-1",
+          models: ["demo-1"],
+          capabilities: {
+            generate: { maxCount: 2 },
+            edit: { enabled: false, maxInputImages: 1 }
+          },
+          defaultBaseUrl: "https://example.test/v1",
+          buildGenerateRequest({ model, count }) {
+            return { kind: "json", body: { model, n: count } };
+          },
+          buildEditRequest() {
+            return { kind: "json", body: { edit: true } };
+          }
+        };
+        const provider = image.createOpenAiCompatibleImageGenerationProvider(providerOptions);
+        let providerResult = provider;
+        if (
+          provider &&
+          Array.isArray(provider.models) &&
+          typeof provider.generateImage === "function"
+        ) {
+          provider.models.push("mutated");
+          let editError = "";
+          try {
+            await provider.generateImage({
+              provider: "demo-image",
+              model: "demo-1",
+              prompt: "edit",
+              cfg: {},
+              inputImages: [{ buffer: Buffer.from("x"), mimeType: "image/png" }]
+            });
+          } catch (error) {
+            editError = error.message;
+          }
+          let missingApiKey = "";
+          try {
+            await provider.generateImage({
+              provider: "demo-image",
+              model: "demo-1",
+              prompt: "draw",
+              cfg: {},
+              count: 2
+            });
+          } catch (error) {
+            missingApiKey = error.message;
+          }
+          providerResult = {
+            id: provider.id,
+            label: provider.label,
+            defaultModel: provider.defaultModel,
+            optionsModels: providerOptions.models,
+            copiedModels: provider.models,
+            configured:
+              typeof provider.isConfigured === "function"
+                ? provider.isConfigured({ agentDir: "" })
+                : null,
+            editError,
+            missingApiKey
+          };
+        }
+        return {
+          keys: Object.keys(image).sort(),
+          scopedSame:
+            scopedImage.toImageDataUrl === image.toImageDataUrl &&
+            scopedImage.createOpenAiCompatibleImageGenerationProvider ===
+              image.createOpenAiCompatibleImageGenerationProvider,
+          extensions: [
+            image.imageFileExtensionForMimeType("IMAGE/JPEG; charset=utf-8"),
+            image.imageFileExtensionForMimeType("image/svg+xml"),
+            image.imageFileExtensionForMimeType(undefined, "bin")
+          ],
+          sniffed: {
+            png: image.sniffImageMimeType(pngBytes),
+            fallback: image.sniffImageMimeType(Buffer.from("x"), "image/gif")
+          },
+          dataUrl: { value: dataUrl, parsed: parsedDataUrl },
+          parsedImages,
+          fromDataUrl:
+            dataUrlAsset && Buffer.isBuffer(dataUrlAsset.buffer)
+              ? {
+                  fileName: dataUrlAsset.fileName,
+                  mimeType: dataUrlAsset.mimeType,
+                  text: dataUrlAsset.buffer.toString("utf8")
+                }
+              : dataUrlAsset ?? null,
+          entryBlankType: typeof image.generatedImageAssetFromBase64({
+            base64: " ",
+            index: 0
+          }),
+          sourceNames: [
+            image.imageSourceUploadFileName({
+              image: { buffer: Buffer.from("x"), mimeType: "image/png", fileName: "keep.jpg" },
+              index: 0
+            }),
+            image.imageSourceUploadFileName({
+              image: { buffer: Buffer.from("x"), mimeType: "image/webp" },
+              index: 1,
+              fileNamePrefix: "ref"
+            })
+          ],
+          provider: providerResult
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "image-generation-plugin",
+                    "name": "Image Generation Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-image-generation.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.image_generation"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.image_generation"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createOpenAiCompatibleImageGenerationProvider",
+            "generatedImageAssetFromBase64",
+            "generatedImageAssetFromDataUrl",
+            "generatedImageAssetFromOpenAiCompatibleEntry",
+            "imageFileExtensionForMimeType",
+            "imageSourceUploadFileName",
+            "parseImageDataUrl",
+            "parseOpenAiCompatibleImageResponse",
+            "sniffImageMimeType",
+            "toImageDataUrl",
+        ],
+        "scopedSame": True,
+        "extensions": ["jpg", "svg", "bin"],
+        "sniffed": {
+            "png": {"mimeType": "image/png", "extension": "png"},
+            "fallback": {"mimeType": "image/gif", "extension": "gif"},
+        },
+        "dataUrl": {
+            "value": "data:image/webp;base64,aGVsbG8=",
+            "parsed": {"mimeType": "image/webp", "base64": "aGVsbG8="},
+        },
+        "parsedImages": [
+            {
+                "fileName": "gen-1.png",
+                "mimeType": "image/png",
+                "revisedPrompt": "revised",
+                "hex": "89504e470d0a1a0a",
+            },
+            {
+                "fileName": "gen-3.jpg",
+                "mimeType": "image/jpeg",
+                "hex": "ffd8ff00",
+            },
+        ],
+        "fromDataUrl": {
+            "fileName": "icon-1.svg",
+            "mimeType": "image/svg+xml",
+            "text": "<svg/>",
+        },
+        "entryBlankType": "undefined",
+        "sourceNames": ["keep.jpg", "ref-2.webp"],
+        "provider": {
+            "id": "demo-image",
+            "label": "Demo Image",
+            "defaultModel": "demo-1",
+            "optionsModels": ["demo-1"],
+            "copiedModels": ["demo-1", "mutated"],
+            "configured": False,
+            "editError": "Demo Image image editing is not supported.",
+            "missingApiKey": "Demo Image API key missing",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_video_generation_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-video-generation.cjs"
+    runtime_entry.write_text(
+        """
+const video = require("openclaw/plugin-sdk/video-generation");
+const scopedVideo = require("@openclaw/plugin-sdk/video-generation");
+
+function projectVideo(asset) {
+  return {
+    fileName: asset.fileName,
+    mimeType: asset.mimeType,
+    hex: asset.buffer ? asset.buffer.toString("hex") : undefined,
+    url: asset.url,
+    metadata: asset.metadata
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.video_generation",
+      description: "Use OpenClaw video-generation SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let bufferInputError = "";
+        try {
+          video.buildDashscopeVideoGenerationInput({
+            providerLabel: "Dashscope",
+            req: {
+              prompt: "make",
+              cfg: {},
+              provider: "dashscope",
+              model: "wan2.6-t2v",
+              inputImages: [{ buffer: Buffer.from("x"), mimeType: "image/png" }]
+            }
+          });
+        } catch (error) {
+          bufferInputError = error.message;
+        }
+        const refs = video.resolveVideoGenerationReferenceUrls(
+          [{ url: " https://img.example/a.png " }, { url: " " }],
+          [{ url: "https://video.example/v.mp4" }]
+        );
+        const oneImageInput = video.buildDashscopeVideoGenerationInput({
+          providerLabel: "Dashscope",
+          req: {
+            prompt: "make",
+            cfg: {},
+            provider: "dashscope",
+            model: "wan2.6-i2v",
+            inputImages: [{ url: "https://img.example/a.png" }]
+          }
+        });
+        const multiInput = video.buildDashscopeVideoGenerationInput({
+          providerLabel: "Dashscope",
+          req: {
+            prompt: "make",
+            cfg: {},
+            provider: "dashscope",
+            model: "wan2.6-r2v",
+            inputImages: [{ url: "https://img.example/a.png" }],
+            inputVideos: [{ url: "https://video.example/v.mp4" }]
+          }
+        });
+        const params = video.buildDashscopeVideoGenerationParameters({
+          prompt: "make",
+          cfg: {},
+          provider: "dashscope",
+          model: "wan2.6-t2v",
+          resolution: "720P",
+          aspectRatio: " 16:9 ",
+          durationSeconds: 3.6,
+          audio: true,
+          watermark: false
+        });
+        const emptyParams = video.buildDashscopeVideoGenerationParameters({
+          prompt: "make",
+          cfg: {},
+          provider: "dashscope",
+          model: "wan2.6-t2v"
+        });
+        const urls = video.extractDashscopeVideoUrls({
+          output: {
+            results: [
+              { video_url: "https://cdn.example/a.mp4" },
+              { video_url: "" },
+              { video_url: "https://cdn.example/b.mp4" }
+            ],
+            video_url: "https://cdn.example/a.mp4"
+          }
+        });
+        const runCalls = [];
+        const fakeFetch = async (url, init = {}) => {
+          const body = init.body ? JSON.parse(init.body) : undefined;
+          runCalls.push({ url, method: init.method, body });
+          if (url.includes("/api/v1/tasks/task-1")) {
+            return new Response(
+              JSON.stringify({
+                output: {
+                  task_status: "SUCCEEDED",
+                  results: [{ video_url: "https://cdn.example/run.mp4" }]
+                }
+              }),
+              { status: 200, headers: { "content-type": "application/json" } }
+            );
+          }
+          if (url === "https://cdn.example/run.mp4") {
+            return new Response(new Uint8Array([9, 8, 7]), {
+              status: 200,
+              headers: { "content-type": "video/mp4" }
+            });
+          }
+          return new Response(
+            JSON.stringify({ request_id: "req-1", output: { task_id: "task-1" } }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        };
+        const runResult = await video.runDashscopeVideoGenerationTask({
+          providerLabel: "Dashscope",
+          model: "wan2.6-t2v",
+          req: {
+            prompt: "go",
+            cfg: {},
+            provider: "dashscope",
+            model: "wan2.6-t2v",
+            resolution: "480P",
+            audio: false,
+            inputImages: [{ url: "https://img.example/frame.png" }]
+          },
+          url: "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis",
+          baseUrl: "https://dashscope.aliyuncs.com",
+          headers: new Headers({ Authorization: "Bearer key" }),
+          fetchFn: fakeFetch,
+          defaultTimeoutMs: 1000
+        });
+        const capabilities = video.DASHSCOPE_WAN_VIDEO_CAPABILITIES || {};
+        const resolutionToSize = video.DEFAULT_VIDEO_RESOLUTION_TO_SIZE || {};
+        return {
+          keys: Object.keys(video).sort(),
+          scopedSame:
+            scopedVideo.buildDashscopeVideoGenerationInput ===
+            video.buildDashscopeVideoGenerationInput,
+          constants: {
+            defaultModel: video.DEFAULT_DASHSCOPE_WAN_VIDEO_MODEL,
+            models: video.DASHSCOPE_WAN_VIDEO_MODELS,
+            defaultDuration: video.DEFAULT_VIDEO_GENERATION_DURATION_SECONDS,
+            defaultTimeout: video.DEFAULT_VIDEO_GENERATION_TIMEOUT_MS,
+            resolutionSize: resolutionToSize["720P"],
+            supportsAudio: capabilities.generate && capabilities.generate.supportsAudio,
+            maxInputVideos: capabilities.videoToVideo && capabilities.videoToVideo.maxInputVideos
+          },
+          refs,
+          inputs: { oneImageInput, multiInput, bufferInputError },
+          params,
+          emptyParams: emptyParams ?? null,
+          urls,
+          run:
+            runResult && Array.isArray(runResult.videos)
+              ? {
+                  model: runResult.model,
+                  videos: runResult.videos.map(projectVideo),
+                  metadata: runResult.metadata,
+                  calls: runCalls
+                }
+              : runResult
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "video-generation-plugin",
+                    "name": "Video Generation Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-video-generation.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.video_generation"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.video_generation"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "DASHSCOPE_WAN_VIDEO_CAPABILITIES",
+            "DASHSCOPE_WAN_VIDEO_MODELS",
+            "DEFAULT_DASHSCOPE_WAN_VIDEO_MODEL",
+            "DEFAULT_VIDEO_GENERATION_DURATION_SECONDS",
+            "DEFAULT_VIDEO_GENERATION_TIMEOUT_MS",
+            "DEFAULT_VIDEO_RESOLUTION_TO_SIZE",
+            "buildDashscopeVideoGenerationInput",
+            "buildDashscopeVideoGenerationParameters",
+            "downloadDashscopeGeneratedVideos",
+            "extractDashscopeVideoUrls",
+            "pollDashscopeVideoTaskUntilComplete",
+            "resolveVideoGenerationReferenceUrls",
+            "runDashscopeVideoGenerationTask",
+        ],
+        "scopedSame": True,
+        "constants": {
+            "defaultModel": "wan2.6-t2v",
+            "models": [
+                "wan2.6-t2v",
+                "wan2.6-i2v",
+                "wan2.6-r2v",
+                "wan2.6-r2v-flash",
+                "wan2.7-r2v",
+            ],
+            "defaultDuration": 5,
+            "defaultTimeout": 120000,
+            "resolutionSize": "1280*720",
+            "supportsAudio": True,
+            "maxInputVideos": 4,
+        },
+        "refs": ["https://img.example/a.png", "https://video.example/v.mp4"],
+        "inputs": {
+            "oneImageInput": {
+                "prompt": "make",
+                "img_url": "https://img.example/a.png",
+            },
+            "multiInput": {
+                "prompt": "make",
+                "reference_urls": [
+                    "https://img.example/a.png",
+                    "https://video.example/v.mp4",
+                ],
+            },
+            "bufferInputError": (
+                "Dashscope video generation currently requires remote http(s) "
+                "URLs for reference images/videos."
+            ),
+        },
+        "params": {
+            "size": "1280*720",
+            "aspect_ratio": "16:9",
+            "duration": 4,
+            "enable_audio": True,
+            "watermark": False,
+        },
+        "emptyParams": None,
+        "urls": ["https://cdn.example/a.mp4", "https://cdn.example/b.mp4"],
+        "run": {
+            "model": "wan2.6-t2v",
+            "videos": [
+                {
+                    "fileName": "video-1.mp4",
+                    "mimeType": "video/mp4",
+                    "hex": "090807",
+                    "metadata": {"sourceUrl": "https://cdn.example/run.mp4"},
+                }
+            ],
+            "metadata": {
+                "requestId": "req-1",
+                "taskId": "task-1",
+                "taskStatus": "SUCCEEDED",
+            },
+            "calls": [
+                {
+                    "url": (
+                        "https://dashscope.aliyuncs.com/api/v1/services/"
+                        "aigc/video-generation/video-synthesis"
+                    ),
+                    "method": "POST",
+                    "body": {
+                        "model": "wan2.6-t2v",
+                        "input": {
+                            "prompt": "go",
+                            "img_url": "https://img.example/frame.png",
+                        },
+                        "parameters": {
+                            "size": "832*480",
+                            "duration": 5,
+                            "enable_audio": False,
+                        },
+                    },
+                },
+                {
+                    "url": "https://dashscope.aliyuncs.com/api/v1/tasks/task-1",
+                    "method": "GET",
+                },
+                {
+                    "url": "https://cdn.example/run.mp4",
+                    "method": "GET",
+                },
+            ],
+        },
     }
 
 
@@ -17271,6 +18731,1816 @@ module.exports = {
             {"name": "github", "ok": False, "message": unavailable_message},
             {"name": "runtime-openai", "ok": False, "message": unavailable_message},
         ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_github_copilot_login_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-github-copilot-login.cjs"
+    runtime_entry.write_text(
+        """
+const login = require("openclaw/plugin-sdk/github-copilot-login");
+const scopedLogin = require("@openclaw/plugin-sdk/github-copilot-login");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.github_copilot_login",
+      description: "Use OpenClaw github-copilot-login SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let unavailable = "";
+        try {
+          await login.githubCopilotLoginCommand({ profileId: "demo" }, {});
+        } catch (error) {
+          unavailable = error && error.message;
+        }
+        return {
+          keys: Object.keys(login).sort(),
+          scopedType: typeof scopedLogin.githubCopilotLoginCommand,
+          unavailable
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-github-copilot-login-plugin",
+                    "name": "Runtime GitHub Copilot Login Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-github-copilot-login.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.github_copilot_login"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.github_copilot_login"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["githubCopilotLoginCommand"],
+        "scopedType": "function",
+        "unavailable": (
+            "Provider auth login helpers require an interactive OpenClaw login runtime."
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_copilot_proxy_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-copilot-proxy.cjs"
+    runtime_entry.write_text(
+        """
+const proxy = require("openclaw/plugin-sdk/copilot-proxy");
+const scopedProxy = require("@openclaw/plugin-sdk/copilot-proxy");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.copilot_proxy",
+      description: "Use OpenClaw copilot-proxy SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const entry = proxy.definePluginEntry({
+          id: "copilot-proxy-demo",
+          name: "Copilot Proxy Demo",
+          description: "Proxy description",
+          register() { return "registered"; }
+        });
+        return {
+          keys: Object.keys(proxy).sort(),
+          scopedSame: scopedProxy.definePluginEntry === proxy.definePluginEntry,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            registerType: typeof entry.register,
+            configSchemaType: typeof entry.configSchema
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-copilot-proxy-plugin",
+                    "name": "Runtime Copilot Proxy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-copilot-proxy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.copilot_proxy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.copilot_proxy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["definePluginEntry"],
+        "scopedSame": True,
+        "entry": {
+            "id": "copilot-proxy-demo",
+            "name": "Copilot Proxy Demo",
+            "description": "Proxy description",
+            "registerType": "function",
+            "configSchemaType": "object",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_private_qa_bundled_env_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    package_root = tmp_path / "source-openclaw"
+    (package_root / ".git").mkdir(parents=True)
+    (package_root / "src").mkdir()
+    extensions_dir = package_root / "extensions"
+    extensions_dir.mkdir()
+    runtime_entry = tmp_path / "runtime-plugin-private-qa-bundled-env.cjs"
+    runtime_entry.write_text(
+        f"""
+const qa = require("openclaw/plugin-sdk/private-qa-bundled-env");
+const scopedQa = require("@openclaw/plugin-sdk/private-qa-bundled-env");
+const sourceRoot = {json.dumps(str(package_root))};
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.private_qa_bundled_env",
+      description: "Use OpenClaw private QA bundled env SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        process.chdir(sourceRoot);
+        const disabled = qa.resolvePrivateQaBundledPluginsEnv({{
+          OPENCLAW_ENABLE_PRIVATE_QA_CLI: "0"
+        }});
+        const enabled = qa.resolvePrivateQaBundledPluginsEnv({{
+          OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1",
+          KEEP_ME: "yes"
+        }});
+        return {{
+          keys: Object.keys(qa).sort(),
+          scopedSame:
+            scopedQa.resolvePrivateQaBundledPluginsEnv ===
+            qa.resolvePrivateQaBundledPluginsEnv,
+          disabled: disabled === undefined,
+          keepMe: enabled && enabled.KEEP_ME,
+          bundledDir: enabled && enabled.OPENCLAW_BUNDLED_PLUGINS_DIR
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-private-qa-bundled-env-plugin",
+                    "name": "Runtime Private QA Bundled Env Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-private-qa-bundled-env.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.private_qa_bundled_env"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.private_qa_bundled_env"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolvePrivateQaBundledPluginsEnv"],
+        "scopedSame": True,
+        "disabled": True,
+        "keepMe": "yes",
+        "bundledDir": str(extensions_dir),
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_thread_ownership_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-thread-ownership.cjs"
+    runtime_entry.write_text(
+        """
+const ownership = require("openclaw/plugin-sdk/thread-ownership");
+const scopedOwnership = require("@openclaw/plugin-sdk/thread-ownership");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.thread_ownership",
+      description: "Use OpenClaw thread-ownership SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const entry = ownership.definePluginEntry({
+          id: "thread-ownership-demo",
+          name: "Thread Ownership Demo",
+          description: "Thread ownership description",
+          register() { return "registered"; }
+        });
+        return {
+          keys: Object.keys(ownership).sort(),
+          scopedSame:
+            scopedOwnership.fetchWithSsrFGuard === ownership.fetchWithSsrFGuard &&
+            scopedOwnership.definePluginEntry === ownership.definePluginEntry,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            registerType: typeof entry.register
+          },
+          fetchType: typeof ownership.fetchWithSsrFGuard,
+          policies: [
+            ownership.ssrfPolicyFromDangerouslyAllowPrivateNetwork(true),
+            ownership.ssrfPolicyFromDangerouslyAllowPrivateNetwork(false) || null,
+            ownership.ssrfPolicyFromAllowPrivateNetwork(true)
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-thread-ownership-plugin",
+                    "name": "Runtime Thread Ownership Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-thread-ownership.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.thread_ownership"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.thread_ownership"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "definePluginEntry",
+            "fetchWithSsrFGuard",
+            "ssrfPolicyFromAllowPrivateNetwork",
+            "ssrfPolicyFromDangerouslyAllowPrivateNetwork",
+        ],
+        "scopedSame": True,
+        "entry": {
+            "id": "thread-ownership-demo",
+            "name": "Thread Ownership Demo",
+            "registerType": "function",
+        },
+        "fetchType": "function",
+        "policies": [
+            {"allowPrivateNetwork": True},
+            None,
+            {"allowPrivateNetwork": True},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_ssrf_dispatcher_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-ssrf-dispatcher.cjs"
+    runtime_entry.write_text(
+        """
+const dispatcher = require("openclaw/plugin-sdk/ssrf-dispatcher");
+const scopedDispatcher = require("@openclaw/plugin-sdk/ssrf-dispatcher");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.ssrf_dispatcher",
+      description: "Use OpenClaw ssrf-dispatcher SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let closed = false;
+        if (typeof dispatcher.closeDispatcher === "function") {
+          await dispatcher.closeDispatcher({
+            close: async () => {
+              closed = true;
+            }
+          });
+        }
+        const pinned =
+          typeof dispatcher.resolvePinnedHostnameWithPolicy === "function"
+            ? await dispatcher.resolvePinnedHostnameWithPolicy("example.com", {
+                lookupFn: async () => [
+                  { address: "93.184.216.34", family: 4 }
+                ]
+              })
+            : null;
+        return {
+          keys: Object.keys(dispatcher).sort(),
+          scopedSame:
+            scopedDispatcher.resolvePinnedHostnameWithPolicy ===
+            dispatcher.resolvePinnedHostnameWithPolicy,
+          createType: typeof dispatcher.createPinnedDispatcher,
+          closed,
+          pinned
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-ssrf-dispatcher-plugin",
+                    "name": "Runtime SSRF Dispatcher Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-ssrf-dispatcher.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.ssrf_dispatcher"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.ssrf_dispatcher"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "closeDispatcher",
+            "createPinnedDispatcher",
+            "resolvePinnedHostnameWithPolicy",
+        ],
+        "scopedSame": True,
+        "createType": "function",
+        "closed": True,
+        "pinned": {"hostname": "example.com", "addresses": ["93.184.216.34"]},
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_bluebubbles_policy_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-bluebubbles-policy.cjs"
+    runtime_entry.write_text(
+        """
+const policy = require("openclaw/plugin-sdk/bluebubbles-policy");
+const scopedPolicy = require("@openclaw/plugin-sdk/bluebubbles-policy");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.bluebubbles_policy",
+      description: "Use OpenClaw bluebubbles-policy SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(policy).sort(),
+          scopedSame:
+            scopedPolicy.isAllowedBlueBubblesSender ===
+            policy.isAllowedBlueBubblesSender,
+          sender: [
+            policy.isAllowedBlueBubblesSender({
+              allowFrom: [" +15551234567 "],
+              sender: "+15551234567"
+            }),
+            policy.isAllowedBlueBubblesSender({
+              allowFrom: ["chat_guid:chat-guid-1"],
+              sender: "other",
+              chatGuid: "chat-guid-1"
+            }),
+            policy.isAllowedBlueBubblesSender({
+              allowFrom: ["different"],
+              sender: "+15551234567"
+            })
+          ],
+          groupDefaults: {
+            mention: policy.resolveBlueBubblesGroupRequireMention({
+              cfg: {},
+              groupId: "chat-1"
+            }),
+            tools: policy.resolveBlueBubblesGroupToolPolicy({
+              cfg: {},
+              groupId: "chat-1"
+            }) || null
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-bluebubbles-policy-plugin",
+                    "name": "Runtime BlueBubbles Policy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-bluebubbles-policy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.bluebubbles_policy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.bluebubbles_policy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "isAllowedBlueBubblesSender",
+            "resolveBlueBubblesGroupRequireMention",
+            "resolveBlueBubblesGroupToolPolicy",
+        ],
+        "scopedSame": True,
+        "sender": [True, True, False],
+        "groupDefaults": {"mention": True, "tools": None},
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_mattermost_policy_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-mattermost-policy.cjs"
+    runtime_entry.write_text(
+        """
+const policy = require("openclaw/plugin-sdk/mattermost-policy");
+const scopedPolicy = require("@openclaw/plugin-sdk/mattermost-policy");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.mattermost_policy",
+      description: "Use OpenClaw mattermost-policy SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(policy).sort(),
+          scopedSame:
+            scopedPolicy.isMattermostSenderAllowed ===
+            policy.isMattermostSenderAllowed,
+          exactId: policy.isMattermostSenderAllowed({
+            senderId: "@Alice",
+            senderName: "Alicia",
+            allowFrom: [" mattermost:alice "],
+            allowNameMatching: false
+          }),
+          nameMatch: policy.isMattermostSenderAllowed({
+            senderId: "user-id-1",
+            senderName: "Team Lead",
+            allowFrom: ["user:team lead"],
+            allowNameMatching: true
+          }),
+          nameMatchDisabled: policy.isMattermostSenderAllowed({
+            senderId: "user-id-1",
+            senderName: "Team Lead",
+            allowFrom: ["team lead"],
+            allowNameMatching: false
+          }),
+          wildcard: policy.isMattermostSenderAllowed({
+            senderId: "anyone",
+            allowFrom: ["*"]
+          }),
+          empty: policy.isMattermostSenderAllowed({
+            senderId: "alice",
+            allowFrom: []
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-mattermost-policy-plugin",
+                    "name": "Runtime Mattermost Policy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-mattermost-policy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.mattermost_policy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.mattermost_policy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["isMattermostSenderAllowed"],
+        "scopedSame": True,
+        "exactId": True,
+        "nameMatch": True,
+        "nameMatchDisabled": False,
+        "wildcard": True,
+        "empty": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_matrix_runtime_surface_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-matrix-runtime-surface.cjs"
+    runtime_entry.write_text(
+        """
+const matrix = require("openclaw/plugin-sdk/matrix-runtime-surface");
+const scopedMatrix = require("@openclaw/plugin-sdk/matrix-runtime-surface");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.matrix_runtime_surface",
+      description: "Use OpenClaw matrix-runtime-surface SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const work = matrix.resolveMatrixAccountStringValues({
+          accountId: "work",
+          account: {
+            homeserver: "https://account.example",
+            userId: "@account:example"
+          },
+          scopedEnv: {
+            accessToken: "scoped-token",
+            password: "scoped-pass"
+          },
+          channel: {
+            homeserver: "https://channel.example",
+            userId: "@channel:example",
+            accessToken: "channel-token",
+            password: "channel-pass",
+            deviceId: "channel-device",
+            deviceName: "Channel Device"
+          },
+          globalEnv: {
+            homeserver: "https://global.example",
+            userId: "@global:example",
+            accessToken: "global-token",
+            password: "global-pass",
+            deviceId: "global-device",
+            deviceName: "Global Device"
+          }
+        });
+        const defaults = matrix.resolveMatrixAccountStringValues({
+          accountId: "default",
+          account: {},
+          scopedEnv: {},
+          channel: {
+            homeserver: "https://channel.example",
+            userId: "@channel:example",
+            accessToken: "channel-token",
+            deviceId: "channel-device"
+          },
+          globalEnv: {
+            homeserver: "https://global.example",
+            userId: "@global:example",
+            accessToken: "global-token",
+            password: "global-pass",
+            deviceId: "global-device",
+            deviceName: "Global Device"
+          }
+        });
+        const runtimeResult = matrix.setMatrixRuntime({ current: () => ({ ok: true }) });
+        return {
+          keys: Object.keys(matrix).sort(),
+          scopedSame:
+            scopedMatrix.resolveMatrixAccountStringValues ===
+              matrix.resolveMatrixAccountStringValues &&
+            scopedMatrix.setMatrixRuntime === matrix.setMatrixRuntime,
+          runtimeResult,
+          work,
+          defaults
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-matrix-runtime-surface-plugin",
+                    "name": "Runtime Matrix Runtime Surface Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-matrix-runtime-surface.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.matrix_runtime_surface"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.matrix_runtime_surface"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolveMatrixAccountStringValues", "setMatrixRuntime"],
+        "scopedSame": True,
+        "work": {
+            "homeserver": "https://account.example",
+            "userId": "@account:example",
+            "accessToken": "scoped-token",
+            "password": "scoped-pass",
+            "deviceId": "",
+            "deviceName": "Channel Device",
+        },
+        "defaults": {
+            "homeserver": "https://channel.example",
+            "userId": "@channel:example",
+            "accessToken": "channel-token",
+            "password": "global-pass",
+            "deviceId": "channel-device",
+            "deviceName": "Global Device",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_matrix_thread_bindings_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-matrix-thread-bindings.cjs"
+    runtime_entry.write_text(
+        """
+const bindings = require("openclaw/plugin-sdk/matrix-thread-bindings");
+const scopedBindings = require("@openclaw/plugin-sdk/matrix-thread-bindings");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.matrix_thread_bindings",
+      description: "Use OpenClaw matrix-thread-bindings SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(bindings).sort(),
+          scopedSame:
+            scopedBindings.setMatrixThreadBindingIdleTimeoutBySessionKey ===
+              bindings.setMatrixThreadBindingIdleTimeoutBySessionKey &&
+            scopedBindings.setMatrixThreadBindingMaxAgeBySessionKey ===
+              bindings.setMatrixThreadBindingMaxAgeBySessionKey,
+          idleMissing: bindings.setMatrixThreadBindingIdleTimeoutBySessionKey({
+            accountId: "ops",
+            targetSessionKey: "agent:ops:subagent:child",
+            idleTimeoutMs: 7200000
+          }),
+          maxAgeMissing: bindings.setMatrixThreadBindingMaxAgeBySessionKey({
+            accountId: "ops",
+            targetSessionKey: "agent:ops:subagent:child",
+            maxAgeMs: 21600000
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-matrix-thread-bindings-plugin",
+                    "name": "Runtime Matrix Thread Bindings Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-matrix-thread-bindings.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.matrix_thread_bindings"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.matrix_thread_bindings"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "setMatrixThreadBindingIdleTimeoutBySessionKey",
+            "setMatrixThreadBindingMaxAgeBySessionKey",
+        ],
+        "scopedSame": True,
+        "idleMissing": [],
+        "maxAgeMissing": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_matrix_surface_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-matrix-surface.cjs"
+    runtime_entry.write_text(
+        """
+const matrix = require("openclaw/plugin-sdk/matrix-surface");
+const scopedMatrix = require("@openclaw/plugin-sdk/matrix-surface");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.matrix_surface",
+      description: "Use OpenClaw matrix-surface SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const params = {
+          cfg: {},
+          accountId: "ops",
+          auth: {
+            accountId: "ops",
+            homeserver: "https://matrix.example.org",
+            userId: "@bot:example.org",
+            accessToken: "token"
+          },
+          client: {},
+          idleTimeoutMs: 86400000,
+          maxAgeMs: 0,
+          enableSweeper: false
+        };
+        const manager = await matrix.createMatrixThreadBindingManager(params);
+        const sameManager = await scopedMatrix.createMatrixThreadBindingManager(params);
+        let mismatchError;
+        try {
+          await matrix.createMatrixThreadBindingManager({
+            ...params,
+            accountId: "ops",
+            auth: { ...params.auth, accountId: "other" }
+          });
+        } catch (error) {
+          mismatchError = String(error && error.message ? error.message : error);
+        }
+        const resetResult = matrix.resetMatrixThreadBindingsForTests();
+        return {
+          keys: Object.keys(matrix).sort(),
+          scopedSame:
+            scopedMatrix.createMatrixThreadBindingManager ===
+              matrix.createMatrixThreadBindingManager &&
+            scopedMatrix.resetMatrixThreadBindingsForTests ===
+              matrix.resetMatrixThreadBindingsForTests,
+          channels: Array.from(matrix.matrixSessionBindingAdapterChannels),
+          sameManager: sameManager === manager,
+          manager: {
+            accountId: manager.accountId,
+            idleTimeoutMs: manager.getIdleTimeoutMs(),
+            maxAgeMs: manager.getMaxAgeMs(),
+            byConversation:
+              manager.getByConversation({
+                conversationId: "$thread",
+                parentConversationId: "!room:example"
+              }) || null,
+            bySession: manager.listBySessionKey("agent:ops:subagent:child"),
+            all: manager.listBindings(),
+            persistType: typeof manager.persist,
+            stopType: typeof manager.stop
+          },
+          mismatchError,
+          resetResult
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-matrix-surface-plugin",
+                    "name": "Runtime Matrix Surface Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-matrix-surface.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.matrix_surface"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.matrix_surface"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createMatrixThreadBindingManager",
+            "matrixSessionBindingAdapterChannels",
+            "resetMatrixThreadBindingsForTests",
+        ],
+        "scopedSame": True,
+        "channels": ["matrix"],
+        "sameManager": True,
+        "manager": {
+            "accountId": "ops",
+            "idleTimeoutMs": 86400000,
+            "maxAgeMs": 0,
+            "byConversation": None,
+            "bySession": [],
+            "all": [],
+            "persistType": "function",
+            "stopType": "function",
+        },
+        "mismatchError": (
+            "Matrix thread binding account mismatch: requested ops, auth resolved other"
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_matrix_helper_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-matrix-helper.cjs"
+    runtime_entry.write_text(
+        """
+const helper = require("openclaw/plugin-sdk/matrix-helper");
+const scopedHelper = require("@openclaw/plugin-sdk/matrix-helper");
+
+function slash(value) {
+  return String(value).replace(/\\\\/g, "/");
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.matrix_helper",
+      description: "Use OpenClaw matrix-helper SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            matrix: {
+              defaultAccount: "Ops Team",
+              homeserver: "https://default.example",
+              userId: "@default:example",
+              password: "default-pass",
+              accounts: {
+                "Ops Team": {
+                  homeserver: "https://ops.example",
+                  userId: "@ops:example",
+                  accessToken: { source: "env", id: "OPS_TOKEN" },
+                  deviceName: "Ops Bot"
+                },
+                "QA": {
+                  homeserver: "https://qa.example",
+                  userId: "@qa:example",
+                  password: "qa-pass"
+                }
+              }
+            }
+          }
+        };
+        const env = {
+          MATRIX_TEAM_X2D_TWO_HOMESERVER: "https://team-two.example",
+          MATRIX_TEAM_X2D_TWO_USER_ID: "@two:example",
+          MATRIX_TEAM_X2D_TWO_ACCESS_TOKEN: "two-token"
+        };
+        const ambiguousCfg = {
+          channels: {
+            matrix: {
+              accounts: {
+                ops: { homeserver: "https://ops.example", userId: "@ops:example" },
+                qa: { homeserver: "https://qa.example", userId: "@qa:example" }
+              }
+            }
+          }
+        };
+        const stateDir = "C:/OpenZues/state";
+        const storage = helper.resolveMatrixAccountStorageRoot({
+          stateDir,
+          homeserver: "https://matrix.example.org:8448/path",
+          userId: "@Bot:Example.Org",
+          accessToken: "secret-token",
+          accountId: "Ops Team"
+        });
+        const legacy = helper.resolveMatrixLegacyFlatStoragePaths(stateDir);
+        return {
+          keys: Object.keys(helper).sort(),
+          scopedSame:
+            scopedHelper.findMatrixAccountEntry === helper.findMatrixAccountEntry &&
+            scopedHelper.resolveMatrixCredentialsPath ===
+              helper.resolveMatrixCredentialsPath,
+          envNames: helper.getMatrixScopedEnvVarNames("Team Two"),
+          channelConfig: helper.resolveMatrixChannelConfig(cfg),
+          missingChannel: helper.resolveMatrixChannelConfig({ channels: { matrix: [] } }),
+          accountEntry: helper.findMatrixAccountEntry(cfg, "ops-team"),
+          ids: helper.resolveConfiguredMatrixAccountIds(cfg, env),
+          defaultId: helper.resolveMatrixDefaultOrOnlyAccountId(cfg, env),
+          missingDefaultId: helper.resolveMatrixDefaultOrOnlyAccountId({}, {}),
+          requiresExplicit: helper.requiresExplicitMatrixDefaultAccount(ambiguousCfg, env),
+          credentialsDir: slash(helper.resolveMatrixCredentialsDir(stateDir)),
+          credentialsPath: slash(
+            helper.resolveMatrixCredentialsPath({
+              stateDir,
+              accountId: "Ops Team"
+            })
+          ),
+          defaultCredentialsPath: slash(
+            helper.resolveMatrixCredentialsPath({ stateDir })
+          ),
+          legacy: {
+            rootDir: slash(legacy.rootDir),
+            storagePath: slash(legacy.storagePath),
+            cryptoPath: slash(legacy.cryptoPath)
+          },
+          storage: {
+            rootDir: slash(storage.rootDir),
+            accountKey: storage.accountKey,
+            tokenHash: storage.tokenHash
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-matrix-helper-plugin",
+                    "name": "Runtime Matrix Helper Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-matrix-helper.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.matrix_helper"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.matrix_helper"})
+
+    assert payload["ok"] is True
+    token_hash = hashlib.sha256(b"secret-token").hexdigest()[:16]
+    assert payload["result"] == {
+        "keys": [
+            "findMatrixAccountEntry",
+            "getMatrixScopedEnvVarNames",
+            "requiresExplicitMatrixDefaultAccount",
+            "resolveConfiguredMatrixAccountIds",
+            "resolveMatrixAccountStorageRoot",
+            "resolveMatrixChannelConfig",
+            "resolveMatrixCredentialsDir",
+            "resolveMatrixCredentialsPath",
+            "resolveMatrixDefaultOrOnlyAccountId",
+            "resolveMatrixLegacyFlatStoragePaths",
+        ],
+        "scopedSame": True,
+        "envNames": {
+            "homeserver": "MATRIX_TEAM_X2D_TWO_HOMESERVER",
+            "userId": "MATRIX_TEAM_X2D_TWO_USER_ID",
+            "accessToken": "MATRIX_TEAM_X2D_TWO_ACCESS_TOKEN",
+            "password": "MATRIX_TEAM_X2D_TWO_PASSWORD",
+            "deviceId": "MATRIX_TEAM_X2D_TWO_DEVICE_ID",
+            "deviceName": "MATRIX_TEAM_X2D_TWO_DEVICE_NAME",
+        },
+        "channelConfig": {
+            "defaultAccount": "Ops Team",
+            "homeserver": "https://default.example",
+            "userId": "@default:example",
+            "password": "default-pass",
+            "accounts": {
+                "Ops Team": {
+                    "homeserver": "https://ops.example",
+                    "userId": "@ops:example",
+                    "accessToken": {"source": "env", "id": "OPS_TOKEN"},
+                    "deviceName": "Ops Bot",
+                },
+                "QA": {
+                    "homeserver": "https://qa.example",
+                    "userId": "@qa:example",
+                    "password": "qa-pass",
+                },
+            },
+        },
+        "missingChannel": None,
+        "accountEntry": {
+            "homeserver": "https://ops.example",
+            "userId": "@ops:example",
+            "accessToken": {"source": "env", "id": "OPS_TOKEN"},
+            "deviceName": "Ops Bot",
+        },
+        "ids": ["default", "ops-team", "qa", "team-two"],
+        "defaultId": "ops-team",
+        "missingDefaultId": "default",
+        "requiresExplicit": True,
+        "credentialsDir": "C:/OpenZues/state/credentials/matrix",
+        "credentialsPath": "C:/OpenZues/state/credentials/matrix/credentials-ops-team.json",
+        "defaultCredentialsPath": "C:/OpenZues/state/credentials/matrix/credentials.json",
+        "legacy": {
+            "rootDir": "C:/OpenZues/state/matrix",
+            "storagePath": "C:/OpenZues/state/matrix/bot-storage.json",
+            "cryptoPath": "C:/OpenZues/state/matrix/crypto",
+        },
+        "storage": {
+            "rootDir": (
+                "C:/OpenZues/state/matrix/accounts/ops_team/"
+                f"matrix.example.org_8448__bot_example.org/{token_hash}"
+            ),
+            "accountKey": "ops_team",
+            "tokenHash": token_hash,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-telegram-command-ui.cjs"
+    runtime_entry.write_text(
+        """
+const ui = require("openclaw/plugin-sdk/telegram-command-ui");
+const scopedUi = require("@openclaw/plugin-sdk/telegram-command-ui");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.telegram_command_ui",
+      description: "Use OpenClaw telegram-command-ui SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(ui).sort(),
+          scopedSame:
+            scopedUi.buildCommandsPaginationKeyboard ===
+            ui.buildCommandsPaginationKeyboard,
+          middle: ui.buildCommandsPaginationKeyboard(2, 4, "ops"),
+          first: ui.buildCommandsPaginationKeyboard(1, 1)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-telegram-command-ui-plugin",
+                    "name": "Runtime Telegram Command UI Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-telegram-command-ui.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.telegram_command_ui"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.telegram_command_ui"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["buildCommandsPaginationKeyboard"],
+        "scopedSame": True,
+        "middle": [
+            [
+                {"text": "\u25c0 Prev", "callback_data": "commands_page_1:ops"},
+                {"text": "2/4", "callback_data": "commands_page_noop:ops"},
+                {"text": "Next \u25b6", "callback_data": "commands_page_3:ops"},
+            ]
+        ],
+        "first": [[{"text": "1/1", "callback_data": "commands_page_noop"}]],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_telegram_account_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    token_path = tmp_path / "telegram-token.txt"
+    token_path.write_text(" file-token \n", encoding="utf-8")
+    runtime_entry = tmp_path / "runtime-plugin-telegram-account.cjs"
+    runtime_entry.write_text(
+        f"""
+const account = require("openclaw/plugin-sdk/telegram-account");
+const scopedAccount = require("@openclaw/plugin-sdk/telegram-account");
+const tokenFile = {json.dumps(str(token_path))};
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.telegram_account",
+      description: "Use OpenClaw telegram-account SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        const cfg = {{
+          channels: {{
+            telegram: {{
+              enabled: false,
+              botToken: "root-token",
+              accounts: {{
+                default: {{
+                  enabled: true,
+                  token: "default-token"
+                }},
+                work: {{
+                  enabled: true,
+                  name: "Work Telegram",
+                  tokenFile,
+                  keep: "yes"
+                }}
+              }}
+            }}
+          }}
+        }};
+        const work = account.resolveTelegramAccount({{ cfg, accountId: "work" }});
+        const defaultAccount = scopedAccount.resolveTelegramAccount({{ cfg }});
+        return {{
+          keys: Object.keys(account).sort(),
+          scopedSame:
+            scopedAccount.resolveTelegramAccount === account.resolveTelegramAccount,
+          work: {{
+            accountId: work.accountId,
+            enabled: work.enabled,
+            name: work.name,
+            token: work.token,
+            tokenSource: work.tokenSource,
+            keep: work.config && work.config.keep
+          }},
+          defaultAccount: {{
+            accountId: defaultAccount.accountId,
+            enabled: defaultAccount.enabled,
+            token: defaultAccount.token,
+            tokenSource: defaultAccount.tokenSource
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-telegram-account-plugin",
+                    "name": "Runtime Telegram Account Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-telegram-account.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.telegram_account"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.telegram_account"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolveTelegramAccount"],
+        "scopedSame": True,
+        "work": {
+            "accountId": "work",
+            "enabled": True,
+            "name": "Work Telegram",
+            "token": "file-token",
+            "tokenSource": "tokenFile",
+            "keep": "yes",
+        },
+        "defaultAccount": {
+            "accountId": "default",
+            "enabled": True,
+            "token": "default-token",
+            "tokenSource": "config",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_irc_surface_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    password_path = tmp_path / "irc-password.txt"
+    password_path.write_text(" file-secret \n", encoding="utf-8")
+    runtime_entry = tmp_path / "runtime-plugin-irc-surface.cjs"
+    runtime_entry.write_text(
+        f"""
+const irc = require("openclaw/plugin-sdk/irc-surface");
+const scopedIrc = require("@openclaw/plugin-sdk/irc-surface");
+const passwordFile = {json.dumps(str(password_path))};
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.irc_surface",
+      description: "Use OpenClaw irc-surface SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        const cfg = {{
+          channels: {{
+            irc: {{
+              enabled: false,
+              host: "irc.root.test",
+              port: 6667,
+              tls: false,
+              nick: "rootbot",
+              username: "rootuser",
+              realname: "Root Bot",
+              password: "root-secret",
+              defaultAccount: "work",
+              accounts: {{
+                default: {{
+                  enabled: true,
+                  host: "irc.default.test",
+                  nick: "defaultbot",
+                  username: "defaultuser",
+                  realname: "Default Bot",
+                  password: "default-secret"
+                }},
+                work: {{
+                  enabled: true,
+                  name: "Work IRC",
+                  host: "irc.work.test",
+                  port: 6697,
+                  tls: true,
+                  nick: "workbot",
+                  username: "workuser",
+                  realname: "Work Bot",
+                  passwordFile,
+                  channels: ["#ops"],
+                  keep: "yes"
+                }}
+              }}
+            }}
+          }}
+        }};
+        const work = irc.resolveIrcAccount({{ cfg, accountId: "work" }});
+        const defaultAccount = scopedIrc.resolveIrcAccount({{ cfg }});
+        return {{
+          keys: Object.keys(irc).sort(),
+          scopedSame: scopedIrc.resolveIrcAccount === irc.resolveIrcAccount,
+          setupTypes: {{
+            adapter: typeof irc.ircSetupAdapter,
+            wizard: typeof irc.ircSetupWizard
+          }},
+          ids: irc.listIrcAccountIds(cfg),
+          defaultId: irc.resolveDefaultIrcAccountId(cfg),
+          work: {{
+            accountId: work.accountId,
+            enabled: work.enabled,
+            configured: work.configured,
+            name: work.name,
+            host: work.host,
+            port: work.port,
+            tls: work.tls,
+            nick: work.nick,
+            username: work.username,
+            realname: work.realname,
+            password: work.password,
+            passwordSource: work.passwordSource,
+            keep: work.config && work.config.keep
+          }},
+          defaultAccount: {{
+            accountId: defaultAccount.accountId,
+            enabled: defaultAccount.enabled,
+            configured: defaultAccount.configured,
+            host: defaultAccount.host,
+            port: defaultAccount.port,
+            tls: defaultAccount.tls,
+            nick: defaultAccount.nick,
+            username: defaultAccount.username,
+            realname: defaultAccount.realname,
+            password: defaultAccount.password,
+            passwordSource: defaultAccount.passwordSource
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-irc-surface-plugin",
+                    "name": "Runtime IRC Surface Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-irc-surface.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.irc_surface"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.irc_surface"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "ircSetupAdapter",
+            "ircSetupWizard",
+            "listIrcAccountIds",
+            "resolveDefaultIrcAccountId",
+            "resolveIrcAccount",
+        ],
+        "scopedSame": True,
+        "setupTypes": {"adapter": "object", "wizard": "object"},
+        "ids": ["default", "work"],
+        "defaultId": "work",
+        "work": {
+            "accountId": "work",
+            "enabled": True,
+            "configured": True,
+            "name": "Work IRC",
+            "host": "irc.work.test",
+            "port": 6697,
+            "tls": True,
+            "nick": "workbot",
+            "username": "workuser",
+            "realname": "Work Bot",
+            "password": "file-secret",
+            "passwordSource": "passwordFile",
+            "keep": "yes",
+        },
+        "defaultAccount": {
+            "accountId": "work",
+            "enabled": True,
+            "configured": True,
+            "host": "irc.work.test",
+            "port": 6697,
+            "tls": True,
+            "nick": "workbot",
+            "username": "workuser",
+            "realname": "Work Bot",
+            "password": "file-secret",
+            "passwordSource": "passwordFile",
+        },
     }
 
 
@@ -26676,6 +29946,8 @@ async def test_tools_invoke_imported_openclaw_command_status_runtime_helpers(
         """
 const statusRuntime = require("openclaw/plugin-sdk/command-status-runtime");
 const scopedStatusRuntime = require("@openclaw/plugin-sdk/command-status-runtime");
+const dottedStatusRuntime = require("openclaw/plugin-sdk/command-status.runtime");
+const scopedDottedStatusRuntime = require("@openclaw/plugin-sdk/command-status.runtime");
 
 module.exports = {
   register(api) {
@@ -26735,9 +30007,16 @@ module.exports = {
         }
         return {
           keys: Object.keys(statusRuntime).sort(),
+          dottedKeys: Object.keys(dottedStatusRuntime).sort(),
           scopedSame:
             scopedStatusRuntime.resolveDirectStatusReplyForSession ===
             statusRuntime.resolveDirectStatusReplyForSession,
+          dottedSame:
+            dottedStatusRuntime.resolveDirectStatusReplyForSession ===
+            statusRuntime.resolveDirectStatusReplyForSession,
+          scopedDottedSame:
+            scopedDottedStatusRuntime.resolveDirectStatusReplyForSession ===
+            dottedStatusRuntime.resolveDirectStatusReplyForSession,
           emptyType: typeof empty,
           calls,
           delegated,
@@ -26801,7 +30080,10 @@ module.exports = {
     assert payload["ok"] is True
     assert payload["result"] == {
         "keys": ["resolveDirectStatusReplyForSession"],
+        "dottedKeys": ["resolveDirectStatusReplyForSession"],
         "scopedSame": True,
+        "dottedSame": True,
+        "scopedDottedSame": True,
         "emptyType": "undefined",
         "calls": [
             {
@@ -34439,6 +37721,117 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_utils_compat_alias(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-test-utils-compat.cjs"
+    runtime_entry.write_text(
+        """
+const testing = require("openclaw/plugin-sdk/testing");
+const testUtils = require("openclaw/plugin-sdk/test-utils");
+const scopedTestUtils = require("@openclaw/plugin-sdk/test-utils");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_utils_compat",
+      description: "Use OpenClaw test-utils compatibility SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const testingKeys = Object.keys(testing).sort();
+        const testUtilsKeys = Object.keys(testUtils).sort();
+        return {
+          sameExports:
+            JSON.stringify(testUtilsKeys) === JSON.stringify(testingKeys),
+          missingFromAlias: testingKeys.filter(
+            (key) => !Object.prototype.hasOwnProperty.call(testUtils, key)
+          ),
+          extraOnAlias: testUtilsKeys.filter(
+            (key) => !Object.prototype.hasOwnProperty.call(testing, key)
+          ),
+          scopedSame:
+            scopedTestUtils.createEmptyPluginRegistry ===
+            testUtils.createEmptyPluginRegistry,
+          helperResults: {
+            semver: testUtils.parseSemver("v2.3.4"),
+            unique: testUtils.assertUniqueValues(["alpha", "beta"], "token"),
+            sidecarCount: testUtils.BUNDLED_RUNTIME_SIDECAR_PATHS.length,
+            testingSidecarCount: testing.BUNDLED_RUNTIME_SIDECAR_PATHS.length
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-utils-compat-plugin",
+                    "name": "Runtime Test Utils Compat Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-test-utils-compat.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_utils_compat"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.test_utils_compat"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "sameExports": True,
+        "missingFromAlias": [],
+        "extraOnAlias": [],
+        "scopedSame": True,
+        "helperResults": {
+            "semver": {"major": 2, "minor": 3, "patch": 4},
+            "unique": ["alpha", "beta"],
+            "sidecarCount": payload["result"]["helperResults"][
+                "testingSidecarCount"
+            ],
+            "testingSidecarCount": payload["result"]["helperResults"][
+                "testingSidecarCount"
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:
@@ -38772,6 +42165,8 @@ async def test_tools_invoke_imported_openclaw_memory_host_search_helpers(
 const core = require("openclaw/plugin-sdk/memory-core-host-runtime-core");
 const search = require("openclaw/plugin-sdk/memory-host-search");
 const scopedSearch = require("@openclaw/plugin-sdk/memory-host-search");
+const runtimeSearch = require("openclaw/plugin-sdk/memory-host-search.runtime");
+const scopedRuntimeSearch = require("@openclaw/plugin-sdk/memory-host-search.runtime");
 
 module.exports = {
   register(api) {
@@ -38808,6 +42203,10 @@ module.exports = {
           agentId: "beta",
           purpose: "status"
         });
+        const backend = runtimeSearch.resolveActiveMemoryBackendConfig({
+          cfg,
+          agentId: "beta"
+        });
         await scopedSearch.closeActiveMemorySearchManagers(cfg);
         core.clearMemoryPluginState();
         const unavailable = await search.getActiveMemorySearchManager({
@@ -38816,8 +42215,11 @@ module.exports = {
         });
         return {
           keys: Object.keys(search).sort(),
+          runtimeKeys: Object.keys(runtimeSearch).sort(),
           scopedType: typeof scopedSearch.getActiveMemorySearchManager,
+          scopedRuntimeType: typeof scopedRuntimeSearch.resolveActiveMemoryBackendConfig,
           active,
+          backend,
           closed,
           unavailable
         };
@@ -38878,7 +42280,13 @@ module.exports = {
             "closeActiveMemorySearchManagers",
             "getActiveMemorySearchManager",
         ],
+        "runtimeKeys": [
+            "closeActiveMemorySearchManagers",
+            "getActiveMemorySearchManager",
+            "resolveActiveMemoryBackendConfig",
+        ],
         "scopedType": "function",
+        "scopedRuntimeType": "function",
         "active": {
             "manager": {
                 "id": "manager",
@@ -38887,6 +42295,7 @@ module.exports = {
                 "agentCount": 2,
             }
         },
+        "backend": {"backend": "builtin"},
         "closed": 1,
         "unavailable": {
             "manager": None,
@@ -45863,6 +49272,807 @@ module.exports = {
         "augmented": [
             {"provider": "demo", "id": "augmented-1", "name": "Augmented Demo"}
         ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_opencode_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-opencode.cjs"
+    runtime_entry.write_text(
+        """
+const opencode = require("openclaw/plugin-sdk/opencode");
+const scopedOpencode = require("@openclaw/plugin-sdk/opencode");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.opencode",
+      description: "Use OpenClaw opencode SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const method = opencode.createOpencodeCatalogApiKeyAuthMethod({
+          providerId: "opencode",
+          label: "OpenCode Zen key",
+          optionKey: "opencodeApiKey",
+          flagName: "--opencode-api-key",
+          defaultModel: opencode.OPENCODE_ZEN_DEFAULT_MODEL,
+          applyConfig: opencode.applyOpencodeZenModelDefault,
+          noteMessage: "OpenCode configured",
+          choiceId: "opencode-zen",
+          choiceLabel: "OpenCode Zen"
+        });
+        const applied = scopedOpencode.applyOpencodeZenModelDefault({
+          agents: { defaults: { model: "demo/old" } }
+        });
+        return {
+          keys: Object.keys(opencode).sort(),
+          scopedTypes: [
+            typeof scopedOpencode.createOpencodeCatalogApiKeyAuthMethod,
+            typeof scopedOpencode.applyOpencodeZenModelDefault
+          ],
+          defaultModel: opencode.OPENCODE_ZEN_DEFAULT_MODEL,
+          method: {
+            id: method.id,
+            label: method.label,
+            hint: method.hint,
+            kind: method.kind,
+            wizard: method.wizard,
+            runNonInteractive: await method.runNonInteractive()
+          },
+          applied
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "opencode-plugin",
+                    "name": "OpenCode Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-opencode.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.opencode"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.opencode"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "OPENCODE_ZEN_DEFAULT_MODEL",
+            "applyOpencodeZenModelDefault",
+            "createOpencodeCatalogApiKeyAuthMethod",
+        ],
+        "scopedTypes": ["function", "function"],
+        "defaultModel": "opencode/claude-opus-4-6",
+        "method": {
+            "id": "api-key",
+            "label": "OpenCode Zen key",
+            "hint": "Shared API key for Zen + Go catalogs",
+            "kind": "api_key",
+            "wizard": {
+                "choiceId": "opencode-zen",
+                "choiceLabel": "OpenCode Zen",
+                "groupId": "opencode",
+                "groupLabel": "OpenCode",
+                "groupHint": "Shared API key for Zen + Go catalogs",
+            },
+            "runNonInteractive": None,
+        },
+        "applied": {
+            "next": {
+                "agents": {
+                    "defaults": {
+                        "model": {"primary": "opencode/claude-opus-4-6"}
+                    }
+                }
+            },
+            "changed": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_ollama_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-ollama.cjs"
+    runtime_entry.write_text(
+        """
+const ollama = require("openclaw/plugin-sdk/ollama");
+const runtime = require("openclaw/plugin-sdk/ollama-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/ollama-runtime");
+
+async function readNdjson() {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      const first =
+        '{"model":"qwen3","created_at":"now",' +
+        '"message":{"role":"assistant","content":"A"},"done":false}\\nnot json\\n';
+      controller.enqueue(encoder.encode(first));
+      controller.enqueue(encoder.encode(
+        '{"model":"qwen3","created_at":"now","message":{"role":"assistant","content":"B"},"done":true}'
+      ));
+      controller.close();
+    }
+  });
+  const values = [];
+  for await (const chunk of runtime.parseNdjsonStream(stream.getReader())) {
+    values.push(chunk.message.content);
+  }
+  return values;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.ollama",
+      description: "Use OpenClaw Ollama SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const converted = runtime.convertToOllamaMessages([
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "describe" },
+              { type: "image", data: "base64-image" }
+            ]
+          },
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "checking" },
+              {
+                type: "toolCall",
+                id: "call-1",
+                name: "tools_exec",
+                arguments: '{"thread":9223372036854775807}'
+              },
+              {
+                type: "tool_use",
+                id: "call-2",
+                name: "function-read",
+                input: { path: "README.md" }
+              }
+            ]
+          },
+          { role: "toolResult", toolName: "read", content: "file text" }
+        ], "system prompt", { availableToolNames: new Set(["exec", "read"]) });
+        const assistant = runtime.buildAssistantMessage({
+          model: "qwen3",
+          created_at: "now",
+          message: {
+            role: "assistant",
+            content: "done",
+            thinking: "thinking",
+            tool_calls: [
+              { function: { name: "functions.exec", arguments: '{"ok":true}' } }
+            ]
+          },
+          done: true,
+          prompt_eval_count: 0,
+          eval_count: 5
+        }, { api: "ollama", provider: "ollama", id: "ollama/qwen3" }, { input: 11, output: 4 });
+        return {
+          apiKeys: Object.keys(ollama).sort(),
+          runtimeKeys: Object.keys(runtime).sort(),
+          scopedTypes: [
+            typeof scopedRuntime.buildOllamaChatRequest,
+            typeof scopedRuntime.parseNdjsonStream
+          ],
+          bases: [
+            ollama.resolveOllamaApiBase(),
+            ollama.resolveOllamaApiBase("http://127.0.0.1:11434/v1///")
+          ],
+          chat: runtime.buildOllamaChatRequest({
+            modelId: "ollama-spark/qwen3:32b",
+            providerId: "ollama-spark",
+            messages: [{ role: "user", content: "hello" }],
+            options: { num_ctx: 8192 },
+            requestParams: { think: "medium" },
+            stream: false
+          }),
+          compat: [
+            runtime.isOllamaCompatProvider({ api: "openai-completions", provider: "ollama" }),
+            runtime.isOllamaCompatProvider({
+              api: "openai-completions",
+              provider: "my-ollama",
+              baseUrl: "http://10.0.0.5:11434/v1"
+            }),
+            runtime.shouldInjectOllamaCompatNumCtx({
+              model: { api: "openai-completions", provider: "ollama" },
+              providerId: "ollama",
+              config: { models: { providers: { ollama: { injectNumCtxForOpenAICompat: false } } } }
+            }),
+            runtime.resolveOllamaBaseUrlForRun({
+              modelBaseUrl: "http://model-host:11434",
+              providerBaseUrl: " http://provider-host:11434 "
+            })
+          ],
+          converted,
+          assistant: {
+            stopReason: assistant.stopReason,
+            api: assistant.api,
+            provider: assistant.provider,
+            model: assistant.model,
+            usage: assistant.usage,
+            content: assistant.content.map((part) => ({
+              type: part.type,
+              text: part.text,
+              thinking: part.thinking,
+              name: part.name,
+              arguments: part.arguments
+            }))
+          },
+          parsed: await readNdjson(),
+          defaultEmbeddingModel: runtime.DEFAULT_OLLAMA_EMBEDDING_MODEL,
+          embeddingProviderType: typeof runtime.createOllamaEmbeddingProvider
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "ollama-plugin",
+                    "name": "Ollama Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-ollama.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.ollama"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.ollama"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["apiKeys"] == ["resolveOllamaApiBase"]
+    assert result["runtimeKeys"] == [
+        "DEFAULT_OLLAMA_EMBEDDING_MODEL",
+        "buildAssistantMessage",
+        "buildOllamaChatRequest",
+        "convertToOllamaMessages",
+        "createConfiguredOllamaCompatNumCtxWrapper",
+        "createConfiguredOllamaCompatStreamWrapper",
+        "createConfiguredOllamaStreamFn",
+        "createOllamaEmbeddingProvider",
+        "createOllamaStreamFn",
+        "isOllamaCompatProvider",
+        "parseNdjsonStream",
+        "resolveOllamaBaseUrlForRun",
+        "resolveOllamaCompatNumCtxEnabled",
+        "shouldInjectOllamaCompatNumCtx",
+        "wrapOllamaCompatNumCtx",
+    ]
+    assert result["scopedTypes"] == ["function", "function"]
+    assert result["bases"] == [
+        "http://127.0.0.1:11434",
+        "http://127.0.0.1:11434",
+    ]
+    assert result["chat"] == {
+        "model": "qwen3:32b",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": False,
+        "options": {"num_ctx": 8192},
+        "think": "medium",
+    }
+    assert result["compat"] == [
+        True,
+        True,
+        False,
+        "http://provider-host:11434",
+    ]
+    assert result["converted"] == [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "describe", "images": ["base64-image"]},
+        {
+            "role": "assistant",
+            "content": "checking",
+            "tool_calls": [
+                {"function": {"name": "exec", "arguments": {"thread": "9223372036854775807"}}},
+                {"function": {"name": "read", "arguments": {"path": "README.md"}}},
+            ],
+        },
+        {"role": "tool", "content": "file text", "tool_name": "read"},
+    ]
+    assert result["assistant"]["stopReason"] == "toolUse"
+    assert result["assistant"]["api"] == "ollama"
+    assert result["assistant"]["provider"] == "ollama"
+    assert result["assistant"]["model"] == "ollama/qwen3"
+    assert result["assistant"]["usage"] == {
+        "input": 0,
+        "output": 5,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 5,
+        "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0,
+        },
+    }
+    assert result["assistant"]["content"] == [
+        {"type": "thinking", "thinking": "thinking"},
+        {"type": "text", "text": "done"},
+        {"type": "toolCall", "name": "exec", "arguments": {"ok": True}},
+    ]
+    assert result["parsed"] == ["A", "B"]
+    assert result["defaultEmbeddingModel"] == "nomic-embed-text"
+    assert result["embeddingProviderType"] == "function"
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_line_surface_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-line-surface.cjs"
+    runtime_entry.write_text(
+        """
+const surface = require("openclaw/plugin-sdk/line-surface");
+const scopedSurface = require("@openclaw/plugin-sdk/line-surface");
+const runtime = require("openclaw/plugin-sdk/line-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.line_surface",
+      description: "Use OpenClaw LINE surface SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          channels: {
+            line: {
+              channelAccessToken: " base-token ",
+              channelSecret: " base-secret ",
+              defaultAccount: "work",
+              groups: { "room:r1": { systemPrompt: "room" } },
+              accounts: {
+                work: {
+                  enabled: true,
+                  name: "Work Bot",
+                  channelAccessToken: " work-token ",
+                  channelSecret: " work-secret ",
+                  groups: { "group:g1": { requireMention: true } }
+                },
+                other: { enabled: false }
+              }
+            }
+          }
+        };
+        const info = surface.createInfoCard("Status", "All good", "footer");
+        const list = surface.createListCard("Tasks", [
+          {
+            title: "Ship",
+            subtitle: "Today",
+            action: runtime.messageAction("Open dashboard", "/status")
+          }
+        ]);
+        const image = surface.createImageCard(
+          "https://example.test/a.png",
+          "Image",
+          "caption",
+          { aspectRatio: "1:1" }
+        );
+        const action = surface.createActionCard("Deploy", "Ready", [
+          { label: "Run", action: runtime.postbackAction("Run deploy", "deploy=1") }
+        ]);
+        const processed = surface.processLineMessage(
+          "## Heading\\nHello **world**\\n\\n```js\\nconsole.log(1)\\n```"
+        );
+        return {
+          keys: Object.keys(surface).sort(),
+          scopedTypes: [
+            typeof scopedSurface.resolveLineAccount,
+            typeof scopedSurface.createInfoCard
+          ],
+          runtimeTypes: [
+            typeof runtime.messageAction,
+            typeof runtime.createQuickReplyItems,
+            typeof runtime.parseLineDirectives
+          ],
+          accounts: {
+            ids: surface.listLineAccountIds(cfg),
+            defaultAccount: surface.resolveDefaultLineAccountId(cfg),
+            normalized: surface.normalizeAccountId(" Work Account! "),
+            work: surface.resolveLineAccount({ cfg, accountId: "work" }),
+            groupKey: surface.resolveExactLineGroupConfigKey({
+              cfg,
+              accountId: "work",
+              groupId: "g1"
+            })
+          },
+          actions: {
+            message: runtime.messageAction("Open dashboard", "/status"),
+            uri: runtime.uriAction("Open docs", "https://example.test/docs"),
+            postback: runtime.postbackAction("Run deploy", "deploy=1", "Deploy"),
+            quickReply: runtime.createQuickReplyItems(["One", "Two"])
+          },
+          cards: {
+            infoTitle: info.body.contents[0].contents[1].text,
+            infoFooter: info.footer.contents[0].text,
+            listFirst: list.body.contents[2].contents[0].contents[1].contents[0].text,
+            imageRatio: image.hero.aspectRatio,
+            actionStyle: action.footer.contents[0].style
+          },
+          processed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "line-surface-plugin",
+                    "name": "LINE Surface Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-line-surface.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.line_surface"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.line_surface"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "LineConfigSchema",
+        "createActionCard",
+        "createAgendaCard",
+        "createAppleTvRemoteCard",
+        "createDeviceControlCard",
+        "createEventCard",
+        "createImageCard",
+        "createInfoCard",
+        "createListCard",
+        "createMediaPlayerCard",
+        "createReceiptCard",
+        "listLineAccountIds",
+        "normalizeAccountId",
+        "processLineMessage",
+        "resolveDefaultLineAccountId",
+        "resolveExactLineGroupConfigKey",
+        "resolveLineAccount",
+    ]
+    assert result["scopedTypes"] == ["function", "function"]
+    assert result["runtimeTypes"] == ["function", "function", "function"]
+    assert result["accounts"]["ids"] == ["default", "work", "other"]
+    assert result["accounts"]["defaultAccount"] == "work"
+    assert result["accounts"]["normalized"] == "work-account"
+    assert result["accounts"]["groupKey"] == "group:g1"
+    assert result["accounts"]["work"] == {
+        "accountId": "work",
+        "name": "Work Bot",
+        "enabled": True,
+        "channelAccessToken": "work-token",
+        "channelSecret": "work-secret",
+        "tokenSource": "config",
+        "config": {
+            "channelAccessToken": " work-token ",
+            "channelSecret": " work-secret ",
+            "enabled": True,
+            "groups": {"group:g1": {"requireMention": True}},
+            "name": "Work Bot",
+        },
+    }
+    assert result["actions"] == {
+        "message": {"type": "message", "label": "Open dashboard", "text": "/status"},
+        "uri": {
+            "type": "uri",
+            "label": "Open docs",
+            "uri": "https://example.test/docs",
+        },
+        "postback": {
+            "type": "postback",
+            "label": "Run deploy",
+            "data": "deploy=1",
+            "displayText": "Deploy",
+        },
+        "quickReply": {
+            "items": [
+                {
+                    "type": "action",
+                    "action": {"type": "message", "label": "One", "text": "One"},
+                },
+                {
+                    "type": "action",
+                    "action": {"type": "message", "label": "Two", "text": "Two"},
+                },
+            ]
+        },
+    }
+    assert result["cards"] == {
+        "infoTitle": "Status",
+        "infoFooter": "footer",
+        "listFirst": "Ship",
+        "imageRatio": "1:1",
+        "actionStyle": "primary",
+    }
+    assert result["processed"]["text"] == "Heading\nHello world"
+    assert [message["altText"] for message in result["processed"]["flexMessages"]] == ["Code"]
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_line_root_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-line-root-core.cjs"
+    runtime_entry.write_text(
+        """
+const line = require("openclaw/plugin-sdk/line");
+const core = require("@openclaw/plugin-sdk/line-core");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.line_root_core",
+      description: "Use OpenClaw LINE root/core SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          channels: {
+            line: {
+              channelAccessToken: "token",
+              defaultAccount: "work",
+              accounts: { work: { enabled: true, channelAccessToken: "work-token" } },
+              groups: { "group:g1": { requireMention: true } }
+            }
+          }
+        };
+        return {
+          rootKeys: Object.keys(line).sort(),
+          coreKeys: Object.keys(core).sort(),
+          constants: [line.DEFAULT_ACCOUNT_ID, core.DEFAULT_ACCOUNT_ID],
+          types: [
+            typeof line.buildChannelConfigSchema,
+            typeof line.clearAccountEntryFields,
+            typeof line.buildTokenChannelStatusSummary,
+            typeof core.setSetupChannelEnabled,
+            typeof core.setTopLevelChannelDmPolicyWithAllowFrom,
+            typeof core.formatDocsLink
+          ],
+          surface: {
+            rootDefault: line.resolveDefaultLineAccountId(cfg),
+            coreGroupKey: core.resolveExactLineGroupConfigKey({
+              cfg,
+              accountId: "default",
+              groupId: "g1"
+            }),
+            cardTitle: core.createInfoCard("LINE", "Ready").body.contents[0].contents[1].text,
+            processed: core.processLineMessage("**Ready**").text
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "line-root-core-plugin",
+                    "name": "LINE Root/Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-line-root-core.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.line_root_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.line_root_core"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["rootKeys"] == [
+        "DEFAULT_ACCOUNT_ID",
+        "LineConfigSchema",
+        "buildChannelConfigSchema",
+        "buildComputedAccountStatusSnapshot",
+        "buildTokenChannelStatusSummary",
+        "clearAccountEntryFields",
+        "createActionCard",
+        "createAgendaCard",
+        "createAppleTvRemoteCard",
+        "createDeviceControlCard",
+        "createEventCard",
+        "createImageCard",
+        "createInfoCard",
+        "createListCard",
+        "createMediaPlayerCard",
+        "createReceiptCard",
+        "emptyPluginConfigSchema",
+        "listLineAccountIds",
+        "normalizeAccountId",
+        "processLineMessage",
+        "resolveAllowlistProviderRuntimeGroupPolicy",
+        "resolveDefaultGroupPolicy",
+        "resolveDefaultLineAccountId",
+        "resolveLineAccount",
+    ]
+    assert result["coreKeys"] == [
+        "DEFAULT_ACCOUNT_ID",
+        "LineConfigSchema",
+        "createActionCard",
+        "createImageCard",
+        "createInfoCard",
+        "createListCard",
+        "createReceiptCard",
+        "createTopLevelChannelDmPolicy",
+        "formatDocsLink",
+        "listLineAccountIds",
+        "normalizeAccountId",
+        "processLineMessage",
+        "resolveDefaultLineAccountId",
+        "resolveExactLineGroupConfigKey",
+        "resolveLineAccount",
+        "setSetupChannelEnabled",
+        "setTopLevelChannelDmPolicyWithAllowFrom",
+        "splitSetupEntries",
+    ]
+    assert result["constants"] == ["default", "default"]
+    assert result["types"] == [
+        "function",
+        "function",
+        "function",
+        "function",
+        "function",
+        "function",
+    ]
+    assert result["surface"] == {
+        "rootDefault": "work",
+        "coreGroupKey": "group:g1",
+        "cardTitle": "LINE",
+        "processed": "Ready",
     }
 
 
@@ -56730,6 +60940,144 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_diagnostics_otel_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-diagnostics-otel.cjs"
+    runtime_entry.write_text(
+        """
+const otel = require("openclaw/plugin-sdk/diagnostics-otel");
+const scopedOtel = require("@openclaw/plugin-sdk/diagnostics-otel");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.diagnostics_otel",
+      description: "Use OpenClaw diagnostics-otel SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const keys = Object.keys(otel).sort();
+        const eventTypes = [];
+        const offEvent =
+          typeof otel.onDiagnosticEvent === "function"
+            ? otel.onDiagnosticEvent((event) => eventTypes.push(event.type))
+            : undefined;
+        if (typeof otel.emitDiagnosticEvent === "function") {
+          otel.emitDiagnosticEvent({ type: "diagnostics.otel.test" });
+        }
+        if (typeof offEvent === "function") {
+          offEvent();
+        }
+        let transportCalls = 0;
+        let unregisterType = null;
+        if (typeof otel.registerLogTransport === "function") {
+          const unregister = otel.registerLogTransport(() => {
+            transportCalls += 1;
+          });
+          unregisterType = typeof unregister;
+          if (typeof unregister === "function") {
+            unregister();
+          }
+        }
+        const redacted =
+          typeof otel.redactSensitiveText === "function"
+            ? otel.redactSensitiveText("Authorization: Bearer 12345678901234567890")
+            : "";
+        const empty =
+          typeof otel.emptyPluginConfigSchema === "function"
+            ? otel.emptyPluginConfigSchema()
+            : null;
+        return {
+          keys,
+          scopedSame:
+            scopedOtel.emitDiagnosticEvent === otel.emitDiagnosticEvent &&
+            scopedOtel.registerLogTransport === otel.registerLogTransport,
+          eventTypes,
+          registerType: typeof otel.registerLogTransport,
+          unregisterType,
+          transportCalls,
+          redacted,
+          emptyKeys: empty ? Object.keys(empty).sort() : [],
+          emptySchema: empty && empty.jsonSchema
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-diagnostics-otel-plugin",
+                    "name": "Runtime Diagnostics OTel Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-diagnostics-otel.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.diagnostics_otel"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.diagnostics_otel"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "emitDiagnosticEvent",
+            "emptyPluginConfigSchema",
+            "onDiagnosticEvent",
+            "redactSensitiveText",
+            "registerLogTransport",
+        ],
+        "scopedSame": True,
+        "eventTypes": ["diagnostics.otel.test"],
+        "registerType": "function",
+        "unregisterType": "function",
+        "transportCalls": 0,
+        "redacted": "Authorization: Bearer 123456...7890",
+        "emptyKeys": ["jsonSchema", "safeParse"],
+        "emptySchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {},
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_system_event_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -66304,6 +70652,1424 @@ module.exports = {
         "emptyOptionalStrings": {"to": "room-2", "accountId": ""},
         "wrongAction": None,
         "missingTo": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_resolution_notes_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-resolution-notes.cjs"
+    runtime_entry.write_text(
+        """
+const notes = require("openclaw/plugin-sdk/resolution-notes");
+const scopedNotes = require("@openclaw/plugin-sdk/resolution-notes");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.resolution_notes",
+      description: "Use OpenClaw resolution-notes SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(notes).sort(),
+          scopedType: typeof scopedNotes.formatResolvedUnresolvedNote,
+          empty: notes.formatResolvedUnresolvedNote({ resolved: [], unresolved: [] }) ?? null,
+          resolved: notes.formatResolvedUnresolvedNote({
+            resolved: ["alice", "bob"],
+            unresolved: []
+          }),
+          unresolved: notes.formatResolvedUnresolvedNote({
+            resolved: [],
+            unresolved: ["@unknown"]
+          }),
+          both: notes.formatResolvedUnresolvedNote({
+            resolved: ["alice"],
+            unresolved: ["@unknown"]
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-resolution-notes-plugin",
+                    "name": "Runtime Resolution Notes Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-resolution-notes-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.resolution_notes"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.resolution_notes"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["formatResolvedUnresolvedNote"],
+        "scopedType": "function",
+        "empty": None,
+        "resolved": "Resolved: alice, bob",
+        "unresolved": "Unresolved (kept as typed): @unknown",
+        "both": "Resolved: alice\nUnresolved (kept as typed): @unknown",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_facade_loader_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    facade_root = tmp_path / "facade-root"
+    facade_root.mkdir()
+    facade_file = facade_root / "facade.cjs"
+    facade_file.write_text("module.exports = { answer: 7 };\n", encoding="utf-8")
+    runtime_entry = tmp_path / "runtime-plugin-facade-loader.cjs"
+    runtime_entry.write_text(
+        f"""
+const loader = require("openclaw/plugin-sdk/facade-loader");
+const scopedLoader = require("@openclaw/plugin-sdk/facade-loader");
+
+const location = {{
+  modulePath: {json.dumps(str(facade_file))},
+  boundaryRoot: {json.dumps(str(facade_root))}
+}};
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.facade_loader",
+      description: "Use OpenClaw facade-loader SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        if (typeof loader.resetFacadeLoaderStateForTest === "function") {{
+          loader.resetFacadeLoaderStateForTest();
+        }}
+        let objectLoadCount = 0;
+        const lazyObject = loader.createLazyFacadeObjectValue(() => {{
+          objectLoadCount += 1;
+          return {{
+            value: 42,
+            call(value) {{
+              return `ok:${{value}}`;
+            }}
+          }};
+        }});
+        let arrayLoadCount = 0;
+        const lazyArray = loader.createLazyFacadeArrayValue(() => {{
+          arrayLoadCount += 1;
+          return ["first", "second"];
+        }});
+        const firstLoaded = loader.loadFacadeModuleAtLocationSync({{
+          location,
+          trackedPluginId: () => "demo-facade",
+          loadModule(modulePath) {{
+            return {{ answer: modulePath.endsWith("facade.cjs") ? 7 : 0 }};
+          }}
+        }});
+        const secondLoaded = loader.loadFacadeModuleAtLocationSync({{
+          location,
+          trackedPluginId: "demo-facade-ignored",
+          loadModule() {{
+            return {{ answer: 99 }};
+          }}
+        }});
+        return {{
+          keys: Object.keys(loader).sort(),
+          scopedType: typeof scopedLoader.createLazyFacadeObjectValue,
+          objectValue: lazyObject.value,
+          objectCall: lazyObject.call("value"),
+          objectKeys: Object.keys(lazyObject),
+          objectLoadCount,
+          arrayLength: lazyArray.length,
+          arraySecond: lazyArray[1],
+          arrayLoadCount,
+          loadedSame: firstLoaded === secondLoaded,
+          loadedAnswer: secondLoaded.answer,
+          facadeIds: loader.listImportedBundledPluginFacadeIds()
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-facade-loader-plugin",
+                    "name": "Runtime Facade Loader Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-facade-loader-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.facade_loader"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.facade_loader"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createLazyFacadeArrayValue",
+            "createLazyFacadeObjectValue",
+            "listImportedBundledPluginFacadeIds",
+            "loadFacadeModuleAtLocationSync",
+            "resetFacadeLoaderStateForTest",
+        ],
+        "scopedType": "function",
+        "objectValue": 42,
+        "objectCall": "ok:value",
+        "objectKeys": ["value", "call"],
+        "objectLoadCount": 1,
+        "arrayLength": 2,
+        "arraySecond": "second",
+        "arrayLoadCount": 1,
+        "loadedSame": True,
+        "loadedAnswer": 7,
+        "facadeIds": ["demo-facade"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_session_transcript_hit_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-session-transcript-hit.cjs"
+    runtime_entry.write_text(
+        """
+const hit = require("openclaw/plugin-sdk/session-transcript-hit");
+const scopedHit = require("@openclaw/plugin-sdk/session-transcript-hit");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.session_transcript_hit",
+      description: "Use OpenClaw session-transcript-hit SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const store = {
+          "agent/thread-file": {
+            sessionFile: "sessions/thread-file.jsonl",
+            sessionId: "session-other"
+          },
+          "agent/thread-id": {
+            sessionFile: "other.jsonl",
+            sessionId: "thread-id"
+          },
+          "agent/thread-archive": {
+            sessionFile: "",
+            sessionId: "thread-archive"
+          },
+          "agent/duplicate": {
+            sessionFile: "sessions/thread-file.jsonl",
+            sessionId: "thread-file"
+          }
+        };
+        return {
+          keys: Object.keys(hit).sort(),
+          scopedType: typeof scopedHit.extractTranscriptStemFromSessionsMemoryHit,
+          stems: [
+            hit.extractTranscriptStemFromSessionsMemoryHit("sessions/thread-file.jsonl"),
+            hit.extractTranscriptStemFromSessionsMemoryHit("exports/thread-md.md"),
+            hit.extractTranscriptStemFromSessionsMemoryHit("notes/thread.txt")
+          ],
+          fileMatches: hit.resolveTranscriptStemToSessionKeys({
+            store,
+            stem: "thread-file"
+          }),
+          idMatches: hit.resolveTranscriptStemToSessionKeys({
+            store,
+            stem: "thread-id"
+          }),
+          archivedMatches: hit.resolveTranscriptStemToSessionKeys({
+            store,
+            stem: "thread-archive.jsonl"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-session-transcript-hit-plugin",
+                    "name": "Runtime Session Transcript Hit Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-session-transcript-hit-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.session_transcript_hit"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.session_transcript_hit"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "extractTranscriptStemFromSessionsMemoryHit",
+            "resolveTranscriptStemToSessionKeys",
+        ],
+        "scopedType": "function",
+        "stems": ["thread-file", "thread-md", None],
+        "fileMatches": ["agent/thread-file", "agent/duplicate"],
+        "idMatches": ["agent/thread-id"],
+        "archivedMatches": ["agent/thread-archive"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_pairing_access_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-pairing-access.cjs"
+    runtime_entry.write_text(
+        """
+const pairingAccess = require("openclaw/plugin-sdk/pairing-access");
+const scopedPairingAccess = require("@openclaw/plugin-sdk/pairing-access");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.pairing_access",
+      description: "Use OpenClaw pairing-access SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const calls = [];
+        const core = {
+          channel: {
+            pairing: {
+              readAllowFromStore(input) {
+                calls.push({ method: "read", input });
+                return { allowed: true, input };
+              },
+              upsertPairingRequest(input) {
+                calls.push({ method: "upsert", input });
+                return { created: true, input };
+              }
+            }
+          }
+        };
+        const access = pairingAccess.createScopedPairingAccess({
+          core,
+          channel: "telegram",
+          accountId: " Acct_Main "
+        });
+        return {
+          keys: Object.keys(pairingAccess).sort(),
+          scopedType: typeof scopedPairingAccess.createScopedPairingAccess,
+          accountId: access.accountId,
+          allow: access.readAllowFromStore(),
+          dmAllow: access.readStoreForDmPolicy("discord", " Dm_One "),
+          upsert: access.upsertPairingRequest({
+            peerId: "user-1",
+            code: "ABC234",
+            expiresAt: 123
+          }),
+          calls
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-pairing-access-plugin",
+                    "name": "Runtime Pairing Access Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-pairing-access-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.pairing_access"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.pairing_access"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["createScopedPairingAccess"],
+        "scopedType": "function",
+        "accountId": "acct_main",
+        "allow": {
+            "allowed": True,
+            "input": {"channel": "telegram", "accountId": "acct_main"},
+        },
+        "dmAllow": {
+            "allowed": True,
+            "input": {"channel": "discord", "accountId": "dm_one"},
+        },
+        "upsert": {
+            "created": True,
+            "input": {
+                "channel": "telegram",
+                "accountId": "acct_main",
+                "peerId": "user-1",
+                "code": "ABC234",
+                "expiresAt": 123,
+            },
+        },
+        "calls": [
+            {
+                "method": "read",
+                "input": {"channel": "telegram", "accountId": "acct_main"},
+            },
+            {
+                "method": "read",
+                "input": {"channel": "discord", "accountId": "dm_one"},
+            },
+            {
+                "method": "upsert",
+                "input": {
+                    "channel": "telegram",
+                    "accountId": "acct_main",
+                    "peerId": "user-1",
+                    "code": "ABC234",
+                    "expiresAt": 123,
+                },
+            },
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_facade_resolution_shared_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-facade-resolution-shared.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const shared = require("openclaw/plugin-sdk/facade-resolution-shared");
+const scopedShared = require("@openclaw/plugin-sdk/facade-resolution-shared");
+
+const root = {json.dumps(str(tmp_path))};
+function writeFile(filePath) {{
+  fs.mkdirSync(path.dirname(filePath), {{ recursive: true }});
+  fs.writeFileSync(filePath, "module.exports = {{ ok: true }};\\n");
+}}
+function rel(filePath) {{
+  return filePath ? path.relative(root, filePath).replace(/\\\\/g, "/") : null;
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.facade_resolution_shared",
+      description: "Use OpenClaw facade-resolution-shared SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        const packageRoot = path.join(root, "package");
+        const bundledRoot = path.join(root, "bundled");
+        const idRoot = path.join(root, "registry", "id-match");
+        const basenameRoot = path.join(root, "registry", "basename-match");
+        const channelRoot = path.join(root, "registry", "channel-match");
+        writeFile(path.join(packageRoot, "extensions", "source-plugin", "surface.ts"));
+        writeFile(path.join(packageRoot, "dist", "extensions", "built-plugin", "surface.js"));
+        writeFile(path.join(bundledRoot, "explicit-plugin", "surface.js"));
+        writeFile(path.join(idRoot, "surface.js"));
+        writeFile(path.join(basenameRoot, "surface.ts"));
+        writeFile(path.join(channelRoot, "surface.mjs"));
+
+        const sourceLocation = shared.resolveBundledFacadeModuleLocation({{
+          currentModulePath: path.join(
+            packageRoot,
+            "src",
+            "plugin-sdk",
+            "facade-resolution-shared.ts"
+          ),
+          packageRoot,
+          dirName: "source-plugin",
+          artifactBasename: "surface.js"
+        }});
+        const builtLocation = shared.resolveBundledFacadeModuleLocation({{
+          currentModulePath: path.join(
+            packageRoot,
+            "dist",
+            "plugin-sdk",
+            "facade-resolution-shared.js"
+          ),
+          packageRoot,
+          dirName: "built-plugin",
+          artifactBasename: "surface.js"
+        }});
+        const explicitLocation = shared.resolveBundledFacadeModuleLocation({{
+          currentModulePath: path.join(
+            packageRoot,
+            "dist",
+            "plugin-sdk",
+            "facade-resolution-shared.js"
+          ),
+          packageRoot,
+          dirName: "explicit-plugin",
+          artifactBasename: "surface.js",
+          bundledPluginsDir: bundledRoot
+        }});
+        const registryId = shared.resolveRegistryPluginModuleLocationFromRecords({{
+          registry: [{{ id: "id-match", rootDir: idRoot, channels: ["other"] }}],
+          dirName: "id-match",
+          artifactBasename: "./surface.js"
+        }});
+        const registryBasename = shared.resolveRegistryPluginModuleLocationFromRecords({{
+          registry: [{{ id: "other", rootDir: basenameRoot, channels: [] }}],
+          dirName: "basename-match",
+          artifactBasename: "surface.js"
+        }});
+        const registryChannel = shared.resolveRegistryPluginModuleLocationFromRecords({{
+          registry: [{{ id: "other", rootDir: channelRoot, channels: ["channel-plugin"] }}],
+          dirName: "channel-plugin",
+          artifactBasename: "surface.js"
+        }});
+
+        return {{
+          keys: Object.keys(shared).sort(),
+          scopedType: typeof scopedShared.createFacadeResolutionKey,
+          keyDefault: shared.createFacadeResolutionKey({{
+            dirName: "plug",
+            artifactBasename: "surface.js",
+            env: {{}}
+          }}),
+          keyDisabledMatches: shared.createFacadeResolutionKey({{
+            dirName: "plug",
+            artifactBasename: "surface.js",
+            bundledPluginsDir: bundledRoot,
+            env: {{ OPENCLAW_DISABLE_BUNDLED_PLUGINS: "true" }}
+          }}) === `plug::surface.js::${{path.resolve(bundledRoot)}}::disabled`,
+          boundaryInside: rel(shared.resolveFacadeBoundaryRoot({{
+            modulePath: path.join(bundledRoot, "explicit-plugin", "surface.js"),
+            bundledPluginsDir: bundledRoot,
+            packageRoot
+          }})),
+          boundaryOutside: rel(shared.resolveFacadeBoundaryRoot({{
+            modulePath: path.join(root, "elsewhere", "surface.js"),
+            bundledPluginsDir: bundledRoot,
+            packageRoot
+          }})),
+          sourceLocation: {{
+            modulePath: rel(sourceLocation.modulePath),
+            boundaryRoot: rel(sourceLocation.boundaryRoot)
+          }},
+          builtLocation: {{
+            modulePath: rel(builtLocation.modulePath),
+            boundaryRoot: rel(builtLocation.boundaryRoot)
+          }},
+          explicitLocation: {{
+            modulePath: rel(explicitLocation.modulePath),
+            boundaryRoot: rel(explicitLocation.boundaryRoot)
+          }},
+          registryId: {{
+            modulePath: rel(registryId.modulePath),
+            boundaryRoot: rel(registryId.boundaryRoot)
+          }},
+          registryBasename: {{
+            modulePath: rel(registryBasename.modulePath),
+            boundaryRoot: rel(registryBasename.boundaryRoot)
+          }},
+          registryChannel: {{
+            modulePath: rel(registryChannel.modulePath),
+            boundaryRoot: rel(registryChannel.boundaryRoot)
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-facade-resolution-shared-plugin",
+                    "name": "Runtime Facade Resolution Shared Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-facade-resolution-shared-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.facade_resolution_shared"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.facade_resolution_shared"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createFacadeResolutionKey",
+            "resolveBundledFacadeModuleLocation",
+            "resolveFacadeBoundaryRoot",
+            "resolveRegistryPluginModuleLocationFromRecords",
+        ],
+        "scopedType": "function",
+        "keyDefault": "plug::surface.js::<default>::enabled",
+        "keyDisabledMatches": True,
+        "boundaryInside": "bundled",
+        "boundaryOutside": "package",
+        "sourceLocation": {
+            "modulePath": "package/extensions/source-plugin/surface.ts",
+            "boundaryRoot": "package",
+        },
+        "builtLocation": {
+            "modulePath": "package/dist/extensions/built-plugin/surface.js",
+            "boundaryRoot": "package",
+        },
+        "explicitLocation": {
+            "modulePath": "bundled/explicit-plugin/surface.js",
+            "boundaryRoot": "bundled",
+        },
+        "registryId": {
+            "modulePath": "registry/id-match/surface.js",
+            "boundaryRoot": "registry/id-match",
+        },
+        "registryBasename": {
+            "modulePath": "registry/basename-match/surface.ts",
+            "boundaryRoot": "registry/basename-match",
+        },
+        "registryChannel": {
+            "modulePath": "registry/channel-match/surface.mjs",
+            "boundaryRoot": "registry/channel-match",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_facade_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-facade-runtime.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const runtime = require("openclaw/plugin-sdk/facade-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/facade-runtime");
+
+const root = {json.dumps(str(tmp_path))};
+function writeFile(filePath) {{
+  fs.mkdirSync(path.dirname(filePath), {{ recursive: true }});
+  fs.writeFileSync(filePath, "module.exports = {{ ok: true }};\\n");
+}}
+function rel(filePath) {{
+  return filePath ? path.relative(root, filePath).replace(/\\\\/g, "/") : null;
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.facade_runtime",
+      description: "Use OpenClaw facade-runtime SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        runtime.resetFacadeRuntimeStateForTest();
+        let callLoads = 0;
+        const greet = runtime.createLazyFacadeValue(() => {{
+          callLoads += 1;
+          return {{
+            greet(name) {{
+              return `hi:${{name}}:${{callLoads}}`;
+            }}
+          }};
+        }}, "greet");
+        let valueLoads = 0;
+        const answer = runtime.createLazyFacadeValue(() => {{
+          valueLoads += 1;
+          return {{ answer: 42 }};
+        }}, "answer");
+
+        const modulePath = path.join(root, "facade", "surface.js");
+        const location = {{ modulePath, boundaryRoot: path.join(root, "facade") }};
+        const firstLoaded = runtime.__testing.loadFacadeModuleAtLocationSync({{
+          location,
+          trackedPluginId: () => "demo-runtime",
+          loadModule(loadedPath) {{
+            return {{ modulePath: path.basename(loadedPath), value: 7 }};
+          }}
+        }});
+        const secondLoaded = runtime.__testing.loadFacadeModuleAtLocationSync({{
+          location,
+          trackedPluginId: "ignored",
+          loadModule() {{
+            return {{ value: 99 }};
+          }}
+        }});
+
+        const registryRoot = path.join(root, "registry", "facade-runtime-channel");
+        writeFile(path.join(registryRoot, "surface.mjs"));
+        const registryLocation =
+          runtime.__testing.resolveRegistryPluginModuleLocationFromRegistry({{
+            registry: [
+              {{
+                id: "other",
+                rootDir: registryRoot,
+                channels: ["facade-runtime-channel"]
+              }}
+            ],
+            dirName: "facade-runtime-channel",
+            artifactBasename: "surface.js"
+          }});
+        const canAlways = runtime.canLoadActivatedBundledPluginPublicSurface({{
+          dirName: "image-generation-core",
+          artifactBasename: "runtime-api.js",
+          env: {{}}
+        }});
+        const accessAlways = runtime.__testing.resolveBundledPluginPublicSurfaceAccess({{
+          dirName: "image-generation-core",
+          artifactBasename: "runtime-api.js",
+          env: {{}}
+        }});
+        const activatedAlways =
+          runtime.__testing.resolveActivatedBundledPluginPublicSurfaceAccessOrThrow({{
+            dirName: "image-generation-core",
+            artifactBasename: "runtime-api.js",
+            env: {{}}
+          }});
+
+        return {{
+          keys: Object.keys(runtime).sort(),
+          scopedType: typeof scopedRuntime.createLazyFacadeValue,
+          lazyCallFirst: greet("ada"),
+          lazyCallSecond: greet("bob"),
+          callLoads,
+          lazyValue: answer("ignored"),
+          valueLoads,
+          loadedSame: firstLoaded === secondLoaded,
+          loadedValue: secondLoaded.value,
+          facadeIds: runtime.listImportedBundledPluginFacadeIds(),
+          registryLocation: {{
+            modulePath: rel(registryLocation.modulePath),
+            boundaryRoot: rel(registryLocation.boundaryRoot)
+          }},
+          canAlways,
+          accessAlways,
+          activatedAlways,
+          blockedTryLoad:
+            runtime.tryLoadActivatedBundledPluginPublicSurfaceModuleSync({{
+              dirName: "missing-plugin",
+              artifactBasename: "missing.js",
+              env: {{}}
+            }}) === null
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-facade-runtime-plugin",
+                    "name": "Runtime Facade Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-facade-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.facade_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.facade_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "__testing",
+            "canLoadActivatedBundledPluginPublicSurface",
+            "createLazyFacadeArrayValue",
+            "createLazyFacadeObjectValue",
+            "createLazyFacadeValue",
+            "listImportedBundledPluginFacadeIds",
+            "loadActivatedBundledPluginPublicSurfaceModuleSync",
+            "loadBundledPluginPublicSurfaceModuleSync",
+            "resetFacadeRuntimeStateForTest",
+            "tryLoadActivatedBundledPluginPublicSurfaceModuleSync",
+        ],
+        "scopedType": "function",
+        "lazyCallFirst": "hi:ada:1",
+        "lazyCallSecond": "hi:bob:2",
+        "callLoads": 2,
+        "lazyValue": 42,
+        "valueLoads": 1,
+        "loadedSame": True,
+        "loadedValue": 7,
+        "facadeIds": ["demo-runtime"],
+        "registryLocation": {
+            "modulePath": "registry/facade-runtime-channel/surface.mjs",
+            "boundaryRoot": "registry/facade-runtime-channel",
+        },
+        "canAlways": True,
+        "accessAlways": {"allowed": True, "pluginId": "image-generation-core"},
+        "activatedAlways": {"allowed": True, "pluginId": "image-generation-core"},
+        "blockedTryLoad": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_facade_activation_check_runtime(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-facade-activation-check.cjs"
+    runtime_entry.write_text(
+        """
+const activation = require("openclaw/plugin-sdk/facade-activation-check.runtime");
+const scopedActivation = require("@openclaw/plugin-sdk/facade-activation-check.runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.facade_activation_check",
+      description: "Use OpenClaw facade-activation-check.runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const enabledAccess = activation.evaluateBundledPluginPublicSurfaceAccess({
+          params: { dirName: "demo-plugin", artifactBasename: "api.js" },
+          manifestRecord: {
+            id: "demo-plugin",
+            origin: "bundled",
+            enabledByDefault: true,
+            rootDir: "demo",
+            channels: []
+          },
+          config: {},
+          normalizedPluginsConfig: {},
+          activationSource: {},
+          autoEnabledReasons: {}
+        });
+        const disabledAccess = activation.evaluateBundledPluginPublicSurfaceAccess({
+          params: { dirName: "off-plugin", artifactBasename: "api.js" },
+          manifestRecord: {
+            id: "off-plugin",
+            origin: "bundled",
+            enabledByDefault: false,
+            rootDir: "off",
+            channels: []
+          },
+          config: {},
+          normalizedPluginsConfig: {},
+          activationSource: {},
+          autoEnabledReasons: {}
+        });
+        const alwaysAccess = activation.resolveBundledPluginPublicSurfaceAccess({
+          dirName: "image-generation-core",
+          artifactBasename: "runtime-api.js",
+          env: {}
+        });
+        const alwaysActivated =
+          activation.resolveActivatedBundledPluginPublicSurfaceAccessOrThrow({
+            dirName: "image-generation-core",
+            artifactBasename: "runtime-api.js",
+            env: {}
+          });
+        let blockedError = "";
+        try {
+          activation.throwForBundledPluginPublicSurfaceAccess({
+            access: {
+              allowed: false,
+              pluginId: "blocked-plugin",
+              reason: "not enabled"
+            },
+            request: { dirName: "blocked", artifactBasename: "api.js" }
+          });
+        } catch (error) {
+          blockedError = error.message;
+        }
+
+        return {
+          keys: Object.keys(activation).sort(),
+          scopedSame:
+            scopedActivation.resolveBundledPluginPublicSurfaceAccess ===
+            activation.resolveBundledPluginPublicSurfaceAccess,
+          enabledAccess,
+          disabledAccess,
+          alwaysAccess,
+          alwaysActivated,
+          trackedFallback: activation.resolveTrackedFacadePluginId({
+            dirName: "fallback-plugin",
+            artifactBasename: "api.js",
+            location: null,
+            sourceExtensionsRoot: "extensions",
+            resolutionKey: "fallback"
+          }),
+          missingRegistry:
+            activation.resolveRegistryPluginModuleLocation({
+              dirName: "missing-plugin",
+              artifactBasename: "api.js",
+              env: {}
+            }) === null,
+          blockedError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-facade-activation-check-plugin",
+                    "name": "Runtime Facade Activation Check Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-facade-activation-check-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.facade_activation_check"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.facade_activation_check"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "evaluateBundledPluginPublicSurfaceAccess",
+            "resolveActivatedBundledPluginPublicSurfaceAccessOrThrow",
+            "resolveBundledPluginPublicSurfaceAccess",
+            "resolveRegistryPluginModuleLocation",
+            "resolveTrackedFacadePluginId",
+            "throwForBundledPluginPublicSurfaceAccess",
+        ],
+        "scopedSame": True,
+        "enabledAccess": {"allowed": True, "pluginId": "demo-plugin"},
+        "disabledAccess": {
+            "allowed": False,
+            "pluginId": "off-plugin",
+            "reason": "plugin runtime is not activated",
+        },
+        "alwaysAccess": {"allowed": True, "pluginId": "image-generation-core"},
+        "alwaysActivated": {"allowed": True, "pluginId": "image-generation-core"},
+        "trackedFallback": "fallback-plugin",
+        "missingRegistry": True,
+        "blockedError": (
+            'Bundled plugin public surface access blocked for "blocked-plugin" '
+            "via blocked/api.js: not enabled"
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_helpers_string_utils(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-helpers-string-utils.cjs"
+    runtime_entry.write_text(
+        """
+const strings = require("openclaw/plugin-sdk/test-helpers/string-utils");
+const scopedStrings = require("@openclaw/plugin-sdk/test-helpers/string-utils");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_helpers_string_utils",
+      description: "Use OpenClaw test-helpers/string-utils SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(strings).sort(),
+          scopedType: typeof scopedStrings.uniqueSortedStrings,
+          unique: strings.uniqueSortedStrings(["b", "a", "b", "c", "a"])
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-helpers-string-utils-plugin",
+                    "name": "Runtime Test Helpers String Utils Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-test-helpers-string-utils-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_helpers_string_utils"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.test_helpers_string_utils"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["uniqueSortedStrings"],
+        "scopedType": "function",
+        "unique": ["a", "b", "c"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_helpers_envelope_timestamp(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-helpers-envelope-timestamp.cjs"
+    runtime_entry.write_text(
+        """
+const envelope = require("openclaw/plugin-sdk/test-helpers/envelope-timestamp");
+const scopedEnvelope = require("@openclaw/plugin-sdk/test-helpers/envelope-timestamp");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_helpers_envelope_timestamp",
+      description: "Use OpenClaw test-helpers/envelope-timestamp SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const date = new Date("2026-05-07T12:34:00.000Z");
+        return {
+          keys: Object.keys(envelope).sort(),
+          scopedType: typeof scopedEnvelope.formatEnvelopeTimestamp,
+          utc: envelope.formatEnvelopeTimestamp(date, "utc"),
+          gmt: envelope.formatEnvelopeTimestamp(date, "gmt"),
+          localType: typeof envelope.formatLocalEnvelopeTimestamp(date),
+          escaped: envelope.escapeRegExp("a+b?")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-helpers-envelope-timestamp-plugin",
+                    "name": "Runtime Test Helpers Envelope Timestamp Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-test-helpers-envelope-timestamp-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.test_helpers_envelope_timestamp"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.test_helpers_envelope_timestamp"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "escapeRegExp",
+            "formatEnvelopeTimestamp",
+            "formatLocalEnvelopeTimestamp",
+        ],
+        "scopedType": "function",
+        "utc": "Thu 2026-05-07T12:34Z",
+        "gmt": "Thu 2026-05-07T12:34Z",
+        "localType": "string",
+        "escaped": "a\\+b\\?",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_helpers_pairing_reply(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-helpers-pairing-reply.cjs"
+    runtime_entry.write_text(
+        """
+const pairing = require("openclaw/plugin-sdk/test-helpers/pairing-reply");
+const scopedPairing = require("@openclaw/plugin-sdk/test-helpers/pairing-reply");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_helpers_pairing_reply",
+      description: "Use OpenClaw test-helpers/pairing-reply SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const text =
+          "OpenClaw: access not configured.\\nUser: Ada\\n" +
+          "Pairing code:\\n```\\nABC234\\n```\\n" +
+          "Run pairing approve demo ABC234";
+        return {
+          keys: Object.keys(pairing).sort(),
+          scopedType: typeof scopedPairing.expectPairingReplyText,
+          extracted: pairing.extractPairingCode(text),
+          expected: pairing.expectPairingReplyText(text, {
+            channel: "demo",
+            idLine: "User: Ada"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-helpers-pairing-reply-plugin",
+                    "name": "Runtime Test Helpers Pairing Reply Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-test-helpers-pairing-reply-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_helpers_pairing_reply"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.test_helpers_pairing_reply"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["expectPairingReplyText", "extractPairingCode"],
+        "scopedType": "function",
+        "extracted": "ABC234",
+        "expected": "ABC234",
     }
 
 

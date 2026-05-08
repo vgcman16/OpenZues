@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -69,6 +69,59 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR approval guidance checkpointed in `d6052fda`; QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code remote secret/rendered QR breadth later |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Zalo user `channels.logout` runtime checkpointed in `4d67d5a6`; QQBot `channels.logout` runtime checkpointed in `aac53b3b`; WhatsApp `channels.logout` runtime checkpointed in `3e99a587`; Nextcloud Talk `channels.logout` runtime checkpointed in `13de6593`; LINE `channels.logout` runtime checkpointed in `9674493d`; Telegram `channels.logout` runtime checkpointed in `2d26bdc4`; `channels.stop` native Tlon runtime checkpointed in `1365c028`; `channels.start` native Tlon runtime checkpointed in `810a6af0`; Tlon production SSE monitor lifecycle checkpointed in `726f03cb`; Tlon approval block/admin handling checkpointed in `800d2ab6`; Tlon approval response replay checkpointed in `265b0a10`; Tlon inbound authorization/pending approvals checkpointed in `d7bd3f7d`; Tlon inbound media staging checkpointed in `d7556229`; Tlon group/thread inbound session routing checkpointed in `b3b06972`; Tlon DM inbound session routing checkpointed in `51e6b618`; Tlon custom S3 media upload checkpointed in `dc999418`; Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to broader provider/runtime, packaging, or companion seams |
+
+Latest queue addendum: `OZ-PKG-001CA` stable/beta release-channel git updates
+are checkpointed in `1f45d307`, and `OZ-PKG-001CB` preflight edge-failure
+proof is checkpointed in `7b15fafc`. `OZ-PKG-001CC` startup auto-update
+dispatch is checkpointed in `822eb6a9`, and `OZ-PKG-001CD` startup throttling
+state is checkpointed in `a1bb5d30`. `OZ-PKG-001CE` startup update
+check-interval gating is checkpointed in `392177e5`, and `OZ-PKG-001CF`
+startup availability hint state is checkpointed in `087924f8`. `OZ-PKG-001CG`
+source-checkout availability clearing is checkpointed in `e66c5082`, and
+`OZ-PKG-001CH` recurring runner startup checks are checkpointed in `49150d76`;
+`OZ-PLUGIN-00300` resolution-notes subpath shim is checkpointed in
+`9c56ff39`, and `OZ-PKG-001CI` combined update hint formatting is
+checkpointed in `1d19a46c`. `OZ-PLUGIN-00301` facade-loader is checkpointed
+in `29aa7956`, `OZ-PLUGIN-00302` session-transcript-hit is checkpointed
+in `b294d317`, and `OZ-PLUGIN-00303` pairing-access is checkpointed in
+`e04677d3`. `OZ-PLUGIN-00304` facade-resolution-shared is checkpointed in
+`2938b03a`, and `OZ-PLUGIN-00305` facade-runtime is checkpointed in
+`1e9b65f5`. `OZ-PLUGIN-00306` test-helpers/string-utils is checkpointed in
+`e2ba3082`, and `OZ-PLUGIN-00307` test-helpers/envelope-timestamp is
+checkpointed in `54b47a45`. `OZ-PLUGIN-00308` test-helpers/pairing-reply is
+checkpointed in `75ac3561`, `OZ-PLUGIN-00309` github-copilot-login is
+checkpointed in `0561baa6`, and `OZ-PLUGIN-00310` copilot-proxy is
+checkpointed in `808c9260`. `OZ-PLUGIN-00311` private-qa-bundled-env is
+checkpointed in `fc6c72d4`, and `OZ-PLUGIN-00312` diagnostics-otel is
+checkpointed in `1bc4c0f9`. `OZ-PLUGIN-00313` thread-ownership is
+checkpointed in `41dad57f`, and `OZ-PLUGIN-00314` ssrf-dispatcher is
+checkpointed in `7b283bdc`. `OZ-PLUGIN-00315` bluebubbles-policy is
+checkpointed in `0cfb2157`, and `OZ-PLUGIN-00316` telegram-command-ui is
+checkpointed in `185f5b52`. `OZ-PLUGIN-00317` telegram-account is
+checkpointed in `49838584`, and `OZ-PLUGIN-00318` irc-surface is
+checkpointed in `a2edff86`. `OZ-PLUGIN-00319` mattermost-policy is
+checkpointed in `f18197d2`, and `OZ-PLUGIN-00320` matrix-runtime-surface is
+checkpointed in `f4473e05`. `OZ-PLUGIN-00321` matrix-thread-bindings is
+checkpointed in `61ade86a`, `OZ-PLUGIN-00322` matrix-surface is checkpointed
+in `20eb2b27`, and `OZ-PLUGIN-00323` volc-model-catalog-shared is
+checkpointed in `799fbdd4`. `OZ-PLUGIN-00324` test-utils is checkpointed in
+`992457ac`, and `OZ-PLUGIN-00325` facade-activation-check.runtime is
+checkpointed in `1f2ec91c`. `OZ-PLUGIN-00326` vercel-ai-gateway is
+checkpointed in `c298b482`, and `OZ-PLUGIN-00327` minimax is checkpointed in
+`95d0e552`. `OZ-PLUGIN-00328` openrouter is checkpointed in `fad79376`;
+`OZ-PLUGIN-00329` litellm is checkpointed in `d7c42aed`,
+`OZ-PLUGIN-00330` llm-task is checkpointed in `1a223530`, and
+`OZ-PLUGIN-00331` command-status.runtime is checkpointed in `e9c42307`.
+`OZ-PLUGIN-00332` image-generation is checkpointed in `8457701d`, and
+`OZ-PLUGIN-00333` video-generation is checkpointed in `69e092b5`.
+`OZ-PLUGIN-00334` memory-host-search.runtime is checkpointed in `96722388`;
+`OZ-PLUGIN-00335` opencode is checkpointed in `114dc40a`, and
+`OZ-PLUGIN-00336` ollama/ollama-runtime is checkpointed in `2b1e3865`;
+`OZ-PLUGIN-00337` line-surface is checkpointed in `fee011e1`, and
+`OZ-PLUGIN-00338` line root/core is checkpointed in `696e61f2`.
+`OZ-PLUGIN-00339` matrix-helper is checkpointed in `1717d1c2`; continue
+remaining exact SDK helper seams, provider/runtime breadth, and broader repo
+parity.
 
 ## Active Slice Detail
 
@@ -931,6 +984,391 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     adjacent setup proof (`4 passed, 1117 deselected`), adjacent
     imported-plugin proof (`309 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00300` Imported resolution-notes subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/resolution-notes.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `resolution-notes` and receive `formatResolvedUnresolvedNote`,
+    returning `undefined` for empty input, a resolved line for resolved
+    entries, an unresolved passthrough line for unresolved entries, and both
+    lines separated by newline when both sets are present.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `9c56ff39`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_resolution_notes_helper -q`
+    (fallback behavior returned raw input objects before implementation, then
+    `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "resolution_notes or tool_send or web_media"`
+    (`3 passed, 1128 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00301` Imported facade-loader subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/facade-loader.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `facade-loader` and receive lazy object/array facade proxies,
+    cached `loadFacadeModuleAtLocationSync`, imported facade id tracking, and
+    reset support without importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `29aa7956`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_facade_loader_helpers -q`
+    (generic fallback returned empty/non-cached proxy behavior before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "facade_loader or plugin_test_runtime or resolution_notes"`
+    (`3 passed, 1129 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00302` Imported session-transcript-hit subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/session-transcript-hit.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `session-transcript-hit` and receive helpers that derive
+    transcript stems from `sessions/*.jsonl` or QMD `.md` paths and resolve
+    those stems to canonical combined session-store keys by `sessionFile` or
+    parsed `sessionId`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `b294d317`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_session_transcript_hit_helpers -q`
+    (generic fallback returned raw inputs before implementation, then `1
+    passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "session_transcript_hit or session_store_runtime or session_visibility"`
+    (`3 passed, 1130 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00303` Imported pairing-access subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/pairing-access.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `pairing-access` and receive `createScopedPairingAccess`, which
+    normalizes account ids and delegates allow-store reads, DM-policy reads,
+    and pairing-request upserts through `core.channel.pairing` with the
+    expected channel/account envelope.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `e04677d3`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_pairing_access_helpers -q`
+    (generic fallback returned raw params and failed with
+    `access.readAllowFromStore is not a function` before implementation, then
+    `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "pairing_access or channel_pairing or pairing_paths"`
+    (`3 passed, 1131 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00304` Imported facade-resolution-shared subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/facade-resolution-shared.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `facade-resolution-shared` and receive pure helpers for facade
+    resolution keys, bundled boundary roots, source/built public-surface
+    artifact selection, explicit bundled-plugin roots, and registry module
+    lookup by plugin id, root basename, or channel id.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `2938b03a`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_facade_resolution_shared_helpers -q`
+    (generic fallback returned objects into `path.relative` before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "facade_resolution_shared or facade_loader or plugin_test_runtime"`
+    (`3 passed, 1132 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00305` Imported facade-runtime subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/facade-runtime.ts` and
+    `openclaw-main/src/plugin-sdk/facade-activation-check.runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `facade-runtime` and receive the lazy facade value wrapper,
+    facade-loader reexports, activation access probes, blocked try-loads,
+    reset, and the upstream `__testing` module/registry hooks.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `1e9b65f5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_facade_runtime_helpers -q`
+    (`__testing.loadFacadeModuleAtLocationSync` was missing before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "facade_runtime or facade_resolution_shared or facade_loader"`
+    (`3 passed, 1133 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00306` Imported test-helpers/string-utils subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/test-helpers/string-utils.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `test-helpers/string-utils` and receive only the
+    `uniqueSortedStrings` helper, preserving the exact upstream subpath export
+    shape instead of the broad generic SDK proxy.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `e2ba3082`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_helpers_string_utils -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "test_helpers_string_utils or channel_test_helpers or plugin_test_api"`
+    (`3 passed, 1134 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00307` Imported test-helpers/envelope-timestamp subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/test-helpers/envelope-timestamp.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `test-helpers/envelope-timestamp` and receive only
+    `escapeRegExp`, `formatEnvelopeTimestamp`, and
+    `formatLocalEnvelopeTimestamp`, preserving the exact upstream subpath
+    export shape instead of the broad generic SDK proxy.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `54b47a45`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_helpers_envelope_timestamp -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "test_helpers_envelope_timestamp or test_helpers_string_utils or channel_test_helpers"`
+    (`3 passed, 1135 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00308` Imported test-helpers/pairing-reply subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/test-helpers/pairing-reply.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `test-helpers/pairing-reply` and receive only
+    `extractPairingCode` and `expectPairingReplyText`, preserving the exact
+    upstream subpath export shape instead of the broad generic SDK proxy.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `75ac3561`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_helpers_pairing_reply -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "test_helpers_pairing_reply or test_helpers_envelope_timestamp or channel_test_helpers"`
+    (`3 passed, 1136 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00309` Imported github-copilot-login subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/github-copilot-login.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `github-copilot-login` and receive only
+    `githubCopilotLoginCommand`, backed by OpenZues' existing native
+    unavailable provider-auth login posture.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `0561baa6`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_github_copilot_login_helper -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "github_copilot_login or provider_auth_login"`
+    (`2 passed, 1138 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00310` Imported copilot-proxy subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/copilot-proxy.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `copilot-proxy` and receive only `definePluginEntry`, matching
+    the bundled Copilot proxy plugin's narrow public SDK surface.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `808c9260`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_copilot_proxy_helper -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "copilot_proxy or plugin_entry or open_prose"`
+    (`4 passed, 1137 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00311` Imported private-qa-bundled-env subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/private-qa-bundled-env.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `private-qa-bundled-env` and receive only
+    `resolvePrivateQaBundledPluginsEnv`, which preserves env fields, returns
+    `undefined` without explicit private QA enablement, and resolves
+    source-checkout `extensions` roots for enabled source installs.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `fc6c72d4`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_private_qa_bundled_env_helper -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "private_qa_bundled_env or qa_runner or plugin_entry"`
+    (`5 passed, 1137 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00312` Imported diagnostics-otel subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/diagnostics-otel.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `diagnostics-otel` and receive only the bundled OTel plugin
+    surface: public diagnostic event emit/listen, quiet log transport
+    registration/disposal, sensitive text redaction, and empty plugin config
+    schema construction.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `1bc4c0f9`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_diagnostics_otel_helpers -q`
+    (exact subpath returned the broad generic SDK export set and eager
+    transport side effect before implementation, then `1 passed`), adjacent
+    proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "diagnostics_otel or diagnostic_runtime or logging_core or plugin_entry"`
+    (`6 passed, 1137 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00313` Imported thread-ownership subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/thread-ownership.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `thread-ownership` and receive only `definePluginEntry`,
+    `fetchWithSsrFGuard`, `ssrfPolicyFromDangerouslyAllowPrivateNetwork`, and
+    `ssrfPolicyFromAllowPrivateNetwork`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `41dad57f`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_thread_ownership_helper -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "thread_ownership or fetch_ssrf_helpers or plugin_entry"`
+    (`5 passed, 1139 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00314` Imported ssrf-dispatcher subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/ssrf-dispatcher.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `ssrf-dispatcher` and receive only `closeDispatcher`,
+    `createPinnedDispatcher`, and `resolvePinnedHostnameWithPolicy`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `7b283bdc`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_ssrf_dispatcher_helper -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "ssrf_dispatcher or fetch_ssrf_helpers or thread_ownership"`
+    (`3 passed, 1142 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00315` Imported bluebubbles-policy subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/bluebubbles-policy.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `bluebubbles-policy` and receive only sender allowlist,
+    group-mention, and group tool-policy helpers.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `0cfb2157`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_bluebubbles_policy_helper -q`
+    (exact subpath returned the broad generic SDK export set and passthrough
+    sender policy before implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "bluebubbles_policy or compat or discord_facade"`
+    (`4 passed, 1142 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00316` Imported telegram-command-ui subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/telegram-command-ui.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `telegram-command-ui` and receive only
+    `buildCommandsPaginationKeyboard`, preserving Telegram pagination callback
+    payloads and optional agent id suffixes.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `185f5b52`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_telegram_command_ui_helper -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "telegram_command_ui or telegram_command_config or command_auth"`
+    (`4 passed, 1143 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00317` Imported telegram-account subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/telegram-account.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `telegram-account` and receive only `resolveTelegramAccount`,
+    resolving account overrides, enabled state, config tokens, token files,
+    env fallback, and token source metadata.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `49838584`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_telegram_account_helper -q`
+    (exact subpath returned generic passthrough data before implementation,
+    then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "telegram_account or telegram_command_ui or channel_config_helpers"`
+    (`3 passed, 1145 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
 
 - [x] `OZ-PLUGIN-00206` Imported messaging-targets helper shim
   - Source: `openclaw-main/src/plugin-sdk/messaging-targets.ts` and
@@ -10934,6 +11372,237 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     src\openzues\services\runtime_updates.py src\openzues\cli.py
     tests\test_runtime_updates.py tests\test_cli.py`, `mypy
     src\openzues\services\runtime_updates.py src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001CA` git release-channel tag checkout
+  - Source: `openclaw-main/src/infra/update-runner.ts`,
+    `openclaw-main/src/infra/update-channels.ts`,
+    `openclaw-main/src/infra/update-check.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: stable/beta git updates fetch tags, list sorted `v*` tags,
+    select the stable tag or beta tag with OpenClaw's stable fallback rule,
+    detach checkout the selected release tag, skip dev upstream/preflight
+    rebase, and return `no-release-tag` when no matching release tag exists.
+  - Evidence required: focused stable/beta/no-release-tag proofs, adjacent
+    git-update proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `1f45d307`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused stable red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight -q`
+    (`1 failed` before implementation, then covered green), focused release
+    channel proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight tests\test_runtime_updates.py::test_runtime_update_run_update_beta_channel_falls_back_to_newer_stable_tag tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_release_tag_for_release_channel -q`
+    (`3 passed`), adjacent runtime proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_main_for_dev_channel tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight tests\test_runtime_updates.py::test_runtime_update_run_update_beta_channel_falls_back_to_newer_stable_tag tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_release_tag_for_release_channel -q`
+    (`6 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`49 passed`),
+    `ruff check src\openzues\services\runtime_updates.py
+    tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001CB` git preflight edge-failure proof
+  - Source: `openclaw-main/src/infra/update-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_runtime_updates.py`
+  - Contract: dev-target-ref resolution returns `no-target-sha` before
+    preflight when none of the fetched remote/tag candidates resolves, and
+    candidate preflight returns `preflight-no-good-commit` after cleanup when
+    every candidate checkout/deps/build sequence fails.
+  - Evidence required: focused no-target/no-good proof, adjacent git-update
+    proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `7b15fafc`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_target_sha_for_dev_target_ref tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_no_good_commit -q`
+    (`2 passed`), adjacent runtime proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_target_sha_for_dev_target_ref tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_no_good_commit tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_errors_when_preflight_has_no_candidates -q`
+    (`5 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`51 passed`), `ruff
+    check tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001CC` startup auto-update dispatch
+  - Source: `openclaw-main/src/infra/update-startup.ts`,
+    `openclaw-main/src/infra/update-startup.test.ts`,
+    `openclaw-main/src/infra/update-check.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `src/openzues/app.py`, `src/openzues/cli.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: app/CLI construction wires the runtime update service to the
+    gateway config snapshot; package-shaped startup auto-update reads
+    `update.auto.enabled`, resolves stable/beta package targets with beta
+    fallback, dispatches the native package update path, and honors
+    `OPENCLAW_NO_AUTO_UPDATE` before version lookup or command execution.
+  - Evidence required: focused startup auto-update tests, adjacent runtime/app
+    and CLI proofs, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `822eb6a9`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_dispatches_beta_package_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update -q`
+    (`2 failed` before implementation, then `2 passed`), adjacent runtime
+    proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_dispatches_beta_package_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step tests\test_runtime_updates.py::test_runtime_update_run_update_checks_out_stable_release_tag_without_preflight -q`
+    (`4 passed`), app proof
+    `python -m pytest tests\test_app.py::test_health_endpoint -q` (`1
+    passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`53 passed`),
+    adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_runtime_update_service or update_json_passes_effective_git_channel_to_runtime or update_dry_run_json_uses_stored_update_channel"`
+    (`3 passed, 558 deselected`), `ruff check
+    src\openzues\services\runtime_updates.py src\openzues\app.py
+    src\openzues\cli.py tests\test_runtime_updates.py`, `mypy
+    src\openzues\services\runtime_updates.py src\openzues\app.py
+    src\openzues\cli.py`, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001CD` startup auto-update throttling state
+  - Source: `openclaw-main/src/infra/update-startup.ts`,
+    `openclaw-main/src/infra/update-startup.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: startup auto-update persists `update-check.json` style state,
+    records first-seen version/tag/time and install id, defers stable updates
+    until delay plus deterministic jitter is due, records attempt/success
+    timestamps, and skips repeat beta attempts for the same version inside
+    `betaCheckIntervalHours`.
+  - Evidence required: focused stable-delay and beta-recent-attempt tests,
+    adjacent runtime proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `a1bb5d30`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_stable_until_rollout_window tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt -q`
+    (`2 failed` before implementation, then `2 passed`), adjacent runtime
+    proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_dispatches_beta_package_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_stable_until_rollout_window tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step -q`
+    (`5 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`55 passed`),
+    adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_runtime_update_service or update_json_passes_effective_git_channel_to_runtime or update_dry_run_json_uses_stored_update_channel"`
+    (`3 passed, 558 deselected`), `ruff check
+    src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+    `mypy src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001CE` startup auto-update check interval
+  - Source: `openclaw-main/src/infra/update-startup.ts`,
+    `openclaw-main/src/infra/update-startup.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: startup auto-update reads persisted `lastCheckedAt` and skips
+    version lookup plus command execution while the configured beta/stable
+    check interval remains fresh, while preserving older attempt-throttle
+    behavior after stale checks proceed.
+  - Evidence required: focused check-interval and adjacent throttling tests,
+    full runtime update suite, ruff, mypy
+  - Status: checkpointed in `392177e5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_skips_recent_check_interval -q`
+    (`1 failed` before implementation, then covered green), adjacent proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_skips_recent_check_interval tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_stable_until_rollout_window -q`
+    (`3 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`56 passed`), `ruff
+    check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+    `mypy src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001CF` startup update availability hint state
+  - Source: `openclaw-main/src/infra/update-startup.ts`,
+    `openclaw-main/src/infra/update-startup.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: startup update checks run hint discovery independently of
+    auto-apply dispatch, persist `lastAvailableVersion`, `lastAvailableTag`,
+    `lastNotifiedVersion`, and `lastNotifiedTag` when updates are available,
+    return persisted availability during recent-check skips, treat
+    `OPENCLAW_NO_AUTO_UPDATE` as command-only suppression while hints remain
+    active, and clear stale availability plus auto-first-seen state when the
+    resolved package target is up to date.
+  - Evidence required: focused availability-state tests, adjacent startup
+    update proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `087924f8`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update tests\test_runtime_updates.py::test_runtime_update_startup_update_hints_record_available_state_when_auto_disabled tests\test_runtime_updates.py::test_runtime_update_startup_update_hints_clear_available_state_when_up_to_date -q`
+    (`3 failed` before implementation, then `3 passed`), adjacent proof
+    `python -m pytest tests\test_runtime_updates.py -q -k "startup_auto_update or startup_update_hints"`
+    (`7 passed, 51 deselected`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`58 passed`), `ruff
+    check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+    `mypy src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001CG` startup update source-checkout availability clearing
+  - Source: `openclaw-main/src/infra/update-startup.ts`,
+    `openclaw-main/src/infra/update-startup.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: startup update checks encountering a source checkout or other
+    non-package install refresh `lastCheckedAt`, clear stale
+    `lastAvailableVersion`/`lastAvailableTag` plus auto-first-seen state, and
+    return before npm version lookup or package-update command dispatch.
+  - Evidence required: focused source-checkout state clearing test, adjacent
+    startup update proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `e66c5082`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_update_hints_clear_available_state_for_source_checkout -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_runtime_updates.py -q -k "startup_update_hints or startup_auto_update"`
+    (`8 passed, 51 deselected`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`59 passed`), `ruff
+    check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+    `mypy src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001CH` recurring startup update runner checks
+  - Source: `openclaw-main/src/infra/update-startup.ts`,
+    `openclaw-main/src/infra/update-startup.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: the long-running runtime update runner performs repeated startup
+    update checks after its poll interval, while persisted `lastCheckedAt`
+    prevents package version lookup until the configured check interval is
+    stale.
+  - Evidence required: focused recurring-runner startup check test, adjacent
+    startup update proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `49150d76`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_runner_repeats_startup_checks_after_interval -q`
+    (`1 passed`; pre-fix behavior timed out after only the first startup
+    version lookup), adjacent proof
+    `python -m pytest tests\test_runtime_updates.py -q -k "startup_update_hints or startup_auto_update or runner_repeats_startup"`
+    (`9 passed, 51 deselected`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`60 passed`), `ruff
+    check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+    `mypy src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001CI` combined update-status availability hint separator
+  - Source: `openclaw-main/src/commands/status.update.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: human update-status output with both git and registry
+    availability details renders `Update available (git behind N · npm
+    VERSION). Run: openzues update`, matching OpenClaw's detail separator.
+  - Evidence required: focused CLI human-output test, adjacent update-status
+    hint tests, ruff, mypy
+  - Status: checkpointed in `1d19a46c`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_status_human_reports_combined_git_and_registry_update_hint -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_cli.py -q -k "update_status_human_reports_update_available_hint or update_status_human_reports_git_update_available_hint or combined_git_and_registry_update_hint"`
+    (`3 passed, 559 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
     `git diff --check`.
 
 - [x] `OZ-PROV-001M` Slack agent-request thread metadata

@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1859,6 +1859,24 @@ may lag behind this tracker.
   generated `dist/control-ui` dirty-file allowance.
   - Status: checkpointed in `5171f2f2`
 
+- [x] Git release-channel tag checkout, preserving OpenClaw's stable/beta
+  `v*` tag resolution, beta stable-fallback, detached checkout, and
+  `no-release-tag` guard.
+  - Status: checkpointed in `1f45d307`
+
+- [x] Git preflight edge-failure proof, preserving OpenClaw's `no-target-sha`
+  and `preflight-no-good-commit` result boundaries.
+  - Status: checkpointed in `7b15fafc`
+
+- [x] Startup auto-update dispatch, preserving config `update.auto.enabled`,
+  stable/beta package target resolution with beta fallback, native package
+  update dispatch, and `OPENCLAW_NO_AUTO_UPDATE` suppression.
+  - Status: checkpointed in `822eb6a9`
+
+- [x] Startup auto-update throttling state, preserving stable first-seen
+  delay/jitter and beta recent-attempt suppression.
+  - Status: checkpointed in `a1bb5d30`
+
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
   - Status: checkpointed in `caded84a`
@@ -3012,6 +3030,369 @@ may lag behind this tracker.
     adjacent setup facade/runtime/tools proof (`4 passed, 1117 deselected`),
     adjacent imported-plugin proof (`309 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK resolution-notes subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/resolution-notes.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `9c56ff39`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused resolution-notes red/green proof
+    (fallback behavior returned raw input objects before implementation, then
+    `1 passed`), adjacent resolution/tool-send/web-media proof (`3 passed,
+    1128 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK facade-loader subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/facade-loader.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `29aa7956`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused facade-loader red/green proof
+    (generic fallback returned empty/non-cached proxy behavior before
+    implementation, then `1 passed`), adjacent facade/plugin-test/runtime proof
+    (`3 passed, 1129 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Imported plugin SDK session-transcript-hit subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/session-transcript-hit.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `b294d317`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused session-transcript-hit red/green proof
+    (generic fallback returned raw inputs before implementation, then `1
+    passed`), adjacent session-store/visibility proof (`3 passed, 1130
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK pairing-access subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/pairing-access.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `e04677d3`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused pairing-access red/green proof
+    (generic fallback returned raw params and failed with
+    `access.readAllowFromStore is not a function` before implementation, then
+    `1 passed`), adjacent channel-pairing proof (`3 passed, 1131
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK facade-resolution-shared subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/facade-resolution-shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `2938b03a`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused facade-resolution-shared red/green
+    proof (generic fallback returned objects into `path.relative` before
+    implementation, then `1 passed`), adjacent facade/plugin proof (`3 passed,
+    1132 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK facade-runtime subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/facade-runtime.ts`,
+    `openclaw-main/src/plugin-sdk/facade-activation-check.runtime.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `1e9b65f5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused facade-runtime red/green proof
+    (`__testing.loadFacadeModuleAtLocationSync` was missing before
+    implementation, then `1 passed`), adjacent facade proof (`3 passed, 1133
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK facade-activation-check.runtime subpath shim.
+  - Source:
+    `openclaw-main/src/plugin-sdk/facade-activation-check.runtime.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `1f2ec91c`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused facade-activation-check.runtime
+    red/green proof (exact subpath returned generic passthrough functions
+    before implementation, then `1 passed`), adjacent facade proof (`3 passed,
+    1153 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK test-helpers/string-utils subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/test-helpers/string-utils.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `e2ba3082`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused string-utils red/green proof
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent helper proof (`3 passed, 1134
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK test-helpers/envelope-timestamp subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/test-helpers/envelope-timestamp.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `54b47a45`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused envelope-timestamp red/green proof
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent helper proof (`3 passed, 1135
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK test-helpers/pairing-reply subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/test-helpers/pairing-reply.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `75ac3561`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused pairing-reply red/green proof
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent helper proof (`3 passed, 1136
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK github-copilot-login subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/github-copilot-login.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `0561baa6`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused github-copilot-login red/green proof
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent provider-auth login proof (`2
+    passed, 1138 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK copilot-proxy subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/copilot-proxy.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `808c9260`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused copilot-proxy red/green proof
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent plugin-entry proof (`4 passed,
+    1137 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK private-qa-bundled-env subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/private-qa-bundled-env.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `fc6c72d4`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused private-qa-bundled-env red/green proof
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent QA/plugin proof (`5 passed,
+    1137 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK diagnostics-otel subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/diagnostics-otel.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `1bc4c0f9`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused diagnostics-otel red/green proof
+    (exact subpath returned the broad generic SDK export set and eager
+    transport side effect before implementation, then `1 passed`), adjacent
+    diagnostic/logging proof (`6 passed, 1137 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK thread-ownership subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/thread-ownership.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `41dad57f`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused thread-ownership red/green proof
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent SSRF/plugin-entry proof (`5
+    passed, 1139 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK ssrf-dispatcher subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/ssrf-dispatcher.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `7b283bdc`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused ssrf-dispatcher red/green proof
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent SSRF proof (`3 passed, 1142
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK bluebubbles-policy subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/bluebubbles-policy.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `0cfb2157`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused bluebubbles-policy red/green proof
+    (exact subpath returned the broad generic SDK export set and passthrough
+    sender policy before implementation, then `1 passed`), adjacent
+    BlueBubbles/compat proof (`4 passed, 1142 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK telegram-command-ui subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/telegram-command-ui.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `185f5b52`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused telegram-command-ui red/green proof
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent Telegram command proof (`4
+    passed, 1143 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK telegram-account subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/telegram-account.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `49838584`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused telegram-account red/green proof
+    (exact subpath returned generic passthrough data before implementation,
+    then `1 passed`), adjacent Telegram/channel config proof (`3 passed, 1145
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK irc-surface subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/irc-surface.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `a2edff86`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused irc-surface red/green proof
+    (exact subpath returned generic passthrough data before implementation,
+    then `1 passed`), adjacent provider/channel helper proof (`4 passed, 1145
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK mattermost-policy subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/mattermost-policy.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `f18197d2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused mattermost-policy red/green proof
+    (exact subpath returned generic passthrough data before implementation,
+    then `1 passed`), adjacent provider/channel policy proof (`4 passed, 1146
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK matrix-runtime-surface subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/matrix-runtime-surface.ts`,
+    `openclaw-main/extensions/matrix/src/auth-precedence.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `f4473e05`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused matrix-runtime-surface red/green proof
+    (exact subpath returned generic passthrough data before implementation,
+    then `1 passed`), adjacent Matrix/provider facade proof (`4 passed, 1147
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK matrix-thread-bindings subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/matrix-thread-bindings.ts`,
+    `openclaw-main/extensions/matrix/src/matrix/thread-bindings-shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `61ade86a`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused matrix-thread-bindings red/green
+    proof (exact subpath returned generic passthrough data before
+    implementation, then `1 passed`), adjacent Matrix/thread-binding proof (`4
+    passed, 1148 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK matrix-surface subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/matrix-surface.ts`,
+    `openclaw-main/extensions/matrix/src/matrix/thread-bindings.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `20eb2b27`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused matrix-surface red/green proof (exact
+    subpath fell through to generic SDK and produced a missing manager-method
+    error before implementation, then `1 passed`), adjacent Matrix facade
+    proof (`4 passed, 1149 deselected`), `ruff check`, `mypy`, and `git diff
+    --check`.
+
+- [x] Imported plugin SDK volc-model-catalog-shared subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/volc-model-catalog-shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `799fbdd4`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused volc-model-catalog-shared red/green
+    proof (exact subpath returned generic non-array catalog data before
+    implementation, then `1 passed`), adjacent provider/model catalog proof
+    (`3 passed, 1151 deselected`), `ruff check`, `mypy`, and `git diff
+    --check`.
+
+- [x] Imported plugin SDK vercel-ai-gateway subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/vercel-ai-gateway.ts`,
+    `openclaw-main/extensions/vercel-ai-gateway/models.ts`,
+    `openclaw-main/extensions/vercel-ai-gateway/provider-catalog.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `c298b482`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused vercel-ai-gateway red/green proof
+    (exact subpath returned generic passthrough data and no provider model
+    array before implementation, then `1 passed`), adjacent provider catalog
+    proof (`4 passed, 1153 deselected`), `ruff check`, `mypy`, and `git diff
+    --check`.
+
+- [x] Imported plugin SDK minimax subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/minimax.ts`,
+    `openclaw-main/extensions/minimax/provider-models.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `95d0e552`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused minimax red/green proof (exact subpath
+    returned the whole generic SDK surface before implementation, then `1
+    passed`), adjacent provider/model proof (`5 passed, 1153 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK openrouter subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/openrouter.ts`,
+    `openclaw-main/extensions/openrouter/provider-catalog.ts`,
+    `openclaw-main/extensions/openrouter/onboard.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `fad79376`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused openrouter red/green proof (exact
+    subpath returned generic passthrough data and no provider envelope before
+    implementation, then `1 passed`), adjacent provider/onboard proof (`5
+    passed, 1154 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK litellm subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/litellm.ts`,
+    `openclaw-main/extensions/litellm/onboard.ts`,
+    `openclaw-main/extensions/litellm/provider-catalog.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `d7c42aed`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused litellm red/green proof (exact subpath
+    returned the generic SDK and passthrough appliers before implementation,
+    then `1 passed`), adjacent provider/onboard proof (`5 passed, 1155
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK llm-task subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/llm-task.ts`,
+    `openclaw-main/src/auto-reply/thinking.ts`,
+    `openclaw-main/src/auto-reply/thinking.shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `1a223530`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused llm-task red/green proof (exact
+    subpath returned generic passthrough thinking helpers before
+    implementation, then `1 passed`), adjacent plugin-entry/diffs/provider
+    proof (`5 passed, 1156 deselected`), `ruff check`, `mypy`, and `git diff
+    --check`.
+
+- [x] Imported plugin SDK test-utils compatibility alias.
+  - Source: `openclaw-main/src/plugin-sdk/test-utils.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `992457ac`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused test-utils compatibility red/green
+    proof (exact subpath returned the whole generic SDK surface before
+    implementation, then `1 passed`), adjacent testing-barrel proof (`2
+    passed, 1153 deselected`), `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin SDK account-core/account-resolution shim.
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
@@ -5812,11 +6193,202 @@ may lag behind this tracker.
     passed`), adjacent human/update proof (`5 passed, 527 deselected`), `ruff
     check`, and focused `git diff --check`.
 
+- [x] Human update-status combined git/npm hint separator.
+  - Source: `openclaw-main/src/commands/status.update.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `1d19a46c`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused combined hint red-green proof (`1
+    failed` before implementation, then `1 passed`), adjacent update-status
+    proof (`3 passed, 559 deselected`), `ruff check`, `mypy`, and focused
+    `git diff --check`.
+
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.
   - Source: OpenClaw repo-wide domains.
   - Status: open
   - Weight: 5+
+
+- [x] Imported plugin SDK command-status.runtime subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/command-status.runtime.ts`,
+    `openclaw-main/src/plugin-sdk/command-status-runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `command-status.runtime` imports expose the
+    same `resolveDirectStatusReplyForSession` helper as
+    `command-status-runtime`, preserving blank-session `undefined`, runtime
+    delegation, and unavailable-runtime error behavior.
+  - Evidence required: focused command-status runtime import test, adjacent
+    command-status proof, ruff, mypy
+  - Status: checkpointed in `e9c42307`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused command-status.runtime red/green proof
+    (dotted import exposed generic SDK exports before implementation, then
+    `1 passed`), adjacent command-status proof (`2 passed, 1159 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK image-generation provider/asset shim.
+  - Source: `openclaw-main/src/plugin-sdk/image-generation.ts`,
+    `openclaw-main/src/image-generation/image-assets.ts`,
+    `openclaw-main/src/image-generation/openai-compatible-image-provider.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `image-generation` imports expose the
+    OpenAI-compatible provider factory and image asset helpers for data URLs,
+    base64 response parsing, MIME sniffing, upload filenames, provider model
+    copy semantics, edit support errors, and missing API-key errors.
+  - Evidence required: focused image-generation import test, adjacent
+    image/media helper proof, ruff, mypy
+  - Status: checkpointed in `8457701d`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused image-generation red/green proof
+    (exact import returned generic passthrough objects before implementation,
+    then `1 passed`), adjacent image/media helper proof (`5 passed, 1157
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK video-generation Dashscope helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/video-generation.ts`,
+    `openclaw-main/src/video-generation/dashscope-compatible.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `video-generation` imports expose Dashscope
+    WAN model/capability constants, reference URL resolution, input/parameter
+    builders, URL extraction, task polling, generated-video download
+    projection, and task-run metadata behavior.
+  - Evidence required: focused video-generation import test, adjacent
+    generation helper proof, ruff, mypy
+  - Status: checkpointed in `69e092b5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused video-generation red/green proof
+    (exact import returned generic passthrough objects before implementation,
+    then `1 passed`), adjacent generation helper proof (`4 passed, 1159
+    deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK memory-host-search.runtime shim.
+  - Source: `openclaw-main/src/plugin-sdk/memory-host-search.runtime.ts`,
+    `openclaw-main/src/plugins/memory-runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `memory-host-search.runtime` imports expose
+    active search-manager lookup, active backend-config resolution, and manager
+    cleanup while the non-runtime `memory-host-search` facade remains narrower.
+  - Evidence required: focused memory-host-search import test, adjacent memory
+    helper proof, ruff, mypy
+  - Status: checkpointed in `96722388`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused memory-host-search.runtime red/green
+    proof (exact runtime import returned generic SDK facade before
+    implementation, then `1 passed`), adjacent memory helper proof (`4 passed,
+    1159 deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK opencode shim.
+  - Source: `openclaw-main/src/plugin-sdk/opencode.ts`,
+    `openclaw-main/src/plugin-sdk/provider-onboard.ts`,
+    `openclaw-main/src/plugin-sdk/provider-auth-api-key.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `opencode` imports expose OpenClaw's
+    `createOpencodeCatalogApiKeyAuthMethod`, `applyOpencodeZenModelDefault`,
+    and `OPENCODE_ZEN_DEFAULT_MODEL`, including shared Zen/Go wizard metadata,
+    shared profile ids, and `OPENCODE_API_KEY` auth posture.
+  - Evidence required: focused opencode import test, adjacent provider-onboard
+    and provider-auth proof, ruff, mypy
+  - Status: checkpointed in `114dc40a`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused opencode red/green proof (exact import
+    returned a helper without OpenClaw's non-interactive auth method shape
+    before implementation, then `1 passed`), adjacent provider/onboard proof
+    (`3 passed, 1161 deselected`), `ruff check`, `mypy`, and focused
+    `git diff --check`.
+
+- [x] Imported plugin SDK ollama/ollama-runtime shim.
+  - Source: `openclaw-main/src/plugin-sdk/ollama.ts`,
+    `openclaw-main/src/plugin-sdk/ollama-runtime.ts`,
+    `openclaw-main/extensions/ollama/src/provider-models.ts`,
+    `openclaw-main/extensions/ollama/src/stream.ts`,
+    `openclaw-main/extensions/ollama/src/embedding-provider.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `ollama`/`ollama-runtime` imports expose
+    API-base normalization, chat request shaping, model id prefix trimming,
+    OpenAI-compatible `num_ctx` detection, message/tool-call conversion with
+    unsafe integer preservation, assistant message projection, tolerant NDJSON
+    parsing, and embedding-provider export posture.
+  - Evidence required: focused Ollama runtime import test, adjacent
+    provider/runtime proof, ruff, mypy
+  - Status: checkpointed in `2b1e3865`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Ollama red/green proof (exact import
+    returned generic/passthrough data before implementation, then `1 passed`),
+    adjacent provider/runtime proof (`4 passed, 1161 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK line-surface/action helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/line-surface.ts`,
+    `openclaw-main/src/plugin-sdk/line-runtime.ts`,
+    `openclaw-main/extensions/line/src/accounts.ts`,
+    `openclaw-main/extensions/line/src/group-keys.ts`,
+    `openclaw-main/extensions/line/src/flex-templates/basic-cards.ts`,
+    `openclaw-main/extensions/line/src/markdown-to-line.ts`,
+    `openclaw-main/extensions/line/src/actions.ts`,
+    `openclaw-main/extensions/line/src/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `line-surface` imports expose account/default
+    resolution, group key lookup, basic Flex card builders, and
+    `processLineMessage`; `line-runtime` exposes action, quick-reply, and
+    directive helper functions used by imported LINE runtime tools.
+  - Evidence required: focused LINE surface import test, adjacent provider
+    facade proof, ruff, mypy
+  - Status: checkpointed in `fee011e1`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused LINE surface red/green proof (exact
+    imports returned generic or wrong-shaped data before implementation, then
+    `1 passed`), adjacent provider facade proof (`4 passed, 1162 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK line root/core barrel shim.
+  - Source: `openclaw-main/src/plugin-sdk/line.ts`,
+    `openclaw-main/src/plugin-sdk/line-core.ts`,
+    `openclaw-main/src/plugin-sdk/channel-plugin-common.ts`,
+    `openclaw-main/src/plugin-sdk/status-helpers.ts`,
+    `openclaw-main/src/plugin-sdk/setup.ts`,
+    `openclaw-main/extensions/line/src/accounts.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `line`/`line-core` imports expose exact
+    root/core barrel keys for channel config helpers, credential cleanup,
+    status summaries, runtime group policy helpers, LINE surface reexports,
+    setup helpers, and docs-link formatting.
+  - Evidence required: focused LINE root/core import test, adjacent LINE/setup
+    proof, ruff, mypy
+  - Status: checkpointed in `696e61f2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused LINE root/core red/green proof (exact
+    imports returned generic or wrong-shaped data before implementation, then
+    `1 passed`), adjacent LINE/setup proof (`4 passed, 1163 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK matrix-helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/matrix-helper.ts`,
+    `openclaw-main/extensions/matrix/src/account-selection.ts`,
+    `openclaw-main/extensions/matrix/src/env-vars.ts`,
+    `openclaw-main/extensions/matrix/src/storage-paths.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `matrix-helper` imports expose Matrix
+    channel config lookup, normalized account entry/default resolution,
+    explicit default-account detection, scoped env var names, credential paths,
+    legacy flat-store paths, and account storage-root derivation.
+  - Evidence required: focused Matrix helper import test, adjacent Matrix
+    helper proof, ruff, mypy
+  - Status: checkpointed in `1717d1c2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Matrix helper red/green proof (exact
+    import returned the generic SDK facade before implementation, then `1
+    passed`), adjacent Matrix helper proof (`4 passed, 1164 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 

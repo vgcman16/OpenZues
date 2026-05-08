@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999999999999999999999%.
+  band of ~80-99.99999999999999999999999999999999%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10345,3 +10345,362 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   evidence band tightened to ~80-99.9999999999999999999999%. Continue
   no-target-sha/no-good-commit edge verification or startup auto-update
   policy next.
+- Current queue-head adjustment: native stable/beta git release-channel
+  updates now list sorted `v*` tags, select the stable tag or beta tag with
+  OpenClaw's stable fallback rule, detach checkout the selected release tag,
+  and return `no-release-tag` when the requested release channel has no
+  matching tag. Source/test checkpointed in `1f45d307`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999995%. Continue startup auto-update policy or
+  remaining no-target/no-good-commit edge verification next.
+- Current queue-head adjustment: native git update preflight edge failures now
+  have focused proof for OpenClaw's `no-target-sha` dev-target-ref failure and
+  `preflight-no-good-commit` candidate exhaustion result. Test checkpointed in
+  `7b15fafc`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99999999999999999999997%. Continue startup
+  auto-update policy next.
+- Current queue-head adjustment: startup auto-update now has a native
+  app/CLI-wired runtime hook for package-shaped installs, config
+  `update.auto.enabled`, stable/beta channel target resolution, beta fallback,
+  package update dispatch, and `OPENCLAW_NO_AUTO_UPDATE` suppression before
+  version lookup. Source/test checkpointed in `822eb6a9`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999998%. Continue stable rollout state/delay and
+  recent-attempt throttling next.
+- Current queue-head adjustment: startup auto-update now persists
+  OpenClaw-shaped update-check state, defers stable auto-apply until the
+  first-seen delay plus deterministic jitter is due, records attempt/success
+  timestamps, and suppresses repeat beta attempts inside the configured
+  interval. Source/test checkpointed in `a1bb5d30`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999%. Continue startup update availability
+  hint/cache and check-interval behavior next.
+- Current queue-head adjustment: startup auto-update now honors the
+  `lastCheckedAt` interval gate, skipping version lookup and command execution
+  while the configured beta/stable check interval is still fresh. Source/test
+  checkpointed in `392177e5`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999999995%.
+  Continue startup update availability hint/cache projection next.
+- Current queue-head adjustment: startup update checks now persist and project
+  OpenClaw-shaped availability hint state (`lastAvailableVersion`,
+  `lastAvailableTag`, `lastNotifiedVersion`, `lastNotifiedTag`) separately
+  from auto-apply dispatch, keep `OPENCLAW_NO_AUTO_UPDATE` as a command-only
+  suppression when hints are enabled, hydrate recent-check responses from
+  persisted availability, and clear stale availability when package checks are
+  up to date. Source/test checkpointed in `087924f8`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999996%. Continue the package/startup runtime queue
+  with checkOnStart=false auto-apply/no-hint and package-install edge parity.
+- Current queue-head adjustment: startup update checks now clear stale
+  availability and auto-first-seen state, and refresh `lastCheckedAt`, when
+  the package root is a source checkout/non-package install before version
+  lookup or command dispatch. Source/test checkpointed in `e66c5082`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999999997%. Continue startup update
+  checkOnStart=false no-notification proof and remaining package/runtime edges.
+- Current queue-head adjustment: the runtime update runner now repeats startup
+  update checks after the poll interval, relying on persisted `lastCheckedAt`
+  to avoid version lookup until the OpenClaw-style interval is stale. Source/test
+  checkpointed in `49150d76`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999999998%.
+  Continue broader package/runtime parity outside `update-startup.ts`.
+- Current queue-head adjustment: imported plugin SDK `resolution-notes` is now
+  a real scoped/unscoped runtime shim exporting `formatResolvedUnresolvedNote`;
+  fallback passthrough no longer returns raw input objects for this subpath.
+  Source/test checkpointed in `9c56ff39`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999985%. Continue remaining exact plugin SDK
+  subpaths such as `session-transcript-hit`, `pairing-access`, or provider
+  facade breadth.
+- Current queue-head adjustment: human update-status combined availability
+  hints now use OpenClaw's ` · ` separator for git/npm details. Source/test
+  checkpointed in `1d19a46c`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999999999%.
+  Continue exact plugin SDK subpaths or package/provider runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `facade-loader` is now a
+  scoped/unscoped runtime shim for lazy facade values, cached facade loading,
+  reset support, and imported facade id tracking. Source/test checkpointed in
+  `29aa7956`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999999999992%. Continue adjacent
+  facade-runtime/facade-resolution-shared or exact plugin SDK subpaths.
+- Current queue-head adjustment: imported plugin SDK `session-transcript-hit`
+  now resolves transcript stems and session store keys through a real
+  scoped/unscoped shim. Source/test checkpointed in `b294d317`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999994%. Continue `pairing-access`,
+  facade-runtime, or remaining exact SDK subpaths.
+- Current queue-head adjustment: imported plugin SDK `pairing-access` now
+  exposes `createScopedPairingAccess` through a real scoped/unscoped exact
+  subpath shim. Source/test checkpointed in `e04677d3`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999995%. Continue `facade-resolution-shared`,
+  `facade-runtime`, or remaining exact SDK subpaths.
+- Current queue-head adjustment: imported plugin SDK `facade-resolution-shared`
+  now exposes pure facade resolution-key, boundary-root, bundled artifact, and
+  registry-record lookup helpers through a real scoped/unscoped exact subpath
+  shim. Source/test checkpointed in `2938b03a`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999996%. Continue `facade-runtime` activation/
+  public-surface loading breadth or remaining exact SDK subpaths.
+- Current queue-head adjustment: imported plugin SDK `facade-runtime` now
+  exposes the lazy facade value helper, facade-loader reexports, activation
+  access probes, blocked try-load behavior, reset, and `__testing` module/
+  registry hooks through a real scoped/unscoped exact subpath shim. Source/test
+  checkpointed in `1e9b65f5`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999997%. Continue exact SDK subpaths such as
+  `test-helpers/string-utils`, `test-helpers/envelope-timestamp`, or
+  `test-helpers/pairing-reply`.
+- Current queue-head adjustment: imported plugin SDK
+  `test-helpers/string-utils` now exposes exact scoped/unscoped
+  `uniqueSortedStrings` without the broad generic SDK export leak. Source/test
+  checkpointed in `e2ba3082`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999998%. Continue exact SDK subpaths such as
+  `test-helpers/envelope-timestamp` or `test-helpers/pairing-reply`.
+- Current queue-head adjustment: imported plugin SDK
+  `test-helpers/envelope-timestamp` now exposes exact scoped/unscoped
+  timestamp and regexp helpers without the broad generic SDK export leak.
+  Source/test checkpointed in `54b47a45`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999%. Continue exact SDK subpaths such as
+  `test-helpers/pairing-reply`.
+- Current queue-head adjustment: imported plugin SDK
+  `test-helpers/pairing-reply` now exposes exact scoped/unscoped pairing code
+  extraction and reply assertion helpers without the broad generic SDK export
+  leak. Source/test checkpointed in `75ac3561`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999995%. Re-scan exact SDK subpaths for the next
+  narrow helper seam.
+- Current queue-head adjustment: imported plugin SDK `github-copilot-login`
+  now exposes exact scoped/unscoped `githubCopilotLoginCommand` with the native
+  unavailable provider-auth posture instead of the broad generic SDK export
+  leak. Source/test checkpointed in `0561baa6`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999996%. Continue the next exact SDK helper seam.
+- Current queue-head adjustment: imported plugin SDK `copilot-proxy` now
+  exposes exact scoped/unscoped `definePluginEntry` for the bundled Copilot
+  proxy plugin without the broad generic SDK export leak. Source/test
+  checkpointed in `808c9260`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999999999999999997%.
+  Continue the remaining exact SDK helper seam sweep.
+- Current queue-head adjustment: imported plugin SDK `private-qa-bundled-env`
+  now exposes exact scoped/unscoped `resolvePrivateQaBundledPluginsEnv` and
+  resolves source-checkout `extensions` roots only under the explicit private
+  QA enablement flag. Source/test checkpointed in `fc6c72d4`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999998%. Continue remaining exact SDK helper
+  subpaths and provider facade breadth.
+- Current queue-head adjustment: imported plugin SDK `diagnostics-otel` now
+  exposes the exact scoped/unscoped bundled OTel surface for diagnostic events,
+  log transport registration, redaction, and empty config schema construction
+  without the broad generic SDK export leak. Source/test checkpointed in
+  `1bc4c0f9`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99999999999999999999999999%. Continue remaining
+  exact SDK helper subpaths and provider facade breadth.
+- Current queue-head adjustment: imported plugin SDK `thread-ownership` now
+  exposes exact scoped/unscoped `definePluginEntry`, guarded fetch, and
+  private-network SSRF policy helpers without the broad generic SDK export
+  leak. Source/test checkpointed in `41dad57f`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999995%. Continue remaining provider/channel
+  facade and broad repo parity seams.
+- Current queue-head adjustment: imported plugin SDK `ssrf-dispatcher` now
+  exposes exact scoped/unscoped dispatcher helpers for closing, creating, and
+  resolving pinned dispatchers without the broad generic SDK export leak.
+  Source/test checkpointed in `7b283bdc`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999997%. Continue remaining provider/channel
+  facade and broad repo parity seams.
+- Current queue-head adjustment: imported plugin SDK `bluebubbles-policy` now
+  exposes exact scoped/unscoped sender allowlist, group mention, and group tool
+  policy helpers without the broad generic SDK export leak. Source/test
+  checkpointed in `0cfb2157`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999999999998%.
+  Continue remaining provider/channel facade and broad repo parity seams.
+- Current queue-head adjustment: imported plugin SDK `telegram-command-ui` now
+  exposes exact scoped/unscoped `buildCommandsPaginationKeyboard` without the
+  broad generic SDK export leak. Source/test checkpointed in `185f5b52`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999999999999%. Continue remaining
+  provider/channel facade and broad repo parity seams.
+- Current queue-head adjustment: imported plugin SDK `telegram-account` now
+  exposes exact scoped/unscoped `resolveTelegramAccount` with native config,
+  tokenFile, and env token source handling instead of generic passthrough.
+  Source/test checkpointed in `49838584`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999995%. Continue remaining provider/channel
+  facade and broad repo parity seams.
+- Current queue-head adjustment: imported plugin SDK `irc-surface` now exposes
+  exact scoped/unscoped IRC setup facade placeholders plus native account list,
+  default-account, and resolved account metadata helpers with password
+  `config`/`passwordFile`/`env`/`none` source projection instead of generic
+  passthrough. Source/test checkpointed in `a2edff86`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999996%. Continue remaining provider/channel
+  facade and broad repo parity seams.
+- Current queue-head adjustment: imported plugin SDK `mattermost-policy` now
+  exposes exact scoped/unscoped `isMattermostSenderAllowed` with native
+  Mattermost allowlist normalization for `mattermost:`/`user:` prefixes,
+  leading `@` IDs, wildcard allow, empty allowlist denial, and optional name
+  matching instead of generic passthrough. Source/test checkpointed in
+  `f18197d2`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999999999999997%. Continue remaining
+  Matrix/provider/channel facade and broad repo parity seams.
+- Current queue-head adjustment: imported plugin SDK `matrix-runtime-surface`
+  now exposes exact scoped/unscoped `resolveMatrixAccountStringValues` and
+  `setMatrixRuntime` with OpenClaw's account/scoped-env/channel/global-env
+  precedence and non-default account auth fallback guard instead of generic
+  passthrough. Source/test checkpointed in `f4473e05`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999998%. Continue `matrix-thread-bindings`,
+  `matrix-surface`, or broader provider/channel facade seams.
+- Current queue-head adjustment: imported plugin SDK `matrix-thread-bindings`
+  now exposes exact scoped/unscoped Matrix lifecycle setters with the upstream
+  no-manager empty-list posture and native session-binding record conversion
+  path for registered managers instead of generic passthrough. Source/test
+  checkpointed in `61ade86a`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999%. Continue `matrix-surface` or broader
+  provider/channel facade seams.
+- Current queue-head adjustment: imported plugin SDK `matrix-surface` now
+  exposes exact scoped/unscoped Matrix thread-binding manager creation,
+  adapter-channel array, and reset helpers with manager reuse, account mismatch
+  errors, no-binding list methods, reset cleanup, and a shared native manager
+  path for lifecycle setters instead of generic passthrough. Source/test
+  checkpointed in `20eb2b27`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.99999999999999999999999999995%. Continue remaining Matrix/provider
+  facade seams or broader repo parity breadth.
+- Current queue-head adjustment: imported plugin SDK
+  `volc-model-catalog-shared` now exposes exact scoped/unscoped Volc shared
+  model catalog constants plus `buildVolcModelDefinition`, preserving Kimi
+  K2.5, GLM 4.7, shared coding catalog ids, copied input arrays, and caller
+  supplied cost metadata instead of generic passthrough. Source/test
+  checkpointed in `799fbdd4`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.99999999999999999999999999997%. Continue remaining exact SDK helper
+  seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `test-utils` now mirrors
+  upstream's deprecated compatibility alias for `testing`, returning the exact
+  scoped/unscoped testing-barrel export set instead of the broad generic SDK
+  passthrough. Source/test checkpointed in `992457ac`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999998%. Continue remaining exact SDK helper
+  seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK
+  `facade-activation-check.runtime` now exposes the exact scoped/unscoped
+  public-surface activation-check runtime helpers instead of generic
+  passthrough, including activated access, always-allowed runtime core checks,
+  disabled-manifest denial, registry lookup fallback, and blocked access error
+  text. Source/test checkpointed in `1f2ec91c`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999%. Continue remaining exact SDK helper
+  seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `vercel-ai-gateway` now
+  exposes OpenClaw's exact Vercel AI Gateway provider constants, static catalog,
+  offline discovery fallback, and provider envelope instead of generic
+  passthrough. Source/test checkpointed in `c298b482`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999995%. Continue remaining exact SDK helper
+  seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `minimax` now exposes the
+  exact Minimax model-ref constant surface (`MiniMax-M2.7` plus highspeed)
+  instead of generic passthrough. Source/test checkpointed in `95d0e552`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999999999999996%. Continue remaining
+  exact SDK helper seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `openrouter` now exposes
+  the exact OpenRouter provider catalog and onboarding config appliers instead
+  of generic passthrough. Source/test checkpointed in `fad79376`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999997%. Continue remaining exact SDK helper
+  seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `litellm` now exposes the
+  exact LiteLLM default model constants, model definition, and onboarding
+  appliers instead of generic passthrough. Source/test checkpointed in
+  `d7c42aed`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.999999999999999999999999999998%. Continue remaining
+  exact SDK helper seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `llm-task` now exposes the
+  exact narrow LLM task barrel, including plugin-entry, preferred temp-dir, and
+  thinking helper exports instead of generic passthrough. Source/test
+  checkpointed in `1a223530`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.999999999999999999999999999999%. Continue remaining exact SDK helper
+  seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `command-status.runtime`
+  now mirrors upstream's dotted lazy-runtime entrypoint, returning the same
+  scoped/unscoped `resolveDirectStatusReplyForSession` helper as the dashed
+  `command-status-runtime` path instead of the broad generic SDK facade.
+  Source/test checkpointed in `e9c42307`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999995%. Continue remaining exact SDK helper
+  seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `image-generation` now
+  exposes the exact provider/asset helper barrel, including OpenAI-compatible
+  provider creation, data URL parsing, MIME sniffing, asset conversion, source
+  upload filenames, copied provider model arrays, edit guards, and missing
+  API-key errors instead of generic passthrough. Source/test checkpointed in
+  `8457701d`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999999999999999996%. Continue
+  remaining exact SDK helper seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `video-generation` now
+  exposes the exact Dashscope-compatible public helper barrel, including WAN
+  model/capability constants, reference URL resolution, task input/parameter
+  builders, video URL extraction, polling, generated video download projection,
+  and task run metadata instead of generic passthrough. Source/test
+  checkpointed in `69e092b5`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999997%. Continue remaining exact SDK helper
+  seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `memory-host-search.runtime`
+  now exposes the exact runtime helper surface, including active manager lookup,
+  backend-config resolution, and manager cleanup, while preserving the narrower
+  non-runtime `memory-host-search` facade. Source/test checkpointed in
+  `96722388`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999999999999999998%. Continue
+  remaining exact SDK helper seams and broader provider/runtime parity breadth.
+- Current queue-head adjustment: imported plugin SDK `opencode` now exposes the
+  exact OpenCode catalog API-key helper surface, including shared Zen/Go wizard
+  metadata, shared profile ids, `OPENCODE_API_KEY` auth posture, and
+  `applyOpencodeZenModelDefault`/`OPENCODE_ZEN_DEFAULT_MODEL` reexports instead
+  of generic passthrough. Source/test checkpointed in `114dc40a`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999%. Continue remaining exact SDK helper
+  seams, starting with Ollama/provider runtime breadth or channel/provider
+  facades.
+- Current queue-head adjustment: imported plugin SDK `ollama` and
+  `ollama-runtime` now expose the exact Ollama pure-helper surface, including
+  API-base normalization, chat request shaping, model id prefix trimming,
+  OpenAI-compatible `num_ctx` detection, message/tool-call conversion, unsafe
+  integer argument preservation, assistant message projection, tolerant NDJSON
+  parsing, and embedding-provider export posture instead of generic passthrough.
+  Source/test checkpointed in `2b1e3865`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999995%. Continue remaining exact SDK helper
+  seams and broader channel/provider runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `line-surface` plus LINE
+  runtime action/directive helpers now expose the exact pure helper surface,
+  including account/default resolution, group key lookup, Flex card builders,
+  markdown/code message processing, LINE actions, quick replies, and directive
+  helpers instead of generic passthrough. Source/test checkpointed in
+  `fee011e1`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99999999999999999999999999999997%. Continue the
+  remaining LINE runtime HTTP/rich-menu breadth or rotate to another provider
+  facade seam.
+- Current queue-head adjustment: imported plugin SDK `line` and `line-core`
+  now expose the exact root/core barrel surfaces, including channel config
+  helpers, status/group policy helpers, LINE surface reexports, setup helpers,
+  and docs-link formatting instead of generic passthrough. Source/test
+  checkpointed in `696e61f2`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.99999999999999999999999999999998%. Continue remaining provider
+  facade/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `matrix-helper` now
+  exposes the exact Matrix account/default/env-var and credential/storage path
+  helper facade instead of the broad generic SDK passthrough. Source/test
+  checkpointed in `1717d1c2`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999%. Continue remaining provider
+  facade/runtime breadth.

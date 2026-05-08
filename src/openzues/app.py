@@ -2105,6 +2105,7 @@ def create_app(
         enabled=active_settings.auto_self_update_enabled,
         poll_interval_seconds=active_settings.auto_self_update_poll_interval_seconds,
         restart_callback=request_runtime_restart,
+        config_snapshot_loader=active_gateway_config_service.build_snapshot,
     )
     active_onboarding_service = OnboardingService(
         active_database,
