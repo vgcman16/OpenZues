@@ -36384,6 +36384,129 @@ function setMatrixThreadBindingMaxAgeBySessionKey(params = {}) {
     );
 }
 
+function normalizeMatrixThreadBindingDurationMs(value) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : 0;
+}
+
+async function createMatrixThreadBindingManager(params = {}) {
+  const accountId = normalizeAccountId(params.accountId);
+  const auth = params.auth || {};
+  if (auth.accountId !== params.accountId) {
+    throw new Error(
+      `Matrix thread binding account mismatch: requested ${params.accountId}, ` +
+        `auth resolved ${auth.accountId}`,
+    );
+  }
+  const existing = MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.get(accountId);
+  if (existing) {
+    return existing;
+  }
+  const bindingsByKey = new Map();
+  const manager = {
+    accountId,
+    getIdleTimeoutMs: () => normalizeMatrixThreadBindingDurationMs(params.idleTimeoutMs),
+    getMaxAgeMs: () => normalizeMatrixThreadBindingDurationMs(params.maxAgeMs),
+    getByConversation: ({ conversationId, parentConversationId } = {}) => {
+      const normalizedConversationId = normalizeOptionalString(conversationId);
+      const normalizedParentConversationId = normalizeOptionalString(parentConversationId);
+      return Array.from(bindingsByKey.values()).find((entry) => {
+        if (entry.conversationId !== normalizedConversationId) {
+          return false;
+        }
+        if (!normalizedParentConversationId) {
+          return true;
+        }
+        return (entry.parentConversationId || "") === normalizedParentConversationId;
+      });
+    },
+    listBySessionKey: (targetSessionKey) => {
+      const normalizedTargetSessionKey = normalizeOptionalString(targetSessionKey);
+      return Array.from(bindingsByKey.values()).filter(
+        (entry) => entry.targetSessionKey === normalizedTargetSessionKey,
+      );
+    },
+    listBindings: () => Array.from(bindingsByKey.values()),
+    touchBinding: (bindingId, at = Date.now()) => {
+      const normalizedBindingId = normalizeOptionalString(bindingId);
+      const existingRecord = Array.from(bindingsByKey.values()).find(
+        (entry) => resolveMatrixThreadBindingKey(entry) === normalizedBindingId,
+      );
+      if (!existingRecord) {
+        return null;
+      }
+      const lastActivityAt =
+        typeof at === "number" && Number.isFinite(at)
+          ? Math.max(existingRecord.lastActivityAt, Math.floor(at))
+          : Date.now();
+      const updated = { ...existingRecord, lastActivityAt };
+      bindingsByKey.set(resolveMatrixThreadBindingKey(updated), updated);
+      return updated;
+    },
+    setIdleTimeoutBySessionKey: ({ targetSessionKey, idleTimeoutMs } = {}) => {
+      const normalizedTargetSessionKey = normalizeOptionalString(targetSessionKey);
+      if (!normalizedTargetSessionKey) {
+        return [];
+      }
+      const now = Date.now();
+      const updated = [];
+      for (const entry of bindingsByKey.values()) {
+        if (entry.targetSessionKey !== normalizedTargetSessionKey) {
+          continue;
+        }
+        const next = {
+          ...entry,
+          idleTimeoutMs: normalizeMatrixThreadBindingDurationMs(idleTimeoutMs),
+          lastActivityAt: now,
+        };
+        bindingsByKey.set(resolveMatrixThreadBindingKey(next), next);
+        updated.push(next);
+      }
+      return updated;
+    },
+    setMaxAgeBySessionKey: ({ targetSessionKey, maxAgeMs } = {}) => {
+      const normalizedTargetSessionKey = normalizeOptionalString(targetSessionKey);
+      if (!normalizedTargetSessionKey) {
+        return [];
+      }
+      const now = Date.now();
+      const updated = [];
+      for (const entry of bindingsByKey.values()) {
+        if (entry.targetSessionKey !== normalizedTargetSessionKey) {
+          continue;
+        }
+        const next = {
+          ...entry,
+          maxAgeMs: normalizeMatrixThreadBindingDurationMs(maxAgeMs),
+          lastActivityAt: now,
+        };
+        bindingsByKey.set(resolveMatrixThreadBindingKey(next), next);
+        updated.push(next);
+      }
+      return updated;
+    },
+    persist: async () => {},
+    stop: () => {
+      bindingsByKey.clear();
+      if (MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.get(accountId) === manager) {
+        MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.delete(accountId);
+      }
+    },
+  };
+  MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.set(accountId, manager);
+  return manager;
+}
+
+function resetMatrixThreadBindingsForTests() {
+  for (const manager of MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.values()) {
+    if (manager && typeof manager.stop === "function") {
+      manager.stop();
+    }
+  }
+  MATRIX_THREAD_BINDING_MANAGERS_BY_ACCOUNT_ID.clear();
+}
+
 function collectBlueBubblesStatusIssues(accounts) {
   return Array.isArray(accounts) ? [] : [];
 }
@@ -84597,6 +84720,12 @@ const matrixThreadBindingsRuntime = {
   setMatrixThreadBindingMaxAgeBySessionKey,
 };
 
+const matrixSurfaceRuntime = {
+  createMatrixThreadBindingManager,
+  matrixSessionBindingAdapterChannels: ["matrix"],
+  resetMatrixThreadBindingsForTests,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -86698,6 +86827,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/matrix-thread-bindings"
   ) {
     return matrixThreadBindingsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-surface" ||
+    request === "@openclaw/plugin-sdk/matrix-surface"
+  ) {
+    return matrixSurfaceRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/bluebubbles-policy" ||

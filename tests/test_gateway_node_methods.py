@@ -18284,6 +18284,155 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_matrix_surface_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-matrix-surface.cjs"
+    runtime_entry.write_text(
+        """
+const matrix = require("openclaw/plugin-sdk/matrix-surface");
+const scopedMatrix = require("@openclaw/plugin-sdk/matrix-surface");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.matrix_surface",
+      description: "Use OpenClaw matrix-surface SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const params = {
+          cfg: {},
+          accountId: "ops",
+          auth: {
+            accountId: "ops",
+            homeserver: "https://matrix.example.org",
+            userId: "@bot:example.org",
+            accessToken: "token"
+          },
+          client: {},
+          idleTimeoutMs: 86400000,
+          maxAgeMs: 0,
+          enableSweeper: false
+        };
+        const manager = await matrix.createMatrixThreadBindingManager(params);
+        const sameManager = await scopedMatrix.createMatrixThreadBindingManager(params);
+        let mismatchError;
+        try {
+          await matrix.createMatrixThreadBindingManager({
+            ...params,
+            accountId: "ops",
+            auth: { ...params.auth, accountId: "other" }
+          });
+        } catch (error) {
+          mismatchError = String(error && error.message ? error.message : error);
+        }
+        const resetResult = matrix.resetMatrixThreadBindingsForTests();
+        return {
+          keys: Object.keys(matrix).sort(),
+          scopedSame:
+            scopedMatrix.createMatrixThreadBindingManager ===
+              matrix.createMatrixThreadBindingManager &&
+            scopedMatrix.resetMatrixThreadBindingsForTests ===
+              matrix.resetMatrixThreadBindingsForTests,
+          channels: Array.from(matrix.matrixSessionBindingAdapterChannels),
+          sameManager: sameManager === manager,
+          manager: {
+            accountId: manager.accountId,
+            idleTimeoutMs: manager.getIdleTimeoutMs(),
+            maxAgeMs: manager.getMaxAgeMs(),
+            byConversation:
+              manager.getByConversation({
+                conversationId: "$thread",
+                parentConversationId: "!room:example"
+              }) || null,
+            bySession: manager.listBySessionKey("agent:ops:subagent:child"),
+            all: manager.listBindings(),
+            persistType: typeof manager.persist,
+            stopType: typeof manager.stop
+          },
+          mismatchError,
+          resetResult
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-matrix-surface-plugin",
+                    "name": "Runtime Matrix Surface Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-matrix-surface.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.matrix_surface"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.matrix_surface"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createMatrixThreadBindingManager",
+            "matrixSessionBindingAdapterChannels",
+            "resetMatrixThreadBindingsForTests",
+        ],
+        "scopedSame": True,
+        "channels": ["matrix"],
+        "sameManager": True,
+        "manager": {
+            "accountId": "ops",
+            "idleTimeoutMs": 86400000,
+            "maxAgeMs": 0,
+            "byConversation": None,
+            "bySession": [],
+            "all": [],
+            "persistType": "function",
+            "stopType": "function",
+        },
+        "mismatchError": (
+            "Matrix thread binding account mismatch: requested ops, auth resolved other"
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
     tmp_path,
 ) -> None:
