@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999995%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18816,6 +18816,16 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`10 passed, 521 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `20e9c885`.
+- Human `openzues update status` now also has focused proof for OpenClaw's
+  `git behind N` update-available hint detail when git availability is the
+  update source. This closes `OZ-PKG-001N`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.999999999995%.
+- Verified the human git-update hint slice with focused
+  `python -m pytest tests\test_cli.py::test_update_status_human_reports_git_update_available_hint -q`
+  (`1 passed`), adjacent human/update proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_human_reports_git_update_available_hint or update_status_human_reports_update_available_hint or update_status_json_projects_git_behind_availability or update_status_json_projects_registry_availability or update_status_json_config_channel_overrides_git_tag"`
+  (`5 passed, 527 deselected`), `ruff check tests\test_cli.py`, and focused
+  `git diff --check`. Test checkpointed and pushed in `d5ea6096`.
 
 ## References
 
