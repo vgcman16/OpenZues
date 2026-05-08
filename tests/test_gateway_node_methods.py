@@ -83040,6 +83040,33 @@ async def test_chat_history_strips_structured_user_channel_envelope(tmp_path) ->
 
 
 @pytest.mark.asyncio
+async def test_chat_history_strips_inbound_metadata_prefix(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-chat-history-inbound-metadata.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content=(
+            "Sender (untrusted metadata):\n"
+            '```json\n{"label":"openclaw-control-ui"}\n```\n\n'
+            "[Thu 2026-03-26 16:29 GMT] hi"
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "hi"}]}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sessions_history_hides_empty_user_and_heartbeat_rows(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-history-heartbeat-hidden.db")
     await database.initialize()
