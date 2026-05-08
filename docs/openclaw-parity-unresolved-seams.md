@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999997%.
+  band of ~80-99.99999999999998%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10064,4 +10064,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `reason="post-update-doctor-failed"` when that repair command fails.
   Source/test checkpointed in `45009862`; repo-wide parity remains estimated
   at ~99.9%, with the evidence band tightened to ~80-99.99999999999997%.
+  Continue broader release/update packaging breadth next.
+- Current queue-head adjustment: package update doctor repair now uses the
+  upstream-shaped `--non-interactive --fix --json` invocation, and root
+  `openzues doctor` accepts `--non-interactive` for update-runner parity.
+  Source/test checkpointed in `837bbd30`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99999999999998%.
   Continue broader release/update packaging breadth next.
