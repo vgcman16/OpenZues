@@ -919,6 +919,70 @@ async def test_runtime_update_run_package_update_sets_windows_install_env(
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_package_update_prepends_portable_git_paths(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "package-root"
+    package_root.mkdir()
+    (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    local_app_data = tmp_path / "LocalAppData"
+    portable_git_root = local_app_data / "OpenClaw" / "deps" / "portable-git"
+    expected_prepend = [
+        portable_git_root / "mingw64" / "bin",
+        portable_git_root / "usr" / "bin",
+        portable_git_root / "cmd",
+        portable_git_root / "bin",
+    ]
+    for candidate in expected_prepend:
+        candidate.mkdir(parents=True)
+    existing_path = str(tmp_path / "existing-bin")
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.setenv("PATH", existing_path)
+    install_env: dict[str, str | None] = {}
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        if argv == ["pnpm", "add", "-g", "openzues@latest"]:
+            install_env["PATH"] = os.environ.get("PATH")
+        if argv == _post_update_doctor_args():
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@latest",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "ok"
+    assert install_env["PATH"] == os.pathsep.join(
+        [*(str(path) for path in expected_prepend), existing_path]
+    )
+    assert os.environ.get("PATH") == existing_path
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_package_update_verifies_expected_version(
     tmp_path,
 ) -> None:

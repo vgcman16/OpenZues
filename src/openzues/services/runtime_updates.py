@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -576,9 +576,38 @@ def _global_package_update_env() -> dict[str, str]:
                 "NODE_LLAMA_CPP_SKIP_DOWNLOAD": "1",
             }
         )
+        path_prepend = _portable_git_path_prepend()
+        if path_prepend:
+            env["PATH"] = _merge_path_prepend(os.environ.get("PATH"), path_prepend)
     if not os.environ.get("COREPACK_ENABLE_DOWNLOAD_PROMPT", "").strip():
         env["COREPACK_ENABLE_DOWNLOAD_PROMPT"] = "0"
     return env
+
+
+def _portable_git_path_prepend() -> list[str]:
+    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+    if not local_app_data:
+        return []
+    portable_git_root = Path(local_app_data) / "OpenClaw" / "deps" / "portable-git"
+    candidates = (
+        portable_git_root / "mingw64" / "bin",
+        portable_git_root / "usr" / "bin",
+        portable_git_root / "cmd",
+        portable_git_root / "bin",
+    )
+    return [str(candidate) for candidate in candidates if candidate.exists()]
+
+
+def _merge_path_prepend(existing: str | None, prepend: Sequence[str]) -> str:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for entry in [*prepend, *(existing or "").split(os.pathsep)]:
+        normalized = entry.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        merged.append(normalized)
+    return os.pathsep.join(merged)
 
 
 def _apply_command_env(env: Mapping[str, str] | None) -> dict[str, str | None]:
