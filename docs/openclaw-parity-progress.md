@@ -21142,6 +21142,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `cd286b80`.
+- `chat.history` now applies OpenClaw's structured-block text cap to non-tool
+  `partialJson` and string `arguments` fields, while keeping tool block payload
+  preservation available for a separate exact-payload seam. This closes another
+  display-projection sanitizer edge; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999998%.
+- Verified the structured-block field-cap seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_truncates_structured_partial_json_fields -q`
+  (structured `partialJson` / `arguments` were uncapped before implementation,
+  then `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`35 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `812f50de`.
 
 ## References
 

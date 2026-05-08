@@ -7124,6 +7124,27 @@ may lag behind this tracker.
     `mypy src\openzues\services\gateway_node_methods.py`, and focused
     `git diff --check`.
 
+- [x] `chat.history` structured partial JSON field caps.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: non-tool structured chat-history content blocks apply the
+    effective `maxChars` cap to string `partialJson` and `arguments` fields,
+    while tool block payloads are left for exact tool-display preservation.
+  - Evidence required: focused structured field-cap test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `812f50de`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_truncates_structured_partial_json_fields -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`35 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
 ## Update Rule
 
 Only move a row to `[x]` when implementation, focused proof, adjacent proof,
