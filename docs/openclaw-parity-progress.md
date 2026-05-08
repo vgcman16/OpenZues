@@ -19725,6 +19725,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `254fcc9d`.
+- Native git updates now create and clean up a detached preflight worktree from
+  the resolved upstream SHA before continuing, and return
+  `preflight-worktree-failed` without pulling when worktree creation fails.
+  This closes `OZ-PKG-001BU`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999999999%.
+- Verified preflight worktree failure projection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_worktree_failure -q`
+  (`1 failed` before implementation, then covered green), focused adjacent
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_worktree_failure tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`41 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `438f3c33`.
 
 ## References
 

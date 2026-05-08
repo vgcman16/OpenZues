@@ -10302,3 +10302,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, with the evidence band tightened to
   ~80-99.999999999999999999998%. Continue preflight worktree/build selection
   or startup auto-update policy next.
+- Current queue-head adjustment: native git updates now create a detached
+  preflight worktree from the resolved upstream SHA and stop with
+  `preflight-worktree-failed` before pull when worktree creation fails.
+  Source/test checkpointed in `438f3c33`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999%. Continue preflight candidate checkout/build
+  selection or startup auto-update policy next.
