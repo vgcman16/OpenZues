@@ -20749,6 +20749,172 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_voice_call_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-voice-call.cjs"
+    runtime_entry.write_text(
+        """
+const voice = require("openclaw/plugin-sdk/voice-call");
+const scopedVoice = require("@openclaw/plugin-sdk/voice-call");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.voice_call",
+      description: "Use OpenClaw voice-call SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const entry = voice.definePluginEntry({
+          id: "voice-call-test",
+          name: "Voice Call Test",
+          description: "Voice call helper",
+          register(runtimeApi) {
+            runtimeApi.registeredByVoice = true;
+          }
+        });
+        const runtimeApi = {};
+        entry.register(runtimeApi);
+        await voice.sleep(1);
+        let bodyErrorCode = "";
+        try {
+          await voice.readRequestBodyWithLimit(
+            { headers: { "content-length": "12" } },
+            { maxBytes: 4 }
+          );
+        } catch (error) {
+          bodyErrorCode = voice.isRequestBodyLimitError(error) ? error.code : "";
+        }
+        return {
+          keys: Object.keys(voice).sort(),
+          scopedSame:
+            scopedVoice.definePluginEntry === voice.definePluginEntry &&
+            scopedVoice.TtsConfigSchema === voice.TtsConfigSchema &&
+            scopedVoice.sleep === voice.sleep,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            registerType: typeof entry.register
+          },
+          schemas: {
+            modeOk: voice.TtsModeSchema.safeParse("final").success,
+            modeBad: voice.TtsModeSchema.safeParse("never").success,
+            autoOk: voice.TtsAutoSchema.safeParse("tagged").success,
+            providerOk: voice.TtsProviderSchema.safeParse("openai").success,
+            providerBad: voice.TtsProviderSchema.safeParse("").success,
+            configOk: voice.TtsConfigSchema.safeParse({
+              enabled: true,
+              mode: "all",
+              auto: "inbound",
+              provider: "openai",
+              timeoutMs: 2000
+            }).success,
+            configBad: voice.TtsConfigSchema.safeParse({
+              enabled: true,
+              mode: "never"
+            }).success
+          },
+          bodyErrorCode,
+          bodyErrorText: voice.requestBodyErrorToText("PAYLOAD_TOO_LARGE"),
+          helperTypes: [
+            typeof voice.readRequestBodyWithLimit,
+            typeof voice.fetchWithSsrFGuard,
+            typeof voice.sleep
+          ],
+          runtimeApi
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-voice-call-plugin",
+                    "name": "Runtime Voice Call Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-voice-call.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.voice_call"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.voice_call"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "TtsAutoSchema",
+            "TtsConfigSchema",
+            "TtsModeSchema",
+            "TtsProviderSchema",
+            "definePluginEntry",
+            "fetchWithSsrFGuard",
+            "isRequestBodyLimitError",
+            "readRequestBodyWithLimit",
+            "requestBodyErrorToText",
+            "sleep",
+        ],
+        "scopedSame": True,
+        "entry": {
+            "id": "voice-call-test",
+            "name": "Voice Call Test",
+            "description": "Voice call helper",
+            "registerType": "function",
+        },
+        "schemas": {
+            "modeOk": True,
+            "modeBad": False,
+            "autoOk": True,
+            "providerOk": True,
+            "providerBad": False,
+            "configOk": True,
+            "configBad": False,
+        },
+        "bodyErrorCode": "PAYLOAD_TOO_LARGE",
+        "bodyErrorText": "Payload too large",
+        "helperTypes": ["function", "function", "function"],
+        "runtimeApi": {"registeredByVoice": True},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
     tmp_path,
 ) -> None:

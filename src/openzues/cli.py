@@ -60051,6 +60051,59 @@ const MarkdownConfigSchema = createOptionalSchema(
     tables: createOptionalSchema(MarkdownTableModeSchema),
   }),
 );
+const TtsProviderSchema = createSimpleSchema(
+  (value) =>
+    typeof value === "string" && value.length > 0 ? undefined : "Expected non-empty string",
+  { typeName: "ZodString", jsonSchema: { type: "string", minLength: 1 } },
+);
+const TtsModeSchema = createEnumSchema(["final", "all"]);
+const TtsAutoSchema = createEnumSchema(["off", "always", "inbound", "tagged"]);
+const TtsPersonaPromptSchema = createStrictObjectSchema({
+  profile: createOptionalSchema(createStringSchema()),
+  scene: createOptionalSchema(createStringSchema()),
+  sampleContext: createOptionalSchema(createStringSchema()),
+  style: createOptionalSchema(createStringSchema()),
+  accent: createOptionalSchema(createStringSchema()),
+  pacing: createOptionalSchema(createStringSchema()),
+  constraints: createOptionalSchema(createArraySchema(createStringSchema())),
+});
+const TtsPersonaSchema = createStrictObjectSchema({
+  label: createOptionalSchema(createStringSchema()),
+  description: createOptionalSchema(createStringSchema()),
+  provider: createOptionalSchema(TtsProviderSchema),
+  fallbackPolicy: createOptionalSchema(
+    createEnumSchema(["preserve-persona", "provider-defaults", "fail"]),
+  ),
+  prompt: createOptionalSchema(TtsPersonaPromptSchema),
+  providers: createOptionalSchema(createRecordSchema()),
+});
+const TtsConfigSchema = createOptionalSchema(
+  createStrictObjectSchema({
+    auto: createOptionalSchema(TtsAutoSchema),
+    enabled: createOptionalSchema(createBooleanSchema()),
+    mode: createOptionalSchema(TtsModeSchema),
+    provider: createOptionalSchema(TtsProviderSchema),
+    persona: createOptionalSchema(createStringSchema()),
+    personas: createOptionalSchema(createRecordSchema().catchall(TtsPersonaSchema)),
+    summaryModel: createOptionalSchema(createStringSchema()),
+    modelOverrides: createOptionalSchema(
+      createStrictObjectSchema({
+        enabled: createOptionalSchema(createBooleanSchema()),
+        allowText: createOptionalSchema(createBooleanSchema()),
+        allowProvider: createOptionalSchema(createBooleanSchema()),
+        allowVoice: createOptionalSchema(createBooleanSchema()),
+        allowModelId: createOptionalSchema(createBooleanSchema()),
+        allowVoiceSettings: createOptionalSchema(createBooleanSchema()),
+        allowNormalization: createOptionalSchema(createBooleanSchema()),
+        allowSeed: createOptionalSchema(createBooleanSchema()),
+      }),
+    ),
+    providers: createOptionalSchema(createRecordSchema()),
+    prefsPath: createOptionalSchema(createStringSchema()),
+    maxTextLength: createOptionalSchema(createNumberSchema({ integer: true, min: 1 })),
+    timeoutMs: createOptionalSchema(createNumberSchema({ integer: true, min: 1000 })),
+  }),
+);
 const BlockStreamingCoalesceSchema = createStrictObjectSchema({
   minChars: createOptionalSchema(createNumberSchema({ integer: true, positive: true })),
   maxChars: createOptionalSchema(createNumberSchema({ integer: true, positive: true })),
@@ -67961,6 +68014,19 @@ const lobsterRuntime = {
   definePluginEntry,
   materializeWindowsSpawnProgram,
   resolveWindowsSpawnProgramCandidate,
+};
+
+const voiceCallRuntime = {
+  TtsAutoSchema,
+  TtsConfigSchema,
+  TtsModeSchema,
+  TtsProviderSchema,
+  definePluginEntry,
+  fetchWithSsrFGuard,
+  isRequestBodyLimitError,
+  readRequestBodyWithLimit,
+  requestBodyErrorToText,
+  sleep: sleepMs,
 };
 
 const copilotProxyRuntime = {
@@ -89231,6 +89297,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/lobster"
   ) {
     return lobsterRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/voice-call" ||
+    request === "@openclaw/plugin-sdk/voice-call"
+  ) {
+    return voiceCallRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/copilot-proxy" ||
