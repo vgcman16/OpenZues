@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999999996% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999999997% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -108,8 +108,9 @@ checkpointed in `799fbdd4`. `OZ-PLUGIN-00324` test-utils is checkpointed in
 `992457ac`, and `OZ-PLUGIN-00325` facade-activation-check.runtime is
 checkpointed in `1f2ec91c`. `OZ-PLUGIN-00326` vercel-ai-gateway is
 checkpointed in `c298b482`, and `OZ-PLUGIN-00327` minimax is checkpointed in
-`95d0e552`; continue remaining exact SDK helper seams, provider/runtime
-breadth, and broader repo parity.
+`95d0e552`. `OZ-PLUGIN-00328` openrouter is checkpointed in `fad79376`;
+continue remaining exact SDK helper seams, provider/runtime breadth, and
+broader repo parity.
 
 ## Active Slice Detail
 

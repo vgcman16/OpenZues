@@ -20392,6 +20392,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`5 passed, 1153 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `95d0e552`.
+- Imported plugin SDK `openrouter` now exposes the exact scoped/unscoped
+  OpenRouter default model ref, provider catalog with `auto` and Kimi K2.6,
+  and onboarding config appliers that preserve existing aliases and fallbacks.
+  This closes `OZ-PLUGIN-00328`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.999999999999999999999999999997%.
+- Verified the openrouter helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_openrouter_helper -q`
+  (the exact subpath returned generic passthrough data and no provider
+  envelope before implementation, then `1 passed`), adjacent provider/onboard
+  proof `python -m pytest tests\test_gateway_node_methods.py -q -k "openrouter_helper or minimax_helper or vercel_ai_gateway or provider_onboard or provider_model_catalog"`
+  (`5 passed, 1154 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `fad79376`.
 
 ## References
 
