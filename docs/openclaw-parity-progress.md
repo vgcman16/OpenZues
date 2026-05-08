@@ -19945,6 +19945,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
   `mypy src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `087924f8`.
+- Startup update checks now match OpenClaw's non-package install state
+  maintenance by clearing stale availability and auto first-seen state, and
+  updating `lastCheckedAt`, when a source checkout/package root with `.git` is
+  encountered before npm version lookup. This closes `OZ-PKG-001CG`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999997%.
+- Verified source-checkout startup availability clearing with focused
+  red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_update_hints_clear_available_state_for_source_checkout -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent startup proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "startup_update_hints or startup_auto_update"`
+  (`8 passed, 51 deselected`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`59 passed`), `ruff
+  check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+  `mypy src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e66c5082`.
 
 ## References
 

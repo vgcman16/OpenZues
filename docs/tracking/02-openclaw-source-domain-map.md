@@ -54,6 +54,10 @@ interval skips before version lookup or command execution.
 checkpointed in `087924f8`; it covers persisted available/notified version
 and tag fields, command-only `OPENCLAW_NO_AUTO_UPDATE` suppression, recent-check
 availability hydration, and up-to-date availability clearing.
+`OZ-PKG-001CG` startup update source-checkout availability clearing from
+`src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` is
+checkpointed in `e66c5082`; it covers non-package install `lastCheckedAt`
+refresh plus stale available/auto-first-seen state clearing before npm lookup.
 
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is
