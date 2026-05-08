@@ -49680,6 +49680,174 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_line_root_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-line-root-core.cjs"
+    runtime_entry.write_text(
+        """
+const line = require("openclaw/plugin-sdk/line");
+const core = require("@openclaw/plugin-sdk/line-core");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.line_root_core",
+      description: "Use OpenClaw LINE root/core SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          channels: {
+            line: {
+              channelAccessToken: "token",
+              defaultAccount: "work",
+              accounts: { work: { enabled: true, channelAccessToken: "work-token" } },
+              groups: { "group:g1": { requireMention: true } }
+            }
+          }
+        };
+        return {
+          rootKeys: Object.keys(line).sort(),
+          coreKeys: Object.keys(core).sort(),
+          constants: [line.DEFAULT_ACCOUNT_ID, core.DEFAULT_ACCOUNT_ID],
+          types: [
+            typeof line.buildChannelConfigSchema,
+            typeof line.clearAccountEntryFields,
+            typeof line.buildTokenChannelStatusSummary,
+            typeof core.setSetupChannelEnabled,
+            typeof core.setTopLevelChannelDmPolicyWithAllowFrom,
+            typeof core.formatDocsLink
+          ],
+          surface: {
+            rootDefault: line.resolveDefaultLineAccountId(cfg),
+            coreGroupKey: core.resolveExactLineGroupConfigKey({
+              cfg,
+              accountId: "default",
+              groupId: "g1"
+            }),
+            cardTitle: core.createInfoCard("LINE", "Ready").body.contents[0].contents[1].text,
+            processed: core.processLineMessage("**Ready**").text
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "line-root-core-plugin",
+                    "name": "LINE Root/Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-line-root-core.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.line_root_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.line_root_core"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["rootKeys"] == [
+        "DEFAULT_ACCOUNT_ID",
+        "LineConfigSchema",
+        "buildChannelConfigSchema",
+        "buildComputedAccountStatusSnapshot",
+        "buildTokenChannelStatusSummary",
+        "clearAccountEntryFields",
+        "createActionCard",
+        "createAgendaCard",
+        "createAppleTvRemoteCard",
+        "createDeviceControlCard",
+        "createEventCard",
+        "createImageCard",
+        "createInfoCard",
+        "createListCard",
+        "createMediaPlayerCard",
+        "createReceiptCard",
+        "emptyPluginConfigSchema",
+        "listLineAccountIds",
+        "normalizeAccountId",
+        "processLineMessage",
+        "resolveAllowlistProviderRuntimeGroupPolicy",
+        "resolveDefaultGroupPolicy",
+        "resolveDefaultLineAccountId",
+        "resolveLineAccount",
+    ]
+    assert result["coreKeys"] == [
+        "DEFAULT_ACCOUNT_ID",
+        "LineConfigSchema",
+        "createActionCard",
+        "createImageCard",
+        "createInfoCard",
+        "createListCard",
+        "createReceiptCard",
+        "createTopLevelChannelDmPolicy",
+        "formatDocsLink",
+        "listLineAccountIds",
+        "normalizeAccountId",
+        "processLineMessage",
+        "resolveDefaultLineAccountId",
+        "resolveExactLineGroupConfigKey",
+        "resolveLineAccount",
+        "setSetupChannelEnabled",
+        "setTopLevelChannelDmPolicyWithAllowFrom",
+        "splitSetupEntries",
+    ]
+    assert result["constants"] == ["default", "default"]
+    assert result["types"] == [
+        "function",
+        "function",
+        "function",
+        "function",
+        "function",
+        "function",
+    ]
+    assert result["surface"] == {
+        "rootDefault": "work",
+        "coreGroupKey": "group:g1",
+        "cardTitle": "LINE",
+        "processed": "Ready",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_onboard_helpers(
     tmp_path,
 ) -> None:

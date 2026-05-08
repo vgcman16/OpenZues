@@ -47515,6 +47515,54 @@ const lineRuntimeRuntime = {
   uriAction,
 };
 
+const lineRootRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  LineConfigSchema,
+  buildChannelConfigSchema,
+  buildComputedAccountStatusSnapshot,
+  buildTokenChannelStatusSummary,
+  clearAccountEntryFields,
+  createActionCard,
+  createAgendaCard,
+  createAppleTvRemoteCard,
+  createDeviceControlCard,
+  createEventCard,
+  createImageCard,
+  createInfoCard,
+  createListCard,
+  createMediaPlayerCard,
+  createReceiptCard,
+  emptyPluginConfigSchema,
+  listLineAccountIds,
+  normalizeAccountId,
+  processLineMessage,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveDefaultGroupPolicy,
+  resolveDefaultLineAccountId,
+  resolveLineAccount,
+};
+
+const lineCoreRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  LineConfigSchema,
+  createActionCard,
+  createImageCard,
+  createInfoCard,
+  createListCard,
+  createReceiptCard,
+  createTopLevelChannelDmPolicy,
+  formatDocsLink,
+  listLineAccountIds,
+  normalizeAccountId,
+  processLineMessage,
+  resolveDefaultLineAccountId,
+  resolveExactLineGroupConfigKey,
+  resolveLineAccount,
+  setSetupChannelEnabled,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  splitSetupEntries,
+};
+
 const PROVIDER_USAGE_DEFAULT_TIMEOUT_MS = 5000;
 const PROVIDER_USAGE_LABELS = {
   anthropic: "Claude",
@@ -87813,6 +87861,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/line-surface"
   ) {
     return lineSurfaceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/line" ||
+    request === "@openclaw/plugin-sdk/line"
+  ) {
+    return lineRootRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/line-core" ||
+    request === "@openclaw/plugin-sdk/line-core"
+  ) {
+    return lineCoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/line-runtime" ||
