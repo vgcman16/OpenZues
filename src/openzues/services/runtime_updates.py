@@ -565,6 +565,12 @@ def _post_package_update_doctor_env() -> dict[str, str]:
     }
 
 
+def _global_package_update_env() -> dict[str, str]:
+    if os.environ.get("COREPACK_ENABLE_DOWNLOAD_PROMPT", "").strip():
+        return {}
+    return {"COREPACK_ENABLE_DOWNLOAD_PROMPT": "0"}
+
+
 def _apply_command_env(env: Mapping[str, str] | None) -> dict[str, str | None]:
     if not env:
         return {}
@@ -806,6 +812,7 @@ class RuntimeUpdateService:
         if disk_warning is not None:
             warnings.append(disk_warning)
         manager = package_manager.strip().lower()
+        install_env = _global_package_update_env()
         staged_install: _StagedNpmInstall | None = None
         if manager == "npm":
             staged_install, failed_stage_step = _create_staged_npm_install(
@@ -850,6 +857,7 @@ class RuntimeUpdateService:
                 argv,
                 cwd=package_root,
                 timeout_ms=timeout_ms,
+                env=install_env,
             )
             steps.append(step)
             if _update_step_exit_code(step) != 0:
@@ -887,6 +895,7 @@ class RuntimeUpdateService:
                         fallback_argv,
                         cwd=package_root,
                         timeout_ms=timeout_ms,
+                        env=install_env,
                     )
                     steps.append(fallback_step)
                     step = fallback_step
