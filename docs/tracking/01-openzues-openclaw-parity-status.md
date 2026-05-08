@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999999997% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999999998% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6883,6 +6883,23 @@ may lag behind this tracker.
     implementation, then `1 passed`), adjacent browser facade proof (`3
     passed, 1193 deselected`), `ruff check`, `mypy`, and focused `git diff
     --check`.
+
+- [x] Imported plugin SDK API baseline hash helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/api-baseline.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `api-baseline` imports expose the upstream
+    value export names and exact
+    `computePluginSdkApiBaselineHashFileContent(rendered)` SHA-256 hash-file
+    formatting for rendered JSON/JSONL artifacts.
+  - Evidence required: focused API baseline import test, adjacent root SDK
+    proof, ruff, mypy
+  - Status: checkpointed in `bcf2185c`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused API baseline hash-helper red/green
+    proof (exact helper import returned broad generic placeholders before
+    implementation, then `1 passed`), adjacent root SDK proof (`2 passed,
+    1195 deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 

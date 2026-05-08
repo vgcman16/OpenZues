@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999999999999999999999999999997%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999999999999999999999999999998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -20949,6 +20949,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 1193 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `4e950ba5`.
+- Imported plugin SDK `api-baseline` now exposes the upstream value export names
+  and exact `computePluginSdkApiBaselineHashFileContent` SHA-256 hash-file
+  formatting for rendered JSON/JSONL API baseline artifacts instead of the
+  generic SDK fallback. This closes `OZ-PLUGIN-00368`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999998%.
+- Verified the API baseline hash helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_api_baseline_helpers -q`
+  (the exact helper import returned the broad generic enumerable surface and a
+  placeholder result before implementation, then `1 passed`), adjacent root SDK
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "api_baseline_helpers or plugin_sdk_root_helpers"`
+  (`2 passed, 1195 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `bcf2185c`.
 
 ## References
 
