@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999994%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999995%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19118,6 +19118,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
   Source/test checkpointed and pushed in `98e4d5c9`.
+- Native npm package updates now install into a clean staged npm prefix, verify
+  the staged package root, swap it into the live package root, replace matching
+  OpenZues bin shims, and clean staged directories on success or verification
+  failure. This closes `OZ-PKG-001AJ`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.99999999999995%.
+- Verified staged npm swap with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_stages_npm_install_before_swap -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent staged verify
+  guard
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_live_root_when_staged_verify_fails -q`
+  (`1 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`9 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed in `954d74ea`.
 
 ## References
 

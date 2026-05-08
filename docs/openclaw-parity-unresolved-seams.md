@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999994%.
+  band of ~80-99.99999999999995%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10044,3 +10044,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   test checkpointed in `98e4d5c9`; repo-wide parity remains estimated at
   ~99.9%, with the evidence band tightened to ~80-99.99999999999994%.
   Continue staged npm swap and post-update plugin sync next.
+- Current queue-head adjustment: native npm package updates now install into a
+  clean staged npm prefix, verify the staged package root, swap it into the
+  live package root, replace matching bin shims, and clean the stage without
+  mutating the live package when staged verification fails. Source/test
+  checkpointed in `954d74ea`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999995%. Continue
+  post-update plugin sync and broader release/update packaging breadth next.
