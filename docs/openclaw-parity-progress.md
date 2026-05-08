@@ -20323,6 +20323,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py tests\test_gateway_node_methods.py`, `mypy
   src\openzues\cli.py`, and focused `git diff --check`. Source/test
   checkpointed in `20eb2b27`.
+- Imported plugin SDK `volc-model-catalog-shared` now exposes the exact
+  scoped/unscoped Volc shared coding model catalog, Kimi K2.5 and GLM 4.7
+  constants, and `buildVolcModelDefinition` helper without falling through to
+  the broad generic SDK passthrough. This closes `OZ-PLUGIN-00323`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999997%.
+- Verified the volc-model-catalog-shared helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_volc_model_catalog_shared_helper -q`
+  (the exact subpath returned generic non-array catalog data before
+  implementation, then `1 passed`), adjacent provider/model catalog proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "volc_model_catalog_shared or provider_model_catalog or xai_model_id"`
+  (`3 passed, 1151 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `799fbdd4`.
 
 ## References
 
