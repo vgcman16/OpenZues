@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999996%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999997%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -20064,6 +20064,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 1132 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `2938b03a`.
+- Imported plugin SDK `facade-runtime` now exposes the scoped/unscoped runtime
+  surface for lazy facade values, facade-loader reexports, activation access
+  probes, blocked try-loads, runtime reset, and the upstream `__testing`
+  hooks for facade module loading and registry location resolution. This
+  closes `OZ-PLUGIN-00305`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999997%.
+- Verified the facade-runtime helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_facade_runtime_helpers -q`
+  (`__testing.loadFacadeModuleAtLocationSync` was missing before
+  implementation, then `1 passed`), adjacent facade proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "facade_runtime or facade_resolution_shared or facade_loader"`
+  (`3 passed, 1133 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `1e9b65f5`.
 
 ## References
 

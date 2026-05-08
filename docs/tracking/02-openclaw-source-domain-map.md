@@ -544,6 +544,8 @@ checkpointed in `b294d317`.
 `e04677d3`.
 `facade-resolution-shared` from `src/plugin-sdk/facade-resolution-shared.ts`
 is checkpointed in `2938b03a`.
+`facade-runtime` from `src/plugin-sdk/facade-runtime.ts` is checkpointed in
+`1e9b65f5`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
