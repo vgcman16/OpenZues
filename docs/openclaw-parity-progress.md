@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999996%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999997%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18481,6 +18481,36 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed and pushed in `726f03cb`.
+- `channels.start` now has an OpenClaw-shaped runtime-start adapter instead of
+  a hard unsupported response for every channel. The gateway method validates
+  `channel`/`accountId`, normalizes blank `accountId` to `default`, dispatches
+  through a fakeable channel-start service, and app construction wires that
+  service to `OpsMeshService.start_channel_runtime_account`. The first native
+  production-backed implementation starts Tlon account monitors through the
+  route-backed SSE lifecycle added in `726f03cb`, while unsupported channels
+  keep the existing precise runtime-start error. This closes
+  `OZ-PROV-001DN`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999997%. The channel/provider queue
+  should rotate to remaining provider-specific runtime breadth, channel
+  stop/logout depth, or broader packaging/companion seams.
+- Verified the `channels.start` native runtime slice with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_channels_start_dispatches_runtime_start_service_with_default_account -q`
+  and
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_start_starts_tlon_monitor_for_account -q`
+  (`1 failed` each before implementation, then `1 passed` each), existing API
+  unsupported-boundary proof
+  `python -m pytest tests\test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_allows_blank_channels_start_account_id -q`
+  (`1 passed`), adjacent gateway method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_start or channels_stop or channels_logout"`
+  (`8 passed, 1118 deselected`), adjacent Tlon monitor proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon_monitor or channels_start_starts_tlon or tlon_native_monitor"`
+  (`3 passed, 401 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_gateway_node_methods.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `810a6af0`.
 
 ## References
 

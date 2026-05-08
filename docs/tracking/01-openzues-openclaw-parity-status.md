@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999996% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999997% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -5112,6 +5112,22 @@ may lag behind this tracker.
     (`1 failed` before implementation, then `1 passed`), native fake-transport
     proof (`1 passed`), focused pair (`2 passed`), adjacent provider/session
     proof (`25 passed, 378 deselected`), `ruff check`, and `mypy`.
+
+- [x] `channels.start` native Tlon runtime start.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
+    `openclaw-main/src/gateway/server-methods/channels.start.test.ts`,
+    `openclaw-main/extensions/tlon/src/channel.runtime.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/ops_mesh.py`, `src/openzues/app.py`
+  - Test: `tests/test_gateway_node_methods.py`, `tests/test_ops_mesh.py`,
+    `tests/test_gateway_nodes_api.py`
+  - Status: checkpointed in `810a6af0`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused gateway/ops red-green proofs (`1
+    failed` each before implementation, then `1 passed` each), API
+    unsupported-boundary proof (`1 passed`), adjacent gateway method proof (`8
+    passed, 1118 deselected`), adjacent Tlon monitor proof (`3 passed, 401
+    deselected`), `ruff check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.

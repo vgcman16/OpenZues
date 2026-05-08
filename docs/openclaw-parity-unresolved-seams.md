@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999996%.
+  band of ~80-99.99999997%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -1780,6 +1780,14 @@ old-CLI guard, runs `imsg rpc` with configured `--db`, and sends JSON-RPC
 metadata. Remaining channel CLI parity is no longer dominated by the
 route/config account-probe queue; the next channel queue should rotate to
 remaining provider runtime breadth.
+`channels.start` now mirrors the OpenClaw runtime-start method shape for the
+native Tlon path: the gateway method dispatches to a fakeable start adapter,
+blank `accountId` resolves to `default`, app construction wires the adapter to
+OpsMesh, and OpsMesh starts the matching route-backed Tlon SSE monitor account.
+Unsupported channels keep the existing precise runtime-start error. Source/test
+checkpointed in `810a6af0`; the channel queue should now rotate to
+provider-specific runtime breadth, channel stop/logout depth, or broader
+packaging/companion seams.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account
