@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999990%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999991%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19060,6 +19060,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`18 passed, 532 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `f088293f`.
+- Package-shaped `openzues update --json --tag ...` roots now dispatch through
+  a fakeable native package update path that runs upstream-shaped
+  npm/pnpm/bun global install args as a `global update` step and returns the
+  OpenClaw-style update result envelope. This closes `OZ-PKG-001AF`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999991%.
+- Verified package update execution with focused red/green service and CLI
+  proofs `python -m pytest tests\test_cli.py::test_update_json_dispatches_package_update_service tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step -q`
+  (`2 passed` after implementation), adjacent runtime/update proof
+  `python -m pytest tests\test_runtime_updates.py tests\test_cli.py -q -k "runtime_update_run_package_update or update_dry_run or update_status or dispatches_runtime_update or dispatches_package_update"`
+  (`20 passed, 536 deselected`), `ruff check src\openzues\cli.py
+  src\openzues\services\runtime_updates.py tests\test_cli.py
+  tests\test_runtime_updates.py`, `mypy src\openzues\cli.py
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `1291d361`.
 
 ## References
 

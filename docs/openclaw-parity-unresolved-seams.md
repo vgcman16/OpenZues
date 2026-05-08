@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999990%.
+  band of ~80-99.99999999999991%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10020,3 +10020,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Source/test checkpointed in `f088293f`; repo-wide parity remains estimated
   at ~99.9%, with the evidence band tightened to ~80-99.99999999999990%.
   Continue package-manager/global-install execution depth next.
+- Current queue-head adjustment: package-shaped root update installs now route
+  through a native `RuntimeUpdateService.run_package_update` path with
+  upstream-shaped npm/pnpm/bun global install args, `global update` step
+  metadata, and OpenClaw-style update result envelopes. Source/test
+  checkpointed in `1291d361`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999991%. Continue staged
+  npm fallback/swap verification and post-update plugin sync next.

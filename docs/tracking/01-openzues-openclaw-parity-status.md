@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999990% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999991% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1737,6 +1737,10 @@ may lag behind this tracker.
 - [x] Inherited update-status parent options, preserving OpenClaw's parent
   `update --json/--timeout status` option behavior.
   - Status: checkpointed in `f088293f`
+
+- [x] Package update runtime path, preserving native global install execution
+  for package-shaped root updates.
+  - Status: checkpointed in `1291d361`
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
@@ -4393,6 +4397,18 @@ may lag behind this tracker.
     -q` (`1 failed` before implementation, then `1 passed`), adjacent update
     proof (`18 passed, 532 deselected`), `ruff check`, `mypy`, and
     `git diff --check`.
+
+- [x] Package update runtime path.
+  - Source: `openclaw-main/src/infra/package-update-steps.ts`,
+    `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`
+  - Target: `src/openzues/services/runtime_updates.py`, `src/openzues/cli.py`
+  - Test: `tests/test_runtime_updates.py`, `tests/test_cli.py`
+  - Status: checkpointed in `1291d361`.
+  - Weight: 2
+  - Last verified: 2026-05-08, focused service/CLI proof (`2 passed`),
+    adjacent runtime/update proof (`20 passed, 536 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
 
 - [x] Companion node presence alive lifecycle.
   - Source: `openclaw-main/src/gateway/server-node-events.ts`,
