@@ -82928,6 +82928,27 @@ async def test_chat_history_hides_structured_heartbeat_user_content(tmp_path) ->
 
 
 @pytest.mark.asyncio
+async def test_chat_history_preserves_empty_structured_assistant_content(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-chat-history-empty-assistant-content.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="assistant",
+        content=json.dumps([]),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [{"role": "assistant", "content": []}]
+
+
+@pytest.mark.asyncio
 async def test_sessions_history_hides_empty_user_and_heartbeat_rows(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-history-heartbeat-hidden.db")
     await database.initialize()

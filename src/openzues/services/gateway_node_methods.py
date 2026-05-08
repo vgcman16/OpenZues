@@ -16797,17 +16797,20 @@ def _project_control_chat_messages(
         metadata = (
             _chat_history_json_object(row.get("metadata_json")) if role == "assistant" else None
         )
-        structured_content = _chat_history_structured_content(
+        structured_result = _chat_history_structured_content(
             text,
             role=role,
             max_chars=max_chars,
         )
-        if structured_content is not None:
+        if structured_result is not None:
+            if bool(structured_result.get("hidden")):
+                continue
+            structured_content = cast(list[dict[str, Any]], structured_result["content"])
             if role == "user" and _chat_history_should_hide_structured_user_content(
                 structured_content
             ):
                 continue
-            if not structured_content:
+            if not structured_content and role != "assistant":
                 continue
             messages.append(
                 _bounded_chat_history_content_payload(
@@ -16944,7 +16947,7 @@ def _chat_history_structured_content(
     *,
     role: str,
     max_chars: int | None,
-) -> list[dict[str, Any]] | None:
+) -> dict[str, Any] | None:
     if not text.lstrip().startswith("["):
         return None
     try:
@@ -16959,13 +16962,13 @@ def _chat_history_structured_content(
         for item in parsed
     ]
     if role != "assistant":
-        return content
+        return {"content": content, "hidden": False}
     if _assistant_content_phase(content) == "commentary":
-        return []
+        return {"content": [], "hidden": True}
     content = _assistant_final_answer_content_blocks(content)
     if _assistant_structured_content_is_suppressed(content):
-        return []
-    return content
+        return {"content": [], "hidden": True}
+    return {"content": content, "hidden": False}
 
 
 def _sanitize_chat_history_content_block(
