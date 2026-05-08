@@ -76141,6 +76141,107 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_helpers_root(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-helpers-root.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const path = require("path");
+const helpers = require("openclaw/plugin-sdk/test-helpers");
+const scopedHelpers = require("@openclaw/plugin-sdk/test-helpers");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_helpers_root",
+      description: "Use OpenClaw test-helpers root shim",
+      parameters: { type: "object" },
+      async execute() {
+        const harness = helpers.createPluginSdkTestHarness();
+        const asyncDir = await harness.createTempDir("case-");
+        const syncDir = harness.createTempDirSync("case-");
+        const root = path.dirname(asyncDir);
+        const result = {
+          keys: Object.keys(helpers).sort(),
+          scopedSame:
+            scopedHelpers.createPluginSdkTestHarness ===
+            helpers.createPluginSdkTestHarness,
+          asyncExists: fs.existsSync(asyncDir),
+          syncExists: fs.existsSync(syncDir),
+          sameRoot: path.dirname(syncDir) === root,
+          rootPrefix: path.basename(root).startsWith("openclaw-plugin-sdk-fixtures-"),
+          basenames: [path.basename(asyncDir), path.basename(syncDir)]
+        };
+        fs.rmSync(root, { recursive: true, force: true });
+        return result;
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-helpers-root-plugin",
+                    "name": "Runtime Test Helpers Root Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-test-helpers-root.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_helpers_root"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.test_helpers_root"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["createPluginSdkTestHarness"],
+        "scopedSame": True,
+        "asyncExists": True,
+        "syncExists": True,
+        "sameRoot": True,
+        "rootPrefix": True,
+        "basenames": ["case-0", "case-1"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_test_helpers_envelope_timestamp(
     tmp_path,
 ) -> None:

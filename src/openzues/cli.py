@@ -63144,6 +63144,46 @@ const testHelpersStringUtilsRuntime = {
   uniqueSortedStrings,
 };
 
+function createPluginSdkTestHarness(options = {}) {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-plugin-sdk-fixtures-"));
+  let caseId = 0;
+
+  function nextTempDir(prefix) {
+    return path.join(fixtureRoot, `${prefix}${caseId++}`);
+  }
+
+  async function createTempDir(prefix) {
+    const dir = nextTempDir(prefix);
+    await fs.promises.mkdir(dir, { recursive: true });
+    return dir;
+  }
+
+  function createTempDirSync(prefix) {
+    const dir = nextTempDir(prefix);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  if (typeof globalThis.afterAll === "function") {
+    globalThis.afterAll(async () => {
+      await fs.promises.rm(fixtureRoot, {
+        recursive: true,
+        force: true,
+        ...(options.cleanup || {}),
+      });
+    });
+  }
+
+  return {
+    createTempDir,
+    createTempDirSync,
+  };
+}
+
+const testHelpersRootRuntime = {
+  createPluginSdkTestHarness,
+};
+
 const testHelpersEnvelopeTimestampRuntime = {
   escapeRegExp,
   formatEnvelopeTimestamp,
@@ -91158,6 +91198,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-test-helpers"
   ) {
     return channelTestHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-helpers" ||
+    request === "@openclaw/plugin-sdk/test-helpers"
+  ) {
+    return testHelpersRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/test-helpers/string-utils" ||
