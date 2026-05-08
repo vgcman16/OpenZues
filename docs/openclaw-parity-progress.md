@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999995%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999997%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -21066,6 +21066,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 1201 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `5500bc77`.
+- Imported plugin SDK `zalo` now exposes the root bundled Zalo helper barrel
+  by composing verified setup, allow-from, command-auth, channel config,
+  pairing, reply payload, status, webhook ingress, outbound media, and
+  proxy/client-IP helpers instead of broad generic SDK placeholders. This
+  closes `OZ-PLUGIN-00376`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999997%.
+- Verified the Zalo root facade with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_zalo_root_helpers -q`
+  (the exact root import returned broad generic fallback behavior before
+  implementation, then `1 passed`), adjacent Zalo/setup/webhook proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "zalo_root_helpers or zalo_setup_helpers or zalouser_helpers or channel_send_result_helpers or webhook_ingress_helpers"`
+  (`5 passed, 1200 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `e789e816`.
 
 ## References
 
