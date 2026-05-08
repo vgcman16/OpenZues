@@ -10098,6 +10098,25 @@ def _emit_update_dry_run_preview(payload: dict[str, object], *, json_output: boo
             typer.echo(f"  - {note}")
 
 
+def _emit_update_run_result(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    status = str(payload.get("status") or "unknown")
+    mode = str(payload.get("mode") or "unknown")
+    typer.echo(f"Update {status}")
+    typer.echo(f"mode: {mode}")
+    reason = _optional_cli_string(payload.get("reason"))
+    if reason is not None:
+        typer.echo(f"reason: {reason}")
+    root = _optional_cli_string(payload.get("root"))
+    if root is not None:
+        typer.echo(f"root: {root}")
+    steps = payload.get("steps")
+    if isinstance(steps, list):
+        typer.echo(f"steps: {len(steps)}")
+
+
 def _parse_openclaw_update_timeout_seconds(value: str | None) -> float | None:
     if value is None:
         return None
@@ -98056,11 +98075,12 @@ def update_root(
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
-    _ = (timeout, yes)
+    _ = yes
     requested_channel = _openclaw_update_normalize_channel(channel)
     if channel is not None and requested_channel is None:
         typer.echo(f'--channel must be "stable", "beta", or "dev" (got "{channel}")', err=True)
         raise typer.Exit(code=1)
+    timeout_seconds = _parse_openclaw_update_timeout_seconds(timeout)
     if dry_run:
         payload = _openclaw_update_dry_run_preview(
             requested_channel=requested_channel,
@@ -98069,12 +98089,15 @@ def update_root(
         )
         _emit_update_dry_run_preview(payload, json_output=json_output)
         return
-    typer.echo(
-        "OpenZues native self-update execution is not available yet; "
-        "rerun with --dry-run to preview.",
-        err=True,
+    timeout_ms = int(timeout_seconds * 1000) if timeout_seconds is not None else None
+    payload = _run(
+        _run_with_services(
+            lambda services: services.runtime_updates.run_update(timeout_ms=timeout_ms)
+        )
     )
-    raise typer.Exit(code=1)
+    _emit_update_run_result(payload, json_output=json_output)
+    if payload.get("status") == "error":
+        raise typer.Exit(code=1)
 
 
 @update_app.command("status")

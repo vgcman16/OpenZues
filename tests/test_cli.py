@@ -25495,6 +25495,36 @@ def test_update_dry_run_json_preserves_explicit_package_install_spec(
     )
 
 
+def test_update_json_dispatches_runtime_update_service(
+    monkeypatch,
+) -> None:
+    seen: dict[str, int | None] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+            seen["timeout_ms"] = timeout_ms
+            return {
+                "status": "ok",
+                "mode": "git",
+                "root": "C:/OpenZues",
+                "steps": [],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(runtime_updates=FakeRuntimeUpdates()))
+
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--json", "--timeout", "9", "--yes"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen["timeout_ms"] == 9000
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "git"
+
+
 def test_update_status_json_detects_package_manager_deps(
     tmp_path,
     monkeypatch,
