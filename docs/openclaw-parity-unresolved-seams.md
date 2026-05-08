@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.999999998%.
+  band of ~80-99.999999999%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -1823,6 +1823,13 @@ cleanup, skips external or symlink-crossing paths, and returns
 `{cleared, loggedOut}` based on actual cleanup. Source/test checkpointed in
 `3e99a587`; the adjacent provider queue should rotate to Zalo, QQ, or broader
 logout/runtime edge cases.
+QQBot `channels.logout` now mirrors OpenClaw's credential cleanup contract:
+OpenZues recognizes `qqbot`/`qq` as channel/config aliases, clears saved
+`channels.qqbot.clientSecret`, `clientSecretFile`, and matching
+`accounts.default` secret fields, preserves `appId`, and returns
+`{ok, cleared, envToken, loggedOut}`. Source/test checkpointed in `aac53b3b`;
+the adjacent provider queue should rotate to Zalo user profile logout or
+broader provider/runtime edge cases.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account

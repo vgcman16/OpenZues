@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999998% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -5199,6 +5199,22 @@ may lag behind this tracker.
     (`6 passed, 403 deselected`), adjacent gateway method proof (`5 passed,
     1123 deselected`), adjacent API proof (`4 passed, 424 deselected`), `ruff
     check`, and `mypy`.
+
+- [x] QQBot `channels.logout` runtime config cleanup.
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
+    `openclaw-main/extensions/qqbot/src/channel.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/config/credentials.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_config.py`,
+    `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_gateway_node_methods.py`, `tests/test_ops_mesh.py`
+  - Status: checkpointed in `aac53b3b`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused QQBot red-green proof (`1 failed`
+    before implementation, then `1 passed`), focused gateway method acceptance
+    proof (`1 passed`), adjacent OpsMesh lifecycle proof (`7 passed, 403
+    deselected`), adjacent gateway method proof (`6 passed, 1123 deselected`),
+    adjacent API proof (`4 passed, 424 deselected`), `ruff check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.
