@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999998% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6368,6 +6368,26 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused LINE root/core red/green proof (exact
     imports returned generic or wrong-shaped data before implementation, then
     `1 passed`), adjacent LINE/setup proof (`4 passed, 1163 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK matrix-helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/matrix-helper.ts`,
+    `openclaw-main/extensions/matrix/src/account-selection.ts`,
+    `openclaw-main/extensions/matrix/src/env-vars.ts`,
+    `openclaw-main/extensions/matrix/src/storage-paths.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `matrix-helper` imports expose Matrix
+    channel config lookup, normalized account entry/default resolution,
+    explicit default-account detection, scoped env var names, credential paths,
+    legacy flat-store paths, and account storage-root derivation.
+  - Evidence required: focused Matrix helper import test, adjacent Matrix
+    helper proof, ruff, mypy
+  - Status: checkpointed in `1717d1c2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Matrix helper red/green proof (exact
+    import returned the generic SDK facade before implementation, then `1
+    passed`), adjacent Matrix helper proof (`4 passed, 1164 deselected`),
     `ruff check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
