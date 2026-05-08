@@ -23,7 +23,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -10363,6 +10363,138 @@ def _openclaw_update_channel_to_package_tag(channel: str) -> str:
     return "latest" if channel == "stable" else channel
 
 
+def _openclaw_update_fetch_package_target_status(
+    target: str,
+    *,
+    package_name: str = _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
+    timeout_seconds: float | None = None,
+) -> dict[str, object]:
+    normalized_target = target.strip()
+    normalized_package = package_name.strip() or _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+    timeout = max(0.25, float(timeout_seconds if timeout_seconds is not None else 3.5))
+    request = Request(
+        f"https://registry.npmjs.org/{quote(normalized_package)}/{quote(normalized_target)}",
+        headers={"Accept": "application/json"},
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            parsed = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        return {
+            "target": normalized_target,
+            "version": None,
+            "nodeEngine": None,
+            "error": f"HTTP {exc.code}",
+        }
+    except (OSError, TimeoutError, URLError, json.JSONDecodeError) as exc:
+        return {
+            "target": normalized_target,
+            "version": None,
+            "nodeEngine": None,
+            "error": str(exc),
+        }
+    if not isinstance(parsed, Mapping):
+        return {
+            "target": normalized_target,
+            "version": None,
+            "nodeEngine": None,
+            "error": "invalid registry payload",
+        }
+    engines = parsed.get("engines")
+    return {
+        "target": normalized_target,
+        "version": _optional_cli_string(parsed.get("version")),
+        "nodeEngine": (
+            _optional_cli_string(engines.get("node")) if isinstance(engines, Mapping) else None
+        ),
+    }
+
+
+def _openclaw_update_semver_prerelease(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    match = re.match(r"^v?\d+\.\d+\.\d+(?:[-.]([0-9A-Za-z][0-9A-Za-z.-]*))?", text)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def _openclaw_update_compare_prerelease(left: str | None, right: str | None) -> int:
+    if left is None and right is None:
+        return 0
+    if left is None:
+        return 1
+    if right is None:
+        return -1
+    left_parts = re.split(r"[.-]", left)
+    right_parts = re.split(r"[.-]", right)
+    for index in range(max(len(left_parts), len(right_parts))):
+        left_part = left_parts[index] if index < len(left_parts) else None
+        right_part = right_parts[index] if index < len(right_parts) else None
+        if left_part is None:
+            return -1
+        if right_part is None:
+            return 1
+        left_numeric = left_part.isdigit()
+        right_numeric = right_part.isdigit()
+        if left_numeric and right_numeric:
+            left_value = int(left_part)
+            right_value = int(right_part)
+            if left_value != right_value:
+                return -1 if left_value < right_value else 1
+            continue
+        if left_numeric != right_numeric:
+            return -1 if left_numeric else 1
+        left_lower = left_part.lower()
+        right_lower = right_part.lower()
+        if left_lower != right_lower:
+            return -1 if left_lower < right_lower else 1
+    return 0
+
+
+def _openclaw_update_compare_semver_strings(left: object, right: object) -> int | None:
+    left_tuple = _openclaw_update_semver_tuple(left)
+    right_tuple = _openclaw_update_semver_tuple(right)
+    if left_tuple is None or right_tuple is None:
+        return None
+    if left_tuple != right_tuple:
+        return -1 if left_tuple < right_tuple else 1
+    return _openclaw_update_compare_prerelease(
+        _openclaw_update_semver_prerelease(left),
+        _openclaw_update_semver_prerelease(right),
+    )
+
+
+def _openclaw_update_resolve_npm_channel_tag(
+    channel: str,
+    *,
+    timeout_seconds: float | None = None,
+) -> dict[str, str | None]:
+    channel_tag = _openclaw_update_channel_to_package_tag(channel)
+    channel_status = _openclaw_update_fetch_package_target_status(
+        channel_tag,
+        timeout_seconds=timeout_seconds,
+    )
+    channel_version = _optional_cli_string(channel_status.get("version"))
+    if channel != "beta":
+        return {"tag": channel_tag, "version": channel_version}
+
+    latest_status = _openclaw_update_fetch_package_target_status(
+        "latest",
+        timeout_seconds=timeout_seconds,
+    )
+    latest_version = _optional_cli_string(latest_status.get("version"))
+    if latest_version is None:
+        return {"tag": channel_tag, "version": channel_version}
+    if channel_version is None:
+        return {"tag": "latest", "version": latest_version}
+    comparison = _openclaw_update_compare_semver_strings(channel_version, latest_version)
+    if comparison is not None and comparison < 0:
+        return {"tag": "latest", "version": latest_version}
+    return {"tag": channel_tag, "version": channel_version}
+
+
 def _openclaw_update_dry_run_preview(
     *,
     requested_channel: str | None,
@@ -10385,12 +10517,19 @@ def _openclaw_update_dry_run_preview(
     target_tag = explicit_tag or _openclaw_update_channel_to_package_tag(effective_channel)
     package_install_spec: str | None = None
     current_version = None if switch_to_package else _openclaw_update_read_package_version(root)
+    target_version: str | None = None
+    fallback_to_latest = False
     mode = "unknown"
 
     if update_install_kind == "git":
         mode = "git"
     elif update_install_kind == "package":
         mode = _openclaw_update_package_manager(root)
+        if not explicit_tag:
+            resolved = _openclaw_update_resolve_npm_channel_tag(effective_channel)
+            target_tag = _optional_cli_string(resolved.get("tag")) or target_tag
+            target_version = _optional_cli_string(resolved.get("version"))
+            fallback_to_latest = effective_channel == "beta" and target_tag == "latest"
         package_install_spec = _openclaw_update_resolve_global_install_spec(
             package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
             tag=target_tag,
@@ -10422,6 +10561,8 @@ def _openclaw_update_dry_run_preview(
     notes: list[str] = []
     if explicit_tag and update_install_kind == "git":
         notes.append("--tag applies to npm installs only; git updates ignore it.")
+    if fallback_to_latest:
+        notes.append("Beta channel resolves to latest for this run (fallback).")
     if explicit_tag and not _openclaw_update_can_resolve_registry_version_for_target(target_tag):
         notes.append("Non-registry package specs skip npm version lookup and downgrade previews.")
 
@@ -10439,7 +10580,7 @@ def _openclaw_update_dry_run_preview(
         "effectiveChannel": effective_channel,
         "tag": package_install_spec or target_tag,
         "currentVersion": current_version,
-        "targetVersion": None,
+        "targetVersion": target_version,
         "downgradeRisk": False,
         "actions": actions,
         "notes": notes,
@@ -98233,10 +98374,14 @@ def update_root(
     install_kind = _openclaw_update_install_kind(root)
     if install_kind == "package":
         effective_channel = requested_channel or "stable"
-        target_tag = (
-            _openclaw_update_normalize_package_target(tag)
-            or _openclaw_update_channel_to_package_tag(effective_channel)
-        )
+        explicit_tag = _openclaw_update_normalize_package_target(tag)
+        target_tag = explicit_tag or _openclaw_update_channel_to_package_tag(effective_channel)
+        if not explicit_tag:
+            resolved = _openclaw_update_resolve_npm_channel_tag(
+                effective_channel,
+                timeout_seconds=timeout_seconds,
+            )
+            target_tag = _optional_cli_string(resolved.get("tag")) or target_tag
         package_spec = _openclaw_update_resolve_global_install_spec(
             package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
             tag=target_tag,

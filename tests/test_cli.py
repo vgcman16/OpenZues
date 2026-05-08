@@ -25542,6 +25542,11 @@ def test_update_dry_run_json_uses_stored_update_channel(
 
     monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
     monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_resolve_npm_channel_tag",
+        lambda channel, timeout_seconds=None: {"tag": "beta", "version": "2.0.0-beta.1"},
+    )
 
     result = runner.invoke(app, ["update", "--dry-run", "--json"])
 
@@ -25552,6 +25557,57 @@ def test_update_dry_run_json_uses_stored_update_channel(
     assert payload["effectiveChannel"] == "beta"
     assert payload["tag"] == "openzues@beta"
     assert "Run global package manager update with spec openzues@beta" in payload["actions"]
+
+
+def test_update_dry_run_json_falls_back_beta_channel_to_latest(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0", "version": "1.2.0"}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_resolve_npm_channel_tag",
+        lambda channel, timeout_seconds=None: {"tag": "latest", "version": "2.0.0"},
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["update", "--dry-run", "--json", "--channel", "beta"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["effectiveChannel"] == "beta"
+    assert payload["tag"] == "openzues@latest"
+    assert payload["targetVersion"] == "2.0.0"
+    assert "Run global package manager update with spec openzues@latest" in payload["actions"]
+    assert "Beta channel resolves to latest for this run (fallback)." in payload["notes"]
+
+
+def test_update_resolve_npm_channel_tag_falls_back_beta_prerelease_to_latest(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_fetch(target: str, *, timeout_seconds: float | None = None) -> dict[str, object]:
+        calls.append(target)
+        if target == "beta":
+            return {"target": target, "version": "2.0.0-beta.1"}
+        if target == "latest":
+            return {"target": target, "version": "2.0.0"}
+        return {"target": target, "version": None}
+
+    monkeypatch.setattr(cli_module, "_openclaw_update_fetch_package_target_status", fake_fetch)
+
+    resolved = cli_module._openclaw_update_resolve_npm_channel_tag("beta")
+
+    assert resolved == {"tag": "latest", "version": "2.0.0"}
+    assert calls == ["beta", "latest"]
 
 
 def test_update_dry_run_json_honors_openclaw_package_spec_override(
@@ -25797,6 +25853,11 @@ def test_update_json_persists_requested_package_channel_after_success(
 
     monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
     monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_resolve_npm_channel_tag",
+        lambda channel, timeout_seconds=None: {"tag": "beta", "version": "2.0.0-beta.1"},
+    )
 
     result = runner.invoke(app, ["update", "--json", "--channel", "beta"])
 
@@ -25809,6 +25870,94 @@ def test_update_json_persists_requested_package_channel_after_success(
         "channel": "beta",
     }
     assert gateway_config.build_snapshot()["update"]["channel"] == "beta"
+
+
+def test_update_json_falls_back_beta_channel_to_latest_package_spec(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0", "version": "1.2.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "update": {"channel": "stable"},
+            }
+        )
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.update(
+                {
+                    "package_root": package_root,
+                    "package_manager": package_manager,
+                    "package_spec": package_spec,
+                    "timeout_ms": timeout_ms,
+                }
+            )
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_resolve_npm_channel_tag",
+        lambda channel, timeout_seconds=None: {"tag": "latest", "version": "2.0.0"},
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["update", "--json", "--channel", "beta"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen["package_spec"] == "openzues@latest"
+    payload = json.loads(result.stdout)
+    assert payload["channelUpdate"] == {
+        "changed": True,
+        "previous": "stable",
+        "channel": "beta",
+    }
 
 
 def test_update_json_runs_post_update_plugin_sync_for_package_update(
