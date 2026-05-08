@@ -6497,6 +6497,7 @@ class GatewayNodeMethodService:
                 label="limit",
                 minimum=1,
                 maximum=1000,
+                clamp_max=True,
             )
             max_chars = _optional_bounded_int(
                 payload.get("maxChars"),

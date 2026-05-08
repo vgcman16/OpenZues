@@ -82886,6 +82886,30 @@ async def test_chat_history_floors_numeric_openclaw_limit(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_history_caps_large_limit_like_openclaw(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-chat-history-large-limit.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    for index in range(1005):
+        await database.append_control_chat_message(
+            role="user",
+            content=f"Chat message {index}",
+            session_key=session_key,
+        )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key, "limit": 2000})
+
+    assert len(payload["messages"]) == 1000
+    assert payload["messages"][0]["content"][0]["text"] == "Chat message 5"
+    assert payload["messages"][-1]["content"][0]["text"] == "Chat message 1004"
+
+
+@pytest.mark.asyncio
 async def test_chat_history_preserves_assistant_usage_and_cost_metadata() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-usage-cost"
     shutil.rmtree(tmp_path, ignore_errors=True)
