@@ -19893,6 +19893,235 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_matrix_helper_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-matrix-helper.cjs"
+    runtime_entry.write_text(
+        """
+const helper = require("openclaw/plugin-sdk/matrix-helper");
+const scopedHelper = require("@openclaw/plugin-sdk/matrix-helper");
+
+function slash(value) {
+  return String(value).replace(/\\\\/g, "/");
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.matrix_helper",
+      description: "Use OpenClaw matrix-helper SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            matrix: {
+              defaultAccount: "Ops Team",
+              homeserver: "https://default.example",
+              userId: "@default:example",
+              password: "default-pass",
+              accounts: {
+                "Ops Team": {
+                  homeserver: "https://ops.example",
+                  userId: "@ops:example",
+                  accessToken: { source: "env", id: "OPS_TOKEN" },
+                  deviceName: "Ops Bot"
+                },
+                "QA": {
+                  homeserver: "https://qa.example",
+                  userId: "@qa:example",
+                  password: "qa-pass"
+                }
+              }
+            }
+          }
+        };
+        const env = {
+          MATRIX_TEAM_X2D_TWO_HOMESERVER: "https://team-two.example",
+          MATRIX_TEAM_X2D_TWO_USER_ID: "@two:example",
+          MATRIX_TEAM_X2D_TWO_ACCESS_TOKEN: "two-token"
+        };
+        const ambiguousCfg = {
+          channels: {
+            matrix: {
+              accounts: {
+                ops: { homeserver: "https://ops.example", userId: "@ops:example" },
+                qa: { homeserver: "https://qa.example", userId: "@qa:example" }
+              }
+            }
+          }
+        };
+        const stateDir = "C:/OpenZues/state";
+        const storage = helper.resolveMatrixAccountStorageRoot({
+          stateDir,
+          homeserver: "https://matrix.example.org:8448/path",
+          userId: "@Bot:Example.Org",
+          accessToken: "secret-token",
+          accountId: "Ops Team"
+        });
+        const legacy = helper.resolveMatrixLegacyFlatStoragePaths(stateDir);
+        return {
+          keys: Object.keys(helper).sort(),
+          scopedSame:
+            scopedHelper.findMatrixAccountEntry === helper.findMatrixAccountEntry &&
+            scopedHelper.resolveMatrixCredentialsPath ===
+              helper.resolveMatrixCredentialsPath,
+          envNames: helper.getMatrixScopedEnvVarNames("Team Two"),
+          channelConfig: helper.resolveMatrixChannelConfig(cfg),
+          missingChannel: helper.resolveMatrixChannelConfig({ channels: { matrix: [] } }),
+          accountEntry: helper.findMatrixAccountEntry(cfg, "ops-team"),
+          ids: helper.resolveConfiguredMatrixAccountIds(cfg, env),
+          defaultId: helper.resolveMatrixDefaultOrOnlyAccountId(cfg, env),
+          missingDefaultId: helper.resolveMatrixDefaultOrOnlyAccountId({}, {}),
+          requiresExplicit: helper.requiresExplicitMatrixDefaultAccount(ambiguousCfg, env),
+          credentialsDir: slash(helper.resolveMatrixCredentialsDir(stateDir)),
+          credentialsPath: slash(
+            helper.resolveMatrixCredentialsPath({
+              stateDir,
+              accountId: "Ops Team"
+            })
+          ),
+          defaultCredentialsPath: slash(
+            helper.resolveMatrixCredentialsPath({ stateDir })
+          ),
+          legacy: {
+            rootDir: slash(legacy.rootDir),
+            storagePath: slash(legacy.storagePath),
+            cryptoPath: slash(legacy.cryptoPath)
+          },
+          storage: {
+            rootDir: slash(storage.rootDir),
+            accountKey: storage.accountKey,
+            tokenHash: storage.tokenHash
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-matrix-helper-plugin",
+                    "name": "Runtime Matrix Helper Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-matrix-helper.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.matrix_helper"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.matrix_helper"})
+
+    assert payload["ok"] is True
+    token_hash = hashlib.sha256(b"secret-token").hexdigest()[:16]
+    assert payload["result"] == {
+        "keys": [
+            "findMatrixAccountEntry",
+            "getMatrixScopedEnvVarNames",
+            "requiresExplicitMatrixDefaultAccount",
+            "resolveConfiguredMatrixAccountIds",
+            "resolveMatrixAccountStorageRoot",
+            "resolveMatrixChannelConfig",
+            "resolveMatrixCredentialsDir",
+            "resolveMatrixCredentialsPath",
+            "resolveMatrixDefaultOrOnlyAccountId",
+            "resolveMatrixLegacyFlatStoragePaths",
+        ],
+        "scopedSame": True,
+        "envNames": {
+            "homeserver": "MATRIX_TEAM_X2D_TWO_HOMESERVER",
+            "userId": "MATRIX_TEAM_X2D_TWO_USER_ID",
+            "accessToken": "MATRIX_TEAM_X2D_TWO_ACCESS_TOKEN",
+            "password": "MATRIX_TEAM_X2D_TWO_PASSWORD",
+            "deviceId": "MATRIX_TEAM_X2D_TWO_DEVICE_ID",
+            "deviceName": "MATRIX_TEAM_X2D_TWO_DEVICE_NAME",
+        },
+        "channelConfig": {
+            "defaultAccount": "Ops Team",
+            "homeserver": "https://default.example",
+            "userId": "@default:example",
+            "password": "default-pass",
+            "accounts": {
+                "Ops Team": {
+                    "homeserver": "https://ops.example",
+                    "userId": "@ops:example",
+                    "accessToken": {"source": "env", "id": "OPS_TOKEN"},
+                    "deviceName": "Ops Bot",
+                },
+                "QA": {
+                    "homeserver": "https://qa.example",
+                    "userId": "@qa:example",
+                    "password": "qa-pass",
+                },
+            },
+        },
+        "missingChannel": None,
+        "accountEntry": {
+            "homeserver": "https://ops.example",
+            "userId": "@ops:example",
+            "accessToken": {"source": "env", "id": "OPS_TOKEN"},
+            "deviceName": "Ops Bot",
+        },
+        "ids": ["default", "ops-team", "qa", "team-two"],
+        "defaultId": "ops-team",
+        "missingDefaultId": "default",
+        "requiresExplicit": True,
+        "credentialsDir": "C:/OpenZues/state/credentials/matrix",
+        "credentialsPath": "C:/OpenZues/state/credentials/matrix/credentials-ops-team.json",
+        "defaultCredentialsPath": "C:/OpenZues/state/credentials/matrix/credentials.json",
+        "legacy": {
+            "rootDir": "C:/OpenZues/state/matrix",
+            "storagePath": "C:/OpenZues/state/matrix/bot-storage.json",
+            "cryptoPath": "C:/OpenZues/state/matrix/crypto",
+        },
+        "storage": {
+            "rootDir": (
+                "C:/OpenZues/state/matrix/accounts/ops_team/"
+                f"matrix.example.org_8448__bot_example.org/{token_hash}"
+            ),
+            "accountKey": "ops_team",
+            "tokenHash": token_hash,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
     tmp_path,
 ) -> None:
