@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999997% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -129,7 +129,8 @@ checkpointed in `c298b482`, and `OZ-PLUGIN-00327` minimax is checkpointed in
 `OZ-PLUGIN-00346` matrix-deps is checkpointed in `3cdfebfd`,
 `OZ-PLUGIN-00347` feishu-security is checkpointed in `a7ea60d4`, and
 `OZ-PLUGIN-00348` synology-chat is checkpointed in `eaf176bb`.
-`OZ-PLUGIN-00349` qa-runtime is checkpointed in `a20434e1`; continue remaining
+`OZ-PLUGIN-00349` qa-runtime is checkpointed in `a20434e1`, and
+`OZ-PLUGIN-00350` qa-lab is checkpointed in `d187a8ce`; continue remaining
 exact SDK helper seams and provider/runtime breadth.
 
 ## Active Slice Detail
