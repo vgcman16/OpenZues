@@ -19507,6 +19507,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `a06dd570`.
+- Native package update verification now enforces critical bundled runtime
+  sidecars for older installed package roots that do not yet require
+  `dist/postinstall-inventory.json`, matching OpenClaw's legacy sidecar
+  fallback. This closes `OZ-PKG-001BH`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999995%.
+- Verified legacy runtime sidecar enforcement with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_legacy_runtime_sidecars -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent sidecar and
+  inventory proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_legacy_runtime_sidecars tests\test_runtime_updates.py::test_runtime_update_run_package_update_enforces_omitted_runtime_sidecar tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_invalid_dist_inventory tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`29 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `603cdb2a`.
 
 ## References
 

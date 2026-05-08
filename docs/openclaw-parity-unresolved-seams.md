@@ -10211,3 +10211,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, with the evidence band tightened to
   ~80-99.999999999999999999%. Continue legacy bundled runtime sidecar
   verification for older package roots without inventory next.
+- Current queue-head adjustment: native package update verification now
+  enforces critical bundled runtime sidecars for older package roots that do not
+  require `dist/postinstall-inventory.json`, matching OpenClaw's legacy
+  sidecar fallback. Source/test checkpointed in `603cdb2a`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999995%. Continue omitted-subtree safety ordering for
+  externalized extensions and plugin dependency folders next.
