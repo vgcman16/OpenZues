@@ -60109,6 +60109,12 @@ const testHelpersStringUtilsRuntime = {
   uniqueSortedStrings,
 };
 
+const testHelpersEnvelopeTimestampRuntime = {
+  escapeRegExp,
+  formatEnvelopeTimestamp,
+  formatLocalEnvelopeTimestamp,
+};
+
 function formatImportSideEffectCall(args) {
   if (!Array.isArray(args) || args.length === 0) {
     return "(no args)";
@@ -86194,6 +86200,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/test-helpers/string-utils"
   ) {
     return testHelpersStringUtilsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-helpers/envelope-timestamp" ||
+    request === "@openclaw/plugin-sdk/test-helpers/envelope-timestamp"
+  ) {
+    return testHelpersEnvelopeTimestampRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/plugin-test-api" ||
