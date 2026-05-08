@@ -19358,6 +19358,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Test checkpointed in `0826cfaa`.
+- Native package update verification now reports missing installed versions as
+  `<missing>` in the `global install verify` error, matching OpenClaw's
+  `collectInstalledGlobalPackageErrors` wording. This closes `OZ-PKG-001AY`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999996%.
+- Verified missing-version projection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent expected
+  version proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version -q`
+  (`2 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`20 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `ad9ba5a5`.
 
 ## References
 

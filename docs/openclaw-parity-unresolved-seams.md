@@ -10147,3 +10147,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   in `0826cfaa`; repo-wide parity remains estimated at ~99.9%, with the
   evidence band tightened to ~80-99.99999999999999995%. Continue broader
   release/update packaging breadth next.
+- Current queue-head adjustment: native package update verification now
+  reports missing installed package versions as `<missing>` in the global
+  install verify error, matching OpenClaw's package verification wording.
+  Source/test checkpointed in `ad9ba5a5`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99999999999999996%.
+  Continue broader release/update packaging breadth next.
