@@ -88325,6 +88325,17 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     });
   }
   if (
+    request === "openclaw/plugin-sdk/msteams" ||
+    request === "@openclaw/plugin-sdk/msteams"
+  ) {
+    return getOptionalChannelRootRuntime({
+      channel: "msteams",
+      label: "Microsoft Teams",
+      npmSpec: "@openclaw/msteams",
+      docsPath: "/channels/msteams",
+    });
+  }
+  if (
     request === "openclaw/plugin-sdk/tlon" ||
     request === "@openclaw/plugin-sdk/tlon"
   ) {

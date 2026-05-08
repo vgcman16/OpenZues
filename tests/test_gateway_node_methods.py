@@ -21163,6 +21163,120 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_msteams_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-msteams.cjs"
+    runtime_entry.write_text(
+        """
+const msteams = require("openclaw/plugin-sdk/msteams");
+const scopedMsteams = require("@openclaw/plugin-sdk/msteams");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.msteams",
+      description: "Use OpenClaw msteams SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const setupKeys = Object.keys(msteams)
+          .filter((key) => key.startsWith("msteamsSetup"))
+          .sort();
+        const adapter = msteams.msteamsSetupAdapter;
+        const wizard = scopedMsteams.msteamsSetupWizard;
+        let finalizeError = "";
+        return Promise.resolve()
+          .then(() => wizard.finalize({}))
+          .catch((error) => {
+            finalizeError = error.message;
+          })
+          .then(() => ({
+            setupKeys,
+            scopedSame: scopedMsteams.msteamsSetupAdapter === msteams.msteamsSetupAdapter,
+            inheritedGenericType: typeof msteams.createDedupeCache,
+            account: adapter.resolveAccountId({}),
+            validation: adapter.validateInput({}),
+            wizard: {
+              channel: wizard.channel,
+              hint: wizard.status.unconfiguredHint,
+              selection: wizard.status.resolveSelectionHint(),
+              finalizeError
+            }
+          }));
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-msteams-plugin",
+                    "name": "Runtime MSTeams Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-msteams.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.msteams"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.msteams"})
+
+    message = (
+        "Microsoft Teams setup requires @openclaw/msteams to be installed. "
+        "Docs: channels/msteams (https://docs.openclaw.ai/channels/msteams)"
+    )
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "setupKeys": ["msteamsSetupAdapter", "msteamsSetupWizard"],
+        "scopedSame": True,
+        "inheritedGenericType": "function",
+        "account": "default",
+        "validation": message,
+        "wizard": {
+            "channel": "msteams",
+            "hint": message,
+            "selection": message,
+            "finalizeError": message,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_nostr_helpers(
     tmp_path,
 ) -> None:
