@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999997%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -20479,6 +20479,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1159 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `69e092b5`.
+- Imported plugin SDK `memory-host-search.runtime` now exposes the exact
+  scoped/unscoped runtime helper surface instead of generic passthrough,
+  including `resolveActiveMemoryBackendConfig` alongside active manager lookup
+  and manager cleanup while preserving the narrower non-runtime
+  `memory-host-search` facade. This closes `OZ-PLUGIN-00334`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999998%.
+- Verified the memory-host-search.runtime helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_memory_host_search_helpers -q`
+  (the exact runtime subpath returned the broad SDK facade before
+  implementation, then `1 passed`), adjacent memory helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "memory_host_search or memory_core_host_status or memory_core_host_query or memory_core_host_runtime_core"`
+  (`4 passed, 1159 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `96722388`.
 
 ## References
 
