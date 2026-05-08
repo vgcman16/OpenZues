@@ -87415,6 +87415,66 @@ const matrixRuntimeSharedRuntime = {
   formatZonedTimestamp,
 };
 
+const REQUIRED_MATRIX_PACKAGES = [
+  "matrix-js-sdk",
+  "@matrix-org/matrix-sdk-crypto-nodejs",
+  "@matrix-org/matrix-sdk-crypto-wasm",
+];
+const MATRIX_DEPS_INSTALL_PROMPT =
+  "Matrix requires matrix-js-sdk, @matrix-org/matrix-sdk-crypto-nodejs, " +
+  "and @matrix-org/matrix-sdk-crypto-wasm. Install now?";
+const MATRIX_DEPS_INSTALL_REQUIRED_MESSAGE =
+  "Matrix requires matrix-js-sdk, @matrix-org/matrix-sdk-crypto-nodejs, " +
+  "and @matrix-org/matrix-sdk-crypto-wasm (install dependencies first).";
+
+function resolveMissingMatrixPackages() {
+  let req;
+  try {
+    req = Module.createRequire(__filename);
+  } catch {
+    return [...REQUIRED_MATRIX_PACKAGES];
+  }
+  return REQUIRED_MATRIX_PACKAGES.filter((pkg) => {
+    try {
+      req.resolve(pkg);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+}
+
+function isMatrixSdkAvailable() {
+  return resolveMissingMatrixPackages().length === 0;
+}
+
+async function ensureMatrixSdkInstalled(params = {}) {
+  if (isMatrixSdkAvailable()) {
+    return;
+  }
+  if (typeof params.confirm === "function") {
+    const ok = await params.confirm(MATRIX_DEPS_INSTALL_PROMPT);
+    if (!ok) {
+      throw new Error(MATRIX_DEPS_INSTALL_REQUIRED_MESSAGE);
+    }
+  }
+  const missing = resolveMissingMatrixPackages();
+  if (params.runtime && typeof params.runtime.log === "function") {
+    params.runtime.log(`matrix: missing dependencies: ${missing.join(", ")}`);
+  }
+  throw new Error(
+    missing.length > 0
+      ? "Matrix dependency install is unavailable in the OpenZues native runtime; " +
+        `missing packages: ${missing.join(", ")}`
+      : "Matrix dependency install is unavailable in the OpenZues native runtime.",
+  );
+}
+
+const matrixDepsRuntime = {
+  ensureMatrixSdkInstalled,
+  isMatrixSdkAvailable,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -89662,6 +89722,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/matrix-runtime-shared"
   ) {
     return matrixRuntimeSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-deps" ||
+    request === "@openclaw/plugin-sdk/matrix-deps"
+  ) {
+    return matrixDepsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/bluebubbles-policy" ||

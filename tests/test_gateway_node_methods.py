@@ -20575,6 +20575,124 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_matrix_deps_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-matrix-deps.cjs"
+    runtime_entry.write_text(
+        """
+const matrixDeps = require("openclaw/plugin-sdk/matrix-deps");
+const scopedMatrixDeps = require("@openclaw/plugin-sdk/matrix-deps");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.matrix_deps",
+      description: "Use OpenClaw matrix-deps SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const available = matrixDeps.isMatrixSdkAvailable();
+        const confirmMessages = [];
+        let ensureOutcome = "available";
+        try {
+          await matrixDeps.ensureMatrixSdkInstalled({
+            runtime: { log() {} },
+            confirm: async (message) => {
+              confirmMessages.push(message);
+              return false;
+            }
+          });
+        } catch (error) {
+          ensureOutcome = String(error && error.message ? error.message : error);
+        }
+        return {
+          keys: Object.keys(matrixDeps).sort(),
+          scopedSame:
+            scopedMatrixDeps.isMatrixSdkAvailable ===
+              matrixDeps.isMatrixSdkAvailable &&
+            scopedMatrixDeps.ensureMatrixSdkInstalled ===
+              matrixDeps.ensureMatrixSdkInstalled,
+          availableType: typeof available,
+          confirmMessages,
+          ensureOutcome
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-matrix-deps-plugin",
+                    "name": "Runtime Matrix Deps Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-matrix-deps.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.matrix_deps"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.matrix_deps"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == ["ensureMatrixSdkInstalled", "isMatrixSdkAvailable"]
+    assert result["scopedSame"] is True
+    assert result["availableType"] == "boolean"
+    if result["ensureOutcome"] == "available":
+        assert result["confirmMessages"] == []
+    else:
+        assert result["confirmMessages"] == [
+            (
+                "Matrix requires matrix-js-sdk, @matrix-org/matrix-sdk-crypto-nodejs, "
+                "and @matrix-org/matrix-sdk-crypto-wasm. Install now?"
+            )
+        ]
+        assert (
+            result["ensureOutcome"]
+            == (
+                "Matrix requires matrix-js-sdk, @matrix-org/matrix-sdk-crypto-nodejs, "
+                "and @matrix-org/matrix-sdk-crypto-wasm (install dependencies first)."
+            )
+        )
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_lobster_helpers(
     tmp_path,
 ) -> None:
