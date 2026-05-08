@@ -2097,6 +2097,81 @@ def test_channels_status_json_uses_route_backed_bluebubbles_probe(
     ]
 
 
+def test_channels_status_json_uses_route_backed_tlon_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Tlon Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Tlon Native Probe Route",
+            kind="tlon",
+            target="https://zod.tlon.network?ship=~zod",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "tlon",
+                "account_id": "ship",
+                "peer_kind": "direct",
+                "peer_id": "tlon:~sampel-palnet",
+                "summary": "ship Tlon DM",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="tlon-code",
+            vault_secret_id=None,
+        )
+    )
+    tlon_probes: list[tuple[str, str, float]] = []
+
+    def fake_request_tlon_name_status(
+        self: object,
+        config,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        tlon_probes.append((str(config.base_url), str(config.code), timeout_seconds))
+        return 200
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._request_tlon_name_status",
+        fake_request_tlon_name_status,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["tlon"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "tlon",
+        "runtime": "native-provider-backed",
+        "accountId": "ship",
+        "ship": "~zod",
+        "baseUrl": "https://zod.tlon.network",
+        "httpStatus": 200,
+        "timeoutMs": 2500,
+    }
+    assert tlon_probes == [("https://zod.tlon.network", "tlon-code", 2.5)]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,

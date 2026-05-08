@@ -65,6 +65,7 @@ from openzues.services.ops_mesh import (
     _IrcRouteConfig,
     _saved_outbound_delivery_replay_message,
     _serialize_task,
+    _TlonRouteConfig,
     _TwitchRouteConfig,
     build_ops_mesh,
 )
@@ -7090,6 +7091,88 @@ def test_ops_mesh_service_bluebubbles_probe_preserves_http_status(
             "GET",
             2.5,
         )
+    ]
+
+
+def test_ops_mesh_service_tlon_probe_authenticates_then_requests_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, dict[str, str], bytes | None, float]] = []
+
+    class FakeTlonResponse:
+        def __init__(
+            self,
+            *,
+            status: int,
+            body: bytes = b"",
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.status = status
+            self._body = body
+            self.headers = headers or {}
+
+        def __enter__(self) -> FakeTlonResponse:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeTlonResponse:
+        request_body = request.data
+        requests.append(
+            (
+                request.full_url,
+                request.get_method(),
+                dict(request.header_items()),
+                request_body if isinstance(request_body, bytes) else None,
+                timeout,
+            )
+        )
+        if request.full_url.endswith("/~/login"):
+            return FakeTlonResponse(
+                status=200,
+                body=b"ok",
+                headers={"Set-Cookie": "urbauth-ship=secret; Path=/"},
+            )
+        return FakeTlonResponse(status=204)
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    status = OpsMeshService.__new__(OpsMeshService)._request_tlon_name_status(
+        _TlonRouteConfig(
+            base_url="https://zod.tlon.network",
+            ship="~zod",
+            code="tlon-code",
+        ),
+        timeout_seconds=2.5,
+    )
+
+    assert status == 204
+    assert requests == [
+        (
+            "https://zod.tlon.network/~/login",
+            "POST",
+            {
+                "Accept": "text/plain",
+                "Content-type": "application/x-www-form-urlencoded",
+            },
+            b"password=tlon-code",
+            2.5,
+        ),
+        (
+            "https://zod.tlon.network/~/name",
+            "GET",
+            {
+                "Accept": "text/plain",
+                "Cookie": "urbauth-ship=secret; Path=/",
+            },
+            None,
+            2.5,
+        ),
     ]
 
 

@@ -5081,6 +5081,7 @@ _DOCTOR_CHANNEL_LABELS = {
     "signal": "Signal",
     "slack": "Slack",
     "telegram": "Telegram",
+    "tlon": "Tlon",
     "twitch": "Twitch",
     "whatsapp": "WhatsApp",
     "zalo": "Zalo",

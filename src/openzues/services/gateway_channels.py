@@ -79,6 +79,11 @@ _CHANNEL_META = (
         "detailLabel": "Twitch",
     },
     {
+        "id": "tlon",
+        "label": "Tlon",
+        "detailLabel": "Tlon (Urbit)",
+    },
+    {
         "id": "line",
         "label": "LINE",
         "detailLabel": "LINE",

@@ -398,6 +398,7 @@ PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "msteams",
     "signal",
     "twitch",
+    "tlon",
     "zalo",
 }
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
@@ -438,6 +439,13 @@ class _TwitchRouteConfig:
     client_id: str
     token: str
     default_channel: str | None
+
+
+@dataclass(frozen=True)
+class _TlonRouteConfig:
+    base_url: str
+    ship: str
+    code: str
 
 
 @dataclass(frozen=True)
@@ -7037,6 +7045,53 @@ def _twitch_route_config(target: str | None, secret_token: str | None) -> _Twitc
         token=_irc_wire_value(token, "Twitch token"),
         default_channel=default_channel,
     )
+
+
+def _tlon_query_value(query: Mapping[str, str], *names: str) -> str | None:
+    lowered = {key.lower(): value for key, value in query.items()}
+    for name in names:
+        value = lowered.get(name.lower())
+        if value is not None and value.strip():
+            return value.strip()
+    return None
+
+
+def _tlon_normalize_ship(raw_ship: str | None) -> str | None:
+    normalized = str(raw_ship or "").strip()
+    if not normalized:
+        return None
+    if not normalized.startswith("~"):
+        normalized = f"~{normalized}"
+    if not re.fullmatch(r"~[a-z-]+", normalized, flags=re.IGNORECASE):
+        raise RuntimeError("Tlon route ship is invalid.")
+    return normalized
+
+
+def _tlon_http_base_url(raw_url: str | None) -> str:
+    normalized = str(raw_url or "").strip()
+    parsed = urlparse(normalized)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError("Tlon route target must include an http(s) ship URL.")
+    return parsed._replace(query="", fragment="").geturl().rstrip("/")
+
+
+def _tlon_route_config(target: str | None, secret_token: str | None) -> _TlonRouteConfig:
+    raw_target = str(target or "").strip()
+    parsed = urlparse(raw_target)
+    query = {key: value for key, value in parse_qsl(parsed.query, keep_blank_values=False)}
+    if parsed.scheme.lower() == "tlon":
+        base_url = _tlon_http_base_url(_tlon_query_value(query, "url", "baseUrl", "base_url"))
+    else:
+        base_url = _tlon_http_base_url(raw_target)
+    ship = _tlon_normalize_ship(_tlon_query_value(query, "ship", "shipName", "ship_name"))
+    if ship is None:
+        raise RuntimeError("Tlon route target is missing ship.")
+    code = str(secret_token or "").strip() or (
+        _tlon_query_value(query, "code", "accessCode", "access_code") or ""
+    )
+    if not code:
+        raise RuntimeError("Tlon route is missing an access code secret.")
+    return _TlonRouteConfig(base_url=base_url, ship=ship, code=code)
 
 
 def _strip_markdown_for_twitch(markdown: str) -> str:
@@ -14473,7 +14528,10 @@ class OpsMeshService:
             if not bool(route.get("enabled")):
                 continue
             route_kind = str(route.get("kind") or "").strip().lower()
-            if route_kind != normalized_channel or route_kind not in NATIVE_PROVIDER_ROUTE_KINDS:
+            provider_probe_route_kinds = (
+                NATIVE_PROVIDER_ROUTE_KINDS | PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS
+            )
+            if route_kind != normalized_channel or route_kind not in provider_probe_route_kinds:
                 continue
             route_target = _normalize_conversation_target(route.get("conversation_target"))
             if route_target is None:
@@ -14765,6 +14823,24 @@ class OpsMeshService:
             try:
                 return await asyncio.to_thread(
                     self._probe_twitch_provider_route,
+                    route,
+                    secret_token_value,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        if route_kind == "tlon":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_tlon_provider_route,
                     route,
                     secret_token_value,
                     timeout_ms,
@@ -15893,6 +15969,52 @@ class OpsMeshService:
             "status": "ok",
             "connected": True,
             "elapsedMs": elapsed_ms,
+        }
+
+    def _probe_tlon_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        config = _tlon_route_config(str(route.get("target") or ""), secret_token)
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "tlon",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "ship": config.ship,
+            "baseUrl": config.base_url,
+            "timeoutMs": timeout_ms,
+        }
+        try:
+            http_status = self._request_tlon_name_status(
+                config,
+                timeout_seconds=max(float(timeout_ms) / 1000.0, 0.001),
+            )
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        payload["httpStatus"] = http_status
+        if http_status < 200 or http_status >= 300:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": f"Name request failed: {http_status}",
+            }
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
         }
 
     def _probe_matrix_provider_route(
@@ -24632,6 +24754,55 @@ class OpsMeshService:
         except OSError as exc:
             raise RuntimeError(f"Twitch provider request failed: {exc}") from exc
         return max(int((time.monotonic() - started) * 1000), 0)
+
+    def _request_tlon_name_status(
+        self,
+        config: _TlonRouteConfig,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        base_url = _tlon_http_base_url(config.base_url)
+        timeout = max(float(timeout_seconds), 0.001)
+        login_request = Request(
+            f"{base_url}/~/login",
+            data=urlencode({"password": config.code}).encode("utf-8"),
+            headers={
+                "Accept": "text/plain",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(login_request, timeout=timeout) as response:
+                login_status = int(getattr(response, "status", getattr(response, "code", 0)))
+                if login_status < 200 or login_status >= 300:
+                    raise RuntimeError(f"Login failed with status {login_status}")
+                response.read()
+                cookie = str(response.headers.get("Set-Cookie") or "").strip()
+        except HTTPError as exc:
+            raise RuntimeError(f"Login failed with status {exc.code}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Tlon login failed: {exc.reason}") from exc
+        if not cookie:
+            raise RuntimeError("No authentication cookie received")
+
+        name_request = Request(
+            f"{base_url}/~/name",
+            headers={
+                "Accept": "text/plain",
+                "Cookie": cookie,
+            },
+            method="GET",
+        )
+        try:
+            with urlopen(name_request, timeout=timeout) as response:
+                response.read()
+                return int(getattr(response, "status", getattr(response, "code", 0)))
+        except HTTPError as exc:
+            return int(exc.code)
+        except URLError as exc:
+            raise RuntimeError(f"Tlon name request failed: {exc.reason}") from exc
 
     def _request_json_provider_url(
         self,
