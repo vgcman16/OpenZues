@@ -1134,6 +1134,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         list_notification_route_views=ops_mesh.list_notification_route_views,
         probe_account=ops_mesh.probe_channel_account,
         resolve_targets=ops_mesh.resolve_channel_targets,
+        config_snapshot=gateway_config.build_snapshot,
     )
     gateway_logs = GatewayLogsService(logs_root=app_settings.data_dir.parent / "logs")
     model_scan = GatewayModelScanService()

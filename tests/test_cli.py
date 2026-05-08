@@ -2172,6 +2172,105 @@ def test_channels_status_json_uses_route_backed_tlon_probe(
     assert tlon_probes == [("https://zod.tlon.network", "tlon-code", 2.5)]
 
 
+def test_channels_status_json_uses_configured_imessage_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI iMessage Probe")
+    config_path = data_dir / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config = {
+        "basePath": "",
+        "assistantName": "OpenZues",
+        "assistantAvatar": "/static/favicon.svg",
+        "assistantAgentId": "openzues",
+        "serverVersion": "2026.3.23-1",
+        "localMediaPreviewRoots": [],
+        "embedSandbox": "scripts",
+        "allowExternalEmbedUrls": False,
+        "channels": {
+            "imessage": {
+                "cliPath": "imsg-test",
+                "dbPath": "C:\\Messages\\chat.db",
+            }
+        },
+    }
+    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    binary_checks: list[str] = []
+    rpc_support_checks: list[tuple[str, int]] = []
+    chats_list_requests: list[tuple[str, str | None, int]] = []
+
+    def fake_imessage_binary_available(self: object, cli_path: str) -> bool:
+        del self
+        binary_checks.append(cli_path)
+        return True
+
+    def fake_probe_imessage_rpc_support(
+        self: object,
+        cli_path: str,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        del self
+        rpc_support_checks.append((cli_path, timeout_ms))
+        return {"supported": True}
+
+    def fake_request_imessage_chats_list(
+        self: object,
+        config,
+        *,
+        timeout_ms: int,
+    ) -> None:
+        del self
+        chats_list_requests.append((str(config.cli_path), config.db_path, timeout_ms))
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._imessage_binary_available",
+        fake_imessage_binary_available,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._probe_imessage_rpc_support",
+        fake_probe_imessage_rpc_support,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._request_imessage_chats_list",
+        fake_request_imessage_chats_list,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["imessage"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "imessage",
+        "runtime": "native-cli-backed",
+        "accountId": "default",
+        "cliPath": "imsg-test",
+        "dbPath": "C:\\Messages\\chat.db",
+        "timeoutMs": 2500,
+    }
+    assert binary_checks == ["imsg-test"]
+    assert rpc_support_checks == [("imsg-test", 2500)]
+    assert chats_list_requests == [("imsg-test", "C:\\Messages\\chat.db", 2500)]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,

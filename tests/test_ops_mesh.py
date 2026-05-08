@@ -9,6 +9,7 @@ import json
 import re
 import secrets
 import shutil
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
@@ -7174,6 +7175,45 @@ def test_ops_mesh_service_tlon_probe_authenticates_then_requests_name(
             2.5,
         ),
     ]
+
+
+def test_ops_mesh_service_imessage_rpc_support_marks_unknown_subcommand_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[list[str], float]] = []
+
+    def fake_run(
+        command: list[str],
+        *,
+        capture_output: bool,
+        check: bool,
+        text: bool,
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        assert capture_output is True
+        assert check is False
+        assert text is True
+        commands.append((command, timeout))
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr='unknown command "rpc" for "imsg"',
+        )
+
+    monkeypatch.setattr("openzues.services.ops_mesh.subprocess.run", fake_run)
+
+    result = OpsMeshService.__new__(OpsMeshService)._probe_imessage_rpc_support(
+        "imsg-test",
+        2500,
+    )
+
+    assert result == {
+        "supported": False,
+        "fatal": True,
+        "error": 'imsg CLI does not support the "rpc" subcommand (update imsg)',
+    }
+    assert commands == [(["imsg-test", "rpc", "--help"], 2.5)]
 
 
 @pytest.mark.asyncio

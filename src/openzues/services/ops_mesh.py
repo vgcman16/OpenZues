@@ -15,10 +15,12 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import socket
 import ssl
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
@@ -86,6 +88,10 @@ from openzues.schemas import (
 from openzues.services.continuity import build_continuity_packet
 from openzues.services.ecc_catalog import build_ecc_workspace_lines
 from openzues.services.gateway_canvas_documents import resolve_canvas_http_path_to_local_path
+from openzues.services.gateway_channels import (
+    imessage_account_configured,
+    resolve_imessage_account_config,
+)
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_cron import cron_expression_next_run_at
 from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
@@ -446,6 +452,12 @@ class _TlonRouteConfig:
     base_url: str
     ship: str
     code: str
+
+
+@dataclass(frozen=True)
+class _IMessageProbeConfig:
+    cli_path: str
+    db_path: str | None
 
 
 @dataclass(frozen=True)
@@ -14604,6 +14616,12 @@ class OpsMeshService:
             normalize_optional_account_id(str(account_id or "").strip())
             or DEFAULT_ACCOUNT_ID
         )
+        if normalized_channel == "imessage":
+            return await asyncio.to_thread(
+                self._probe_imessage_config_account,
+                normalized_account_id,
+                timeout_ms,
+            )
         route = await self._provider_route_for_channel_account(
             channel=normalized_channel,
             account_id=normalized_account_id,
@@ -16010,6 +16028,87 @@ class OpsMeshService:
                 "ok": False,
                 "status": "error",
                 "error": f"Name request failed: {http_status}",
+            }
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
+        }
+
+    def _probe_imessage_config_account(
+        self,
+        account_id: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "imessage",
+            "runtime": "native-cli-backed",
+            "accountId": normalized_account_id,
+            "timeoutMs": timeout_ms,
+        }
+        if self.gateway_config_service is None:
+            return {
+                **payload,
+                "ok": False,
+                "status": "unavailable",
+                "reason": "imessage_config_unavailable",
+                "error": "iMessage config is unavailable.",
+            }
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "unavailable",
+                "reason": "imessage_config_unavailable",
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        account_config = resolve_imessage_account_config(snapshot, normalized_account_id)
+        if account_config is None or not imessage_account_configured(account_config):
+            return {
+                **payload,
+                "ok": False,
+                "status": "unavailable",
+                "reason": "imessage_account_not_configured",
+                "error": "iMessage account is not configured.",
+            }
+        cli_path = str(account_config.get("cliPath") or "").strip() or "imsg"
+        db_path = str(account_config.get("dbPath") or "").strip() or None
+        probe_config = _IMessageProbeConfig(cli_path=cli_path, db_path=db_path)
+        payload["cliPath"] = cli_path
+        if db_path is not None:
+            payload["dbPath"] = db_path
+        if not self._imessage_binary_available(cli_path):
+            return {
+                **payload,
+                "ok": False,
+                "status": "unavailable",
+                "error": f"imsg not found ({cli_path})",
+            }
+        rpc_support = self._probe_imessage_rpc_support(cli_path, timeout_ms)
+        if rpc_support.get("supported") is not True:
+            result = {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(rpc_support.get("error") or "imsg rpc unavailable"),
+            }
+            if rpc_support.get("fatal") is True:
+                result["fatal"] = True
+            return result
+        try:
+            self._request_imessage_chats_list(probe_config, timeout_ms=timeout_ms)
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(exc).strip() or type(exc).__name__,
             }
         return {
             **payload,
@@ -24803,6 +24902,142 @@ class OpsMeshService:
             return int(exc.code)
         except URLError as exc:
             raise RuntimeError(f"Tlon name request failed: {exc.reason}") from exc
+
+    def _imessage_binary_available(self, cli_path: str) -> bool:
+        del self
+        normalized = str(cli_path or "").strip()
+        if not normalized:
+            return False
+        candidate = Path(normalized).expanduser()
+        if candidate.is_absolute() or any(separator in normalized for separator in ("\\", "/")):
+            return candidate.exists()
+        return shutil.which(normalized) is not None
+
+    def _probe_imessage_rpc_support(
+        self,
+        cli_path: str,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        del self
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        try:
+            completed = subprocess.run(
+                [cli_path, "rpc", "--help"],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "supported": False,
+                "error": "imsg rpc --help timed out",
+            }
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {
+                "supported": False,
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        combined = f"{completed.stdout or ''}\n{completed.stderr or ''}".strip()
+        normalized = combined.lower()
+        if "unknown command" in normalized and "rpc" in normalized:
+            return {
+                "supported": False,
+                "fatal": True,
+                "error": 'imsg CLI does not support the "rpc" subcommand (update imsg)',
+            }
+        if completed.returncode == 0:
+            return {"supported": True}
+        return {
+            "supported": False,
+            "error": combined
+            or f"imsg rpc --help failed (code {completed.returncode})",
+        }
+
+    def _request_imessage_chats_list(
+        self,
+        config: _IMessageProbeConfig,
+        *,
+        timeout_ms: int,
+    ) -> None:
+        del self
+        args = [config.cli_path, "rpc"]
+        if config.db_path:
+            args.extend(["--db", config.db_path])
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        process = subprocess.Popen(  # noqa: S603
+            args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        line_box: list[str] = []
+        error_box: list[BaseException] = []
+
+        def read_line() -> None:
+            try:
+                assert process.stdout is not None
+                line_box.append(process.stdout.readline())
+            except BaseException as exc:  # pragma: no cover - defensive thread boundary
+                error_box.append(exc)
+
+        try:
+            assert process.stdin is not None
+            process.stdin.write(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "chats.list",
+                        "params": {"limit": 1},
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+            process.stdin.flush()
+            reader = threading.Thread(target=read_line, daemon=True)
+            reader.start()
+            reader.join(timeout_seconds)
+            if reader.is_alive():
+                raise RuntimeError("imsg rpc timeout (chats.list)")
+            if error_box:
+                raise RuntimeError(str(error_box[0]))
+            raw_line = (line_box[0] if line_box else "").strip()
+            if not raw_line:
+                raise RuntimeError("imsg rpc closed")
+            try:
+                response = json.loads(raw_line)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"imsg rpc returned invalid JSON: {raw_line}") from exc
+            if not isinstance(response, dict):
+                raise RuntimeError("imsg rpc returned a non-object response")
+            error = response.get("error")
+            if isinstance(error, dict):
+                message = str(error.get("message") or "imsg rpc error")
+                code = error.get("code")
+                data = error.get("data")
+                suffixes: list[str] = []
+                if isinstance(code, int) and not isinstance(code, bool):
+                    suffixes.append(f"code={code}")
+                if data not in (None, "", [], {}):
+                    suffixes.append(data if isinstance(data, str) else json.dumps(data))
+                raise RuntimeError(
+                    f"{message}: {' '.join(suffixes)}" if suffixes else message
+                )
+        finally:
+            try:
+                if process.stdin is not None:
+                    process.stdin.close()
+            except OSError:
+                pass
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
 
     def _request_json_provider_url(
         self,
