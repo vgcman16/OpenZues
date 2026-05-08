@@ -24918,6 +24918,83 @@ def test_update_status_json_projects_registry_availability(
     }
 
 
+def test_update_status_json_projects_git_behind_availability(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    branch_sha = "1111111111111111111111111111111111111111"
+    branch_ref = git_dir / "refs" / "heads"
+    git_dir.mkdir(parents=True)
+    branch_ref.mkdir(parents=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (branch_ref / "main").write_text(f"{branch_sha}\n", encoding="utf-8")
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "headline": "OpenZues runtime update status is steady.",
+                "update": {
+                    "git": {
+                        "upstream": "origin/main",
+                        "ahead": 0,
+                        "behind": 3,
+                        "dirty": False,
+                        "fetchOk": True,
+                    }
+                },
+            }
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["update"]["git"] == {
+        "root": str(package_root),
+        "sha": branch_sha,
+        "tag": None,
+        "branch": "main",
+        "upstream": "origin/main",
+        "dirty": False,
+        "ahead": 0,
+        "behind": 3,
+        "fetchOk": True,
+    }
+    assert payload["availability"] == {
+        "available": True,
+        "hasGitUpdate": True,
+        "hasRegistryUpdate": False,
+        "latestVersion": None,
+        "gitBehind": 3,
+    }
+
+
 def test_doctor_json_warns_when_sandbox_enabled_without_docker(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:

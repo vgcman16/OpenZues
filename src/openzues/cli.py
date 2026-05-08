@@ -9792,8 +9792,10 @@ def _openclaw_update_git_payload(
     *,
     git_tag: str | None,
     git_branch: str | None,
+    raw_update_payload: object,
 ) -> dict[str, object]:
-    return {
+    raw_git = raw_update_payload.get("git") if isinstance(raw_update_payload, Mapping) else None
+    git_payload: dict[str, object] = {
         "root": str(root),
         "sha": _openclaw_update_git_head_sha(root),
         "tag": git_tag,
@@ -9804,6 +9806,11 @@ def _openclaw_update_git_payload(
         "behind": None,
         "fetchOk": None,
     }
+    if isinstance(raw_git, Mapping):
+        for key in ("upstream", "dirty", "ahead", "behind", "fetchOk"):
+            if key in raw_git:
+                git_payload[key] = raw_git[key]
+    return git_payload
 
 
 def _openclaw_update_semver_tuple(value: object) -> tuple[int, int, int] | None:
@@ -9920,6 +9927,7 @@ def _with_openclaw_update_status_projection(
             root,
             git_tag=git_tag,
             git_branch=git_branch,
+            raw_update_payload=raw_update_payload,
         )
     registry_payload = _openclaw_update_registry_payload(raw_update_payload)
     if registry_payload is not None:
