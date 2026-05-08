@@ -82909,6 +82909,46 @@ async def test_chat_history_redacts_base64_audio_content_blocks(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_chat_history_redacts_inline_image_data_blocks(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-chat-history-image-redaction.db")
+    await database.initialize()
+    data = base64.b64encode(b"image-bytes").decode("ascii")
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="assistant",
+        content=json.dumps(
+            [
+                {"type": "text", "text": "Image reply"},
+                {"type": "image", "media_type": "image/png", "data": data},
+            ]
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Image reply"},
+                {
+                    "type": "image",
+                    "media_type": "image/png",
+                    "omitted": True,
+                    "bytes": len(data.encode("utf-8")),
+                },
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_history_floors_numeric_openclaw_limit(tmp_path) -> None:
     database = Database(tmp_path / "gateway-chat-history-numeric-limit.db")
     await database.initialize()

@@ -16912,6 +16912,12 @@ def _sanitize_chat_history_content_block(
         sanitized[key] = value
     if "thinkingSignature" in sanitized:
         sanitized.pop("thinkingSignature", None)
+    if sanitized.get("type") == "image":
+        data = sanitized.get("data")
+        if isinstance(data, str):
+            sanitized.pop("data", None)
+            sanitized["omitted"] = True
+            sanitized["bytes"] = len(data.encode("utf-8"))
     if sanitized.get("type") == "audio":
         source = sanitized.get("source")
         if isinstance(source, Mapping):
