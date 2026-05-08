@@ -847,6 +847,78 @@ async def test_runtime_update_run_package_update_preserves_corepack_download_pro
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_package_update_sets_windows_install_env(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "package-root"
+    package_root.mkdir()
+    (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    monkeypatch.setenv("NPM_CONFIG_UPDATE_NOTIFIER", "true")
+    monkeypatch.delenv("NPM_CONFIG_FUND", raising=False)
+    monkeypatch.delenv("NPM_CONFIG_AUDIT", raising=False)
+    monkeypatch.delenv("NODE_LLAMA_CPP_SKIP_DOWNLOAD", raising=False)
+    install_env: dict[str, str | None] = {}
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        if argv == ["pnpm", "add", "-g", "openzues@latest"]:
+            install_env.update(
+                {
+                    "NPM_CONFIG_UPDATE_NOTIFIER": os.environ.get(
+                        "NPM_CONFIG_UPDATE_NOTIFIER"
+                    ),
+                    "NPM_CONFIG_FUND": os.environ.get("NPM_CONFIG_FUND"),
+                    "NPM_CONFIG_AUDIT": os.environ.get("NPM_CONFIG_AUDIT"),
+                    "NODE_LLAMA_CPP_SKIP_DOWNLOAD": os.environ.get(
+                        "NODE_LLAMA_CPP_SKIP_DOWNLOAD"
+                    ),
+                }
+            )
+        if argv == _post_update_doctor_args():
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@latest",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "ok"
+    assert install_env == {
+        "NPM_CONFIG_UPDATE_NOTIFIER": "false",
+        "NPM_CONFIG_FUND": "false",
+        "NPM_CONFIG_AUDIT": "false",
+        "NODE_LLAMA_CPP_SKIP_DOWNLOAD": "1",
+    }
+    assert os.environ.get("NPM_CONFIG_UPDATE_NOTIFIER") == "true"
+    assert os.environ.get("NPM_CONFIG_FUND") is None
+    assert os.environ.get("NPM_CONFIG_AUDIT") is None
+    assert os.environ.get("NODE_LLAMA_CPP_SKIP_DOWNLOAD") is None
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_package_update_verifies_expected_version(
     tmp_path,
 ) -> None:

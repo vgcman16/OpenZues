@@ -566,9 +566,19 @@ def _post_package_update_doctor_env() -> dict[str, str]:
 
 
 def _global_package_update_env() -> dict[str, str]:
-    if os.environ.get("COREPACK_ENABLE_DOWNLOAD_PROMPT", "").strip():
-        return {}
-    return {"COREPACK_ENABLE_DOWNLOAD_PROMPT": "0"}
+    env: dict[str, str] = {}
+    if os.name == "nt":
+        env.update(
+            {
+                "NPM_CONFIG_UPDATE_NOTIFIER": "false",
+                "NPM_CONFIG_FUND": "false",
+                "NPM_CONFIG_AUDIT": "false",
+                "NODE_LLAMA_CPP_SKIP_DOWNLOAD": "1",
+            }
+        )
+    if not os.environ.get("COREPACK_ENABLE_DOWNLOAD_PROMPT", "").strip():
+        env["COREPACK_ENABLE_DOWNLOAD_PROMPT"] = "0"
+    return env
 
 
 def _apply_command_env(env: Mapping[str, str] | None) -> dict[str, str | None]:
