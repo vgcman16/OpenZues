@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999989%.
+  band of ~80-99.99999999999990%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10014,3 +10014,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, with the evidence band tightened to ~80-99.99999999999989%.
   Continue package-manager update breadth, channel/tag apply semantics, and
   installed-plugin post-update behavior next.
+- Current queue-head adjustment: `openzues update --json --timeout <seconds>
+  status` now forwards parent update options into the `status` subcommand,
+  preserving OpenClaw's inherited status `--json`/`--timeout` semantics.
+  Source/test checkpointed in `f088293f`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99999999999990%.
+  Continue package-manager/global-install execution depth next.
