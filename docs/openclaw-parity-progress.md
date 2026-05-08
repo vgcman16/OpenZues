@@ -18853,6 +18853,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 530 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `69b23cb9`.
+- `openzues doctor --json` now detects OpenClaw legacy plugin dependency
+  staging debris in packaged `dist/extensions/*/.openclaw-install-stage*`
+  directories and reports the exact
+  `unexpected legacy plugin dependency staging debris in package dist: ...`
+  warning alongside the package distribution checks. This closes
+  `OZ-PKG-001P`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999998%.
+- Verified the package dist staging-debris slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_warns_on_package_dist_legacy_staging_debris -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris"`
+  (`5 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `b16db705`.
 
 ## References
 

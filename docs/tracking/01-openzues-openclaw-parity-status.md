@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999997% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999998% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1672,6 +1672,10 @@ may lag behind this tracker.
 - [x] Package dist inventory drift diagnostics, preserving OpenClaw's
   missing/unexpected packaged-file warning contract.
   - Status: checkpointed in `69b23cb9`
+
+- [x] Package dist legacy staging-debris diagnostics, preserving OpenClaw's
+  `.openclaw-install-stage*` release guard warning.
+  - Status: checkpointed in `b16db705`
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
@@ -4116,6 +4120,19 @@ may lag behind this tracker.
     tests\test_cli.py::test_doctor_json_warns_on_package_dist_inventory_file_drift
     -q` (`1 failed` before implementation, then `1 passed`), adjacent package
     doctor proof (`4 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Package dist legacy staging-debris diagnostics.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `b16db705`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_warns_on_package_dist_legacy_staging_debris
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`5 passed, 530 deselected`), `ruff check`, `mypy`, and
     `git diff --check`.
 
 - [x] Companion node presence alive lifecycle.

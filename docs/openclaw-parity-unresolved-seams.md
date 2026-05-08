@@ -9916,3 +9916,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, with the evidence band tightened to
   ~80-99.999999999997%. Rotate to the adjacent package dist legacy plugin
   dependency staging-debris seam next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  detect legacy plugin dependency staging debris under packaged
+  `dist/extensions/*/.openclaw-install-stage*` directories and report the
+  upstream `unexpected legacy plugin dependency staging debris in package
+  dist: ...` warning. Source/test checkpointed in `b16db705`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999998%. Rotate to the adjacent mixed-case staging-path proof
+  next, then continue package/update/release breadth.
