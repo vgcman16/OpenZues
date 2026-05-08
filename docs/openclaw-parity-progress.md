@@ -21097,6 +21097,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`5 passed, 1201 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `f5b4121a`.
+- `chat.history` now clamps oversized numeric `limit` requests to OpenClaw's
+  hard 1000-message cap instead of rejecting them. This closes a bounded
+  read-model edge in the active `chat.*` / `sessions.*` transcript family;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999999999999999999999999999%.
+- Verified the `chat.history` limit-cap seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_caps_large_limit_like_openclaw -q`
+  (large `limit` raised `ValueError` before implementation, then `1 passed`),
+  adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`32 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `6a964896`.
 
 ## References
 

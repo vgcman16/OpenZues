@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999999999999999999999999999999998%.
+  band of ~80-99.99999999999999999999999999999999999999999%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -2708,6 +2708,18 @@ Current queue-head adjustment: `chat.history` and direct
 RPC `maxChars` still overrides config. The next bounded seam should inspect a
 new source-backed `chat.*` / `sessions.*` read-model mismatch, not the now-closed
 default/config text cap path.
+
+Current queue-head adjustment: `chat.history` now mirrors OpenClaw's hard
+1000-message cap for oversized `limit` values: numeric limits are still floored
+like upstream, but values above 1000 are clamped instead of rejected before the
+read-model lookup. Verified on 2026-05-08 with focused red/green
+`python -m pytest tests\test_gateway_node_methods.py::test_chat_history_caps_large_limit_like_openclaw -q`
+(`1 passed`), adjacent transcript/read-model proof
+`python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+(`32 passed, 1175 deselected`), `ruff check
+src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+`mypy src\openzues\services\gateway_node_methods.py`, and focused
+`git diff --check`. Source/test checkpointed in `6a964896`.
 
 Current queue-head adjustment: `chat.history` now replaces single oversized
 projected messages with `[chat.history omitted: message too large]` and

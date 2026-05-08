@@ -7060,6 +7060,27 @@ may lag behind this tracker.
     proof (`5 passed, 1201 deselected`), `ruff check`, `mypy`, and focused
     `git diff --check`.
 
+- [x] `chat.history` large-limit cap.
+  - Source: `openclaw-main/src/gateway/server-methods/chat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: RPC `chat.history` floors numeric `limit` values and clamps
+    values above OpenClaw's 1000-message hard cap instead of rejecting them
+    before transcript projection.
+  - Evidence required: focused `chat.history` large-limit test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `6a964896`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_caps_large_limit_like_openclaw -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`32 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
 ## Update Rule
 
 Only move a row to `[x]` when implementation, focused proof, adjacent proof,
