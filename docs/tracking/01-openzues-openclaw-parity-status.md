@@ -7145,6 +7145,27 @@ may lag behind this tracker.
     `mypy src\openzues\services\gateway_node_methods.py`, and focused
     `git diff --check`.
 
+- [x] `chat.history` exact tool block payload preservation.
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: structured content blocks whose type is a tool-history block
+    preserve exact `text` and `content` payloads under `maxChars`, while still
+    stripping display-only inline directives.
+  - Evidence required: focused exact tool-block payload test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `ec0a6950`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_preserves_exact_tool_block_payloads -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`36 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
 ## Update Rule
 
 Only move a row to `[x]` when implementation, focused proof, adjacent proof,

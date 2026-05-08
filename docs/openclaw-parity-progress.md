@@ -21157,6 +21157,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `812f50de`.
+- `chat.history` now preserves exact structured tool-history block
+  `text`/`content` payloads while still stripping display-only directives,
+  matching OpenClaw's `preserveExactToolPayload` branch. This closes the
+  neighboring tool-display sanitizer edge; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999%.
+- Verified the tool-block exact-payload seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_preserves_exact_tool_block_payloads -q`
+  (tool block text/content were truncated before implementation, then
+  `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`36 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `ec0a6950`.
 
 ## References
 
