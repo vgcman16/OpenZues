@@ -9938,3 +9938,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `76cdb404`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.999999999999%. Rotate to package inventory omission
   and unsafe-path breadth next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  omit OpenClaw's local build metadata stamps, source maps, and transient
+  extension `node_modules` dependency debris when comparing packaged `dist/`
+  files against `postinstall-inventory.json`. Source/test checkpointed in
+  `6e8bb491`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999992%. Rotate to unsafe symlinked dist
+  entry detection next.
