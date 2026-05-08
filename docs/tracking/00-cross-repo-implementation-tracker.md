@@ -64,7 +64,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
-| OZ-PKG-001 | Packaging/distribution breadth | Bundled runtime sidecar enforcement checkpointed in `07b17ad0`; source-checkout package-root warning checkpointed in `912aee5e`; private QA dist omission checkpointed in `bde731a9`; externalized extension dist omission checkpointed in `06ba5480`; unsafe dist symlink detection checkpointed in `a9c7884f`; local build metadata omission checkpointed in `6e8bb491`; exact missing inventory warning checkpointed in `76cdb404`; mixed-case staging-debris proof checkpointed in `9422c6b7`; package dist staging-debris detection checkpointed in `b16db705`; package dist inventory drift checkpointed in `69b23cb9`; human git update hint proof checkpointed in `d5ea6096`; human update-available hint checkpointed in `20e9c885`; config channel precedence proof checkpointed in `d9150777`; git availability projection checkpointed in `de37e6f8`; registry availability projection checkpointed in `55a785a8`; update-status git metadata checkpointed in `b31d8f41`; packed git-tag update-status projection checkpointed in `71029a02`; update-status git-tag channel projection checkpointed in `dce24b5e`; source-install package doctor warnings checkpointed in `4c1d7a2a`; update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Add private-QA sidecar no-warning proof |
+| OZ-PKG-001 | Packaging/distribution breadth | Private QA sidecar omission proof checkpointed in `ad248bf4`; bundled runtime sidecar enforcement checkpointed in `07b17ad0`; source-checkout package-root warning checkpointed in `912aee5e`; private QA dist omission checkpointed in `bde731a9`; externalized extension dist omission checkpointed in `06ba5480`; unsafe dist symlink detection checkpointed in `a9c7884f`; local build metadata omission checkpointed in `6e8bb491`; exact missing inventory warning checkpointed in `76cdb404`; mixed-case staging-debris proof checkpointed in `9422c6b7`; package dist staging-debris detection checkpointed in `b16db705`; package dist inventory drift checkpointed in `69b23cb9`; human git update hint proof checkpointed in `d5ea6096`; human update-available hint checkpointed in `20e9c885`; config channel precedence proof checkpointed in `d9150777`; git availability projection checkpointed in `de37e6f8`; registry availability projection checkpointed in `55a785a8`; update-status git metadata checkpointed in `b31d8f41`; packed git-tag update-status projection checkpointed in `71029a02`; update-status git-tag channel projection checkpointed in `dce24b5e`; source-install package doctor warnings checkpointed in `4c1d7a2a`; update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue update-global install-manager/update command breadth |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR approval guidance checkpointed in `d6052fda`; QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code remote secret/rendered QR breadth later |
@@ -9628,6 +9628,25 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     (`13 passed, 530 deselected`), `ruff check src\openzues\cli.py
     tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
     `git diff --check`.
+
+- [x] `OZ-PKG-001Y` private QA bundled sidecar no-warning proof
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`,
+    `openclaw-main/scripts/lib/bundled-runtime-sidecar-paths.json`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_cli.py`
+  - Contract: package distribution diagnostics exclude private QA bundled
+    plugin roots from bundled runtime sidecar enforcement.
+  - Evidence required: focused private-QA sidecar doctor test, adjacent
+    sidecar/QA proof, ruff
+  - Status: checkpointed in `ad248bf4`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_doctor_json_ignores_private_qa_bundled_runtime_sidecars -q`
+    (`1 passed`), adjacent sidecar/QA proof
+    `python -m pytest tests\test_cli.py -q -k "missing_bundled_runtime_sidecar or ignores_private_qa_bundled_runtime_sidecars or private_qa_package_dist"`
+    (`3 passed, 541 deselected`), `ruff check tests\test_cli.py`, and
+    focused `git diff --check`.
 
 - [x] `OZ-PROV-001M` Slack agent-request thread metadata
   - Source: `openclaw-main/src/agents/subagent-announce-delivery.ts`,

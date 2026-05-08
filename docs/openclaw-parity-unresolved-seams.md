@@ -9976,3 +9976,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   repo-wide parity remains estimated at ~99.9%, with the evidence band
   tightened to ~80-99.9999999999997%. Rotate to private-QA sidecar no-warning
   proof next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  have focused proof that private QA bundled plugin roots are excluded from
+  bundled runtime sidecar enforcement. Test checkpointed in `ad248bf4`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999998%. Rotate to remaining update-global
+  install-manager/update command breadth.

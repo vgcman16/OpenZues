@@ -18977,6 +18977,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`13 passed, 530 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `07b17ad0`.
+- `openzues doctor --json` now has focused proof that private QA bundled
+  plugin roots are excluded from bundled runtime sidecar enforcement, matching
+  OpenClaw's non-packaged private QA sidecar behavior. This closes
+  `OZ-PKG-001Y`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999998%.
+- Verified the private-QA bundled sidecar no-warning slice with focused
+  `python -m pytest tests\test_cli.py::test_doctor_json_ignores_private_qa_bundled_runtime_sidecars -q`
+  (`1 passed`), adjacent sidecar/QA proof
+  `python -m pytest tests\test_cli.py -q -k "missing_bundled_runtime_sidecar or ignores_private_qa_bundled_runtime_sidecars or private_qa_package_dist"`
+  (`3 passed, 541 deselected`), `ruff check tests\test_cli.py`, and focused
+  `git diff --check`. Test checkpointed and pushed in `ad248bf4`.
 
 ## References
 
