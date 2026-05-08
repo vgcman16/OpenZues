@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999995% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6454,6 +6454,24 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused Matrix runtime-shared red/green proof
     (exact import returned the generic SDK facade before implementation, then
     `1 passed`), adjacent Matrix/time proof (`4 passed, 1168 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK lobster shim.
+  - Source: `openclaw-main/src/plugin-sdk/lobster.ts`,
+    `openclaw-main/src/plugin-sdk/windows-spawn.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `lobster` imports expose only the bundled
+    Lobster `definePluginEntry`, `resolveWindowsSpawnProgramCandidate`,
+    `applyWindowsSpawnProgramPolicy`, and `materializeWindowsSpawnProgram`
+    helpers.
+  - Evidence required: focused Lobster import test, adjacent
+    Windows-spawn/plugin-entry proof, ruff, mypy
+  - Status: checkpointed in `0beb9dbc`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Lobster red/green proof (exact import
+    returned the generic SDK facade before implementation, then `1 passed`),
+    adjacent Windows-spawn/plugin-entry proof (`3 passed, 1170 deselected`),
     `ruff check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule

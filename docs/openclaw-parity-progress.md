@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999999999999999999999999%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999999995%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -20633,6 +20633,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1168 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `c34a2d10`.
+- Imported plugin SDK `lobster` now exposes the exact scoped/unscoped bundled
+  Lobster plugin-entry plus Windows spawn helper facade instead of the broad
+  generic SDK passthrough. This closes `OZ-PLUGIN-00344`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999995%.
+- Verified the Lobster helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_lobster_helpers -q`
+  (the exact subpath returned the broad generic SDK facade before
+  implementation, then `1 passed`), adjacent Windows-spawn/plugin-entry proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "lobster_helpers or windows_spawn_helpers or plugin_entry_facade or phone_control_helpers"`
+  (`3 passed, 1170 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `0beb9dbc`.
 
 ## References
 
