@@ -19689,6 +19689,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `2603380f`.
+- Native package update CLI now resolves package channels through an
+  OpenClaw-style npm target resolver, including beta fallback to `latest` when
+  the beta tag is missing or older than latest. Dry-run previews show the
+  fallback note, target version, and `openzues@latest` install spec; real
+  package update dispatch sends the same resolved spec. This closes
+  `OZ-PKG-001BS`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999999999999997%.
+- Verified beta package fallback with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_falls_back_beta_channel_to_latest tests\test_cli.py::test_update_json_falls_back_beta_channel_to_latest_package_spec -q`
+  (`2 failed` before implementation, then `2 passed`), direct resolver proof
+  `python -m pytest tests\test_cli.py::test_update_resolve_npm_channel_tag_falls_back_beta_prerelease_to_latest tests\test_cli.py::test_update_dry_run_json_falls_back_beta_channel_to_latest tests\test_cli.py::test_update_json_falls_back_beta_channel_to_latest_package_spec -q`
+  (`3 passed`), adjacent update CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_dry_run or package_update_service or requested_package_channel or beta_channel_to_latest or resolve_npm_channel_tag"`
+  (`9 passed, 550 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `93061087`.
 
 ## References
 

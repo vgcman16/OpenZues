@@ -10287,3 +10287,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   checkpointed in `2603380f`; repo-wide parity remains estimated at ~99.9%,
   with the evidence band tightened to ~80-99.999999999999999999996%. Continue
   package beta-channel fallback or git preflight behavior next.
+- Current queue-head adjustment: native package update CLI now resolves beta
+  package channels with OpenClaw's `latest` fallback when beta is missing or
+  older, and applies the resolved spec consistently to dry-run previews and
+  real package-update dispatch. Source/test checkpointed in `93061087`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999999999997%. Continue git update preflight
+  behavior or startup auto-update policy next.
