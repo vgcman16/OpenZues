@@ -481,9 +481,16 @@ class _TlonInboundMessage:
     message_id: str
     sender_ship: str
     text: str
+    content: object | None = None
     timestamp: int | None = None
     channel_nest: str | None = None
     thread_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _TlonInboundImage:
+    url: str
+    alt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -531,6 +538,23 @@ class GatewayMSTeamsInboundMediaFetchRequest:
 
 GatewayMSTeamsInboundMediaFetchService = Callable[
     [GatewayMSTeamsInboundMediaFetchRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayTlonInboundMediaFetchRequest:
+    url: str
+    source_url: str
+    filename: str | None
+    content_type: str | None
+    max_bytes: int
+    account_id: str | None
+    message_id: str | None
+
+
+GatewayTlonInboundMediaFetchService = Callable[
+    [GatewayTlonInboundMediaFetchRequest],
     Awaitable[object],
 ]
 
@@ -7108,6 +7132,8 @@ TLON_TARGET_HINT = (
     "group:~host-ship/channel"
 )
 TLON_MEMEX_BASE_URL = "https://memex.tlon.network"
+TLON_INBOUND_MAX_IMAGES_PER_MESSAGE = 8
+TLON_INBOUND_MAX_IMAGE_BYTES = 6 * 1024 * 1024
 
 
 def _tlon_normalize_ship(raw_ship: str | None) -> str | None:
@@ -7302,6 +7328,23 @@ def _tlon_extract_message_text(content: object) -> str:
     return "\n".join(rendered).strip()
 
 
+def _tlon_extract_image_blocks(content: object) -> list[_TlonInboundImage]:
+    if not isinstance(content, list):
+        return []
+    images: list[_TlonInboundImage] = []
+    for verse in content:
+        verse_record = _tlon_as_mapping(verse)
+        block = _tlon_as_mapping(verse_record.get("block")) if verse_record else None
+        image = _tlon_as_mapping(block.get("image")) if block else None
+        image_src = _tlon_read_string(image, "src")
+        if not image_src:
+            continue
+        images.append(_TlonInboundImage(url=image_src, alt=_tlon_read_string(image, "alt")))
+        if len(images) >= TLON_INBOUND_MAX_IMAGES_PER_MESSAGE:
+            break
+    return images
+
+
 def _tlon_inbound_chat_message(event: Mapping[str, Any]) -> _TlonInboundMessage | None:
     response = _tlon_as_mapping(event.get("response"))
     add = _tlon_as_mapping(response.get("add")) if response is not None else None
@@ -7324,6 +7367,7 @@ def _tlon_inbound_chat_message(event: Mapping[str, Any]) -> _TlonInboundMessage 
         message_id=message_id,
         sender_ship=sender_ship,
         text=text,
+        content=essay.get("content"),
         timestamp=_tlon_read_int(essay, "sent"),
     )
 
@@ -7376,6 +7420,7 @@ def _tlon_inbound_channels_message(event: Mapping[str, Any]) -> _TlonInboundMess
         message_id=message_id,
         sender_ship=sender_ship,
         text=text,
+        content=content_record.get("content"),
         timestamp=_tlon_read_int(content_record, "sent"),
         channel_nest=channel_target.nest,
         thread_id=thread_id,
@@ -11941,6 +11986,7 @@ class OpsMeshService:
     outbound_runtime_service: GatewayOutboundRuntimeService | None = None
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
     msteams_inbound_media_fetch_service: GatewayMSTeamsInboundMediaFetchService | None = None
+    tlon_inbound_media_fetch_service: GatewayTlonInboundMediaFetchService | None = None
     msteams_feedback_reflection_service: GatewayMSTeamsFeedbackReflectionService | None = None
     discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
     gateway_config_service: GatewayConfigService | None = None
@@ -13610,11 +13656,29 @@ class OpsMeshService:
                 "Tlon inbound session delivery is unavailable."
             )
         context = _tlon_inbound_session_context(message, account_id=account_id)
+        staged_media = await self._stage_tlon_inbound_media(
+            message,
+            account_id=account_id,
+        )
+        delivery_text = message.text
+        if staged_media:
+            media_lines = "\n".join(
+                (
+                    "[media attached: "
+                    f"{media.path} ({media.content_type or 'application/octet-stream'}) "
+                    f"| {media.path}]"
+                )
+                for media in staged_media
+            )
+            delivery_text = f"{media_lines}\n{message.text}"
         delivery_result = await self.session_delivery_service(
             context.session_key,
-            message.text,
+            delivery_text,
         )
         delivery_message_id = _session_delivery_message_id(delivery_result)
+        delivery: dict[str, object] = {"runtime": "session-backed"}
+        if staged_media:
+            delivery["media"] = {"staged": len(staged_media)}
         result: dict[str, object] = {
             "ok": True,
             "channel": "tlon",
@@ -13626,15 +13690,145 @@ class OpsMeshService:
             "conversationId": context.conversation_id,
             "conversationType": context.conversation_type,
             "conversationTarget": context.conversation_target.model_dump(mode="json"),
-            "delivery": {"runtime": "session-backed"},
+            "delivery": delivery,
         }
         if delivery_message_id is not None:
             result["messageId"] = delivery_message_id
+        if staged_media:
+            result["mediaUrls"] = [media.source_url for media in staged_media]
+            result.update(_msteams_media_payload(staged_media))
+            result["stagedMedia"] = _msteams_staged_media_metadata(staged_media)
         if message.timestamp is not None:
             result["timestamp"] = message.timestamp
         if context.thread_id is not None:
             result["threadId"] = context.thread_id
         return result
+
+    async def _default_tlon_inbound_media_fetch(
+        self,
+        request: GatewayTlonInboundMediaFetchRequest,
+    ) -> object:
+        return await asyncio.to_thread(self._download_tlon_inbound_media_url, request)
+
+    def _tlon_inbound_media_fetcher(self) -> GatewayTlonInboundMediaFetchService:
+        return self.tlon_inbound_media_fetch_service or self._default_tlon_inbound_media_fetch
+
+    def _download_tlon_inbound_media_url(
+        self,
+        request: GatewayTlonInboundMediaFetchRequest,
+    ) -> dict[str, object]:
+        parsed = urlparse(request.url)
+        if parsed.scheme.lower() not in {"http", "https"}:
+            raise RuntimeError("Tlon inbound media URL must be http(s).")
+        http_request = Request(
+            request.url,
+            headers={"User-Agent": "OpenZues-TlonMedia/1.0"},
+            method="GET",
+        )
+        try:
+            with urlopen(http_request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Tlon inbound media URL returned HTTP {response.status}.")
+                media_bytes = response.read(request.max_bytes + 1)
+                if len(media_bytes) > request.max_bytes:
+                    raise RuntimeError("Tlon inbound media attachment is too large.")
+                content_type = response.headers.get("Content-Type")
+        except HTTPError as exc:
+            message = _http_error_message("Tlon inbound media URL returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Tlon inbound media URL failed: {exc.reason}") from exc
+        result: dict[str, object] = {"bytes": media_bytes}
+        if content_type:
+            result["contentType"] = content_type.strip()
+        if request.filename:
+            result["filename"] = request.filename
+        return result
+
+    def _save_tlon_inbound_media(
+        self,
+        *,
+        candidate: _MSTeamsInboundMediaCandidate,
+        response: object,
+        media_bytes: bytes,
+        index: int,
+    ) -> _MSTeamsStagedInboundMedia | None:
+        if not media_bytes:
+            return None
+        content_type = _msteams_staged_media_content_type(
+            response,
+            candidate,
+            candidate.file_hint or "",
+        )
+        filename = _msteams_staged_media_filename(response, candidate, content_type, index)
+        digest = hashlib.sha256(media_bytes).hexdigest()
+        storage_root = (
+            self.canvas_state_dir
+            if self.canvas_state_dir is not None
+            else self.database.path.parent
+        )
+        stored_path = storage_root / "gateway-attachments" / "inbound" / (
+            f"{digest[:16]}-{filename}"
+        )
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        if not stored_path.exists():
+            stored_path.write_bytes(media_bytes)
+        return _MSTeamsStagedInboundMedia(
+            source_url=candidate.source_url,
+            path=stored_path,
+            content_type=content_type,
+            filename=filename,
+            placeholder=candidate.placeholder,
+            sha256=digest,
+            byte_length=len(media_bytes),
+        )
+
+    async def _stage_tlon_inbound_media(
+        self,
+        message: _TlonInboundMessage,
+        *,
+        account_id: str | None,
+    ) -> list[_MSTeamsStagedInboundMedia]:
+        images = _tlon_extract_image_blocks(message.content)
+        if not images:
+            return []
+        fetcher = self._tlon_inbound_media_fetcher()
+        staged_media: list[_MSTeamsStagedInboundMedia] = []
+        for index, image in enumerate(images, start=1):
+            parsed_path = Path(unquote(urlparse(image.url).path))
+            file_hint = parsed_path.name.strip() or f"tlon-image-{index}"
+            candidate = _MSTeamsInboundMediaCandidate(
+                source_url=image.url,
+                url=image.url,
+                file_hint=file_hint,
+                content_type_hint=None,
+                placeholder=image.url,
+            )
+            request = GatewayTlonInboundMediaFetchRequest(
+                url=image.url,
+                source_url=image.url,
+                filename=file_hint,
+                content_type=None,
+                max_bytes=TLON_INBOUND_MAX_IMAGE_BYTES,
+                account_id=account_id,
+                message_id=message.message_id,
+            )
+            try:
+                response = await fetcher(request)
+            except Exception:
+                continue
+            media_bytes = _msteams_fetch_response_bytes(response)
+            if media_bytes is None or len(media_bytes) > TLON_INBOUND_MAX_IMAGE_BYTES:
+                continue
+            staged = self._save_tlon_inbound_media(
+                candidate=candidate,
+                response=response,
+                media_bytes=media_bytes,
+                index=index,
+            )
+            if staged is not None:
+                staged_media.append(staged)
+        return staged_media
 
     def _bluebubbles_config_snapshot(self) -> dict[str, Any]:
         if self.gateway_config_service is None:

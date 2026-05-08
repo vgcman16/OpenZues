@@ -7893,6 +7893,109 @@ async def test_ops_mesh_service_routes_tlon_group_thread_firehose_event_to_sessi
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_stages_tlon_inbound_image_blocks_for_session() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-tlon-media-inbound"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+    fetch_requests: list[object] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "tlon-media-session-message-1"}
+
+    async def fake_tlon_media_fetch(request: object) -> dict[str, object]:
+        fetch_requests.append(request)
+        return {
+            "bytes": b"image-data",
+            "contentType": "image/png",
+            "filename": "photo.png",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        tlon_inbound_media_fetch_service=fake_tlon_media_fetch,
+        canvas_state_dir=tmp_path / "state",
+    )
+
+    result = await service.handle_tlon_inbound_event(
+        {
+            "id": "tlon-dm-media-1",
+            "whom": "~sampel-palnet",
+            "response": {
+                "add": {
+                    "essay": {
+                        "author": "~sampel-palnet",
+                        "sent": 1713980000789,
+                        "content": [
+                            {"inline": ["See attached."]},
+                            {
+                                "block": {
+                                    "image": {
+                                        "src": "https://example.com/photo.png",
+                                        "alt": "diagram",
+                                    }
+                                }
+                            },
+                        ],
+                    }
+                }
+            },
+        },
+        account_id="ship",
+    )
+
+    digest = hashlib.sha256(b"image-data").hexdigest()
+    expected_path = (
+        tmp_path
+        / "state"
+        / "gateway-attachments"
+        / "inbound"
+        / f"{digest[:16]}-photo.png"
+    )
+    assert len(fetch_requests) == 1
+    fetch_request = fetch_requests[0]
+    assert fetch_request.url == "https://example.com/photo.png"
+    assert fetch_request.max_bytes == 6 * 1024 * 1024
+    assert fetch_request.account_id == "ship"
+    assert fetch_request.message_id == "tlon-dm-media-1"
+    assert session_deliveries[0][1] == (
+        f"[media attached: {expected_path} (image/png) | {expected_path}]\n"
+        "See attached.\n\nhttps://example.com/photo.png (diagram)"
+    )
+    assert expected_path.read_bytes() == b"image-data"
+    assert result["mediaUrls"] == ["https://example.com/photo.png"]
+    assert result["MediaPath"] == str(expected_path)
+    assert result["delivery"] == {
+        "runtime": "session-backed",
+        "media": {"staged": 1},
+    }
+    assert result["stagedMedia"] == [
+        {
+            "sourceUrl": "https://example.com/photo.png",
+            "path": str(expected_path),
+            "filename": "photo.png",
+            "placeholder": "https://example.com/photo.png",
+            "openzuesMediaRef": "media://inbound/photo.png",
+            "openzuesSavedPath": str(expected_path),
+            "openzuesSha256": digest,
+            "openzuesByteLength": len(b"image-data"),
+            "contentType": "image/png",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
