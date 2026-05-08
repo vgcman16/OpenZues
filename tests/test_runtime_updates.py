@@ -216,11 +216,13 @@ async def test_runtime_update_run_update_executes_native_git_install_build_steps
         "upstream check",
         "git rev-parse @{upstream}",
         "git rev-list",
+        "preflight worktree",
+        "preflight cleanup",
         "git pull",
         "deps install",
         "build",
     ]
-    assert command_calls == [
+    assert command_calls[:5] == [
         (["git", "status", "--porcelain", "--", ":!dist/control-ui/"], tmp_path, 1000),
         (["git", "fetch", "--all", "--prune", "--tags"], tmp_path, 1000),
         (
@@ -236,6 +238,11 @@ async def test_runtime_update_run_update_executes_native_git_install_build_steps
         ),
         (["git", "rev-parse", "@{upstream}"], tmp_path, 1000),
         (["git", "rev-list", "--max-count=10", "rev-b"], tmp_path, 1000),
+    ]
+    assert command_calls[5][0][:4] == ["git", "worktree", "add", "--detach"]
+    assert command_calls[5][0][-1] == "rev-b"
+    assert command_calls[6][0][:4] == ["git", "worktree", "remove", "--force"]
+    assert command_calls[7:] == [
         (["git", "pull", "--ff-only"], tmp_path, 1000),
         ([sys.executable, "-m", "pip", "install", "-e", "."], tmp_path, 1000),
         ([sys.executable, "-m", "compileall", "-q", "src"], tmp_path, 1000),
@@ -289,6 +296,8 @@ async def test_runtime_update_run_update_ignores_control_ui_dist_dirty_files(
         "upstream check",
         "git rev-parse @{upstream}",
         "git rev-list",
+        "preflight worktree",
+        "preflight cleanup",
         "git pull",
         "deps install",
         "build",
@@ -404,6 +413,58 @@ async def test_runtime_update_run_update_errors_when_preflight_has_no_candidates
         "git rev-list",
     ]
     assert command_calls[-1] == ["git", "rev-list", "--max-count=10", "rev-b"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_reports_preflight_worktree_failure(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[list[str]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        command_calls.append(argv)
+        if argv == ["git", "rev-parse", "@{upstream}"]:
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        if argv[:2] == ["git", "rev-list"]:
+            return {"stdout": "rev-b\nrev-a\n", "stderr": "", "exitCode": 0}
+        if argv[:3] == ["git", "worktree", "add"]:
+            return {"stdout": "", "stderr": "worktree failed\n", "exitCode": 1}
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("preflight failure should not schedule immediate restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "error"
+    assert result["reason"] == "preflight-worktree-failed"
+    assert [step["name"] for step in result["steps"]] == [
+        "git status",
+        "git fetch",
+        "upstream check",
+        "git rev-parse @{upstream}",
+        "git rev-list",
+        "preflight worktree",
+    ]
+    assert command_calls[-1][:4] == ["git", "worktree", "add", "--detach"]
+    assert command_calls[-1][-1] == "rev-b"
 
 
 @pytest.mark.asyncio

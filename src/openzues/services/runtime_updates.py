@@ -1266,6 +1266,33 @@ class RuntimeUpdateService:
                 started_at=started_at,
             )
 
+        preflight_root = Path(tempfile.mkdtemp(prefix="openzues-update-preflight-"))
+        worktree_dir = preflight_root / ("wt" if os.name == "nt" else "worktree")
+        worktree_step = await self._run_update_command_step(
+            "preflight worktree",
+            ["git", "worktree", "add", "--detach", str(worktree_dir), upstream_sha],
+            timeout_ms=timeout_ms,
+        )
+        steps.append(worktree_step)
+        if _update_step_exit_code(worktree_step) != 0:
+            shutil.rmtree(preflight_root, ignore_errors=True)
+            return self._build_update_command_result(
+                status="error",
+                reason="preflight-worktree-failed",
+                root=root,
+                before=before,
+                after=None,
+                steps=steps,
+                started_at=started_at,
+            )
+        cleanup_step = await self._run_update_command_step(
+            "preflight cleanup",
+            ["git", "worktree", "remove", "--force", str(worktree_dir)],
+            timeout_ms=timeout_ms,
+        )
+        steps.append(cleanup_step)
+        shutil.rmtree(preflight_root, ignore_errors=True)
+
         for name, argv, reason in (
             ("git pull", ["git", "pull", "--ff-only"], "pull-failed"),
             (
