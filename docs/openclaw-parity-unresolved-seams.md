@@ -9963,3 +9963,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.9999999999995%. Re-check packaging queue for the next source-backed
   release/update seam.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  flag package roots that resolve to an OpenClaw-shaped source checkout with
+  the upstream `global package root resolves to source checkout: ...` warning.
+  Source/test checkpointed in `912aee5e`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.9999999999996%.
+  Rotate to installed bundled runtime sidecar enforcement next.
