@@ -21033,6 +21033,136 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_feishu_security_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-feishu-security.cjs"
+    runtime_entry.write_text(
+        """
+const security = require("openclaw/plugin-sdk/feishu-security");
+const scopedSecurity = require("@openclaw/plugin-sdk/feishu-security");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.feishu_security",
+      description: "Use OpenClaw feishu-security SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            feishu: {
+              enabled: true,
+              appId: "cli_a",
+              appSecret: { source: "env", id: "FEISHU_APP_SECRET" },
+              tools: { doc: true }
+            }
+          }
+        };
+        const accountCfg = {
+          channels: {
+            feishu: {
+              enabled: true,
+              tools: { doc: false },
+              accounts: {
+                Ops: {
+                  appId: "cli_ops",
+                  appSecret: "ops-secret",
+                  tools: { doc: true }
+                }
+              }
+            }
+          }
+        };
+        const disabledCfg = {
+          channels: { feishu: { enabled: false, appId: "cli_a", appSecret: "s" } }
+        };
+        return {
+          keys: Object.keys(security).sort(),
+          scopedSame:
+            scopedSecurity.collectFeishuSecurityAuditFindings ===
+              security.collectFeishuSecurityAuditFindings,
+          base: security.collectFeishuSecurityAuditFindings({ cfg }),
+          account: security.collectFeishuSecurityAuditFindings({ cfg: accountCfg }),
+          disabled: security.collectFeishuSecurityAuditFindings({ cfg: disabledCfg })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-feishu-security-plugin",
+                    "name": "Runtime Feishu Security Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-feishu-security.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.feishu_security"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.feishu_security"})
+
+    expected_finding = {
+        "checkId": "channels.feishu.doc_owner_open_id",
+        "severity": "warn",
+        "title": "Feishu doc create can grant requester permissions",
+        "detail": (
+            'channels.feishu tools include "doc"; feishu_doc action "create" can grant '
+            "document access to the trusted requesting Feishu user."
+        ),
+        "remediation": (
+            "Disable channels.feishu.tools.doc when not needed, and restrict tool access "
+            "for untrusted prompts."
+        ),
+    }
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["collectFeishuSecurityAuditFindings"],
+        "scopedSame": True,
+        "base": [expected_finding],
+        "account": [expected_finding],
+        "disabled": [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
     tmp_path,
 ) -> None:

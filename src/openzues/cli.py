@@ -87475,6 +87475,64 @@ const matrixDepsRuntime = {
   isMatrixSdkAvailable,
 };
 
+function isFeishuDocToolEnabled(cfg = {}) {
+  const channels = isRecord(cfg.channels) ? cfg.channels : {};
+  const feishu = isRecord(channels.feishu) ? channels.feishu : null;
+  if (!feishu || feishu.enabled === false) {
+    return false;
+  }
+  const defaults = cfg.secrets && isRecord(cfg.secrets) ? cfg.secrets.defaults : undefined;
+  const baseTools = isRecord(feishu.tools) ? feishu.tools : {};
+  const baseDocEnabled = baseTools.doc !== false;
+  const baseAppId = hasNonEmptyString(feishu.appId);
+  const baseAppSecret = hasConfiguredSecretInput(feishu.appSecret, defaults);
+  const baseConfigured = baseAppId && baseAppSecret;
+  const accounts = isRecord(feishu.accounts) ? feishu.accounts : null;
+  if (!accounts || Object.keys(accounts).length === 0) {
+    return baseDocEnabled && baseConfigured;
+  }
+  for (const accountValue of Object.values(accounts)) {
+    const account = isRecord(accountValue) ? accountValue : {};
+    if (account.enabled === false) {
+      continue;
+    }
+    const accountTools = isRecord(account.tools) ? account.tools : baseTools;
+    if (accountTools.doc === false) {
+      continue;
+    }
+    const accountConfigured =
+      (hasNonEmptyString(account.appId) || baseAppId) &&
+      (hasConfiguredSecretInput(account.appSecret, defaults) || baseAppSecret);
+    if (accountConfigured) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function collectFeishuSecurityAuditFindings(params = {}) {
+  if (!isFeishuDocToolEnabled(params.cfg || {})) {
+    return [];
+  }
+  return [
+    {
+      checkId: "channels.feishu.doc_owner_open_id",
+      severity: "warn",
+      title: "Feishu doc create can grant requester permissions",
+      detail:
+        'channels.feishu tools include "doc"; feishu_doc action "create" can grant ' +
+        "document access to the trusted requesting Feishu user.",
+      remediation:
+        "Disable channels.feishu.tools.doc when not needed, and restrict tool access " +
+        "for untrusted prompts.",
+    },
+  ];
+}
+
+const feishuSecurityRuntime = {
+  collectFeishuSecurityAuditFindings,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -89728,6 +89786,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/matrix-deps"
   ) {
     return matrixDepsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/feishu-security" ||
+    request === "@openclaw/plugin-sdk/feishu-security"
+  ) {
+    return feishuSecurityRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/bluebubbles-policy" ||
