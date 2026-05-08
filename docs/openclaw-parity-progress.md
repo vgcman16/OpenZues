@@ -19390,6 +19390,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `a330fecc`.
+- Native package update verification now requires
+  `dist/postinstall-inventory.json` for installed or requested versions at
+  `2026.4.15` and newer before post-update doctor/swap, matching OpenClaw's
+  installed global package verification gate. This closes `OZ-PKG-001BA`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999998%.
+- Verified missing dist-inventory rejection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package
+  verifier proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_expected_version tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_source_checkout_root tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_missing_dist_inventory -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`22 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `d7e87c9b`.
 
 ## References
 
