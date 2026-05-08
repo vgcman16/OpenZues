@@ -10117,6 +10117,58 @@ def _emit_update_run_result(payload: dict[str, object], *, json_output: bool) ->
         typer.echo(f"steps: {len(steps)}")
 
 
+def _openclaw_post_update_plugins_payload(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    outcomes_value = payload.get("outcomes")
+    outcomes = list(outcomes_value) if isinstance(outcomes_value, list) else []
+    error_messages = [
+        str(outcome.get("message") or "plugin update failed")
+        for outcome in outcomes
+        if isinstance(outcome, Mapping) and outcome.get("status") == "error"
+    ]
+    return {
+        "status": "error" if error_messages else "ok",
+        "changed": bool(payload.get("changed")),
+        "sync": {
+            "changed": False,
+            "switchedToBundled": [],
+            "switchedToNpm": [],
+            "warnings": [],
+            "errors": error_messages,
+        },
+        "npm": {
+            "changed": bool(payload.get("changed")),
+            "outcomes": outcomes,
+        },
+        "integrityDrifts": [],
+    }
+
+
+async def _openclaw_update_attach_post_update_plugins(
+    services: CliServices,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    if payload.get("status") != "ok":
+        return payload
+    plugins_payload = await _build_plugins_update_payload(
+        services,
+        plugin_id=None,
+        all_plugins=True,
+        dry_run=False,
+    )
+    projected_plugins = _openclaw_post_update_plugins_payload(plugins_payload)
+    post_update_value = payload.get("postUpdate")
+    post_update = dict(post_update_value) if isinstance(post_update_value, Mapping) else {}
+    post_update["plugins"] = projected_plugins
+    result = dict(payload)
+    result["postUpdate"] = post_update
+    if projected_plugins.get("status") == "error":
+        result["status"] = "error"
+        result["reason"] = "post-update-plugins"
+    return result
+
+
 def _parse_openclaw_update_timeout_seconds(value: str | None) -> float | None:
     if value is None:
         return None
@@ -98107,24 +98159,30 @@ def update_root(
             tag=target_tag,
         )
         package_manager = _openclaw_update_package_manager(root)
-        payload = _run(
-            _run_with_services(
-                lambda services: services.runtime_updates.run_package_update(
-                    package_root=root,
-                    package_manager=package_manager,
-                    package_spec=package_spec,
-                    timeout_ms=timeout_ms,
-                )
+
+        async def run_package_update_with_plugins(services: CliServices) -> dict[str, object]:
+            payload = await services.runtime_updates.run_package_update(
+                package_root=root,
+                package_manager=package_manager,
+                package_spec=package_spec,
+                timeout_ms=timeout_ms,
             )
+            return await _openclaw_update_attach_post_update_plugins(services, payload)
+
+        payload = _run(
+            _run_with_services(run_package_update_with_plugins)
         )
         _emit_update_run_result(payload, json_output=json_output)
         if payload.get("status") == "error":
             raise typer.Exit(code=1)
         return
+
+    async def run_git_update_with_plugins(services: CliServices) -> dict[str, object]:
+        payload = await services.runtime_updates.run_update(timeout_ms=timeout_ms)
+        return await _openclaw_update_attach_post_update_plugins(services, payload)
+
     payload = _run(
-        _run_with_services(
-            lambda services: services.runtime_updates.run_update(timeout_ms=timeout_ms)
-        )
+        _run_with_services(run_git_update_with_plugins)
     )
     _emit_update_run_result(payload, json_output=json_output)
     if payload.get("status") == "error":

@@ -25496,9 +25496,17 @@ def test_update_dry_run_json_preserves_explicit_package_install_spec(
 
 
 def test_update_json_dispatches_runtime_update_service(
+    tmp_path,
     monkeypatch,
 ) -> None:
     seen: dict[str, int | None] = {}
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
 
     class FakeRuntimeUpdates:
         async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
@@ -25512,7 +25520,12 @@ def test_update_json_dispatches_runtime_update_service(
             }
 
     async def fake_run_with_services(action):
-        return await action(SimpleNamespace(runtime_updates=FakeRuntimeUpdates()))
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
 
     monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
 
@@ -25534,6 +25547,13 @@ def test_update_json_dispatches_package_update_service(
     (package_root / "package.json").write_text(
         json.dumps({"packageManager": "pnpm@9.0.0"}),
         encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
     )
     seen: dict[str, object] = {}
 
@@ -25566,7 +25586,12 @@ def test_update_json_dispatches_package_update_service(
             }
 
     async def fake_run_with_services(action):
-        return await action(SimpleNamespace(runtime_updates=FakeRuntimeUpdates()))
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
 
     monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
     monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
@@ -25584,6 +25609,242 @@ def test_update_json_dispatches_package_update_service(
     assert payload["status"] == "ok"
     assert payload["mode"] == "pnpm"
 
+
+def test_update_json_runs_post_update_plugin_sync_for_package_update(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "npm" / "demo"
+    plugin_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["demo"],
+                    "entries": {"demo": {"enabled": True}},
+                    "installs": {
+                        "demo": {
+                            "source": "npm",
+                            "spec": "@openclaw/demo@beta",
+                            "installPath": str(plugin_dir),
+                            "version": "1.2.2",
+                            "resolvedName": "@openclaw/demo",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    npm_calls: list[dict[str, object]] = []
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "before": {"sha": None, "version": "2026.5.1"},
+                "after": {"sha": None, "version": "2026.5.2"},
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+                "packageSpec": package_spec,
+                "timeoutMs": timeout_ms,
+            }
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            npm_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(plugin_dir),
+                "version": "1.2.3",
+                "npmResolution": {
+                    "resolvedName": "@openclaw/demo",
+                    "resolvedVersion": "1.2.3",
+                    "resolvedSpec": "@openclaw/demo@1.2.3",
+                    "integrity": "sha512-new",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+                plugin_npm_installer=FakeNpmInstaller(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--json", "--tag", "latest", "--timeout", "9"])
+
+    assert result.exit_code == 0, result.stdout
+    assert npm_calls == [{"spec": "@openclaw/demo@beta", "mode": "update"}]
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["postUpdate"]["plugins"] == {
+        "status": "ok",
+        "changed": True,
+        "sync": {
+            "changed": False,
+            "switchedToBundled": [],
+            "switchedToNpm": [],
+            "warnings": [],
+            "errors": [],
+        },
+        "npm": {
+            "changed": True,
+            "outcomes": [
+                {
+                    "pluginId": "demo",
+                    "status": "updated",
+                    "currentVersion": "1.2.2",
+                    "nextVersion": "1.2.3",
+                    "message": "Updated demo: 1.2.2 -> 1.2.3.",
+                }
+            ],
+        },
+        "integrityDrifts": [],
+    }
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["installs"]["demo"]["version"] == "1.2.3"
+
+
+def test_update_json_fails_when_post_update_plugin_sync_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "npm" / "demo"
+    plugin_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["demo"],
+                    "entries": {"demo": {"enabled": True}},
+                    "installs": {
+                        "demo": {
+                            "source": "npm",
+                            "spec": "@openclaw/demo@beta",
+                            "installPath": str(plugin_dir),
+                            "version": "1.2.2",
+                            "resolvedName": "@openclaw/demo",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            del package_spec, timeout_ms
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            del kwargs
+            return {"ok": False, "error": "registry timeout"}
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+                plugin_npm_installer=FakeNpmInstaller(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--json", "--tag", "latest"])
+
+    assert result.exit_code == 1, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error"
+    assert payload["reason"] == "post-update-plugins"
+    plugins = payload["postUpdate"]["plugins"]
+    assert plugins["status"] == "error"
+    assert plugins["sync"]["errors"] == ["Failed to update demo: registry timeout"]
+    assert plugins["npm"]["outcomes"] == [
+        {
+            "pluginId": "demo",
+            "status": "error",
+            "message": "Failed to update demo: registry timeout",
+        }
+    ]
 
 def test_update_status_json_detects_package_manager_deps(
     tmp_path,
