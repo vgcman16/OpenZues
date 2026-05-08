@@ -966,6 +966,7 @@ def _collect_package_update_verify_errors(
     inventory_files, inventory_error = _read_package_dist_inventory_if_present(package_root)
     if inventory_error is not None:
         errors.append(inventory_error)
+        errors.extend(_collect_missing_bundled_runtime_sidecar_errors(package_root, None))
     elif inventory_files is not None:
         errors.extend(
             _collect_package_dist_inventory_file_errors(package_root, inventory_files)
@@ -984,6 +985,8 @@ def _collect_package_update_verify_errors(
             "missing package dist inventory "
             f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
         )
+        errors.extend(_collect_missing_bundled_runtime_sidecar_errors(package_root, None))
+    else:
         errors.extend(_collect_missing_bundled_runtime_sidecar_errors(package_root, None))
     return errors
 
