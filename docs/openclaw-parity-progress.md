@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999995%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18433,6 +18433,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `265b0a10`.
+- Tlon approval block/admin handling now mirrors the remaining native approval
+  runtime controls: `block <id>` removes pending approvals and persists
+  `blockedShips`, later blocked senders are ignored before approval/session
+  processing, and owner `unblock ~ship` admin commands mutate the blocked list
+  without entering a work session. This closes `OZ-PROV-001DL`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999995%. Remaining Tlon-specific breadth is production SSE monitor
+  lifecycle.
+- Verified the Tlon block/admin slice with focused red/green proofs
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_blocks_tlon_pending_request_from_owner -q`,
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_ignores_tlon_inbound_from_blocked_ship -q`,
+  and
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_unblocks_tlon_ship_from_owner_admin_command -q`
+  (`1 failed` before each implementation path, then `1 passed`), focused
+  approval/admin cluster
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_blocks_tlon_pending_request_from_owner tests\test_ops_mesh.py::test_ops_mesh_service_ignores_tlon_inbound_from_blocked_ship tests\test_ops_mesh.py::test_ops_mesh_service_unblocks_tlon_ship_from_owner_admin_command tests\test_ops_mesh.py::test_ops_mesh_service_approves_tlon_dm_pending_request_from_owner -q`
+  (`4 passed`), adjacent provider/session proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or msteams_message_text_without_mentions or msteams_adaptive_card_action"`
+  (`23 passed, 378 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `800d2ab6`.
 
 ## References
 

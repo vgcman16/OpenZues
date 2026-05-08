@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999999%.
+  band of ~80-99.99999995%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1764,9 +1764,10 @@ inbound authorization now enforces configured DM allowlists, owner approval
 queueing, restricted channel rules/default authorized ships, and native pending
 approval persistence before session/media processing. Tlon owner approval
 responses now resolve approved pending DMs/channels, mutate allowlists, remove
-pending approvals, and replay stored original messages into sessions.
-Remaining Tlon runtime parity is now deny/block confirmations, owner admin
-commands, and production SSE monitor lifecycle.
+pending approvals, and replay stored original messages into sessions. Tlon
+block/admin handling now persists blocked ships, ignores later blocked inbound
+messages, and handles owner unblock commands without entering a work session.
+Remaining Tlon runtime parity is now production SSE monitor lifecycle.
 iMessage config-backed account probes now mirror OpenClaw's `probeIMessage`
 status hook: `channels status --probe --json` discovers configured
 `channels.imessage` accounts from the Gateway config snapshot, checks the
@@ -9788,7 +9789,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound media staging checkpointed in `d7556229`;
   inbound authorization and pending approvals checkpointed in `d7bd3f7d`;
   owner approval response replay checkpointed in `265b0a10`;
+  approval block/admin handling checkpointed in `800d2ab6`;
   repo-wide parity remains estimated at ~99.9%, with the evidence band
-  tightened to ~80-99.9999999%. Remaining Tlon-specific gaps are deny/block
-  confirmations, owner admin commands, and production SSE monitor lifecycle
-  before rotating through broader provider, packaging, and companion seams.
+  tightened to ~80-99.99999995%. Remaining Tlon-specific gaps are production
+  SSE monitor lifecycle before rotating through broader provider, packaging,
+  and companion seams.
