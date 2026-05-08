@@ -20350,6 +20350,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`2 passed, 1153 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `992457ac`.
+- Imported plugin SDK `facade-activation-check.runtime` now exposes the exact
+  scoped/unscoped public-surface activation-check runtime surface, including
+  registry module-location lookup, tracked plugin id fallback, public-surface
+  access evaluation, activated access throwing, and OpenClaw-shaped blocked
+  access error text. This closes `OZ-PLUGIN-00325`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999%.
+- Verified the facade-activation-check.runtime helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_facade_activation_check_runtime -q`
+  (the exact subpath returned generic passthrough functions before
+  implementation, then `1 passed`), adjacent facade proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "facade_activation_check or facade_runtime or facade_resolution_shared"`
+  (`3 passed, 1153 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `1f2ec91c`.
 
 ## References
 
