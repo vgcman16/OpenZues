@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999996% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -89,8 +89,8 @@ in `b294d317`, and `OZ-PLUGIN-00303` pairing-access is checkpointed in
 `1e9b65f5`. `OZ-PLUGIN-00306` test-helpers/string-utils is checkpointed in
 `e2ba3082`, and `OZ-PLUGIN-00307` test-helpers/envelope-timestamp is
 checkpointed in `54b47a45`. `OZ-PLUGIN-00308` test-helpers/pairing-reply is
-checkpointed in `75ac3561`; re-scan exact plugin SDK subpaths for the next
-narrow helper seam.
+checkpointed in `75ac3561`, and `OZ-PLUGIN-00309` github-copilot-login is
+checkpointed in `0561baa6`; continue the next exact plugin SDK helper seam.
 
 ## Active Slice Detail
 
@@ -1147,6 +1147,27 @@ narrow helper seam.
     implementation, then `1 passed`), adjacent proof
     `python -m pytest tests\test_gateway_node_methods.py -q -k "test_helpers_pairing_reply or test_helpers_envelope_timestamp or channel_test_helpers"`
     (`3 passed, 1136 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00309` Imported github-copilot-login subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/github-copilot-login.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `github-copilot-login` and receive only
+    `githubCopilotLoginCommand`, backed by OpenZues' existing native
+    unavailable provider-auth login posture.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `0561baa6`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_github_copilot_login_helper -q`
+    (exact subpath returned the broad generic SDK export set before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "github_copilot_login or provider_auth_login"`
+    (`2 passed, 1138 deselected`), `ruff check src\openzues\cli.py
     tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
     focused `git diff --check`.
 

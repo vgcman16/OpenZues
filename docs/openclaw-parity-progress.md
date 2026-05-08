@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999995%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999996%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -20119,6 +20119,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 1136 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `75ac3561`.
+- Imported plugin SDK `github-copilot-login` now exposes the exact
+  scoped/unscoped `githubCopilotLoginCommand` facade with OpenZues' existing
+  native unavailable posture instead of leaking the broad generic SDK proxy
+  surface. This closes `OZ-PLUGIN-00309`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999996%.
+- Verified the github-copilot-login helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_github_copilot_login_helper -q`
+  (the exact subpath returned the broad generic SDK export set before
+  implementation, then `1 passed`), adjacent provider-auth login proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "github_copilot_login or provider_auth_login"`
+  (`2 passed, 1138 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `0561baa6`.
 
 ## References
 

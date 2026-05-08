@@ -553,6 +553,8 @@ is checkpointed in `2938b03a`.
 `54b47a45`.
 `test-helpers/pairing-reply` from
 `src/plugin-sdk/test-helpers/pairing-reply.ts` is checkpointed in `75ac3561`.
+`github-copilot-login` from `src/plugin-sdk/github-copilot-login.ts` is
+checkpointed in `0561baa6`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
