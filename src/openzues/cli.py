@@ -97863,7 +97863,14 @@ def doctor(
         "--repair",
         help="Run repair-mode doctor checks where native adapters are available.",
     ),
+    non_interactive: bool = typer.Option(
+        False,
+        "--non-interactive",
+        help="Disable interactive doctor prompts; accepted for update-runner parity.",
+    ),
 ) -> None:
+    _ = non_interactive
+
     async def _action(services: CliServices) -> dict[str, object]:
         view = await _try_live_hermes_doctor_view(services.settings)
         if view is None:

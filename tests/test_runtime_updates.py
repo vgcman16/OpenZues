@@ -73,6 +73,18 @@ def _staged_bin_dir(stage_prefix: Path) -> Path:
     return stage_prefix / "bin"
 
 
+def _post_update_doctor_args() -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "openzues.cli",
+        "doctor",
+        "--non-interactive",
+        "--fix",
+        "--json",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_runtime_update_requests_restart_after_repo_head_changes(tmp_path) -> None:
     database = Database(tmp_path / "openzues.db")
@@ -247,11 +259,7 @@ async def test_runtime_update_run_package_update_executes_global_install_step(
     assert [step["name"] for step in result["steps"]] == ["global update", "openzues doctor"]
     assert command_calls == [
         (["pnpm", "add", "-g", "openzues@latest"], package_root, 1000),
-        (
-            [sys.executable, "-m", "openzues.cli", "doctor", "--fix", "--json"],
-            package_root,
-            1000,
-        ),
+        (_post_update_doctor_args(), package_root, 1000),
     ]
 
 
@@ -324,7 +332,7 @@ async def test_runtime_update_run_package_update_retries_npm_without_optional_de
     assert second_cwd == package_root
     assert first_timeout == 1000
     assert second_timeout == 1000
-    assert doctor_argv == [sys.executable, "-m", "openzues.cli", "doctor", "--fix", "--json"]
+    assert doctor_argv == _post_update_doctor_args()
     assert doctor_cwd == package_root
     assert doctor_timeout == 1000
 
@@ -404,7 +412,7 @@ async def test_runtime_update_run_package_update_stages_npm_install_before_swap(
     assert cwd == package_root
     assert timeout_ms == 1000
     doctor_argv, doctor_cwd, doctor_timeout = command_calls[1]
-    assert doctor_argv == [sys.executable, "-m", "openzues.cli", "doctor", "--fix", "--json"]
+    assert doctor_argv == _post_update_doctor_args()
     assert doctor_cwd == package_root
     assert doctor_timeout == 1000
     assert (package_root / "package.json").read_text(encoding="utf-8") == (
@@ -528,11 +536,7 @@ async def test_runtime_update_run_package_update_fails_when_post_update_doctor_f
     assert [step["name"] for step in result["steps"]] == ["global update", "openzues doctor"]
     assert command_calls == [
         (["pnpm", "add", "-g", "openzues@latest"], package_root, 1000),
-        (
-            [sys.executable, "-m", "openzues.cli", "doctor", "--fix", "--json"],
-            package_root,
-            1000,
-        ),
+        (_post_update_doctor_args(), package_root, 1000),
     ]
 
 

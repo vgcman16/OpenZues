@@ -439,7 +439,15 @@ def _global_package_update_fallback_args(
 
 
 def _post_package_update_doctor_args() -> list[str]:
-    return [sys.executable, "-m", "openzues.cli", "doctor", "--fix", "--json"]
+    return [
+        sys.executable,
+        "-m",
+        "openzues.cli",
+        "doctor",
+        "--non-interactive",
+        "--fix",
+        "--json",
+    ]
 
 
 def _expected_package_version_from_spec(package_spec: str) -> str | None:
