@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-07
+Last updated: 2026-05-08
 
 Primary ledgers:
 
@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99991% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -735,6 +735,39 @@ may lag behind this tracker.
 - [x] Imported plugin SDK channel-runtime-context shim for register/get/watch
   runtime context helpers.
   - Status: checkpointed in `ced07255`
+
+- [x] Imported plugin SDK channel-runtime compatibility facade shim for chat
+  type normalization, reply prefix/typing helpers, channel id normalization,
+  interactive reply reduction, poll normalization, system-event enqueue/reset,
+  channel activity recording, heartbeat event/visibility helpers,
+  transport-ready waits, and selected lifecycle helpers.
+  - Status: checkpointed in `1cc947f3`
+
+- [x] Imported plugin SDK compat facade shim for the deprecated broad
+  migration barrel, including config-schema, channel policy/config/directory/
+  reply-history helpers, channel reply pipeline aliases, runtime store/queue/
+  temp/account helpers, provider auth helper aliases, command gating,
+  diagnostics, context-engine registration, memory prompt addition delegation,
+  BlueBubbles policy/status helpers, and selected channel lifecycle helpers.
+  - Status: checkpointed in `f21a22bd`
+
+- [x] Imported plugin SDK discord facade shim for the deprecated Discord
+  compatibility barrel, including channel-common helpers, `DiscordConfigSchema`,
+  status helpers, account/default-account inspection and resolution, target
+  normalization, directory lists, component helpers, audit channel ids, group
+  mention/tool policy resolution, runtime-config filled subagent thread
+  auto-binding, thread binding list/unbind helpers, and fakeable bundled
+  Discord public-surface delegation.
+  - Status: checkpointed in `307777d8`
+
+- [x] Imported plugin SDK extension-shared utility facade shim for schema
+  parsing, timeout abort-signal construction, passive/probed/traffic status
+  summaries, stoppable passive monitor lifecycle, logger-backed runtime
+  fallback, open-DM allowlist issue projection, status issue field readers,
+  deferred promise creation, plugin config issue mapping, read-only env secret
+  provider gates, package-version candidate resolution, and no-proxy ambient
+  proxy-agent resolution.
+  - Status: checkpointed in `b56d15d7`
 
 - [x] Imported plugin SDK channel-activity-runtime shim for
   `recordChannelActivity`.
@@ -1936,6 +1969,21 @@ may lag behind this tracker.
   preserving OpenClaw localized post parsing, embedded image/media key
   collection, resource downloads, and ordered read action media metadata.
   - Status: checkpointed in `ed3aedb5`
+
+- [x] Feishu/Lark route-backed account probe support, preserving OpenClaw's
+  `probeFeishu` status hook over the Open API `openclaw_bot/ping` endpoint
+  with bot name/open-id projection.
+  - Status: checkpointed in `bf1d1d3c`
+
+- [x] Mattermost route-backed account probe support, preserving OpenClaw's
+  `probeMattermost` status hook over `/api/v4/users/me` with bot user
+  projection.
+  - Status: checkpointed in `ba0205fc`
+
+- [x] Signal route-backed account probe support, preserving OpenClaw's
+  `probeSignal` status hook over `/api/v1/check` plus JSON-RPC `version`,
+  without requiring a route secret.
+  - Status: checkpointed in `1af31a04`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -4809,6 +4857,54 @@ may lag behind this tracker.
   - Last verified: 2026-05-02, focused Slack media route tests (`2 passed`),
     adjacent Slack native/media route tests (`7 passed`), `ruff check`, and
     `mypy`.
+
+- [x] Google Chat route-backed account probe.
+  - Source: `openclaw-main/extensions/googlechat/src/api.ts`,
+    `openclaw-main/extensions/googlechat/src/channel.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `816d97c4`.
+  - Weight: 1
+  - Last verified: 2026-05-07, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_googlechat_probe -q`
+    (`1 passed`), adjacent channel-probe proof (`9 passed, 506 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Feishu/Lark route-backed account probe.
+  - Source: `openclaw-main/extensions/feishu/src/probe.ts`,
+    `openclaw-main/extensions/feishu/src/channel.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `bf1d1d3c`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_feishu_probe -q`
+    (`1 passed`), adjacent channel-probe proof (`10 passed, 506 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Mattermost route-backed account probe.
+  - Source: `openclaw-main/extensions/mattermost/src/mattermost/probe.ts`,
+    `openclaw-main/extensions/mattermost/src/channel.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `ba0205fc`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_mattermost_probe -q`
+    (`1 passed`), adjacent channel-probe proof (`11 passed, 506 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Signal route-backed account probe.
+  - Source: `openclaw-main/extensions/signal/src/probe.ts`,
+    `openclaw-main/extensions/signal/src/channel.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `1af31a04`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_signal_probe -q`
+    (`1 passed`), adjacent channel-probe proof (`12 passed, 506 deselected`),
+    `ruff check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.

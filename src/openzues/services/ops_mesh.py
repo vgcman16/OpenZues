@@ -387,9 +387,13 @@ PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
     "telegram",
     "discord",
+    "feishu",
+    "googlechat",
     "line",
     "matrix",
+    "mattermost",
     "msteams",
+    "signal",
     "zalo",
 }
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
@@ -3483,6 +3487,17 @@ def _googlechat_direct_message_endpoint(target: str | None, *, user_name: str) -
     endpoint = f"{_googlechat_api_base(target).rstrip('/')}/spaces:findDirectMessage"
     separator = "&" if "?" in endpoint else "?"
     return f"{endpoint}{separator}{urlencode({'name': user_name})}"
+
+
+def _googlechat_probe_endpoint(target: str | None) -> str:
+    endpoint_base = _googlechat_api_base(target).rstrip("/")
+    spaces_index = endpoint_base.lower().find("/spaces")
+    if spaces_index >= 0:
+        endpoint_base = endpoint_base[:spaces_index].rstrip("/")
+    endpoint = f"{endpoint_base}/spaces"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Google Chat route target must be an http(s) Chat API base URL.")
+    return f"{endpoint}?{urlencode({'pageSize': '1'})}"
 
 
 def _googlechat_upload_endpoint(*, space: str) -> str:
@@ -6763,6 +6778,23 @@ def _signal_base_url(raw_target: str | None) -> str:
 
 def _signal_rpc_endpoint(raw_target: str | None) -> str:
     return f"{_signal_base_url(raw_target)}/api/v1/rpc"
+
+
+def _signal_check_endpoint(raw_target: str | None) -> str:
+    return f"{_signal_base_url(raw_target)}/api/v1/check"
+
+
+def _signal_probe_version(result: object) -> str | None:
+    candidate = result
+    if isinstance(result, dict) and "result" in result:
+        candidate = result.get("result")
+    if isinstance(candidate, str):
+        version = candidate.strip()
+        return version or None
+    if isinstance(candidate, dict):
+        version = str(candidate.get("version") or "").strip()
+        return version or None
+    return None
 
 
 def _signal_target_params(raw_target: str | None) -> tuple[dict[str, object], str]:
@@ -14507,7 +14539,7 @@ class OpsMeshService:
                 "timeoutMs": timeout_ms,
             }
         secret_token = await self._notification_route_secret_token(route)
-        if not secret_token:
+        if not secret_token and route_kind != "signal":
             return {
                 "ok": False,
                 "status": "unavailable",
@@ -14517,12 +14549,13 @@ class OpsMeshService:
                 "summary": "Native provider route is missing a credential secret.",
                 "timeoutMs": timeout_ms,
             }
+        secret_token_value = str(secret_token or "")
         if route_kind == "telegram":
             try:
                 return await asyncio.to_thread(
                     self._probe_telegram_provider_route,
                     route,
-                    secret_token,
+                    secret_token_value,
                     timeout_ms,
                 )
             except Exception as exc:
@@ -14540,7 +14573,43 @@ class OpsMeshService:
                 return await asyncio.to_thread(
                     self._probe_discord_provider_route,
                     route,
-                    secret_token,
+                    secret_token_value,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        if route_kind == "googlechat":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_googlechat_provider_route,
+                    route,
+                    secret_token_value,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        if route_kind == "feishu":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_feishu_provider_route,
+                    route,
+                    secret_token_value,
                     timeout_ms,
                 )
             except Exception as exc:
@@ -14558,7 +14627,25 @@ class OpsMeshService:
                 return await asyncio.to_thread(
                     self._probe_line_provider_route,
                     route,
-                    secret_token,
+                    secret_token_value,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        if route_kind == "mattermost":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_mattermost_provider_route,
+                    route,
+                    secret_token_value,
                     timeout_ms,
                 )
             except Exception as exc:
@@ -14576,7 +14663,24 @@ class OpsMeshService:
                 return await asyncio.to_thread(
                     self._probe_matrix_provider_route,
                     route,
-                    secret_token,
+                    secret_token_value,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        if route_kind == "signal":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_signal_provider_route,
+                    route,
                     timeout_ms,
                 )
             except Exception as exc:
@@ -14594,7 +14698,7 @@ class OpsMeshService:
                 return await asyncio.to_thread(
                     self._probe_zalo_provider_route,
                     route,
-                    secret_token,
+                    secret_token_value,
                     timeout_ms,
                 )
             except Exception as exc:
@@ -14612,7 +14716,7 @@ class OpsMeshService:
                 result = await asyncio.to_thread(
                     self._probe_msteams_provider_route,
                     route,
-                    secret_token,
+                    secret_token_value,
                     timeout_ms,
                 )
                 delegated_auth = await self._msteams_delegated_auth_probe(
@@ -14635,7 +14739,7 @@ class OpsMeshService:
             return await asyncio.to_thread(
                 self._probe_slack_provider_route,
                 route,
-                secret_token,
+                secret_token_value,
                 timeout_ms,
             )
         except Exception as exc:
@@ -15433,6 +15537,150 @@ class OpsMeshService:
             payload["application"] = application
         return payload
 
+    def _probe_googlechat_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        result = self._get_json_provider_url(
+            _googlechat_probe_endpoint(str(route.get("target") or "")),
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Google Chat API returned a non-JSON spaces response.")
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "googlechat",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "timeoutMs": timeout_ms,
+        }
+
+    def _probe_feishu_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        result = self._request_json_provider_url(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                "bot/v1/openclaw_bot/ping",
+            ),
+            method="POST",
+            payload={"needBotInfo": True},
+            secret_header_name="Authorization",
+            secret_token=_feishu_bearer_token(secret_token),
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Feishu API returned a non-JSON probe response.")
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "feishu",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "timeoutMs": timeout_ms,
+        }
+        if result.get("code") != 0:
+            error = str(result.get("msg") or f"code {result.get('code')}").strip()
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": f"API error: {error}",
+            }
+        data = result.get("data")
+        bot_info = data.get("pingBotInfo") if isinstance(data, dict) else None
+        if isinstance(bot_info, dict):
+            bot_name = str(bot_info.get("botName") or "").strip()
+            bot_open_id = str(
+                bot_info.get("botID") or bot_info.get("botOpenId") or ""
+            ).strip()
+            if bot_name:
+                payload["botName"] = bot_name
+        if bot_open_id:
+            payload["botOpenId"] = bot_open_id
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
+        }
+
+    def _probe_signal_provider_route(
+        self,
+        route: dict[str, Any],
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        check = self._get_json_provider_url(
+            _signal_check_endpoint(str(route.get("target") or "")),
+            timeout_seconds=timeout_seconds,
+        )
+        check_status: int | None = None
+        if isinstance(check, dict):
+            raw_status = check.get("status")
+            if isinstance(raw_status, int) and not isinstance(raw_status, bool):
+                check_status = raw_status
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "signal",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "timeoutMs": timeout_ms,
+        }
+        if check_status is not None:
+            payload["httpStatus"] = check_status
+            if check_status < 200 or check_status >= 300:
+                return {
+                    **payload,
+                    "ok": False,
+                    "status": "error",
+                    "error": f"HTTP {check_status}",
+                }
+        try:
+            version_result = self._request_json_provider_url(
+                _signal_rpc_endpoint(str(route.get("target") or "")),
+                method="POST",
+                payload={
+                    "jsonrpc": "2.0",
+                    "method": "version",
+                    "id": uuid.uuid4().hex,
+                },
+                timeout_seconds=timeout_seconds,
+            )
+            if isinstance(version_result, dict) and version_result.get("error"):
+                payload["versionError"] = str(version_result.get("error"))
+            version = _signal_probe_version(version_result)
+            if version:
+                payload["version"] = version
+        except Exception as exc:
+            payload["versionError"] = str(exc).strip() or type(exc).__name__
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
+        }
+
     def _probe_matrix_provider_route(
         self,
         route: dict[str, Any],
@@ -15475,6 +15723,36 @@ class OpsMeshService:
         if device_id:
             payload["deviceId"] = device_id
         return payload
+
+    def _probe_mattermost_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        result = self._get_json_provider_url(
+            _mattermost_api_endpoint(str(route.get("target") or ""), "users/me"),
+            secret_header_name="Authorization",
+            secret_token=_mattermost_bearer_token(secret_token),
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Mattermost API returned a non-JSON user response.")
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "mattermost",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "bot": result,
+            "timeoutMs": timeout_ms,
+        }
 
     def _probe_line_provider_route(
         self,

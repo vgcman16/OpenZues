@@ -1,11 +1,11 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-07
+Updated: 2026-05-08
 
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99991%.
+  band of ~80-99.99999%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1672,7 +1672,35 @@ through the saved native route token and returns `displayName`, `userId`,
 `basicId`, and `pictureUrl` bot metadata in the per-account probe result.
 Remaining channel CLI parity is provider-specific credential probe breadth
 beyond Slack/Telegram/Discord/Matrix/Zalo/LINE and production provider-backed
-live resolve adapters.
+live resolve adapters. Google Chat route-backed account probes now mirror
+OpenClaw's `probeGoogleChat` status hook: `channels status --probe --json`
+calls Chat API `spaces?pageSize=1` through the saved native route bearer token
+and returns the native-provider-backed account probe envelope. Remaining
+channel CLI parity is provider-specific credential probe breadth beyond
+Slack/Telegram/Discord/Matrix/Zalo/LINE/Google Chat and production
+provider-backed live resolve adapters.
+Feishu/Lark route-backed account probes now mirror OpenClaw's `probeFeishu`
+status hook: `channels status --probe --json` posts `needBotInfo=true` to
+`bot/v1/openclaw_bot/ping` through the saved native route bearer token and
+returns bot name/open-id metadata in the native-provider-backed account probe
+envelope. Remaining channel CLI parity is provider-specific credential probe
+breadth beyond Slack/Telegram/Discord/Matrix/Zalo/LINE/Google Chat/Feishu-Lark
+and production provider-backed live resolve adapters.
+Mattermost route-backed account probes now mirror OpenClaw's `probeMattermost`
+status hook: `channels status --probe --json` calls Mattermost
+`/api/v4/users/me` through the saved native route bot token and returns bot
+user metadata in the native-provider-backed account probe envelope. Remaining
+channel CLI parity is provider-specific credential probe breadth beyond
+Slack/Telegram/Discord/Matrix/Zalo/LINE/Google Chat/Feishu-Lark/Mattermost and
+production provider-backed live resolve adapters.
+Signal route-backed account probes now mirror OpenClaw's `probeSignal` status
+hook: `channels status --probe --json` calls `/api/v1/check` and JSON-RPC
+`version` through the saved native route base URL without requiring a route
+secret, returning HTTP status and daemon version metadata in the
+native-provider-backed account probe envelope. Remaining channel CLI parity is
+provider-specific credential probe breadth beyond Slack/Telegram/Discord/Matrix/
+Zalo/LINE/Google Chat/Feishu-Lark/Mattermost/Signal and production
+provider-backed live resolve adapters.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account
@@ -9625,9 +9653,49 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   resolved/unresolved note formatting. Source/test checkpointed in
   `ec94f934`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.99991%.
-- The queue head now tracks the remaining exact advertised SDK subpath
-  `channel-runtime`, followed by `compat`, `discord`, `extension-shared`,
-  generation/provider/document helper facades, and any newly exposed
-  repo-wide OpenClaw namespaces. `config-types` was re-verified on
-  2026-05-07 as an upstream type-only barrel through the existing empty
-  runtime module proof.
+- Current queue-head adjustment: imported plugin SDK `channel-runtime` now
+  exposes the source-backed compatibility facade for scoped and unscoped
+  imports, including chat type normalization, reply prefix/typing helpers,
+  channel id normalization, interactive reply reduction, poll normalization,
+  system-event enqueue/reset, channel activity recording, heartbeat
+  event/visibility helpers, transport-ready waits, and selected channel
+  lifecycle helpers. Source/test checkpointed in `1cc947f3`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99992%.
+- Current queue-head adjustment: imported plugin SDK `compat` now exposes the
+  source-backed deprecated compatibility barrel for scoped and unscoped
+  imports, including config-schema, channel policy/config/directory/
+  reply-history helpers, channel reply pipeline aliases, runtime store,
+  keyed queue, temp/account helpers, provider auth helper aliases, command
+  gating, diagnostics, context-engine registration, memory prompt addition
+  delegation, BlueBubbles policy/status helpers, and selected channel
+  lifecycle helpers. Source/test checkpointed in `f21a22bd`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99993%.
+- Current queue-head adjustment: imported plugin SDK `discord` now exposes the
+  source-backed deprecated compatibility facade for scoped and unscoped
+  imports, including channel-common helpers, `DiscordConfigSchema`, status
+  snapshot helpers, account/default-account inspection and resolution, target
+  normalization, directory lists, component build/edit/register helpers, audit
+  channel ids, group mention/tool policy resolution, status issue projection,
+  runtime-config filled subagent thread auto-binding, thread binding
+  list/unbind helpers, and fakeable bundled Discord public-surface delegation.
+  Source/test checkpointed in `307777d8`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99994%.
+- Current queue-head adjustment: imported plugin SDK `extension-shared` now
+  exposes the source-backed exact utility barrel for scoped and unscoped
+  imports, including schema parsing, timeout abort-signal construction,
+  passive/probed/traffic status summaries, stoppable passive monitor
+  lifecycle, logger-backed runtime fallback, open-DM allowlist issue
+  projection, status issue field readers, deferred promise creation, plugin
+  config issue mapping, read-only env secret provider gates, package-version
+  candidate resolution, and no-proxy ambient proxy-agent resolution.
+  Source/test checkpointed in `b56d15d7`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99995%.
+- The exact advertised SDK subpath queue is no longer blocked on
+  `extension-shared`; generation/provider/document type-only helper facades
+  remain covered by the existing `type_only_sdk_barrels` proof. The queue head
+  rotates back to broader repo-wide packaging/provider/companion breadth and
+  any newly exposed OpenClaw namespaces.
+  `config-types` was re-verified on 2026-05-07 as an upstream type-only barrel
+  through the existing empty runtime module proof.

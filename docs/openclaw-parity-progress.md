@@ -3,11 +3,11 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99991%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99992%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through session-binding/session-key runtime aliases, session-store runtime helpers, session-visibility helpers, simple-completion-runtime extractAssistantText helper, poll-runtime helpers, lazy-runtime helpers, config-paths helpers, context-visibility-runtime helpers, heartbeat-runtime helpers, json-store helpers, diagnostic-runtime helpers, system-event-runtime helpers, oauth-utils helpers, runtime-config-snapshot helpers, runtime-fetch helpers, runtime-doctor helpers, runtime-secret-resolution helpers, memory-core-host-query helpers, memory-core-host-multimodal helpers, memory-core-host-secret helpers, memory-core-host-events helpers, memory-core-host-status helpers, provider-setup helpers, self-hosted-provider-setup helpers, LM Studio runtime helpers, group-activation helpers, media-store helpers, web-media helpers, browser-security-runtime helpers, approval-auth-helpers, approval-approvers helpers, approval-reply-runtime helpers, approval-renderers helpers, approval-client-helpers, approval-client-runtime alias helpers, approval-delivery-helpers, approval-native-helpers, approval-native-runtime delivery helpers, approval-handler-adapter-runtime helpers, approval-handler-runtime adapter factory, speech facade helpers, model-session-runtime helpers, process-runtime command helpers, run-command normalized command helpers, string-coerce-runtime primitive helpers, provider-auth-login runtime alias helpers, approval-auth-runtime helpers, telegram-command-config helpers, param-readers helpers, provider-zai-endpoint helpers, provider-env-vars helpers, account-id/configured-id subpath helpers, agent-media-payload helpers, agent-config-primitives helpers, ACP binding resolve helpers, Anthropic CLI facade helpers, Anthropic Vertex auth-presence helpers, Anthropic Vertex facade helpers, XAI model-id helpers, channel pairing path helpers, channel inbound root helpers, channel location helpers, state path helpers, setup adapter runtime helpers, channel secret TTS runtime helpers, channel secret basic/runtime helpers, secret-file-runtime helpers, secret-ref-runtime helpers, secret-input-runtime helpers, secret-input-schema helpers, cron-store-runtime helpers, file-access-runtime helpers, logging-core helpers, native-command-config-runtime helpers, host-runtime helpers, image-generation-core auth-runtime helpers, talk config runtime helpers, GitHub Copilot token helper shims, channel plugin common/core helper shims, channel entry contract helper shims, channel config primitives/schema helper shims, runtime-env helper shims, channel-config-helpers shim, channel-config-writes alias shim, channel-lifecycle shim, exact channel-core shim, channel-contract-testing shim, channel-targets shim, channel-streaming shim, channel-envelope shim, channel-mention-gating shim, channel-runtime-context shim, channel-activity-runtime shim, inbound-envelope shim, CLI runtime helper shim, memory-core-engine-runtime facade shim, memory-core-host-engine-embeddings helper shim, memory-core-host-engine-foundation helper shim, models-provider-runtime helper shim, skill-commands-runtime helper shim, skills-runtime helper shim, provider-tools helper shim, provider-stream-shared helper shim, provider-stream family helper shim, provider-transport-runtime helper shim, provider-http helper shim, provider-catalog-runtime helper shim, provider-onboard helper shim, provider-usage helper shim, tool-send helper shim, webhook-ingress helper shim, web-media helper shim, speech facade helper shim, zalouser facade shim, zod facade shim, web-content-extractor facade shim, plugin-entry facade shim, optional-channel-setup facade shim, outbound-media facade shim, delivery-queue-runtime facade shim, migration-runtime facade shim, migration helper facade shim, outbound-send-deps facade shim, command-status-runtime facade shim, reply-runtime facade shim, reply-dispatch-runtime facade shim, inbound-reply-dispatch facade shim, interactive-runtime facade shim, infra-runtime compatibility facade shim, and media-runtime facade shim; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through session-binding/session-key runtime aliases, session-store runtime helpers, session-visibility helpers, simple-completion-runtime extractAssistantText helper, poll-runtime helpers, lazy-runtime helpers, config-paths helpers, context-visibility-runtime helpers, heartbeat-runtime helpers, json-store helpers, diagnostic-runtime helpers, system-event-runtime helpers, oauth-utils helpers, runtime-config-snapshot helpers, runtime-fetch helpers, runtime-doctor helpers, runtime-secret-resolution helpers, memory-core-host-query helpers, memory-core-host-multimodal helpers, memory-core-host-secret helpers, memory-core-host-events helpers, memory-core-host-status helpers, provider-setup helpers, self-hosted-provider-setup helpers, LM Studio runtime helpers, group-activation helpers, media-store helpers, web-media helpers, browser-security-runtime helpers, approval-auth-helpers, approval-approvers helpers, approval-reply-runtime helpers, approval-renderers helpers, approval-client-helpers, approval-client-runtime alias helpers, approval-delivery-helpers, approval-native-helpers, approval-native-runtime delivery helpers, approval-handler-adapter-runtime helpers, approval-handler-runtime adapter factory, speech facade helpers, model-session-runtime helpers, process-runtime command helpers, run-command normalized command helpers, string-coerce-runtime primitive helpers, provider-auth-login runtime alias helpers, approval-auth-runtime helpers, telegram-command-config helpers, param-readers helpers, provider-zai-endpoint helpers, provider-env-vars helpers, account-id/configured-id subpath helpers, agent-media-payload helpers, agent-config-primitives helpers, ACP binding resolve helpers, Anthropic CLI facade helpers, Anthropic Vertex auth-presence helpers, Anthropic Vertex facade helpers, XAI model-id helpers, channel pairing path helpers, channel inbound root helpers, channel location helpers, state path helpers, setup adapter runtime helpers, channel secret TTS runtime helpers, channel secret basic/runtime helpers, secret-file-runtime helpers, secret-ref-runtime helpers, secret-input-runtime helpers, secret-input-schema helpers, cron-store-runtime helpers, file-access-runtime helpers, logging-core helpers, native-command-config-runtime helpers, host-runtime helpers, image-generation-core auth-runtime helpers, talk config runtime helpers, GitHub Copilot token helper shims, channel plugin common/core helper shims, channel entry contract helper shims, channel config primitives/schema helper shims, runtime-env helper shims, channel-config-helpers shim, channel-config-writes alias shim, channel-lifecycle shim, exact channel-core shim, channel-contract-testing shim, channel-targets shim, channel-streaming shim, channel-envelope shim, channel-mention-gating shim, channel-runtime-context shim, channel-runtime compatibility facade shim, channel-activity-runtime shim, inbound-envelope shim, CLI runtime helper shim, memory-core-engine-runtime facade shim, memory-core-host-engine-embeddings helper shim, memory-core-host-engine-foundation helper shim, models-provider-runtime helper shim, skill-commands-runtime helper shim, skills-runtime helper shim, provider-tools helper shim, provider-stream-shared helper shim, provider-stream family helper shim, provider-transport-runtime helper shim, provider-http helper shim, provider-catalog-runtime helper shim, provider-onboard helper shim, provider-usage helper shim, tool-send helper shim, webhook-ingress helper shim, web-media helper shim, speech facade helper shim, zalouser facade shim, zod facade shim, web-content-extractor facade shim, plugin-entry facade shim, optional-channel-setup facade shim, outbound-media facade shim, delivery-queue-runtime facade shim, migration-runtime facade shim, migration helper facade shim, outbound-send-deps facade shim, command-status-runtime facade shim, reply-runtime facade shim, reply-dispatch-runtime facade shim, inbound-reply-dispatch facade shim, interactive-runtime facade shim, infra-runtime compatibility facade shim, and media-runtime facade shim; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
 - Runtime helper addendum: imported `agent-runtime` core helper coverage is
   now verified in `a8e871a3` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `agent-runtime` model-selection helper
@@ -17967,6 +17967,163 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_type_only_sdk_barrels -q`
   (`1 passed`) on 2026-05-07. No source changes were required; the next exact
   advertised SDK subpath queue head is `channel-runtime`.
+- Imported OpenClaw plugin runtime entries now have the source-backed exact
+  `channel-runtime` compatibility facade from
+  `src/plugin-sdk/channel-runtime.ts`: scoped and unscoped native runtime
+  entries expose the tight public barrel for chat type normalization, reply
+  prefix/typing helpers, channel id normalization, interactive reply
+  reduction, poll normalization, system-event enqueue/reset, channel activity
+  recording, heartbeat event/visibility helpers, transport-ready waits, and
+  selected channel lifecycle helpers without falling through to the broad SDK
+  proxy. This closes `OZ-PLUGIN-00299`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.99992%. Remaining exact
+  advertised SDK subpath queue head is `compat`.
+- Verified the channel-runtime facade slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_channel_runtime_facade_helpers -q`
+  (`1 passed`), adjacent channel-runtime/context/activity/heartbeat/poll/
+  transport-ready proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channel_runtime_facade or channel_runtime_context or channel_activity_runtime or heartbeat_runtime or poll_runtime or transport_ready"`
+  (`7 passed, 1115 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`310 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `1cc947f3`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  deprecated `compat` facade from `src/plugin-sdk/compat.ts`: scoped and
+  unscoped native runtime entries expose the broad legacy migration barrel for
+  config-schema, channel policy/config/directory/reply-history helpers,
+  channel reply pipeline aliases, runtime store/queue/temp/account helpers,
+  provider auth helper aliases, command gating, diagnostics, context-engine
+  registration, memory prompt addition delegation, BlueBubbles policy/status
+  helpers, and selected channel lifecycle helpers without falling through to
+  the broad SDK proxy. This closes `OZ-PLUGIN-00300`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.99993%.
+  Remaining exact advertised SDK subpath queue head is `discord`.
+- Verified the compat facade slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_compat_facade_helpers -q`
+  (`1 passed`), adjacent compat/testing/channel/runtime/config/policy/
+  directory proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "compat_facade or testing_compat or channel_runtime_facade or channel_config_schema or channel_policy or reply_history or directory_runtime or runtime_store"`
+  (`7 passed, 1116 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`311 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `f21a22bd`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  deprecated `discord` facade from `src/plugin-sdk/discord.ts`: scoped and
+  unscoped native runtime entries expose the Discord compatibility barrel for
+  channel-common helpers, `DiscordConfigSchema`, status snapshot helpers,
+  account/default-account inspection and resolution, target normalization,
+  directory lists, component build/edit/register helpers, audit channel ids,
+  group mention/tool policy resolution, status issue projection, runtime-config
+  filled subagent thread auto-binding, thread binding list/unbind helpers, and
+  host-fakeable bundled Discord public-surface delegation without falling
+  through to the broad SDK proxy. This closes `OZ-PLUGIN-00301`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99994%. Remaining exact advertised SDK subpath queue head is
+  `extension-shared`.
+- Verified the discord facade slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_discord_facade_helpers -q`
+  (`1 passed`), adjacent discord/compat/channel-status/channel-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "discord_facade or compat_facade or channel_status or channel_plugin_common or bundled_channel_config_schema or channel_config_schema"`
+  (`4 passed, 1120 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`312 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `307777d8`.
+- Imported OpenClaw plugin runtime entries now have the source-backed exact
+  `extension-shared` utility barrel from `src/plugin-sdk/extension-shared.ts`:
+  scoped and unscoped native runtime entries expose schema parsing helpers,
+  timeout abort-signal construction, passive/probed/traffic status summaries,
+  stoppable passive monitor lifecycle, logger-backed runtime fallback,
+  open-DM allowlist issue projection, status issue field readers, deferred
+  promise creation, plugin config issue mapping, read-only env secret
+  provider gates, package-version candidate resolution, and no-proxy ambient
+  proxy-agent resolution without falling through to the broad SDK proxy. This
+  closes `OZ-PLUGIN-00302`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99995%. The generation/provider/
+  document type-only helper facades remain covered by the existing
+  `type_only_sdk_barrels` proof; the next queue head rotates back to broader
+  repo-wide packaging/provider/companion breadth.
+- Verified the extension-shared slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_extension_shared_helpers -q`
+  (`1 passed`), adjacent extension/discord/runtime/fetch/secret proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "extension_shared or discord_facade or runtime_logger or channel_lifecycle or fetch_runtime or secret_ref_runtime"`
+  (`5 passed, 1120 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`313 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `b56d15d7`.
+- Google Chat route-backed account probes now mirror OpenClaw's
+  `probeGoogleChat` status hook: `channels status --probe --json` calls the
+  Google Chat API `spaces?pageSize=1` endpoint through the saved native route
+  bearer token, normalizes specific route targets back to the Chat API base,
+  and returns the native-provider-backed probe envelope with account and
+  timeout metadata. This closes `OZ-PROV-001CS`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.99996%.
+  The next channel-probe queue rotates to remaining provider-specific account
+  probes such as Feishu/Lark, Mattermost, IRC, Signal, Twitch, BlueBubbles,
+  iMessage, and Tlon.
+- Verified the Google Chat probe slice with
+  `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_googlechat_probe -q`
+  (`1 passed`), adjacent channel-probe proof
+  `python -m pytest tests\test_cli.py -q -k "route_backed_googlechat_probe or route_backed_line_probe or route_backed_zalo_probe or route_backed_matrix_probe or route_backed_discord_probe or route_backed_telegram_probe or route_backed_slack_probe or keeps_whatsapp_no_hook_probe or msteams_native_probe"`
+  (`9 passed, 506 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_cli.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and `git diff --check`. Source/test
+  checkpointed in `816d97c4`.
+- Feishu/Lark route-backed account probes now mirror OpenClaw's
+  `probeFeishu` status hook: `channels status --probe --json` treats native
+  Feishu routes as probeable, posts `needBotInfo=true` to
+  `bot/v1/openclaw_bot/ping` through the saved route bearer token, supports
+  Feishu and Lark Open API bases, and returns the native-provider-backed probe
+  envelope with account, timeout, bot name, and bot open-id metadata. This
+  closes `OZ-PROV-001CT`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.99997%. The next channel-probe queue
+  rotates to remaining provider-specific account probes such as Mattermost,
+  IRC, Signal, Twitch, BlueBubbles, iMessage, and Tlon.
+- Verified the Feishu/Lark probe slice with
+  `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_feishu_probe -q`
+  (`1 passed`), adjacent channel-probe proof
+  `python -m pytest tests\test_cli.py -q -k "route_backed_feishu_probe or route_backed_googlechat_probe or route_backed_line_probe or route_backed_zalo_probe or route_backed_matrix_probe or route_backed_discord_probe or route_backed_telegram_probe or route_backed_slack_probe or keeps_whatsapp_no_hook_probe or msteams_native_probe"`
+  (`10 passed, 506 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_cli.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `bf1d1d3c`.
+- Mattermost route-backed account probes now mirror OpenClaw's
+  `probeMattermost` status hook: `channels status --probe --json` treats
+  native Mattermost routes as probeable, normalizes route targets with or
+  without `/api/v4`, calls `users/me` through the saved bot token, and returns
+  the native-provider-backed probe envelope with account, timeout, and bot user
+  metadata. This closes `OZ-PROV-001CU`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.99998%. The next
+  channel-probe queue rotates to remaining provider-specific account probes
+  such as IRC, Signal, Twitch, BlueBubbles, iMessage, and Tlon.
+- Verified the Mattermost probe slice with
+  `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_mattermost_probe -q`
+  (`1 passed`), adjacent channel-probe proof
+  `python -m pytest tests\test_cli.py -q -k "route_backed_mattermost_probe or route_backed_feishu_probe or route_backed_googlechat_probe or route_backed_line_probe or route_backed_zalo_probe or route_backed_matrix_probe or route_backed_discord_probe or route_backed_telegram_probe or route_backed_slack_probe or keeps_whatsapp_no_hook_probe or msteams_native_probe"`
+  (`11 passed, 506 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_cli.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `ba0205fc`.
+- Signal route-backed account probes now mirror OpenClaw's `probeSignal`
+  status hook: `channels status --probe --json` treats native Signal routes
+  as probeable without requiring a route secret, calls `/api/v1/check`, then
+  queries JSON-RPC `version`, and returns the native-provider-backed probe
+  envelope with account, timeout, HTTP status, and daemon version metadata.
+  This closes `OZ-PROV-001CV`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999%. The next channel-probe
+  queue rotates to remaining provider-specific account probes such as IRC,
+  Twitch, BlueBubbles, iMessage, and Tlon.
+- Verified the Signal probe slice with
+  `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_signal_probe -q`
+  (`1 passed`), adjacent channel-probe proof
+  `python -m pytest tests\test_cli.py -q -k "route_backed_signal_probe or route_backed_mattermost_probe or route_backed_feishu_probe or route_backed_googlechat_probe or route_backed_line_probe or route_backed_zalo_probe or route_backed_matrix_probe or route_backed_discord_probe or route_backed_telegram_probe or route_backed_slack_probe or keeps_whatsapp_no_hook_probe or msteams_native_probe"`
+  (`12 passed, 506 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_cli.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `1af31a04`.
 
 ## References
 

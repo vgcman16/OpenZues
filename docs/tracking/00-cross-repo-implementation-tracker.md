@@ -1,6 +1,6 @@
 # Cross-Repo Implementation Tracker
 
-Last updated: 2026-05-07
+Last updated: 2026-05-08
 
 Coordinator repo: `C:\Users\skull\OneDrive\Documents\OpenZues`
 
@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99991% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,11 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK setup facade slice is checkpointed in `ec94f934`, and
-the exact `config-types` type-only barrel was reverified on 2026-05-07.
+The imported plugin SDK extension-shared facade slice is checkpointed in
+`b56d15d7`; the discord facade is checkpointed in `307777d8`, the compat
+facade is checkpointed in `f21a22bd`, the channel-runtime facade is
+checkpointed in `1cc947f3`, the setup facade is checkpointed in `ec94f934`,
+and the exact `config-types` type-only barrel was reverified on 2026-05-07.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,12 +65,221 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Setup SDK facade checkpointed in `ec94f934`; `config-types` reverified as type-only | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `channel-runtime` facade |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue remaining provider-specific account probes, then rotate packaging/companion breadth |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001CV` Signal route-backed account probe
+  - Source: `openclaw-main/extensions/signal/src/probe.ts`,
+    `openclaw-main/extensions/signal/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_cli.py`
+  - Contract: `channels status --probe --json` treats native
+    `kind="signal"` routes as probeable without a route secret, calls
+    `/api/v1/check`, then calls JSON-RPC `version`, and returns a
+    native-provider-backed probe envelope with account, timeout, HTTP status,
+    and daemon version metadata.
+  - Evidence required: focused Signal channel-probe CLI test, adjacent
+    channel-probe CLI tests, ruff, mypy
+  - Status: checkpointed in `1af31a04`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_signal_probe -q`
+    (`1 passed`), adjacent channel-probe proof (`12 passed, 506 deselected`),
+    `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and
+    `mypy src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001CU` Mattermost route-backed account probe
+  - Source: `openclaw-main/extensions/mattermost/src/mattermost/probe.ts`,
+    `openclaw-main/extensions/mattermost/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_cli.py`
+  - Contract: `channels status --probe --json` treats native
+    `kind="mattermost"` routes as probeable, normalizes route targets with or
+    without `/api/v4`, calls Mattermost `users/me` through the saved bot token,
+    and returns a native-provider-backed probe envelope with account, timeout,
+    and bot user metadata.
+  - Evidence required: focused Mattermost channel-probe CLI test, adjacent
+    channel-probe CLI tests, ruff, mypy
+  - Status: checkpointed in `ba0205fc`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_mattermost_probe -q`
+    (`1 passed`), adjacent channel-probe proof (`11 passed, 506 deselected`),
+    `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and
+    `mypy src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001CT` Feishu/Lark route-backed account probe
+  - Source: `openclaw-main/extensions/feishu/src/probe.ts`,
+    `openclaw-main/extensions/feishu/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_cli.py`
+  - Contract: `channels status --probe --json` treats native
+    `kind="feishu"` routes as probeable, posts `needBotInfo=true` to the
+    Feishu/Lark Open API `bot/v1/openclaw_bot/ping` endpoint through the saved
+    bearer token, and returns a native-provider-backed probe envelope with
+    account, timeout, bot name, and bot open-id metadata.
+  - Evidence required: focused Feishu/Lark channel-probe CLI test, adjacent
+    channel-probe CLI tests, ruff, mypy
+  - Status: checkpointed in `bf1d1d3c`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_feishu_probe -q`
+    (`1 passed`), adjacent channel-probe proof (`10 passed, 506 deselected`),
+    `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and
+    `mypy src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001CS` Google Chat route-backed account probe
+  - Source: `openclaw-main/extensions/googlechat/src/api.ts`,
+    `openclaw-main/extensions/googlechat/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_cli.py`
+  - Contract: `channels status --probe --json` treats native
+    `kind="googlechat"` routes as probeable, calls Chat API
+    `spaces?pageSize=1` through the saved bearer token, normalizes specific
+    route targets back to the Chat API base, and returns the
+    native-provider-backed probe envelope with account and timeout metadata.
+  - Evidence required: focused Google Chat channel-probe CLI test, adjacent
+    channel-probe CLI tests, ruff, mypy
+  - Status: checkpointed in `816d97c4`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_googlechat_probe -q`
+    (`1 passed`), adjacent channel-probe proof (`9 passed, 506 deselected`),
+    `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and
+    `mypy src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PLUGIN-00302` Imported extension-shared utility facade shim
+  - Source: `openclaw-main/src/plugin-sdk/extension-shared.ts`,
+    `openclaw-main/src/utils/zod-parse.ts`,
+    `openclaw-main/src/utils/fetch-timeout.ts`,
+    `openclaw-main/src/infra/net/proxy-env.ts`,
+    `openclaw-main/src/secrets/ref-contract.ts`,
+    `openclaw-main/src/plugin-sdk/channel-lifecycle.core.ts`, and
+    `openclaw-main/src/plugin-sdk/runtime-logger.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `extension-shared` and receive the exact utility barrel for schema
+    parsing, timeout abort-signal construction, passive/probed/traffic status
+    summaries, stoppable passive monitor lifecycle, logger-backed runtime
+    fallback, open-DM allowlist issue projection, status issue field readers,
+    deferred promise creation, plugin config issue mapping, read-only env
+    secret provider gates, package-version candidate resolution, and no-proxy
+    ambient proxy-agent resolution.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `b56d15d7`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused extension-shared proof (`1 passed`),
+    adjacent extension/discord/runtime/fetch/secret proof (`5 passed, 1120
+    deselected`), adjacent imported-plugin proof (`313 passed, 812
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00301` Imported discord facade shim
+  - Source: `openclaw-main/src/plugin-sdk/discord.ts`,
+    `openclaw-main/src/plugin-sdk/channel-contract.js`,
+    `openclaw-main/src/plugin-sdk/channel-core.js`,
+    `openclaw-main/src/plugin-sdk/config-types.js`,
+    `openclaw-main/src/plugin-sdk/channel-plugin-common.js`,
+    `openclaw-main/src/plugin-sdk/channel-status.js`,
+    `openclaw-main/src/plugin-sdk/bundled-channel-config-schema.js`, and
+    bundled Discord public surface contracts for `api.js` and `runtime-api.js`
+  - References: `openclaw-main/src/plugin-sdk/discord.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `discord` and receive the deprecated Discord compatibility barrel
+    for channel-common helpers, `DiscordConfigSchema`, status helpers,
+    account/default-account inspection and resolution, target normalization,
+    directory lists, component build/edit/register helpers, audit channel ids,
+    group mention/tool policy resolution, status issue projection,
+    runtime-config filled subagent thread auto-binding, thread binding
+    list/unbind helpers, and fakeable bundled Discord public-surface
+    delegation.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `307777d8`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused discord facade proof (`1 passed`),
+    adjacent discord/compat/channel-status/channel-plugin proof (`4 passed,
+    1120 deselected`), adjacent imported-plugin proof (`312 passed, 812
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00300` Imported compat facade shim
+  - Source: `openclaw-main/src/plugin-sdk/compat.ts`,
+    `openclaw-main/src/plugin-sdk/channel-reply-pipeline.ts`,
+    `openclaw-main/src/plugin-sdk/channel-lifecycle.core.ts`,
+    `openclaw-main/src/plugin-sdk/runtime-store.ts`,
+    `openclaw-main/src/plugin-sdk/keyed-async-queue.ts`,
+    `openclaw-main/src/plugin-sdk/account-id.ts`,
+    `openclaw-main/src/plugin-sdk/temp-path.ts`,
+    `openclaw-main/src/plugin-sdk/channel-config-helpers.ts`,
+    `openclaw-main/src/plugin-sdk/allow-from.ts`,
+    `openclaw-main/src/plugin-sdk/channel-config-schema.ts`,
+    `openclaw-main/src/plugin-sdk/channel-policy.ts`,
+    `openclaw-main/src/plugin-sdk/reply-history.ts`,
+    `openclaw-main/src/plugin-sdk/directory-runtime.ts`,
+    `openclaw-main/src/plugin-sdk/bluebubbles-policy.ts`,
+    `openclaw-main/src/plugin-sdk/bluebubbles.ts`,
+    `openclaw-main/src/channels/command-gating.ts`,
+    `openclaw-main/src/context-engine/delegate.ts`,
+    `openclaw-main/src/context-engine/registry.ts`,
+    `openclaw-main/src/infra/diagnostic-events.ts`,
+    `openclaw-main/src/agents/schema/typebox.ts`, and
+    `openclaw-main/src/plugins/provider-auth-helpers.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `compat` and receive the broad deprecated migration barrel for
+    config-schema, channel policy/config/directory/reply-history helpers,
+    channel reply pipeline aliases, runtime store/queue/temp/account helpers,
+    provider auth helper aliases, command gating, diagnostics, context-engine
+    registration, memory prompt addition delegation, BlueBubbles policy/status
+    helpers, and selected channel lifecycle helpers.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `f21a22bd`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused compat facade proof (`1 passed`),
+    adjacent compat/testing/channel/runtime/config/policy/directory proof
+    (`7 passed, 1116 deselected`), adjacent imported-plugin proof (`311
+    passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00299` Imported channel-runtime compatibility facade shim
+  - Source: `openclaw-main/src/plugin-sdk/channel-runtime.ts`,
+    `openclaw-main/src/channels/chat-type.ts`,
+    `openclaw-main/src/channels/reply-prefix.ts`,
+    `openclaw-main/src/channels/typing.ts`,
+    `openclaw-main/src/channels/plugins/registry.ts`,
+    `openclaw-main/src/channels/plugins/outbound/interactive.ts`,
+    `openclaw-main/src/polls.ts`,
+    `openclaw-main/src/infra/system-events.ts`,
+    `openclaw-main/src/infra/channel-activity.ts`,
+    `openclaw-main/src/infra/heartbeat-events.ts`,
+    `openclaw-main/src/infra/heartbeat-visibility.ts`,
+    `openclaw-main/src/infra/transport-ready.ts`, and
+    `openclaw-main/src/plugin-sdk/channel-lifecycle.core.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `channel-runtime` and receive the exact public compatibility
+    barrel for channel chat type normalization, reply prefix/typing helpers,
+    channel id normalization, interactive reply reduction, poll normalization,
+    system-event enqueue/reset, channel activity recording, heartbeat
+    event/visibility helpers, transport-ready waits, and selected channel
+    lifecycle helpers.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `1cc947f3`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused channel-runtime proof (`1 passed`),
+    adjacent channel-runtime/context/activity/heartbeat/poll/transport-ready
+    proof (`7 passed, 1115 deselected`), adjacent imported-plugin proof
+    (`310 passed, 812 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
 
 - [x] `OZ-PLUGIN-00298` Imported setup facade shim
   - Source: `openclaw-main/src/plugin-sdk/setup.ts`,

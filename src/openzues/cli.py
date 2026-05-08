@@ -23246,6 +23246,99 @@ function createPluginRuntimeStore(options) {
   };
 }
 
+const CONTEXT_ENGINE_REGISTRY_KEY = Symbol.for("openclaw.contextEngine.registry");
+const PUBLIC_CONTEXT_ENGINE_OWNER = "public-sdk";
+
+function getContextEngineRegistryState() {
+  return resolveGlobalSingleton(CONTEXT_ENGINE_REGISTRY_KEY, () => ({
+    engines: new Map(),
+  }));
+}
+
+function registerContextEngineForOwner(id, factory, owner, opts = {}) {
+  const normalizedId = String(id || "").trim();
+  const normalizedOwner = String(owner || "").trim();
+  if (!normalizedId) {
+    throw new Error("registerContextEngine: id must be a non-empty string");
+  }
+  if (typeof factory !== "function") {
+    throw new Error("registerContextEngine: factory must be a function");
+  }
+  if (!normalizedOwner) {
+    throw new Error("registerContextEngineForOwner: owner must be a non-empty string");
+  }
+  const registry = getContextEngineRegistryState().engines;
+  const existing = registry.get(normalizedId);
+  if (existing && existing.owner !== normalizedOwner) {
+    return { ok: false, existingOwner: existing.owner };
+  }
+  if (existing && opts.allowSameOwnerRefresh !== true) {
+    return { ok: false, existingOwner: existing.owner };
+  }
+  registry.set(normalizedId, { factory, owner: normalizedOwner });
+  return { ok: true };
+}
+
+function registerContextEngine(id, factory) {
+  return registerContextEngineForOwner(id, factory, PUBLIC_CONTEXT_ENGINE_OWNER);
+}
+
+async function delegateCompactionToRuntime(params = {}) {
+  const runtimeContext = (params && params.runtimeContext) || {};
+  const delegate =
+    (typeof params.compactEmbeddedPiSessionDirect === "function"
+      ? params.compactEmbeddedPiSessionDirect
+      : undefined) ||
+    (typeof runtimeContext.compactEmbeddedPiSessionDirect === "function"
+      ? runtimeContext.compactEmbeddedPiSessionDirect
+      : undefined) ||
+    (typeof runtimeContext.delegateCompactionToRuntime === "function"
+      ? runtimeContext.delegateCompactionToRuntime
+      : undefined);
+  if (delegate) {
+    const result = await delegate({
+      ...runtimeContext,
+      sessionId: params.sessionId,
+      sessionFile: params.sessionFile,
+      tokenBudget: params.tokenBudget,
+      currentTokenCount: params.currentTokenCount ?? runtimeContext.currentTokenCount,
+      force: params.force,
+      customInstructions: params.customInstructions,
+      workspaceDir: runtimeContext.workspaceDir || process.cwd(),
+    });
+    return {
+      ok: Boolean(result && result.ok),
+      compacted: Boolean(result && result.compacted),
+      reason: result && result.reason,
+      result: result && result.result,
+    };
+  }
+  return {
+    ok: false,
+    compacted: false,
+    reason: "runtime-unavailable",
+  };
+}
+
+function buildMemorySystemPromptAddition(params = {}) {
+  const lines = Array.isArray(params.lines)
+    ? params.lines
+    : typeof params.buildMemoryPromptSection === "function"
+      ? params.buildMemoryPromptSection({
+          availableTools: params.availableTools || new Set(),
+          citationsMode: params.citationsMode,
+        })
+      : [];
+  const normalizedLines = (Array.isArray(lines) ? lines : [])
+    .filter((line) => typeof line === "string")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (normalizedLines.length === 0) {
+    return undefined;
+  }
+  return normalizedLines.join("\n");
+}
+
 function buildAuthProfileId(params) {
   const profilePrefix = normalizeOptionalString(params.profilePrefix) || params.providerId;
   const profileName = normalizeOptionalString(params.profileName) || "default";
@@ -34781,6 +34874,38 @@ function resolveChannelGroupToolsPolicy(params) {
     return defaultSenderPolicy;
   }
   return defaultConfig && defaultConfig.tools ? defaultConfig.tools : undefined;
+}
+
+function collectOpenGroupPolicyConfiguredRouteWarnings(params = {}) {
+  const groupPolicy = params.groupPolicy || params.policy;
+  const hasRouteAllowlist =
+    Array.isArray(params.routeAllowFrom) && params.routeAllowFrom.filter(Boolean).length > 0;
+  if (groupPolicy !== "open" || !hasRouteAllowlist) {
+    return [];
+  }
+  const surface = params.surface || params.channel || "channel";
+  return [
+    `- ${surface}: groupPolicy="open" allows configured routes to trigger ` +
+      "without an explicit group allowlist.",
+  ].filter(Boolean);
+}
+
+function resolveBlueBubblesGroupRequireMention(params = {}) {
+  return resolveChannelGroupRequireMention({
+    ...params,
+    channel: "bluebubbles",
+  });
+}
+
+function resolveBlueBubblesGroupToolPolicy(params = {}) {
+  return resolveChannelGroupToolsPolicy({
+    ...params,
+    channel: "bluebubbles",
+  });
+}
+
+function collectBlueBubblesStatusIssues(accounts) {
+  return Array.isArray(accounts) ? [] : [];
 }
 
 function firstDefined(...values) {
@@ -65947,6 +66072,31 @@ const transportReadyRuntime = {
   waitForTransportReady,
 };
 
+const channelRuntimeRuntime = {
+  createAccountStatusSink,
+  createReplyPrefixContext,
+  createReplyPrefixOptions,
+  createTypingCallbacks,
+  emitHeartbeatEvent,
+  enqueueSystemEvent,
+  getLastHeartbeatEvent,
+  keepHttpServerTaskAlive,
+  normalizeChannelId,
+  normalizeChatType,
+  normalizePollDurationHours,
+  normalizePollInput,
+  onHeartbeatEvent,
+  recordChannelActivity,
+  reduceInteractiveReply,
+  resetHeartbeatEventsForTest,
+  resetSystemEventsForTest,
+  resolveHeartbeatVisibility,
+  resolveIndicatorType,
+  resolvePollMaxSelections,
+  waitForTransportReady,
+  waitUntilAbort,
+};
+
 const targetResolverRuntime = {
   buildUnresolvedTargetResults,
   resolveTargetsWithOptionalToken,
@@ -81500,6 +81650,616 @@ const providerTransportRuntime = {
   transformTransportMessages,
 };
 
+function safeParseWithSchema(schema, value) {
+  const parsed = schema.safeParse(value);
+  return parsed && parsed.success ? parsed.data : null;
+}
+
+function safeParseJsonWithSchema(schema, raw) {
+  try {
+    return safeParseWithSchema(schema, JSON.parse(raw));
+  } catch (_error) {
+    return null;
+  }
+}
+
+function buildPassiveChannelStatusSummary(snapshot = {}, extra = {}) {
+  return {
+    configured: snapshot.configured ?? false,
+    ...(extra || {}),
+    running: snapshot.running ?? false,
+    lastStartAt: snapshot.lastStartAt ?? null,
+    lastStopAt: snapshot.lastStopAt ?? null,
+    lastError: snapshot.lastError ?? null,
+  };
+}
+
+function buildPassiveProbedChannelStatusSummary(snapshot = {}, extra = {}) {
+  return {
+    ...buildPassiveChannelStatusSummary(snapshot, extra),
+    probe: snapshot.probe,
+    lastProbeAt: snapshot.lastProbeAt ?? null,
+  };
+}
+
+function buildTrafficStatusSummary(snapshot = {}) {
+  return {
+    lastInboundAt: (snapshot && snapshot.lastInboundAt) ?? null,
+    lastOutboundAt: (snapshot && snapshot.lastOutboundAt) ?? null,
+  };
+}
+
+async function runStoppablePassiveMonitor(params = {}) {
+  await runPassiveAccountLifecycle({
+    abortSignal: params.abortSignal,
+    start: params.start,
+    stop: async (monitor) => {
+      monitor.stop();
+    },
+  });
+}
+
+function resolveLoggerBackedRuntime(runtime, logger) {
+  return (
+    runtime ??
+    createLoggerBackedRuntime({
+      logger,
+      exitError: () => new Error("Runtime exit not available"),
+    })
+  );
+}
+
+function requireChannelOpenAllowFrom(params = {}) {
+  params.requireOpenAllowFrom({
+    policy: params.policy,
+    allowFrom: params.allowFrom,
+    ctx: params.ctx,
+    path: ["allowFrom"],
+    message:
+      `channels.${params.channel}.dmPolicy="open" requires ` +
+      `channels.${params.channel}.allowFrom to include "*"`,
+  });
+}
+
+function readStatusIssueFields(value, fields) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const result = {};
+  for (const field of fields || []) {
+    result[field] = value[field];
+  }
+  return result;
+}
+
+function coerceStatusIssueAccountId(value) {
+  return typeof value === "string" ? value : typeof value === "number" ? String(value) : undefined;
+}
+
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function formatPluginConfigIssue(issue, options = {}) {
+  if (!issue) {
+    return options.invalidConfigMessage ?? "invalid config";
+  }
+  if (issue.code === "unrecognized_keys" && Array.isArray(issue.keys) && issue.keys.length > 0) {
+    return typeof options.unknownKeyMessage === "function"
+      ? options.unknownKeyMessage(issue.keys[0])
+      : `unknown config key: ${issue.keys[0]}`;
+  }
+  if (issue.code === "invalid_type" && (!Array.isArray(issue.path) || issue.path.length === 0)) {
+    return options.rootInvalidTypeMessage ?? "expected config object";
+  }
+  return issue.message;
+}
+
+function normalizePluginConfigIssuePath(pathSegments) {
+  return (Array.isArray(pathSegments) ? pathSegments : []).filter((segment) => {
+    const kind = typeof segment;
+    return kind === "string" || kind === "number";
+  });
+}
+
+function mapPluginConfigIssues(issues, options = {}) {
+  return (Array.isArray(issues) ? issues : []).map((issue) => ({
+    path: normalizePluginConfigIssuePath(issue.path),
+    message: formatPluginConfigIssue(issue, options),
+  }));
+}
+
+function canResolveEnvSecretRefInReadOnlyPath(params = {}) {
+  const cfg = params.cfg || {};
+  const providers = cfg.secrets && cfg.secrets.providers;
+  const providerConfig = providers && providers[params.provider];
+  if (!providerConfig) {
+    return params.provider === resolveDefaultSecretProviderAliasFromConfig(cfg, "env");
+  }
+  if (providerConfig.source !== "env") {
+    return false;
+  }
+  const allowlist = providerConfig.allowlist;
+  return !Array.isArray(allowlist) || allowlist.includes(params.id);
+}
+
+function readPluginPackageVersion(params = {}) {
+  const candidates = params.candidates || [
+    "../package.json",
+    "./package.json",
+    "../../package.json",
+  ];
+  for (const candidate of candidates) {
+    try {
+      const version = params.require(candidate).version;
+      if (typeof version === "string" && version.trim().length > 0) {
+        return version;
+      }
+    } catch (_error) {
+      // Missing candidate paths are expected across source and bundled layouts.
+    }
+  }
+  return params.fallback ?? "unknown";
+}
+
+async function resolveAmbientNodeProxyAgent(params = {}) {
+  if (!hasEnvHttpProxyConfigured(params.protocol || "https")) {
+    return undefined;
+  }
+  try {
+    const { ProxyAgent } = await import("proxy-agent");
+    params.onUsingProxy?.();
+    return new ProxyAgent();
+  } catch (error) {
+    params.onError?.(error);
+    return undefined;
+  }
+}
+
+const extensionSharedRuntime = {
+  buildPassiveChannelStatusSummary,
+  buildPassiveProbedChannelStatusSummary,
+  buildTimeoutAbortSignal,
+  buildTrafficStatusSummary,
+  canResolveEnvSecretRefInReadOnlyPath,
+  coerceStatusIssueAccountId,
+  createDeferred,
+  formatPluginConfigIssue,
+  mapPluginConfigIssues,
+  normalizePluginConfigIssuePath,
+  readPluginPackageVersion,
+  readStatusIssueFields,
+  requireChannelOpenAllowFrom,
+  resolveAmbientNodeProxyAgent,
+  resolveLoggerBackedRuntime,
+  runStoppablePassiveMonitor,
+  safeParseJsonWithSchema,
+  safeParseWithSchema,
+};
+
+const discordThreadBindingRecords = [];
+const discordBuiltComponentMessages = new Map();
+
+function isMissingBundledDiscordSurfaceError(error) {
+  const message = String(error && error.message ? error.message : error);
+  return message.includes("Unable to open bundled plugin public surface discord/");
+}
+
+function tryLoadDiscordPublicSurfaceModule(artifactBasename) {
+  const host = globalThis.__openzuesDiscordRuntime || {};
+  if (artifactBasename === "api.js" && host.api && typeof host.api === "object") {
+    return host.api;
+  }
+  if (
+    artifactBasename === "runtime-api.js" &&
+    host.runtime &&
+    typeof host.runtime === "object"
+  ) {
+    return host.runtime;
+  }
+  if (typeof host.loadBundledPluginPublicSurfaceModuleSync === "function") {
+    return host.loadBundledPluginPublicSurfaceModuleSync({
+      dirName: "discord",
+      artifactBasename,
+    });
+  }
+  try {
+    return loadBundledPluginPublicSurfaceModuleSync({
+      dirName: "discord",
+      artifactBasename,
+    });
+  } catch (error) {
+    if (isMissingBundledDiscordSurfaceError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function callDiscordApiFacade(name, args, fallback) {
+  const surface = tryLoadDiscordPublicSurfaceModule("api.js");
+  if (surface && typeof surface[name] === "function") {
+    return surface[name](...args);
+  }
+  return fallback();
+}
+
+function callDiscordRuntimeFacade(name, args, fallback) {
+  const surface = tryLoadDiscordPublicSurfaceModule("runtime-api.js");
+  if (surface && typeof surface[name] === "function") {
+    return surface[name](...args);
+  }
+  return fallback();
+}
+
+function resolveDiscordConfigSection(cfg) {
+  return resolveChannelAccountSection(cfg || {}, "discord") || {};
+}
+
+function resolveDiscordAccountIds(cfg) {
+  return createAccountListHelpers("discord", {
+    normalizeAccountId,
+  }).listAccountIds(cfg || {});
+}
+
+function resolveDiscordDefaultAccountId(cfg) {
+  return createAccountListHelpers("discord", {
+    normalizeAccountId,
+  }).resolveDefaultAccountId(cfg || {});
+}
+
+function resolveDiscordTokenFromConfig(config) {
+  const token = asString(config && (config.token ?? config.botToken));
+  if (token) {
+    return { token, tokenSource: "config" };
+  }
+  const envToken = asString(process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN);
+  if (envToken) {
+    return { token: envToken, tokenSource: "env" };
+  }
+  return { token: "", tokenSource: "none" };
+}
+
+function resolveDiscordMergedAccountConfig(cfg, accountId) {
+  const section = resolveDiscordConfigSection(cfg);
+  const resolvedAccountId = normalizeAccountId(accountId || resolveDiscordDefaultAccountId(cfg));
+  const accounts = section.accounts && typeof section.accounts === "object" ? section.accounts : {};
+  return {
+    accountId: resolvedAccountId,
+    config: mergeAccountConfig({
+      channelConfig: section,
+      accountConfig: resolveNormalizedAccountEntry(accounts, resolvedAccountId, normalizeAccountId),
+      omitKeys: ["accounts"],
+      nestedObjectKeys: [
+        "agentComponents",
+        "autoPresence",
+        "directory",
+        "dm",
+        "execApprovals",
+        "heartbeat",
+        "thread",
+        "threadBindings",
+        "ui",
+        "voice",
+      ],
+    }),
+  };
+}
+
+function resolveDiscordAccountNative(params = {}) {
+  const cfg = params.cfg || {};
+  const { accountId, config } = resolveDiscordMergedAccountConfig(cfg, params.accountId);
+  const { token, tokenSource } = resolveDiscordTokenFromConfig(config);
+  return {
+    accountId,
+    enabled: config.enabled !== false,
+    name: asString(config.name),
+    token,
+    tokenSource,
+    config,
+  };
+}
+
+function inspectDiscordAccountNative(params = {}) {
+  const account = resolveDiscordAccountNative(params);
+  return {
+    accountId: account.accountId,
+    enabled: account.enabled,
+    name: account.name,
+    configured: account.tokenSource !== "none",
+    tokenSource: account.tokenSource,
+  };
+}
+
+function normalizeDiscordTargetBody(raw) {
+  let value = String(raw || "").trim();
+  if (!value) {
+    return "";
+  }
+  if (normalizeLowercaseStringOrEmpty(value).startsWith("discord:")) {
+    value = value.slice("discord:".length).trim();
+  }
+  return value;
+}
+
+function looksLikeDiscordTargetIdNative(raw) {
+  const value = normalizeDiscordTargetBody(raw);
+  return /^(channel|user|thread):\S+$/iu.test(value) || /^\d{15,25}$/u.test(value);
+}
+
+function normalizeDiscordMessagingTargetNative(raw) {
+  const value = normalizeDiscordTargetBody(raw);
+  if (!value) {
+    return undefined;
+  }
+  const prefixed = /^(channel|user|thread):(.+)$/iu.exec(value);
+  if (prefixed) {
+    const body = prefixed[2].trim();
+    return body ? `${prefixed[1].toLowerCase()}:${body}` : undefined;
+  }
+  if (/^\d{15,25}$/u.test(value)) {
+    return `channel:${value}`;
+  }
+  return undefined;
+}
+
+function normalizeDiscordOutboundTargetNative(to) {
+  const normalized = normalizeDiscordMessagingTargetNative(to);
+  if (!normalized) {
+    return { ok: false, error: new Error("Discord target is required") };
+  }
+  return { ok: true, to: normalized };
+}
+
+function resolveDiscordDirectory(params, key) {
+  const { config } = resolveDiscordMergedAccountConfig(
+    (params && params.cfg) || {},
+    params && params.accountId,
+  );
+  const directory =
+    config.directory && typeof config.directory === "object" ? config.directory : {};
+  const entries = directory[key];
+  return Array.isArray(entries) ? entries.slice() : [];
+}
+
+function buildDiscordComponentMessageNative(params = {}) {
+  const spec = params.spec && typeof params.spec === "object" ? params.spec : {};
+  const text = asString(spec.text) || asString(params.fallbackText) || "";
+  const result = {
+    components: Array.isArray(spec.blocks) ? spec.blocks.slice() : [],
+    entries: [{ text, fallbackText: asString(params.fallbackText) || "" }],
+    modals: spec.modal === undefined ? [] : [spec.modal],
+  };
+  if (text) {
+    result.text = text;
+  }
+  if (spec.container && typeof spec.container === "object") {
+    result.container = { ...spec.container };
+  }
+  return result;
+}
+
+async function editDiscordComponentMessageNative(to, messageId, spec = {}) {
+  return {
+    id: String(messageId || ""),
+    channel_id: String(to || ""),
+    edited: true,
+    text: asString(spec.text) || "",
+  };
+}
+
+function registerBuiltDiscordComponentMessageNative(params = {}) {
+  const messageId = asString(params.messageId);
+  if (messageId) {
+    discordBuiltComponentMessages.set(messageId, params.buildResult);
+  }
+}
+
+function collectDiscordAuditChannelIdsNative(params = {}) {
+  const { config } = resolveDiscordMergedAccountConfig(params.cfg || {}, params.accountId);
+  const channelIds = normalizeStringEntries(config.auditChannels || config.auditChannelIds || []);
+  return { channelIds, unresolvedChannels: [] };
+}
+
+async function autoBindSpawnedDiscordSubagentNative(params = {}) {
+  const accountId = normalizeAccountId(params.accountId || DEFAULT_ACCOUNT_ID);
+  const target = normalizeDiscordOutboundTargetNative(params.to || params.channelId);
+  const threadId = asString(params.threadId) || (target.ok ? target.to : "");
+  if (!params.childSessionKey || !threadId) {
+    return null;
+  }
+  const record = {
+    accountId,
+    threadId,
+    channelId: target.ok ? target.to : undefined,
+    targetKind: "subagent",
+    targetSessionKey: params.childSessionKey,
+    ...(params.agentId ? { agentId: params.agentId } : {}),
+    ...(params.label ? { label: params.label } : {}),
+    ...(params.boundBy ? { boundBy: params.boundBy } : {}),
+  };
+  discordThreadBindingRecords.push(record);
+  return record;
+}
+
+function listDiscordThreadBindingsBySessionKeyNative(params = {}) {
+  const accountId = params.accountId ? normalizeAccountId(params.accountId) : undefined;
+  return discordThreadBindingRecords
+    .filter((record) => record.targetSessionKey === params.targetSessionKey)
+    .filter((record) => !accountId || record.accountId === accountId)
+    .filter((record) => !params.targetKind || record.targetKind === params.targetKind)
+    .map((record) => ({ ...record }));
+}
+
+function unbindDiscordThreadBindingsBySessionKeyNative(params = {}) {
+  const matched = [];
+  const accountId = params.accountId ? normalizeAccountId(params.accountId) : undefined;
+  for (let index = discordThreadBindingRecords.length - 1; index >= 0; index -= 1) {
+    const record = discordThreadBindingRecords[index];
+    if (record.targetSessionKey !== params.targetSessionKey) {
+      continue;
+    }
+    if (accountId && record.accountId !== accountId) {
+      continue;
+    }
+    if (params.targetKind && record.targetKind !== params.targetKind) {
+      continue;
+    }
+    discordThreadBindingRecords.splice(index, 1);
+    matched.unshift({
+      ...record,
+      ...(params.reason ? { reason: params.reason } : {}),
+    });
+  }
+  return matched;
+}
+
+const discordRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  DiscordConfigSchema: providerChannelConfigSchema,
+  PAIRING_APPROVED_MESSAGE,
+  applyAccountNameToChannelSection,
+  buildChannelConfigSchema,
+  buildComputedAccountStatusSnapshot,
+  buildTokenChannelStatusSummary,
+  emptyPluginConfigSchema,
+  getChatChannelMeta,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
+  projectCredentialSnapshotFields,
+  resolveConfiguredFromCredentialStatuses,
+  discordOnboardingAdapter: {},
+  autoBindSpawnedDiscordSubagent: (params = {}) =>
+    callDiscordRuntimeFacade(
+      "autoBindSpawnedDiscordSubagent",
+      [{ ...params, cfg: params.cfg || getRuntimeConfigSnapshot() || getRuntimeConfig() || {} }],
+      () => autoBindSpawnedDiscordSubagentNative(params),
+    ),
+  buildDiscordComponentMessage: (params = {}) =>
+    callDiscordApiFacade("buildDiscordComponentMessage", [params], () =>
+      buildDiscordComponentMessageNative(params),
+    ),
+  collectDiscordAuditChannelIds: (params = {}) =>
+    callDiscordRuntimeFacade("collectDiscordAuditChannelIds", [params], () =>
+      collectDiscordAuditChannelIdsNative(params),
+    ),
+  collectDiscordStatusIssues: (accounts = []) =>
+    callDiscordApiFacade("collectDiscordStatusIssues", [accounts], () =>
+      collectStatusIssuesFromLastError("discord", accounts),
+    ),
+  editDiscordComponentMessage: (to, messageId, spec, opts = {}) =>
+    callDiscordRuntimeFacade(
+      "editDiscordComponentMessage",
+      [to, messageId, spec, opts],
+      () => editDiscordComponentMessageNative(to, messageId, spec, opts),
+    ),
+  inspectDiscordAccount: (params = {}) =>
+    callDiscordApiFacade("inspectDiscordAccount", [params], () =>
+      inspectDiscordAccountNative(params),
+    ),
+  listDiscordAccountIds: (cfg = {}) =>
+    callDiscordApiFacade("listDiscordAccountIds", [cfg], () => resolveDiscordAccountIds(cfg)),
+  listDiscordDirectoryGroupsFromConfig: (params = {}) =>
+    callDiscordApiFacade("listDiscordDirectoryGroupsFromConfig", [params], () =>
+      resolveDiscordDirectory(params, "groups"),
+    ),
+  listDiscordDirectoryPeersFromConfig: (params = {}) =>
+    callDiscordApiFacade("listDiscordDirectoryPeersFromConfig", [params], () =>
+      resolveDiscordDirectory(params, "peers"),
+    ),
+  listThreadBindingsBySessionKey: (params = {}) =>
+    callDiscordRuntimeFacade("listThreadBindingsBySessionKey", [params], () =>
+      listDiscordThreadBindingsBySessionKeyNative(params),
+    ),
+  looksLikeDiscordTargetId: (raw) =>
+    callDiscordApiFacade("looksLikeDiscordTargetId", [raw], () =>
+      looksLikeDiscordTargetIdNative(raw),
+    ),
+  normalizeDiscordMessagingTarget: (raw) =>
+    callDiscordApiFacade("normalizeDiscordMessagingTarget", [raw], () =>
+      normalizeDiscordMessagingTargetNative(raw),
+    ),
+  normalizeDiscordOutboundTarget: (to) =>
+    callDiscordApiFacade("normalizeDiscordOutboundTarget", [to], () =>
+      normalizeDiscordOutboundTargetNative(to),
+    ),
+  registerBuiltDiscordComponentMessage: (params = {}) =>
+    callDiscordRuntimeFacade("registerBuiltDiscordComponentMessage", [params], () =>
+      registerBuiltDiscordComponentMessageNative(params),
+    ),
+  resolveDefaultDiscordAccountId: (cfg = {}) =>
+    callDiscordApiFacade("resolveDefaultDiscordAccountId", [cfg], () =>
+      resolveDiscordDefaultAccountId(cfg),
+    ),
+  resolveDiscordAccount: (params = {}) =>
+    callDiscordApiFacade("resolveDiscordAccount", [params], () =>
+      resolveDiscordAccountNative(params),
+    ),
+  resolveDiscordGroupRequireMention: (params = {}) =>
+    callDiscordApiFacade("resolveDiscordGroupRequireMention", [params], () =>
+      resolveChannelGroupRequireMention({ ...params, channel: "discord" }),
+    ),
+  resolveDiscordGroupToolPolicy: (params = {}) =>
+    callDiscordApiFacade("resolveDiscordGroupToolPolicy", [params], () =>
+      resolveChannelGroupToolsPolicy({ ...params, channel: "discord" }),
+    ),
+  unbindThreadBindingsBySessionKey: (params = {}) =>
+    callDiscordRuntimeFacade("unbindThreadBindingsBySessionKey", [params], () =>
+      unbindDiscordThreadBindingsBySessionKeyNative(params),
+    ),
+};
+
+const compatRuntime = {
+  ...channelConfigSchemaRuntime,
+  ...channelPolicyRuntime,
+  ...replyHistoryRuntime,
+  ...directoryRuntime,
+  KeyedAsyncQueue,
+  applyAuthProfileConfig,
+  buildApiKeyCredential,
+  buildMemorySystemPromptAddition,
+  collectBlueBubblesStatusIssues,
+  collectOpenGroupPolicyConfiguredRouteWarnings,
+  createAccountStatusSink,
+  createChannelReplyPipeline,
+  createHybridChannelConfigAdapter,
+  createHybridChannelConfigBase,
+  createPluginRuntimeStore,
+  createReplyPrefixContext,
+  createReplyPrefixOptions,
+  createScopedAccountConfigAccessors,
+  createScopedChannelConfigAdapter,
+  createScopedChannelConfigBase,
+  createScopedDmSecurityResolver,
+  createTopLevelChannelConfigAdapter,
+  createTopLevelChannelConfigBase,
+  createTypingCallbacks,
+  delegateCompactionToRuntime,
+  emptyPluginConfigSchema,
+  formatAllowFromLowercase,
+  formatNormalizedAllowFromEntries,
+  mapAllowFromEntries,
+  mapAllowlistResolutionInputs,
+  normalizeAccountId,
+  onDiagnosticEvent,
+  optionalStringEnum,
+  registerContextEngine,
+  resolveBlueBubblesGroupRequireMention,
+  resolveBlueBubblesGroupToolPolicy,
+  resolveChannelSourceReplyDeliveryMode,
+  resolveControlCommandGate,
+  resolvePreferredOpenClawTmpDir,
+  stringEnum,
+  upsertApiKeyProfile,
+  writeOAuthCredentials: providerAuthFacadeRuntime.writeOAuthCredentials,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -83513,6 +84273,24 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return talkConfigRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/compat" ||
+    request === "@openclaw/plugin-sdk/compat"
+  ) {
+    return compatRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/discord" ||
+    request === "@openclaw/plugin-sdk/discord"
+  ) {
+    return discordRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/extension-shared" ||
+    request === "@openclaw/plugin-sdk/extension-shared"
+  ) {
+    return extensionSharedRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/channel-plugin-common" ||
     request === "@openclaw/plugin-sdk/channel-plugin-common"
   ) {
@@ -83690,6 +84468,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-runtime-context"
   ) {
     return channelRuntimeContextRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-runtime" ||
+    request === "@openclaw/plugin-sdk/channel-runtime"
+  ) {
+    return channelRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-activity-runtime" ||
