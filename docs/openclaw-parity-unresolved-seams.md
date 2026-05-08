@@ -10225,3 +10225,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   repo-wide parity remains estimated at ~99.9%, with the evidence band
   tightened to ~80-99.9999999999999999996%. Continue package update
   externalized `includeInCore` guard and private QA omission proof next.
+- Current queue-head adjustment: native npm package updates now have focused
+  proof that staged npm install prefixes are removed when the install command
+  raises before verification or swap, matching OpenClaw's
+  `cleanupStagedNpmInstall` `finally` behavior. Test checkpointed in
+  `beadafaa`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999997%. Continue package update
+  externalized `includeInCore` guard and private QA omission proof next.

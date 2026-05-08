@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999996% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999997% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1825,6 +1825,10 @@ may lag behind this tracker.
 - [x] Package update omitted-subtree safety ordering, preserving OpenClaw's
   externalized/dependency subtree omission before unsafe symlink checks.
   - Status: checkpointed in `2830b5ef`
+
+- [x] Package update staged crash cleanup proof, preserving OpenClaw's staged
+  npm prefix cleanup when the install command raises before verification/swap.
+  - Status: checkpointed in `beadafaa`
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
