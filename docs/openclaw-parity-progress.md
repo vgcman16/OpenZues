@@ -19977,6 +19977,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
   `mypy src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `49150d76`.
+- Imported plugin SDK `resolution-notes` is now an exact scoped/unscoped
+  subpath shim: native plugin runtimes can require
+  `openclaw/plugin-sdk/resolution-notes` or
+  `@openclaw/plugin-sdk/resolution-notes` and receive
+  `formatResolvedUnresolvedNote` instead of the generic passthrough fallback.
+  This closes `OZ-PLUGIN-00300`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999985%.
+- Verified the resolution-notes helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_resolution_notes_helper -q`
+  (fallback behavior returned the raw input object before implementation, then
+  `1 passed`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "resolution_notes or tool_send or web_media"`
+  (`3 passed, 1128 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `9c56ff39`.
 
 ## References
 

@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999985% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -79,7 +79,9 @@ check-interval gating is checkpointed in `392177e5`, and `OZ-PKG-001CF`
 startup availability hint state is checkpointed in `087924f8`. `OZ-PKG-001CG`
 source-checkout availability clearing is checkpointed in `e66c5082`, and
 `OZ-PKG-001CH` recurring runner startup checks are checkpointed in `49150d76`;
-continue broader package/runtime parity outside `update-startup.ts`.
+`OZ-PLUGIN-00300` resolution-notes subpath shim is checkpointed in
+`9c56ff39`; continue remaining exact plugin SDK subpaths or broader
+package/provider runtime parity.
 
 ## Active Slice Detail
 
@@ -942,6 +944,28 @@ continue broader package/runtime parity outside `update-startup.ts`.
     adjacent setup proof (`4 passed, 1117 deselected`), adjacent
     imported-plugin proof (`309 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00300` Imported resolution-notes subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/resolution-notes.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `resolution-notes` and receive `formatResolvedUnresolvedNote`,
+    returning `undefined` for empty input, a resolved line for resolved
+    entries, an unresolved passthrough line for unresolved entries, and both
+    lines separated by newline when both sets are present.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `9c56ff39`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_resolution_notes_helper -q`
+    (fallback behavior returned raw input objects before implementation, then
+    `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "resolution_notes or tool_send or web_media"`
+    (`3 passed, 1128 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
 
 - [x] `OZ-PLUGIN-00206` Imported messaging-targets helper shim
   - Source: `openclaw-main/src/plugin-sdk/messaging-targets.ts` and

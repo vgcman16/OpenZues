@@ -531,6 +531,8 @@ config schema contracts, and bundled Discord public-surface delegation for
 `src/infra/net/proxy-env.ts`, `src/secrets/ref-contract.ts`,
 `src/plugin-sdk/channel-lifecycle.core.ts`, and
 `src/plugin-sdk/runtime-logger.ts` is checkpointed in `b56d15d7`.
+`resolution-notes` from `src/plugin-sdk/resolution-notes.ts` is checkpointed
+in `9c56ff39`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map

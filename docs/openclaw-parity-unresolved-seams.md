@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.999999999999999999999998%.
+  band of ~80-99.9999999999999999999999985%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10404,3 +10404,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   checkpointed in `49150d76`; repo-wide parity remains estimated at ~99.9%,
   with the evidence band tightened to ~80-99.999999999999999999999998%.
   Continue broader package/runtime parity outside `update-startup.ts`.
+- Current queue-head adjustment: imported plugin SDK `resolution-notes` is now
+  a real scoped/unscoped runtime shim exporting `formatResolvedUnresolvedNote`;
+  fallback passthrough no longer returns raw input objects for this subpath.
+  Source/test checkpointed in `9c56ff39`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999985%. Continue remaining exact plugin SDK
+  subpaths such as `session-transcript-hit`, `pairing-access`, or provider
+  facade breadth.
