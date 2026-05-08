@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999995%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999996%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19134,6 +19134,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
   Source/test checkpointed in `954d74ea`.
+- Root `openzues update --json` now runs OpenClaw-shaped post-core plugin
+  update sync after successful git/package updates, attaches the result under
+  `postUpdate.plugins`, and fails the overall update with
+  `reason="post-update-plugins"` when a plugin update fails. This closes
+  `OZ-PKG-001AK`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999996%.
+- Verified post-update plugin sync with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_json_runs_post_update_plugin_sync_for_package_update -q`
+  (`1 failed` before implementation, then `1 passed`), fail-closed proof
+  `python -m pytest tests\test_cli.py::test_update_json_fails_when_post_update_plugin_sync_fails -q`
+  (`1 passed`), adjacent update CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_package_update_service or update_json_dispatches_runtime_update_service or post_update_plugin_sync or update_dry_run or update_status"`
+  (`21 passed, 532 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `aa71bcbc`.
 
 ## References
 
