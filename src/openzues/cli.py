@@ -8206,8 +8206,67 @@ def _doctor_read_package_dist_inventory(
     return files, None
 
 
-def _doctor_is_packaged_dist_file(relative_path: str) -> bool:
+def _doctor_is_externalized_bundled_extension_dist_path(
+    relative_path: str,
+    externalized_extension_ids: set[str],
+) -> bool:
+    parts = relative_path.split("/")
+    return (
+        len(parts) >= 3
+        and parts[0] == "dist"
+        and parts[1] == "extensions"
+        and parts[2] in externalized_extension_ids
+    )
+
+
+def _doctor_is_publishable_externalized_manifest(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    openclaw = value.get("openclaw")
+    if not isinstance(openclaw, Mapping):
+        return False
+    bundle = openclaw.get("bundle")
+    if isinstance(bundle, Mapping) and bundle.get("includeInCore") is True:
+        return False
+    release = openclaw.get("release")
+    if not isinstance(release, Mapping):
+        return False
+    return release.get("publishToNpm") is True or release.get("publishToClawHub") is True
+
+
+def _doctor_collect_externalized_bundled_extension_ids(root: Path) -> set[str]:
+    extensions_path = root / "extensions"
+    if not _doctor_path_exists(extensions_path):
+        return set()
+    extension_ids: set[str] = set()
+    try:
+        extension_entries = list(extensions_path.iterdir())
+    except OSError:
+        return set()
+    for extension_entry in extension_entries:
+        try:
+            if not extension_entry.is_dir() or extension_entry.is_symlink():
+                continue
+            parsed = json.loads(
+                (extension_entry / "package.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            continue
+        if _doctor_is_publishable_externalized_manifest(parsed):
+            extension_ids.add(extension_entry.name)
+    return extension_ids
+
+
+def _doctor_is_packaged_dist_file(
+    relative_path: str,
+    externalized_extension_ids: set[str],
+) -> bool:
     if relative_path == _PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix():
+        return False
+    if _doctor_is_externalized_bundled_extension_dist_path(
+        relative_path,
+        externalized_extension_ids,
+    ):
         return False
     if relative_path in _PACKAGE_DIST_LOCAL_BUILD_METADATA_PATHS:
         return False
@@ -8231,6 +8290,7 @@ def _doctor_collect_package_dist_files(root: Path) -> list[str]:
     dist_path = root / "dist"
     if not _doctor_path_exists(dist_path):
         return []
+    externalized_extension_ids = _doctor_collect_externalized_bundled_extension_ids(root)
     files: list[str] = []
     for path in dist_path.rglob("*"):
         try:
@@ -8239,7 +8299,7 @@ def _doctor_collect_package_dist_files(root: Path) -> list[str]:
         except OSError:
             continue
         relative_path = _doctor_normalize_package_dist_path(path.relative_to(root).as_posix())
-        if _doctor_is_packaged_dist_file(relative_path):
+        if _doctor_is_packaged_dist_file(relative_path, externalized_extension_ids):
             files.append(relative_path)
     return sorted(set(files))
 
