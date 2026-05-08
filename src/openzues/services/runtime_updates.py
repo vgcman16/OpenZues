@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
@@ -27,6 +29,20 @@ RuntimeUpdateCommandRunner = Callable[
     [list[str], Path, int | None],
     Awaitable[dict[str, object]],
 ]
+
+
+@dataclass(slots=True)
+class _NpmGlobalPrefixLayout:
+    prefix: Path
+    global_root: Path
+    bin_dir: Path
+
+
+@dataclass(slots=True)
+class _StagedNpmInstall:
+    prefix: Path
+    layout: _NpmGlobalPrefixLayout
+    package_root: Path
 
 
 def _utcnow_iso() -> str:
@@ -112,7 +128,288 @@ def _read_package_version(package_root: Path) -> str | None:
     return version.strip() if isinstance(version, str) and version.strip() else None
 
 
-def _global_package_update_args(package_manager: str, package_spec: str) -> list[str] | None:
+def _read_package_name(package_root: Path) -> str:
+    package_json = package_root / "package.json"
+    try:
+        parsed = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return package_root.name
+    if not isinstance(parsed, dict):
+        return package_root.name
+    name = parsed.get("name")
+    return name.strip() if isinstance(name, str) and name.strip() else package_root.name
+
+
+def _package_name_parts(package_name: str) -> tuple[str, ...]:
+    return tuple(part for part in package_name.strip().split("/") if part)
+
+
+def _package_root_for_name(global_root: Path, package_name: str) -> Path:
+    parts = _package_name_parts(package_name)
+    if not parts:
+        return global_root / "openzues"
+    return global_root.joinpath(*parts)
+
+
+def _global_root_from_package_root(package_root: Path, package_name: str) -> Path:
+    root = package_root
+    for _part in _package_name_parts(package_name) or (package_root.name,):
+        root = root.parent
+    return root
+
+
+def _npm_prefix_layout_from_global_root(global_root: Path) -> _NpmGlobalPrefixLayout | None:
+    resolved = global_root.resolve()
+    if resolved.name != "node_modules":
+        return None
+    parent = resolved.parent
+    if parent.name == "lib":
+        prefix = parent.parent
+        return _NpmGlobalPrefixLayout(
+            prefix=prefix,
+            global_root=resolved,
+            bin_dir=prefix / "bin",
+        )
+    if os.name == "nt":
+        return _NpmGlobalPrefixLayout(
+            prefix=parent,
+            global_root=resolved,
+            bin_dir=parent,
+        )
+    return None
+
+
+def _npm_prefix_layout_from_prefix(prefix: Path) -> _NpmGlobalPrefixLayout:
+    resolved = prefix.resolve()
+    if os.name == "nt":
+        return _NpmGlobalPrefixLayout(
+            prefix=resolved,
+            global_root=resolved / "node_modules",
+            bin_dir=resolved,
+        )
+    return _NpmGlobalPrefixLayout(
+        prefix=resolved,
+        global_root=resolved / "lib" / "node_modules",
+        bin_dir=resolved / "bin",
+    )
+
+
+def _create_staged_npm_install(
+    package_root: Path,
+    package_name: str,
+) -> tuple[_StagedNpmInstall | None, dict[str, object] | None]:
+    started_at = time.monotonic()
+    global_root = _global_root_from_package_root(package_root, package_name)
+    target_layout = _npm_prefix_layout_from_global_root(global_root)
+    if target_layout is None:
+        return None, {
+            "name": "global install stage",
+            "command": "prepare staged npm install",
+            "cwd": str(global_root),
+            "durationMs": int((time.monotonic() - started_at) * 1000),
+            "log": {
+                "stdoutTail": None,
+                "stderrTail": "cannot resolve npm global prefix layout",
+                "exitCode": 1,
+            },
+        }
+    try:
+        target_layout.global_root.mkdir(parents=True, exist_ok=True)
+        stage_prefix = Path(
+            tempfile.mkdtemp(
+                prefix=".openzues-update-stage-",
+                dir=str(target_layout.global_root),
+            ),
+        )
+    except OSError as exc:
+        return None, {
+            "name": "global install stage",
+            "command": "prepare staged npm install",
+            "cwd": str(target_layout.global_root),
+            "durationMs": int((time.monotonic() - started_at) * 1000),
+            "log": {
+                "stdoutTail": None,
+                "stderrTail": str(exc),
+                "exitCode": 1,
+            },
+        }
+    stage_layout = _npm_prefix_layout_from_prefix(stage_prefix)
+    return _StagedNpmInstall(
+        prefix=stage_prefix,
+        layout=stage_layout,
+        package_root=_package_root_for_name(stage_layout.global_root, package_name),
+    ), None
+
+
+def _cleanup_staged_npm_install(stage: _StagedNpmInstall | None) -> None:
+    if stage is None:
+        return
+    shutil.rmtree(stage.prefix, ignore_errors=True)
+
+
+def _path_exists(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
+def _copy_path_entry(source: Path, destination: Path) -> None:
+    if destination.exists() or destination.is_symlink():
+        if destination.is_dir() and not destination.is_symlink():
+            shutil.rmtree(destination)
+        else:
+            destination.unlink()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_symlink():
+        destination.symlink_to(source.readlink())
+        return
+    if source.is_dir():
+        shutil.copytree(source, destination, symlinks=True)
+        return
+    shutil.copy2(source, destination)
+
+
+def _restore_npm_bin_shim_backup(
+    *,
+    backup_dir: Path,
+    target_bin_dir: Path,
+    entries: list[tuple[str, bool]],
+) -> None:
+    target_bin_dir.mkdir(parents=True, exist_ok=True)
+    for entry, had_existing in entries:
+        destination = target_bin_dir / entry
+        if destination.exists() or destination.is_symlink():
+            if destination.is_dir() and not destination.is_symlink():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink()
+        if had_existing:
+            _copy_path_entry(backup_dir / entry, destination)
+
+
+def _replace_npm_bin_shims(
+    *,
+    stage_layout: _NpmGlobalPrefixLayout,
+    target_layout: _NpmGlobalPrefixLayout,
+    package_name: str,
+) -> None:
+    try:
+        entries = list(stage_layout.bin_dir.iterdir())
+    except OSError:
+        return
+    package_last_name = _package_name_parts(package_name)[-1:] or (package_name,)
+    names = {package_name, *package_last_name, "openzues"}
+    shim_entries = [
+        entry.name
+        for entry in entries
+        if entry.name in names or entry.stem in names
+    ]
+    if not shim_entries:
+        return
+    backup_dir = Path(
+        tempfile.mkdtemp(
+            prefix=".openzues-shim-backup-",
+            dir=str(target_layout.global_root),
+        ),
+    )
+    backups: list[tuple[str, bool]] = []
+    try:
+        target_layout.bin_dir.mkdir(parents=True, exist_ok=True)
+        for entry in shim_entries:
+            destination = target_layout.bin_dir / entry
+            had_existing = _path_exists(destination)
+            backups.append((entry, had_existing))
+            if had_existing:
+                _copy_path_entry(destination, backup_dir / entry)
+        for entry in shim_entries:
+            _copy_path_entry(stage_layout.bin_dir / entry, target_layout.bin_dir / entry)
+    except OSError:
+        _restore_npm_bin_shim_backup(
+            backup_dir=backup_dir,
+            target_bin_dir=target_layout.bin_dir,
+            entries=backups,
+        )
+        raise
+    finally:
+        shutil.rmtree(backup_dir, ignore_errors=True)
+
+
+def _swap_staged_npm_install(
+    *,
+    stage: _StagedNpmInstall,
+    package_root: Path,
+    package_name: str,
+) -> dict[str, object]:
+    started_at = time.monotonic()
+    global_root = _global_root_from_package_root(package_root, package_name)
+    target_layout = _npm_prefix_layout_from_global_root(global_root)
+    if target_layout is None:
+        return {
+            "name": "global install swap",
+            "command": "swap staged npm install",
+            "cwd": str(stage.prefix),
+            "durationMs": int((time.monotonic() - started_at) * 1000),
+            "log": {
+                "stdoutTail": None,
+                "stderrTail": "cannot resolve npm global prefix layout",
+                "exitCode": 1,
+            },
+        }
+    backup_root = target_layout.global_root / f".openzues-{os.getpid()}-{int(time.time() * 1000)}"
+    moved_existing = False
+    moved_staged = False
+    command = f"swap {stage.package_root} -> {package_root}"
+    try:
+        package_root.parent.mkdir(parents=True, exist_ok=True)
+        if _path_exists(package_root):
+            package_root.rename(backup_root)
+            moved_existing = True
+        stage.package_root.rename(package_root)
+        moved_staged = True
+        _replace_npm_bin_shims(
+            stage_layout=stage.layout,
+            target_layout=target_layout,
+            package_name=package_name,
+        )
+        if moved_existing:
+            shutil.rmtree(backup_root, ignore_errors=True)
+        stdout_tail = f"replaced {package_name}" if moved_existing else f"installed {package_name}"
+        return {
+            "name": "global install swap",
+            "command": command,
+            "cwd": str(target_layout.global_root),
+            "durationMs": int((time.monotonic() - started_at) * 1000),
+            "log": {
+                "stdoutTail": stdout_tail,
+                "stderrTail": None,
+                "exitCode": 0,
+            },
+        }
+    except OSError as exc:
+        if moved_staged:
+            shutil.rmtree(package_root, ignore_errors=True)
+        if moved_existing:
+            try:
+                backup_root.rename(package_root)
+            except OSError:
+                pass
+        return {
+            "name": "global install swap",
+            "command": command,
+            "cwd": str(target_layout.global_root),
+            "durationMs": int((time.monotonic() - started_at) * 1000),
+            "log": {
+                "stdoutTail": None,
+                "stderrTail": str(exc),
+                "exitCode": 1,
+            },
+        }
+
+
+def _global_package_update_args(
+    package_manager: str,
+    package_spec: str,
+    *,
+    install_prefix: Path | None = None,
+) -> list[str] | None:
     manager = package_manager.strip().lower()
     spec = package_spec.strip()
     if not spec:
@@ -122,19 +419,23 @@ def _global_package_update_args(package_manager: str, package_spec: str) -> list
     if manager == "bun":
         return ["bun", "add", "-g", spec]
     if manager == "npm":
-        return ["npm", "i", "-g", spec, *_NPM_GLOBAL_INSTALL_QUIET_FLAGS]
+        prefix_args = ["--prefix", str(install_prefix)] if install_prefix is not None else []
+        return ["npm", "i", "-g", *prefix_args, spec, *_NPM_GLOBAL_INSTALL_QUIET_FLAGS]
     return None
 
 
 def _global_package_update_fallback_args(
     package_manager: str,
     package_spec: str,
+    *,
+    install_prefix: Path | None = None,
 ) -> list[str] | None:
     manager = package_manager.strip().lower()
     spec = package_spec.strip()
     if manager != "npm" or not spec:
         return None
-    return ["npm", "i", "-g", spec, *_NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS]
+    prefix_args = ["--prefix", str(install_prefix)] if install_prefix is not None else []
+    return ["npm", "i", "-g", *prefix_args, spec, *_NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS]
 
 
 def _expected_package_version_from_spec(package_spec: str) -> str | None:
@@ -350,8 +651,33 @@ class RuntimeUpdateService:
         started_at = time.monotonic()
         steps: list[dict[str, object]] = []
         before = {"sha": None, "version": _read_package_version(package_root)}
-        argv = _global_package_update_args(package_manager, package_spec)
+        package_name = _read_package_name(package_root)
+        manager = package_manager.strip().lower()
+        staged_install: _StagedNpmInstall | None = None
+        if manager == "npm":
+            staged_install, failed_stage_step = _create_staged_npm_install(
+                package_root,
+                package_name,
+            )
+            if failed_stage_step is not None:
+                steps.append(failed_stage_step)
+                return self._build_package_update_result(
+                    status="error",
+                    reason="global-install-stage-failed",
+                    mode=package_manager,
+                    root=package_root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+        argv = _global_package_update_args(
+            package_manager,
+            package_spec,
+            install_prefix=staged_install.prefix if staged_install is not None else None,
+        )
         if argv is None:
+            _cleanup_staged_npm_install(staged_install)
             return self._build_package_update_result(
                 status="error",
                 reason="package-manager-unavailable",
@@ -363,24 +689,51 @@ class RuntimeUpdateService:
                 started_at=started_at,
             )
 
-        step = await self._run_update_command_step_at(
-            "global update",
-            argv,
-            cwd=package_root,
-            timeout_ms=timeout_ms,
-        )
-        steps.append(step)
-        if _update_step_exit_code(step) != 0:
-            fallback_argv = _global_package_update_fallback_args(package_manager, package_spec)
-            if fallback_argv is not None:
-                fallback_step = await self._run_update_command_step_at(
-                    "global update (omit optional)",
-                    fallback_argv,
-                    cwd=package_root,
-                    timeout_ms=timeout_ms,
+        try:
+            step = await self._run_update_command_step_at(
+                "global update",
+                argv,
+                cwd=package_root,
+                timeout_ms=timeout_ms,
+            )
+            steps.append(step)
+            if _update_step_exit_code(step) != 0:
+                _cleanup_staged_npm_install(staged_install)
+                staged_install = None
+                fallback_prefix: Path | None = None
+                if manager == "npm":
+                    staged_install, failed_stage_step = _create_staged_npm_install(
+                        package_root,
+                        package_name,
+                    )
+                    if failed_stage_step is not None:
+                        steps.append(failed_stage_step)
+                        return self._build_package_update_result(
+                            status="error",
+                            reason="global-install-stage-failed",
+                            mode=package_manager,
+                            root=package_root,
+                            before=before,
+                            after=None,
+                            steps=steps,
+                            started_at=started_at,
+                        )
+                    assert staged_install is not None
+                    fallback_prefix = staged_install.prefix
+                fallback_argv = _global_package_update_fallback_args(
+                    package_manager,
+                    package_spec,
+                    install_prefix=fallback_prefix,
                 )
-                steps.append(fallback_step)
-                step = fallback_step
+                if fallback_argv is not None:
+                    fallback_step = await self._run_update_command_step_at(
+                        "global update (omit optional)",
+                        fallback_argv,
+                        cwd=package_root,
+                        timeout_ms=timeout_ms,
+                    )
+                    steps.append(fallback_step)
+                    step = fallback_step
             if _update_step_exit_code(step) != 0:
                 return self._build_package_update_result(
                     status="error",
@@ -393,26 +746,61 @@ class RuntimeUpdateService:
                     started_at=started_at,
                 )
 
-        after_version = _read_package_version(package_root)
-        after = {"sha": None, "version": after_version}
-        expected_version = _expected_package_version_from_spec(package_spec)
-        if expected_version is not None and after_version != expected_version:
-            found = after_version or "unknown"
-            verify_step = {
-                "name": "global install verify",
-                "command": f"verify {package_root}",
-                "cwd": str(package_root),
-                "durationMs": 0,
-                "log": {
-                    "stdoutTail": None,
-                    "stderrTail": f"expected installed version {expected_version}, found {found}",
-                    "exitCode": 1,
-                },
-            }
-            steps.append(verify_step)
+            verification_root = (
+                staged_install.package_root if staged_install is not None else package_root
+            )
+            after_version = _read_package_version(verification_root)
+            after = {"sha": None, "version": after_version}
+            expected_version = _expected_package_version_from_spec(package_spec)
+            if expected_version is not None and after_version != expected_version:
+                found = after_version or "unknown"
+                verify_step = {
+                    "name": "global install verify",
+                    "command": f"verify {verification_root}",
+                    "cwd": str(verification_root),
+                    "durationMs": 0,
+                    "log": {
+                        "stdoutTail": None,
+                        "stderrTail": (
+                            f"expected installed version {expected_version}, found {found}"
+                        ),
+                        "exitCode": 1,
+                    },
+                }
+                steps.append(verify_step)
+                live_after = {"sha": None, "version": _read_package_version(package_root)}
+                return self._build_package_update_result(
+                    status="error",
+                    reason="global-install-verify-failed",
+                    mode=package_manager,
+                    root=package_root,
+                    before=before,
+                    after=live_after,
+                    steps=steps,
+                    started_at=started_at,
+                )
+            if staged_install is not None:
+                swap_step = _swap_staged_npm_install(
+                    stage=staged_install,
+                    package_root=package_root,
+                    package_name=package_name,
+                )
+                steps.append(swap_step)
+                if _update_step_exit_code(swap_step) != 0:
+                    live_after = {"sha": None, "version": _read_package_version(package_root)}
+                    return self._build_package_update_result(
+                        status="error",
+                        reason="global-install-swap-failed",
+                        mode=package_manager,
+                        root=package_root,
+                        before=before,
+                        after=live_after,
+                        steps=steps,
+                        started_at=started_at,
+                    )
             return self._build_package_update_result(
-                status="error",
-                reason="global-install-verify-failed",
+                status="ok",
+                reason=None,
                 mode=package_manager,
                 root=package_root,
                 before=before,
@@ -420,16 +808,8 @@ class RuntimeUpdateService:
                 steps=steps,
                 started_at=started_at,
             )
-        return self._build_package_update_result(
-            status="ok",
-            reason=None,
-            mode=package_manager,
-            root=package_root,
-            before=before,
-            after=after,
-            steps=steps,
-            started_at=started_at,
-        )
+        finally:
+            _cleanup_staged_npm_install(staged_install)
 
     async def _run_update_command_step(
         self,

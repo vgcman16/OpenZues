@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -49,6 +50,27 @@ async def _create_live_mission(database: Database) -> int:
         phase="executing",
     )
     return mission_id
+
+
+def _write_package_root(package_root: Path, version: str, *, name: str = "openzues") -> None:
+    (package_root / "dist").mkdir(parents=True, exist_ok=True)
+    (package_root / "package.json").write_text(
+        f'{{"name":"{name}","version":"{version}"}}',
+        encoding="utf-8",
+    )
+    (package_root / "dist" / "index.js").write_text("export {};\n", encoding="utf-8")
+
+
+def _staged_global_root(stage_prefix: Path) -> Path:
+    if os.name == "nt":
+        return stage_prefix / "node_modules"
+    return stage_prefix / "lib" / "node_modules"
+
+
+def _staged_bin_dir(stage_prefix: Path) -> Path:
+    if os.name == "nt":
+        return stage_prefix
+    return stage_prefix / "bin"
 
 
 @pytest.mark.asyncio
@@ -232,9 +254,10 @@ async def test_runtime_update_run_package_update_retries_npm_without_optional_de
 ) -> None:
     database = Database(tmp_path / "openzues.db")
     await database.initialize()
-    package_root = tmp_path / "package-root"
-    package_root.mkdir()
-    (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    prefix = tmp_path / "prefix"
+    global_root = prefix / "lib" / "node_modules"
+    package_root = global_root / "openzues"
+    _write_package_root(package_root, "2026.5.1")
     command_calls: list[tuple[list[str], Path, int | None]] = []
 
     async def fake_command_runner(
@@ -245,6 +268,9 @@ async def test_runtime_update_run_package_update_retries_npm_without_optional_de
         command_calls.append((argv, cwd, timeout_ms))
         if len(command_calls) == 1:
             return {"stdout": "", "stderr": "optional native build failed", "exitCode": 1}
+        prefix_index = argv.index("--prefix")
+        stage_prefix = Path(argv[prefix_index + 1])
+        _write_package_root(_staged_global_root(stage_prefix) / "openzues", "2026.5.1")
         return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
 
     async def restart_callback() -> None:
@@ -271,28 +297,167 @@ async def test_runtime_update_run_package_update_retries_npm_without_optional_de
     assert [step["name"] for step in result["steps"]] == [
         "global update",
         "global update (omit optional)",
+        "global install swap",
     ]
-    assert command_calls == [
-        (
-            ["npm", "i", "-g", "openzues@latest", "--no-fund", "--no-audit", "--loglevel=error"],
-            package_root,
-            1000,
-        ),
-        (
-            [
-                "npm",
-                "i",
-                "-g",
-                "openzues@latest",
-                "--omit=optional",
-                "--no-fund",
-                "--no-audit",
-                "--loglevel=error",
-            ],
-            package_root,
-            1000,
-        ),
+    assert len(command_calls) == 2
+    first_argv, first_cwd, first_timeout = command_calls[0]
+    second_argv, second_cwd, second_timeout = command_calls[1]
+    assert first_argv[:3] == ["npm", "i", "-g"]
+    assert second_argv[:3] == ["npm", "i", "-g"]
+    assert "--prefix" in first_argv
+    assert "--prefix" in second_argv
+    assert "openzues@latest" in first_argv
+    assert "openzues@latest" in second_argv
+    assert "--omit=optional" in second_argv
+    assert first_cwd == package_root
+    assert second_cwd == package_root
+    assert first_timeout == 1000
+    assert second_timeout == 1000
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_package_update_stages_npm_install_before_swap(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    prefix = tmp_path / "prefix"
+    global_root = prefix / "lib" / "node_modules"
+    package_root = global_root / "openzues"
+    _write_package_root(package_root, "2026.5.1")
+    stale_runtime = package_root / "dist" / "extensions" / "qa-channel" / "runtime-api.js"
+    stale_runtime.parent.mkdir(parents=True)
+    stale_runtime.write_text("export const stale = true;\n", encoding="utf-8")
+    target_shim = prefix / "bin" / "openzues"
+    target_shim.parent.mkdir(parents=True)
+    target_shim.write_text("old shim\n", encoding="utf-8")
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+    stage_prefixes: list[Path] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        command_calls.append((argv, cwd, timeout_ms))
+        prefix_index = argv.index("--prefix")
+        stage_prefix = Path(argv[prefix_index + 1])
+        stage_prefixes.append(stage_prefix)
+        assert stage_prefix.parent == global_root
+        _write_package_root(_staged_global_root(stage_prefix) / "openzues", "2026.5.2")
+        staged_shim = _staged_bin_dir(stage_prefix) / "openzues"
+        staged_shim.parent.mkdir(parents=True, exist_ok=True)
+        staged_shim.write_text("new shim\n", encoding="utf-8")
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="npm",
+        package_spec="openzues@2026.5.2",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "ok"
+    assert result["mode"] == "npm"
+    assert result["root"] == str(package_root)
+    assert result["before"] == {"sha": None, "version": "2026.5.1"}
+    assert result["after"] == {"sha": None, "version": "2026.5.2"}
+    assert [step["name"] for step in result["steps"]] == [
+        "global update",
+        "global install swap",
     ]
+    assert len(command_calls) == 1
+    argv, cwd, timeout_ms = command_calls[0]
+    assert argv[:3] == ["npm", "i", "-g"]
+    assert "--prefix" in argv
+    assert "openzues@2026.5.2" in argv
+    assert cwd == package_root
+    assert timeout_ms == 1000
+    assert (package_root / "package.json").read_text(encoding="utf-8") == (
+        '{"name":"openzues","version":"2026.5.2"}'
+    )
+    assert not stale_runtime.exists()
+    assert target_shim.read_text(encoding="utf-8") == "new shim\n"
+    assert stage_prefixes
+    assert all(not stage_prefix.exists() for stage_prefix in stage_prefixes)
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_package_update_keeps_live_root_when_staged_verify_fails(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    prefix = tmp_path / "prefix"
+    global_root = prefix / "lib" / "node_modules"
+    package_root = global_root / "openzues"
+    _write_package_root(package_root, "2026.5.1")
+    live_marker = package_root / "dist" / "live-only.js"
+    live_marker.write_text("export const live = true;\n", encoding="utf-8")
+    stage_prefixes: list[Path] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        prefix_index = argv.index("--prefix")
+        stage_prefix = Path(argv[prefix_index + 1])
+        stage_prefixes.append(stage_prefix)
+        _write_package_root(_staged_global_root(stage_prefix) / "openzues", "2026.5.3")
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="npm",
+        package_spec="openzues@2026.5.2",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "error"
+    assert result["reason"] == "global-install-verify-failed"
+    assert result["failedStep"]["name"] == "global install verify"
+    assert result["after"] == {"sha": None, "version": "2026.5.1"}
+    assert [step["name"] for step in result["steps"]] == [
+        "global update",
+        "global install verify",
+    ]
+    assert result["steps"][1]["log"]["stderrTail"] == (
+        "expected installed version 2026.5.2, found 2026.5.3"
+    )
+    assert (package_root / "package.json").read_text(encoding="utf-8") == (
+        '{"name":"openzues","version":"2026.5.1"}'
+    )
+    assert live_marker.exists()
+    assert stage_prefixes
+    assert all(not stage_prefix.exists() for stage_prefix in stage_prefixes)
 
 
 @pytest.mark.asyncio
