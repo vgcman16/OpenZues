@@ -19606,6 +19606,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Test checkpointed in `d58b0879`.
+- Native package update verification now treats malformed source bundled
+  extension `package.json` manifests as hard verify errors instead of silently
+  treating the extension as non-externalized, matching OpenClaw's
+  non-`ENOENT` manifest failure posture. This closes `OZ-PKG-001BN`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.99999999999999999997%.
+- Verified malformed externalized extension manifest rejection with focused
+  red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_malformed_externalized_manifest -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent externalized
+  inventory proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_include_in_core_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_malformed_externalized_manifest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_runtime_install_staging_debris -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`36 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `733c7b15`.
 
 ## References
 

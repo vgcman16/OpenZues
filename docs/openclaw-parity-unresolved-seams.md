@@ -10253,3 +10253,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, with the evidence band tightened to
   ~80-99.99999999999999999995%. Continue malformed externalized extension
   manifest behavior next.
+- Current queue-head adjustment: native package update verification now reports
+  malformed source bundled extension manifests as hard verify errors instead of
+  silently classifying the extension as non-externalized, matching OpenClaw's
+  non-`ENOENT` package-dist inventory posture. Source/test checkpointed in
+  `733c7b15`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99999999999999999997%. Continue the adjacent doctor
+  malformed externalized manifest behavior next.

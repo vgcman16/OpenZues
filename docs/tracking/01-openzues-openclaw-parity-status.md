@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999995% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999997% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1841,6 +1841,10 @@ may lag behind this tracker.
 - [x] Package update runtime staging debris verifier, preserving OpenClaw's
   installed-package `.openclaw-install-stage*` drift reporting.
   - Status: checkpointed in `d58b0879`
+
+- [x] Package update malformed extension manifest rejection, preserving
+  OpenClaw's non-`ENOENT` source extension manifest failure posture.
+  - Status: checkpointed in `733c7b15`
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
