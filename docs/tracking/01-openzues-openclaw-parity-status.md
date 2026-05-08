@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999999995% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999999996% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6933,6 +6933,23 @@ may lag behind this tracker.
     import returned no usable harness before implementation, then `1 passed`),
     adjacent test-helper proof (`4 passed, 1195 deselected`), `ruff check`,
     `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK QA channel facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/qa-channel.ts`,
+    `openclaw-main/extensions/qa-channel/src/bus-client.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `qa-channel` imports expose exact target
+    normalization/parsing/building helpers, the QA channel plugin object,
+    runtime setter, and JSON bus method exports.
+  - Evidence required: focused QA channel import test, adjacent QA runtime/lab
+    proof, ruff, mypy
+  - Status: checkpointed in `fda1c201`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused QA channel red/green proof (exact
+    facade import returned generic placeholder behavior before implementation,
+    then `1 passed`), adjacent QA proof (`4 passed, 1196 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 

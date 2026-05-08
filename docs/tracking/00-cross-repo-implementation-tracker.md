@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999999999999996% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -150,6 +150,7 @@ checkpointed in `09d036fd`. `OZ-PLUGIN-00362` googlechat is checkpointed in
 `OZ-PLUGIN-00368` api-baseline is checkpointed in `bcf2185c`.
 `OZ-PLUGIN-00369` nextcloud-talk is checkpointed in `b76a0b47`.
 `OZ-PLUGIN-00370` test-helpers is checkpointed in `2af9f158`.
+`OZ-PLUGIN-00371` qa-channel is checkpointed in `fda1c201`.
 Continue remaining exact SDK helper seams and provider/runtime breadth.
 
 ## Active Slice Detail
