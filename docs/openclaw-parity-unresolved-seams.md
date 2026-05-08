@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.999999995%.
+  band of ~80-99.999999997%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -1808,6 +1808,13 @@ preserving non-secret channel settings, then returns the same
 `{cleared, envToken, loggedOut}` posture. Source/test checkpointed in
 `9674493d`; the adjacent provider queue should rotate to Nextcloud Talk,
 WhatsApp, Zalo, QQ, or broader logout-capable channel configs.
+Nextcloud Talk `channels.logout` now mirrors OpenClaw's
+`extensions/nextcloud-talk` logout cleanup by clearing saved
+`channels.nextcloud-talk.botSecret` and matching `accounts.default.botSecret`
+fields, preserving non-secret `baseUrl` config, and returning
+`{cleared, envSecret, loggedOut}`. Source/test checkpointed in `13de6593`;
+the adjacent provider queue should rotate to WhatsApp, Zalo, QQ, or broader
+logout-capable channel configs.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account
