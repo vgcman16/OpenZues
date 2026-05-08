@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999995% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6710,6 +6710,23 @@ may lag behind this tracker.
     (exact import returned the generic SDK facade before implementation, then
     `1 passed`), adjacent memory proof (`4 passed, 1182 deselected`), `ruff
     check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK twitch setup shim.
+  - Source: `openclaw-main/src/plugin-sdk/twitch.ts`,
+    `openclaw-main/src/plugin-sdk/channel-setup.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `twitch` imports expose root
+    `twitchSetupAdapter` and `twitchSetupWizard` optional-channel setup
+    surfaces while inherited generic SDK helper exports remain reachable.
+  - Evidence required: focused Twitch import test, adjacent optional setup
+    proof, ruff, mypy
+  - Status: checkpointed in `24f8edee`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Twitch red/green proof (exact root
+    import returned generic placeholders before implementation, then `1
+    passed`), adjacent optional setup proof (`4 passed, 1183 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 
