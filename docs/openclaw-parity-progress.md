@@ -20420,6 +20420,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`5 passed, 1155 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `d7c42aed`.
+- Imported plugin SDK `llm-task` now exposes the exact scoped/unscoped narrow
+  LLM task barrel for `definePluginEntry`, preferred temp roots, and
+  thinking-level helpers, including xhigh catalog formatting and canonical
+  thinking-level normalization. This closes `OZ-PLUGIN-00330`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999%.
+- Verified the llm-task helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_llm_task_helper -q`
+  (the exact subpath returned generic passthrough thinking helpers before
+  implementation, then `1 passed`), adjacent plugin-entry/diffs/provider proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "llm_task_helper or plugin_entry_helpers or diffs_helpers or litellm_helper or provider_onboard"`
+  (`5 passed, 1156 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `1a223530`.
 
 ## References
 
