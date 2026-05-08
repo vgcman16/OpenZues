@@ -18826,6 +18826,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `python -m pytest tests\test_cli.py -q -k "update_status_human_reports_git_update_available_hint or update_status_human_reports_update_available_hint or update_status_json_projects_git_behind_availability or update_status_json_projects_registry_availability or update_status_json_config_channel_overrides_git_tag"`
   (`5 passed, 527 deselected`), `ruff check tests\test_cli.py`, and focused
   `git diff --check`. Test checkpointed and pushed in `d5ea6096`.
+- Human `openzues qr --no-ascii --url ...` output now mirrors OpenClaw's
+  post-scan approval guidance by appending an actionable approval block after
+  setup metadata, using the native `openzues devices list` and
+  `openzues devices approve <requestId>` commands. This closes
+  `OZ-COMP-001G`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999999999996%.
+- Verified the QR human approval-instruction slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_human_output_includes_openclaw_approval_instructions -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent QR proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`5 passed, 528
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`,
+  `mypy src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed and pushed in `d6052fda`.
 
 ## References
 

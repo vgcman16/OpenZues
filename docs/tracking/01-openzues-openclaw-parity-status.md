@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999995% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999996% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1659,6 +1659,10 @@ may lag behind this tracker.
 - [x] Companion QR JSON setup-code contract, preserving OpenClaw's four-field
   `setupCode` / `gatewayUrl` / `auth` / `urlSource` response shape.
   - Status: checkpointed in `b79b87c3`
+
+- [x] Companion QR human approval instructions, preserving OpenClaw's
+  post-scan approval guidance with native OpenZues command names.
+  - Status: checkpointed in `d6052fda`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -4179,6 +4183,18 @@ may lag behind this tracker.
     tests\test_cli.py::test_qr_json_output_matches_openclaw_setup_code_contract
     -q` (`1 passed`), adjacent QR proof (`4 passed, 496 deselected`), `ruff
     check`, and `mypy`.
+
+- [x] Companion QR human approval instructions.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `d6052fda`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_qr_human_output_includes_openclaw_approval_instructions
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent QR
+    proof (`5 passed, 528 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
 
 - [x] Plugin provider metadata projection.
   - Source: `openclaw-main/src/plugins/manifest.ts`,

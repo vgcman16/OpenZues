@@ -9900,3 +9900,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tightened to ~80-99.99999996%. No Tlon-specific queue head remains known;
   rotate through broader provider, packaging, companion, and newly exposed
   upstream namespace seams.
+- Current queue-head adjustment: companion QR human output now mirrors
+  OpenClaw's post-scan approval guidance by appending an approval block to
+  `openzues qr --no-ascii --url ...`, with native `openzues devices list` and
+  `openzues devices approve <requestId>` commands. Source/test checkpointed in
+  `d6052fda`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.999999999996%. QR setup-code breadth remains open
+  only for deeper remote secret-resolution and rendered terminal QR edges;
+  rotate to package distribution drift next.
