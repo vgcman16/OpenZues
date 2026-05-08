@@ -36251,6 +36251,56 @@ function isMattermostSenderAllowed(params = {}) {
   return match.allowed;
 }
 
+const MATRIX_RESOLVED_STRING_FIELDS = [
+  "homeserver",
+  "userId",
+  "accessToken",
+  "password",
+  "deviceId",
+  "deviceName",
+];
+const MATRIX_DEFAULT_ACCOUNT_AUTH_ONLY_FIELDS = new Set([
+  "userId",
+  "accessToken",
+  "password",
+  "deviceId",
+]);
+
+function resolveMatrixStringSourceValue(value) {
+  return typeof value === "string" ? value : "";
+}
+
+function shouldAllowMatrixBaseAuthFallback(accountId, field) {
+  return (
+    normalizeAccountId(accountId) === DEFAULT_ACCOUNT_ID ||
+    !MATRIX_DEFAULT_ACCOUNT_AUTH_ONLY_FIELDS.has(field)
+  );
+}
+
+function resolveMatrixAccountStringValues(params = {}) {
+  const account = params.account || {};
+  const scopedEnv = params.scopedEnv || {};
+  const channel = params.channel || {};
+  const globalEnv = params.globalEnv || {};
+  const resolved = {};
+  for (const field of MATRIX_RESOLVED_STRING_FIELDS) {
+    resolved[field] =
+      resolveMatrixStringSourceValue(account[field]) ||
+      resolveMatrixStringSourceValue(scopedEnv[field]) ||
+      (shouldAllowMatrixBaseAuthFallback(params.accountId, field)
+        ? resolveMatrixStringSourceValue(channel[field]) ||
+          resolveMatrixStringSourceValue(globalEnv[field])
+        : "");
+  }
+  return resolved;
+}
+
+let currentMatrixRuntime = null;
+
+function setMatrixRuntime(runtime) {
+  currentMatrixRuntime = runtime || null;
+}
+
 function collectBlueBubblesStatusIssues(accounts) {
   return Array.isArray(accounts) ? [] : [];
 }
@@ -84454,6 +84504,11 @@ const mattermostPolicyRuntime = {
   isMattermostSenderAllowed,
 };
 
+const matrixRuntimeSurfaceRuntime = {
+  resolveMatrixAccountStringValues,
+  setMatrixRuntime,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -86543,6 +86598,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/mattermost-policy"
   ) {
     return mattermostPolicyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-runtime-surface" ||
+    request === "@openclaw/plugin-sdk/matrix-runtime-surface"
+  ) {
+    return matrixRuntimeSurfaceRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/bluebubbles-policy" ||

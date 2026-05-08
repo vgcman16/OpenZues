@@ -18026,6 +18026,160 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_matrix_runtime_surface_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-matrix-runtime-surface.cjs"
+    runtime_entry.write_text(
+        """
+const matrix = require("openclaw/plugin-sdk/matrix-runtime-surface");
+const scopedMatrix = require("@openclaw/plugin-sdk/matrix-runtime-surface");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.matrix_runtime_surface",
+      description: "Use OpenClaw matrix-runtime-surface SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const work = matrix.resolveMatrixAccountStringValues({
+          accountId: "work",
+          account: {
+            homeserver: "https://account.example",
+            userId: "@account:example"
+          },
+          scopedEnv: {
+            accessToken: "scoped-token",
+            password: "scoped-pass"
+          },
+          channel: {
+            homeserver: "https://channel.example",
+            userId: "@channel:example",
+            accessToken: "channel-token",
+            password: "channel-pass",
+            deviceId: "channel-device",
+            deviceName: "Channel Device"
+          },
+          globalEnv: {
+            homeserver: "https://global.example",
+            userId: "@global:example",
+            accessToken: "global-token",
+            password: "global-pass",
+            deviceId: "global-device",
+            deviceName: "Global Device"
+          }
+        });
+        const defaults = matrix.resolveMatrixAccountStringValues({
+          accountId: "default",
+          account: {},
+          scopedEnv: {},
+          channel: {
+            homeserver: "https://channel.example",
+            userId: "@channel:example",
+            accessToken: "channel-token",
+            deviceId: "channel-device"
+          },
+          globalEnv: {
+            homeserver: "https://global.example",
+            userId: "@global:example",
+            accessToken: "global-token",
+            password: "global-pass",
+            deviceId: "global-device",
+            deviceName: "Global Device"
+          }
+        });
+        const runtimeResult = matrix.setMatrixRuntime({ current: () => ({ ok: true }) });
+        return {
+          keys: Object.keys(matrix).sort(),
+          scopedSame:
+            scopedMatrix.resolveMatrixAccountStringValues ===
+              matrix.resolveMatrixAccountStringValues &&
+            scopedMatrix.setMatrixRuntime === matrix.setMatrixRuntime,
+          runtimeResult,
+          work,
+          defaults
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-matrix-runtime-surface-plugin",
+                    "name": "Runtime Matrix Runtime Surface Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-matrix-runtime-surface.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.matrix_runtime_surface"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.matrix_runtime_surface"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolveMatrixAccountStringValues", "setMatrixRuntime"],
+        "scopedSame": True,
+        "work": {
+            "homeserver": "https://account.example",
+            "userId": "@account:example",
+            "accessToken": "scoped-token",
+            "password": "scoped-pass",
+            "deviceId": "",
+            "deviceName": "Channel Device",
+        },
+        "defaults": {
+            "homeserver": "https://channel.example",
+            "userId": "@channel:example",
+            "accessToken": "channel-token",
+            "password": "global-pass",
+            "deviceId": "channel-device",
+            "deviceName": "Global Device",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
     tmp_path,
 ) -> None:
