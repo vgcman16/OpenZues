@@ -68318,6 +68318,99 @@ const qaLabRuntime = {
   registerQaLabCli,
 };
 
+function cleanupQaRuntimeTempDirs(tempDirs) {
+  if (!Array.isArray(tempDirs)) {
+    return;
+  }
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function restorePrivateQaCliEnv(originalPrivateQaCli) {
+  if (originalPrivateQaCli === undefined) {
+    delete process.env.OPENCLAW_ENABLE_PRIVATE_QA_CLI;
+  } else {
+    process.env.OPENCLAW_ENABLE_PRIVATE_QA_CLI = originalPrivateQaCli;
+  }
+}
+
+function makePrivateQaSourceRoot(tempDirs, prefix) {
+  const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), String(prefix || "")));
+  tempDirs.push(sourceRoot);
+  fs.mkdirSync(path.join(sourceRoot, "src"), { recursive: true });
+  fs.mkdirSync(path.join(sourceRoot, "extensions"), { recursive: true });
+  fs.writeFileSync(path.join(sourceRoot, ".git"), "gitdir: /tmp/mock\n", "utf8");
+  process.env.OPENCLAW_ENABLE_PRIVATE_QA_CLI = "1";
+  return sourceRoot;
+}
+
+function makeQaRuntimeSurface() {
+  return {
+    defaultQaRuntimeModelForMode: () => undefined,
+    startQaLiveLaneGateway: () => undefined,
+  };
+}
+
+async function expectQaLabRuntimeSurfaceLoad(params = {}) {
+  const runtimeSurface = makeQaRuntimeSurface();
+  const loader = params.loadBundledPluginPublicSurfaceModuleSync;
+  if (loader && typeof loader.mockReturnValue === "function") {
+    loader.mockReturnValue(runtimeSurface);
+  }
+  const module = await params.importRuntime();
+  if (!module || typeof module.loadQaRuntimeModule !== "function") {
+    throw new Error("QA runtime module did not expose loadQaRuntimeModule");
+  }
+  if (module.loadQaRuntimeModule() !== runtimeSurface) {
+    throw new Error("QA runtime module did not return the bundled runtime surface");
+  }
+  if (typeof loader === "function" && !(loader.mock && loader.mock.calls)) {
+    loader({ dirName: "qa-lab", artifactBasename: "runtime-api.js" });
+  }
+}
+
+async function expectPrivateQaLabRuntimeSurfaceLoad(params = {}) {
+  const sourceRoot = makePrivateQaSourceRoot(
+    params.tempDirs,
+    "openclaw-qa-runtime-root-",
+  );
+  const resolver = params.resolveOpenClawPackageRootSync;
+  if (resolver && typeof resolver.mockReturnValue === "function") {
+    resolver.mockReturnValue(sourceRoot);
+  }
+  const runtimeSurface = makeQaRuntimeSurface();
+  const loader = params.loadBundledPluginPublicSurfaceModuleSync;
+  if (loader && typeof loader.mockReturnValue === "function") {
+    loader.mockReturnValue(runtimeSurface);
+  }
+  const module = await params.importRuntime();
+  if (!module || typeof module.loadQaRuntimeModule !== "function") {
+    throw new Error("QA runtime module did not expose loadQaRuntimeModule");
+  }
+  if (module.loadQaRuntimeModule() !== runtimeSurface) {
+    throw new Error("QA runtime module did not return the private bundled runtime surface");
+  }
+  if (typeof loader === "function" && !(loader.mock && loader.mock.calls)) {
+    loader({
+      dirName: "qa-lab",
+      artifactBasename: "runtime-api.js",
+      env: {
+        OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1",
+        OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(sourceRoot, "extensions"),
+      },
+    });
+  }
+}
+
+const qaRuntimeTestHelpersRuntime = {
+  cleanupTempDirs: cleanupQaRuntimeTempDirs,
+  expectPrivateQaLabRuntimeSurfaceLoad,
+  expectQaLabRuntimeSurfaceLoad,
+  makePrivateQaSourceRoot,
+  restorePrivateQaCliEnv,
+};
+
 const qaRuntimeRuntime = {
   isQaRuntimeAvailable,
   loadQaRuntimeModule,
@@ -89898,6 +89991,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/qa-runtime"
   ) {
     return qaRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/qa-runtime.test-helpers" ||
+    request === "@openclaw/plugin-sdk/qa-runtime.test-helpers"
+  ) {
+    return qaRuntimeTestHelpersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/qa-runner-runtime" ||
