@@ -87582,6 +87582,33 @@ function loadFeishuSetupFacadeModule() {
   });
 }
 
+function loadFeishuContractFacadeModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "feishu",
+    artifactBasename: "contract-api.js",
+  });
+}
+
+function buildFeishuConversationId(...args) {
+  return loadFeishuContractFacadeModule().buildFeishuConversationId(...args);
+}
+
+function createFeishuThreadBindingManager(...args) {
+  return loadFeishuContractFacadeModule().createFeishuThreadBindingManager(...args);
+}
+
+function parseFeishuDirectConversationId(...args) {
+  return loadFeishuContractFacadeModule().parseFeishuDirectConversationId(...args);
+}
+
+function parseFeishuConversationId(...args) {
+  return loadFeishuContractFacadeModule().parseFeishuConversationId(...args);
+}
+
+function parseFeishuTargetId(...args) {
+  return loadFeishuContractFacadeModule().parseFeishuTargetId(...args);
+}
+
 const feishuSetupRuntime = {
   feishuSetupAdapter: createLazyFacadeObjectValue(
     () => loadFeishuSetupFacadeModule().feishuSetupAdapter || {},
@@ -87589,6 +87616,20 @@ const feishuSetupRuntime = {
   feishuSetupWizard: createLazyFacadeObjectValue(
     () => loadFeishuSetupFacadeModule().feishuSetupWizard || {},
   ),
+};
+
+const feishuConversationRuntime = {
+  buildFeishuConversationId,
+  createFeishuThreadBindingManager,
+  feishuSessionBindingAdapterChannels: createLazyFacadeArrayValue(
+    () => loadFeishuContractFacadeModule().feishuSessionBindingAdapterChannels || [],
+  ),
+  feishuThreadBindingTesting: createLazyFacadeObjectValue(
+    () => loadFeishuContractFacadeModule().feishuThreadBindingTesting || {},
+  ),
+  parseFeishuConversationId,
+  parseFeishuDirectConversationId,
+  parseFeishuTargetId,
 };
 
 function loadZaloSetupFacadeModule() {
@@ -89937,6 +89978,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/feishu-setup"
   ) {
     return feishuSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/feishu-conversation" ||
+    request === "@openclaw/plugin-sdk/feishu-conversation"
+  ) {
+    return feishuConversationRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/zalo-setup" ||
