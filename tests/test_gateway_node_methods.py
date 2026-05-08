@@ -21683,6 +21683,146 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_qa_channel_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-qa-channel.cjs"
+    runtime_entry.write_text(
+        """
+const qa = require("openclaw/plugin-sdk/qa-channel");
+const scopedQa = require("@openclaw/plugin-sdk/qa-channel");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.qa_channel",
+      description: "Use OpenClaw QA channel SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const threadTarget = qa.buildQaTarget({
+          chatType: "channel",
+          conversationId: "ops-room",
+          threadId: "thread-a"
+        });
+        qa.setQaChannelRuntime({ label: "runtime" });
+        return {
+          keys: Object.keys(qa).sort(),
+          scopedSame:
+            scopedQa.buildQaTarget === qa.buildQaTarget &&
+            scopedQa.parseQaTarget === qa.parseQaTarget,
+          normalized: {
+            blank: qa.normalizeQaTarget("   ") ?? null,
+            direct: qa.normalizeQaTarget("  dm:alice  ")
+          },
+          parsed: {
+            group: qa.parseQaTarget("group:ops-room"),
+            thread: qa.parseQaTarget(threadTarget),
+            defaultDirect: qa.parseQaTarget("alice")
+          },
+          built: {
+            group: qa.buildQaTarget({ chatType: "group", conversationId: "ops-room" }),
+            thread: threadTarget,
+            direct: qa.formatQaTarget({ chatType: "direct", conversationId: "alice" })
+          },
+          plugin: {
+            id: qa.qaChannelPlugin.id,
+            label: qa.qaChannelPlugin.meta.label
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-qa-channel-plugin",
+                    "name": "Runtime QA Channel Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-qa-channel.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.qa_channel"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.qa_channel"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildQaTarget",
+            "createQaBusThread",
+            "deleteQaBusMessage",
+            "editQaBusMessage",
+            "formatQaTarget",
+            "getQaBusState",
+            "injectQaBusInboundMessage",
+            "normalizeQaTarget",
+            "parseQaTarget",
+            "pollQaBus",
+            "qaChannelPlugin",
+            "reactToQaBusMessage",
+            "readQaBusMessage",
+            "searchQaBusMessages",
+            "sendQaBusMessage",
+            "setQaChannelRuntime",
+        ],
+        "scopedSame": True,
+        "normalized": {"blank": None, "direct": "dm:alice"},
+        "parsed": {
+            "group": {"chatType": "group", "conversationId": "ops-room"},
+            "thread": {
+                "chatType": "channel",
+                "conversationId": "ops-room",
+                "threadId": "thread-a",
+            },
+            "defaultDirect": {"chatType": "direct", "conversationId": "alice"},
+        },
+        "built": {
+            "group": "group:ops-room",
+            "thread": "thread:ops-room/thread-a",
+            "direct": "dm:alice",
+        },
+        "plugin": {"id": "qa-channel", "label": "QA Channel"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_feishu_root_helpers(
     tmp_path,
 ) -> None:

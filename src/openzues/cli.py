@@ -68353,6 +68353,183 @@ const skillsRuntime = {
   shouldRefreshSnapshotForVersion,
 };
 
+let qaChannelRuntime = {};
+
+function normalizeQaTarget(raw) {
+  const trimmed = String(raw ?? "").trim();
+  return trimmed || undefined;
+}
+
+function parseQaTarget(raw) {
+  const normalized = normalizeQaTarget(raw);
+  if (!normalized) {
+    throw new Error("qa-channel target is required");
+  }
+  if (normalized.startsWith("thread:")) {
+    const rest = normalized.slice("thread:".length);
+    const slashIndex = rest.indexOf("/");
+    if (slashIndex <= 0 || slashIndex === rest.length - 1) {
+      throw new Error(`invalid qa-channel thread target: ${normalized}`);
+    }
+    return {
+      chatType: "channel",
+      conversationId: rest.slice(0, slashIndex),
+      threadId: rest.slice(slashIndex + 1),
+    };
+  }
+  if (normalized.startsWith("channel:")) {
+    return {
+      chatType: "channel",
+      conversationId: normalized.slice("channel:".length),
+    };
+  }
+  if (normalized.startsWith("group:")) {
+    return {
+      chatType: "group",
+      conversationId: normalized.slice("group:".length),
+    };
+  }
+  if (normalized.startsWith("dm:")) {
+    return {
+      chatType: "direct",
+      conversationId: normalized.slice("dm:".length),
+    };
+  }
+  return {
+    chatType: "direct",
+    conversationId: normalized,
+  };
+}
+
+function buildQaTarget(params = {}) {
+  if (params.threadId) {
+    return `thread:${params.conversationId}/${params.threadId}`;
+  }
+  const prefix = params.chatType === "direct" ? "dm" : params.chatType || "dm";
+  return `${prefix}:${params.conversationId}`;
+}
+
+const formatQaTarget = buildQaTarget;
+
+function buildQaBusUrl(baseUrl, pathValue) {
+  const normalizedBaseUrl = String(baseUrl || "").endsWith("/")
+    ? String(baseUrl || "")
+    : `${baseUrl}/`;
+  return new URL(String(pathValue || "").replace(/^\/+/u, ""), normalizedBaseUrl).toString();
+}
+
+async function qaBusPostJson(baseUrl, pathValue, body, signal) {
+  if (typeof fetch !== "function") {
+    throw new Error("qa-channel bus client requires fetch");
+  }
+  const response = await fetch(buildQaBusUrl(baseUrl, pathValue), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body || {}),
+    signal,
+  });
+  const text = await response.text();
+  const parsed = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new Error(
+      parsed && parsed.error ? parsed.error : `qa-bus request failed: ${response.status}`,
+    );
+  }
+  return parsed;
+}
+
+async function pollQaBus(params = {}) {
+  return await qaBusPostJson(
+    params.baseUrl,
+    "/v1/poll",
+    {
+      accountId: params.accountId,
+      cursor: params.cursor,
+      timeoutMs: params.timeoutMs,
+    },
+    params.signal,
+  );
+}
+
+async function sendQaBusMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/outbound/message", params, params.signal);
+}
+
+async function createQaBusThread(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/thread-create", params, params.signal);
+}
+
+async function reactToQaBusMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/react", params, params.signal);
+}
+
+async function editQaBusMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/edit", params, params.signal);
+}
+
+async function deleteQaBusMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/delete", params, params.signal);
+}
+
+async function readQaBusMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/read", params, params.signal);
+}
+
+async function searchQaBusMessages(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/actions/search", params.input, params.signal);
+}
+
+async function injectQaBusInboundMessage(params = {}) {
+  return await qaBusPostJson(params.baseUrl, "/v1/inbound/message", params.input, params.signal);
+}
+
+async function getQaBusState(baseUrl) {
+  if (typeof fetch !== "function") {
+    throw new Error("qa-channel bus client requires fetch");
+  }
+  const response = await fetch(buildQaBusUrl(baseUrl, "/v1/state"));
+  const text = await response.text();
+  const parsed = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new Error(
+      parsed && parsed.error ? parsed.error : `qa-bus request failed: ${response.status}`,
+    );
+  }
+  return parsed;
+}
+
+function setQaChannelRuntime(runtime) {
+  qaChannelRuntime = runtime || {};
+}
+
+const qaChannelPlugin = {
+  id: "qa-channel",
+  meta: { label: "QA Channel" },
+  capabilities: { chatTypes: ["direct", "group"] },
+  get runtime() {
+    return qaChannelRuntime;
+  },
+};
+
+const qaChannelRuntimeFacade = {
+  buildQaTarget,
+  createQaBusThread,
+  deleteQaBusMessage,
+  editQaBusMessage,
+  formatQaTarget,
+  getQaBusState,
+  injectQaBusInboundMessage,
+  normalizeQaTarget,
+  parseQaTarget,
+  pollQaBus,
+  qaChannelPlugin,
+  reactToQaBusMessage,
+  readQaBusMessage,
+  searchQaBusMessages,
+  sendQaBusMessage,
+  setQaChannelRuntime,
+};
+
 const qaLabRuntime = {
   isQaLabCliAvailable,
   registerQaLabCli,
@@ -90326,6 +90503,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/qa-lab"
   ) {
     return qaLabRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/qa-channel" ||
+    request === "@openclaw/plugin-sdk/qa-channel"
+  ) {
+    return qaChannelRuntimeFacade;
   }
   if (
     request === "openclaw/plugin-sdk/qa-runtime" ||
