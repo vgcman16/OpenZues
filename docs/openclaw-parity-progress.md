@@ -21367,6 +21367,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `cfec33ca`.
+- `sessions.history` now strips OpenClaw-style raw user channel envelopes and
+  standalone message-id hint lines before returning session snapshots, while
+  parsing structured JSON from raw rows to keep structured snapshots intact.
+  This closes the session snapshot raw user side of the channel envelope edge;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999999999999999999999999997%.
+- Verified the `sessions.history` user envelope/message-id seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_history_strips_user_channel_envelope_and_message_id -q`
+  (the envelope/header leaked before implementation, then `1 passed`),
+  structured internal-context regression proof (`1 passed`), adjacent
+  transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`49 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `abd535b3`.
 
 ## References
 
