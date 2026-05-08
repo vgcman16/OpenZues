@@ -20406,6 +20406,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`5 passed, 1154 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `fad79376`.
+- Imported plugin SDK `litellm` now exposes the exact scoped/unscoped LiteLLM
+  default model constants, model-definition builder, and provider/default-model
+  onboarding appliers, including base-url/api-key preservation and default
+  alias/primary model handling. This closes `OZ-PLUGIN-00329`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999998%.
+- Verified the litellm helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_litellm_helper -q`
+  (the exact subpath returned the generic SDK and passthrough appliers before
+  implementation, then `1 passed`), adjacent provider/onboard proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "litellm_helper or openrouter_helper or minimax_helper or provider_onboard or provider_model_catalog"`
+  (`5 passed, 1155 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `d7c42aed`.
 
 ## References
 

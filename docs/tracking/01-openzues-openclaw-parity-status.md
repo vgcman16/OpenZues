@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999997% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999998% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -3355,6 +3355,19 @@ may lag behind this tracker.
     subpath returned generic passthrough data and no provider envelope before
     implementation, then `1 passed`), adjacent provider/onboard proof (`5
     passed, 1154 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK litellm subpath shim.
+  - Source: `openclaw-main/src/plugin-sdk/litellm.ts`,
+    `openclaw-main/extensions/litellm/onboard.ts`,
+    `openclaw-main/extensions/litellm/provider-catalog.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `d7c42aed`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused litellm red/green proof (exact subpath
+    returned the generic SDK and passthrough appliers before implementation,
+    then `1 passed`), adjacent provider/onboard proof (`5 passed, 1155
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin SDK test-utils compatibility alias.
   - Source: `openclaw-main/src/plugin-sdk/test-utils.ts`
