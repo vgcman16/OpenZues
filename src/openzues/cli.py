@@ -8314,27 +8314,41 @@ def _doctor_is_publishable_externalized_manifest(value: object) -> bool:
     return release.get("publishToNpm") is True or release.get("publishToClawHub") is True
 
 
-def _doctor_collect_externalized_bundled_extension_ids(root: Path) -> set[str]:
+def _doctor_collect_externalized_bundled_extension_ids(root: Path) -> tuple[set[str], list[str]]:
     extensions_path = root / "extensions"
     if not _doctor_path_exists(extensions_path):
-        return set()
+        return set(), []
     extension_ids: set[str] = set()
+    warnings: list[str] = []
     try:
         extension_entries = list(extensions_path.iterdir())
     except OSError:
-        return set()
+        return set(), []
     for extension_entry in extension_entries:
+        manifest_path = extension_entry / "package.json"
         try:
             if not extension_entry.is_dir() or extension_entry.is_symlink():
                 continue
-            parsed = json.loads(
-                (extension_entry / "package.json").read_text(encoding="utf-8")
+            raw_manifest = manifest_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        except OSError:
+            warnings.append(
+                "invalid bundled extension manifest "
+                f"{manifest_path.relative_to(root).as_posix()}"
             )
-        except (OSError, ValueError):
+            continue
+        try:
+            parsed = json.loads(raw_manifest)
+        except ValueError:
+            warnings.append(
+                "invalid bundled extension manifest "
+                f"{manifest_path.relative_to(root).as_posix()}"
+            )
             continue
         if _doctor_is_publishable_externalized_manifest(parsed):
             extension_ids.add(extension_entry.name)
-    return extension_ids
+    return extension_ids, sorted(set(warnings))
 
 
 def _doctor_is_packaged_dist_file(
@@ -8374,11 +8388,14 @@ def _doctor_is_packaged_dist_file(
     )
 
 
-def _doctor_collect_package_dist_files(root: Path) -> list[str]:
+def _doctor_collect_package_dist_files(root: Path) -> tuple[list[str], list[str]]:
     dist_path = root / "dist"
     if not _doctor_path_exists(dist_path):
-        return []
-    externalized_extension_ids = _doctor_collect_externalized_bundled_extension_ids(root)
+        return [], []
+    (
+        externalized_extension_ids,
+        externalized_manifest_warnings,
+    ) = _doctor_collect_externalized_bundled_extension_ids(root)
     files: list[str] = []
     for path in dist_path.rglob("*"):
         try:
@@ -8389,7 +8406,7 @@ def _doctor_collect_package_dist_files(root: Path) -> list[str]:
         relative_path = _doctor_normalize_package_dist_path(path.relative_to(root).as_posix())
         if _doctor_is_packaged_dist_file(relative_path, externalized_extension_ids):
             files.append(relative_path)
-    return sorted(set(files))
+    return sorted(set(files)), externalized_manifest_warnings
 
 
 def _doctor_package_dist_unsafe_path_warnings(root: Path) -> list[str]:
@@ -8543,10 +8560,10 @@ def _doctor_package_dist_inventory_file_warnings(
 ) -> list[str]:
     if expected_files is None:
         return []
-    actual_files = _doctor_collect_package_dist_files(root)
+    actual_files, manifest_warnings = _doctor_collect_package_dist_files(root)
     actual_set = set(actual_files)
     expected_set = set(expected_files)
-    warnings: list[str] = []
+    warnings: list[str] = [*manifest_warnings]
     for relative_path in expected_files:
         if relative_path not in actual_set:
             warnings.append(f"missing packaged dist file {relative_path}")
