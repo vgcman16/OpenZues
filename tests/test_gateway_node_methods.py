@@ -15755,6 +15755,336 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_video_generation_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-video-generation.cjs"
+    runtime_entry.write_text(
+        """
+const video = require("openclaw/plugin-sdk/video-generation");
+const scopedVideo = require("@openclaw/plugin-sdk/video-generation");
+
+function projectVideo(asset) {
+  return {
+    fileName: asset.fileName,
+    mimeType: asset.mimeType,
+    hex: asset.buffer ? asset.buffer.toString("hex") : undefined,
+    url: asset.url,
+    metadata: asset.metadata
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.video_generation",
+      description: "Use OpenClaw video-generation SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let bufferInputError = "";
+        try {
+          video.buildDashscopeVideoGenerationInput({
+            providerLabel: "Dashscope",
+            req: {
+              prompt: "make",
+              cfg: {},
+              provider: "dashscope",
+              model: "wan2.6-t2v",
+              inputImages: [{ buffer: Buffer.from("x"), mimeType: "image/png" }]
+            }
+          });
+        } catch (error) {
+          bufferInputError = error.message;
+        }
+        const refs = video.resolveVideoGenerationReferenceUrls(
+          [{ url: " https://img.example/a.png " }, { url: " " }],
+          [{ url: "https://video.example/v.mp4" }]
+        );
+        const oneImageInput = video.buildDashscopeVideoGenerationInput({
+          providerLabel: "Dashscope",
+          req: {
+            prompt: "make",
+            cfg: {},
+            provider: "dashscope",
+            model: "wan2.6-i2v",
+            inputImages: [{ url: "https://img.example/a.png" }]
+          }
+        });
+        const multiInput = video.buildDashscopeVideoGenerationInput({
+          providerLabel: "Dashscope",
+          req: {
+            prompt: "make",
+            cfg: {},
+            provider: "dashscope",
+            model: "wan2.6-r2v",
+            inputImages: [{ url: "https://img.example/a.png" }],
+            inputVideos: [{ url: "https://video.example/v.mp4" }]
+          }
+        });
+        const params = video.buildDashscopeVideoGenerationParameters({
+          prompt: "make",
+          cfg: {},
+          provider: "dashscope",
+          model: "wan2.6-t2v",
+          resolution: "720P",
+          aspectRatio: " 16:9 ",
+          durationSeconds: 3.6,
+          audio: true,
+          watermark: false
+        });
+        const emptyParams = video.buildDashscopeVideoGenerationParameters({
+          prompt: "make",
+          cfg: {},
+          provider: "dashscope",
+          model: "wan2.6-t2v"
+        });
+        const urls = video.extractDashscopeVideoUrls({
+          output: {
+            results: [
+              { video_url: "https://cdn.example/a.mp4" },
+              { video_url: "" },
+              { video_url: "https://cdn.example/b.mp4" }
+            ],
+            video_url: "https://cdn.example/a.mp4"
+          }
+        });
+        const runCalls = [];
+        const fakeFetch = async (url, init = {}) => {
+          const body = init.body ? JSON.parse(init.body) : undefined;
+          runCalls.push({ url, method: init.method, body });
+          if (url.includes("/api/v1/tasks/task-1")) {
+            return new Response(
+              JSON.stringify({
+                output: {
+                  task_status: "SUCCEEDED",
+                  results: [{ video_url: "https://cdn.example/run.mp4" }]
+                }
+              }),
+              { status: 200, headers: { "content-type": "application/json" } }
+            );
+          }
+          if (url === "https://cdn.example/run.mp4") {
+            return new Response(new Uint8Array([9, 8, 7]), {
+              status: 200,
+              headers: { "content-type": "video/mp4" }
+            });
+          }
+          return new Response(
+            JSON.stringify({ request_id: "req-1", output: { task_id: "task-1" } }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        };
+        const runResult = await video.runDashscopeVideoGenerationTask({
+          providerLabel: "Dashscope",
+          model: "wan2.6-t2v",
+          req: {
+            prompt: "go",
+            cfg: {},
+            provider: "dashscope",
+            model: "wan2.6-t2v",
+            resolution: "480P",
+            audio: false,
+            inputImages: [{ url: "https://img.example/frame.png" }]
+          },
+          url: "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis",
+          baseUrl: "https://dashscope.aliyuncs.com",
+          headers: new Headers({ Authorization: "Bearer key" }),
+          fetchFn: fakeFetch,
+          defaultTimeoutMs: 1000
+        });
+        const capabilities = video.DASHSCOPE_WAN_VIDEO_CAPABILITIES || {};
+        const resolutionToSize = video.DEFAULT_VIDEO_RESOLUTION_TO_SIZE || {};
+        return {
+          keys: Object.keys(video).sort(),
+          scopedSame:
+            scopedVideo.buildDashscopeVideoGenerationInput ===
+            video.buildDashscopeVideoGenerationInput,
+          constants: {
+            defaultModel: video.DEFAULT_DASHSCOPE_WAN_VIDEO_MODEL,
+            models: video.DASHSCOPE_WAN_VIDEO_MODELS,
+            defaultDuration: video.DEFAULT_VIDEO_GENERATION_DURATION_SECONDS,
+            defaultTimeout: video.DEFAULT_VIDEO_GENERATION_TIMEOUT_MS,
+            resolutionSize: resolutionToSize["720P"],
+            supportsAudio: capabilities.generate && capabilities.generate.supportsAudio,
+            maxInputVideos: capabilities.videoToVideo && capabilities.videoToVideo.maxInputVideos
+          },
+          refs,
+          inputs: { oneImageInput, multiInput, bufferInputError },
+          params,
+          emptyParams: emptyParams ?? null,
+          urls,
+          run:
+            runResult && Array.isArray(runResult.videos)
+              ? {
+                  model: runResult.model,
+                  videos: runResult.videos.map(projectVideo),
+                  metadata: runResult.metadata,
+                  calls: runCalls
+                }
+              : runResult
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "video-generation-plugin",
+                    "name": "Video Generation Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-video-generation.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.video_generation"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.video_generation"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "DASHSCOPE_WAN_VIDEO_CAPABILITIES",
+            "DASHSCOPE_WAN_VIDEO_MODELS",
+            "DEFAULT_DASHSCOPE_WAN_VIDEO_MODEL",
+            "DEFAULT_VIDEO_GENERATION_DURATION_SECONDS",
+            "DEFAULT_VIDEO_GENERATION_TIMEOUT_MS",
+            "DEFAULT_VIDEO_RESOLUTION_TO_SIZE",
+            "buildDashscopeVideoGenerationInput",
+            "buildDashscopeVideoGenerationParameters",
+            "downloadDashscopeGeneratedVideos",
+            "extractDashscopeVideoUrls",
+            "pollDashscopeVideoTaskUntilComplete",
+            "resolveVideoGenerationReferenceUrls",
+            "runDashscopeVideoGenerationTask",
+        ],
+        "scopedSame": True,
+        "constants": {
+            "defaultModel": "wan2.6-t2v",
+            "models": [
+                "wan2.6-t2v",
+                "wan2.6-i2v",
+                "wan2.6-r2v",
+                "wan2.6-r2v-flash",
+                "wan2.7-r2v",
+            ],
+            "defaultDuration": 5,
+            "defaultTimeout": 120000,
+            "resolutionSize": "1280*720",
+            "supportsAudio": True,
+            "maxInputVideos": 4,
+        },
+        "refs": ["https://img.example/a.png", "https://video.example/v.mp4"],
+        "inputs": {
+            "oneImageInput": {
+                "prompt": "make",
+                "img_url": "https://img.example/a.png",
+            },
+            "multiInput": {
+                "prompt": "make",
+                "reference_urls": [
+                    "https://img.example/a.png",
+                    "https://video.example/v.mp4",
+                ],
+            },
+            "bufferInputError": (
+                "Dashscope video generation currently requires remote http(s) "
+                "URLs for reference images/videos."
+            ),
+        },
+        "params": {
+            "size": "1280*720",
+            "aspect_ratio": "16:9",
+            "duration": 4,
+            "enable_audio": True,
+            "watermark": False,
+        },
+        "emptyParams": None,
+        "urls": ["https://cdn.example/a.mp4", "https://cdn.example/b.mp4"],
+        "run": {
+            "model": "wan2.6-t2v",
+            "videos": [
+                {
+                    "fileName": "video-1.mp4",
+                    "mimeType": "video/mp4",
+                    "hex": "090807",
+                    "metadata": {"sourceUrl": "https://cdn.example/run.mp4"},
+                }
+            ],
+            "metadata": {
+                "requestId": "req-1",
+                "taskId": "task-1",
+                "taskStatus": "SUCCEEDED",
+            },
+            "calls": [
+                {
+                    "url": (
+                        "https://dashscope.aliyuncs.com/api/v1/services/"
+                        "aigc/video-generation/video-synthesis"
+                    ),
+                    "method": "POST",
+                    "body": {
+                        "model": "wan2.6-t2v",
+                        "input": {
+                            "prompt": "go",
+                            "img_url": "https://img.example/frame.png",
+                        },
+                        "parameters": {
+                            "size": "832*480",
+                            "duration": 5,
+                            "enable_audio": False,
+                        },
+                    },
+                },
+                {
+                    "url": "https://dashscope.aliyuncs.com/api/v1/tasks/task-1",
+                    "method": "GET",
+                },
+                {
+                    "url": "https://cdn.example/run.mp4",
+                    "method": "GET",
+                },
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_music_generation_core_helpers(
     tmp_path,
 ) -> None:
