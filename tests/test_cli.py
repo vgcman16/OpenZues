@@ -25046,6 +25046,57 @@ def test_update_status_human_reports_update_available_hint(
     assert "Update available (npm 9.0.0). Run: openzues update" in result.stdout
 
 
+def test_update_status_human_reports_git_update_available_hint(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    branch_sha = "3333333333333333333333333333333333333333"
+    branch_ref = git_dir / "refs" / "heads"
+    git_dir.mkdir(parents=True)
+    branch_ref.mkdir(parents=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (branch_ref / "main").write_text(f"{branch_sha}\n", encoding="utf-8")
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "headline": "OpenZues runtime update status is steady.",
+                "update": {"git": {"behind": 3}},
+            }
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Update available (git behind 3). Run: openzues update" in result.stdout
+
+
 def test_update_status_json_config_channel_overrides_git_tag(
     tmp_path,
     monkeypatch,
