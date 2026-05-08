@@ -90597,6 +90597,10 @@ def qr_command(
             f"Gateway: {gateway_url}",
             f"Auth: {auth_label}",
             f"Source: {url_source}",
+            "",
+            "Approve after scan with:",
+            "  openzues devices list",
+            "  openzues devices approve <requestId>",
         ]
     )
     typer.echo("\n".join(lines))

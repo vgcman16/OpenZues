@@ -222,6 +222,27 @@ def test_qr_json_output_matches_openclaw_setup_code_contract(
     assert setup_payload["bootstrapToken"]
 
 
+def test_qr_human_output_includes_openclaw_approval_instructions(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(tmp_path / "data"))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--no-ascii",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Approve after scan with:" in result.stdout
+    assert "openzues devices list" in result.stdout
+    assert "openzues devices approve <requestId>" in result.stdout
+
+
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
     assert _is_root_value_token("work") is True
     assert _is_root_value_token("-1") is True
