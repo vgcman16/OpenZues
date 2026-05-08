@@ -60986,12 +60986,227 @@ function resetFacadeRuntimeStateForTest() {
   resetFacadeLoaderStateForTest();
 }
 
+const FACADE_PUBLIC_SURFACE_SOURCE_EXTENSIONS = [".ts", ".mts", ".js", ".mjs", ".cts", ".cjs"];
+
+function areBundledPluginsDisabledForFacade(env = process.env) {
+  const raw = normalizeOptionalLowercaseString(env && env.OPENCLAW_DISABLE_BUNDLED_PLUGINS);
+  return raw === "1" || raw === "true";
+}
+
+function normalizeBundledPluginArtifactSubpathForFacade(artifactBasename) {
+  const value = String(artifactBasename || "");
+  if (path.posix.isAbsolute(value) || path.win32.isAbsolute(value) || value.includes("\\")) {
+    throw new Error(`Bundled plugin artifact path must stay plugin-local: ${value}`);
+  }
+  const normalized = value.replace(/^\.\//u, "");
+  if (!normalized) {
+    throw new Error("Bundled plugin artifact path must not be empty");
+  }
+  const segments = normalized.split("/");
+  if (
+    segments.some(
+      (segment) =>
+        segment.length === 0 || segment === "." || segment === ".." || segment.includes(":"),
+    )
+  ) {
+    throw new Error(`Bundled plugin artifact path must stay plugin-local: ${value}`);
+  }
+  return normalized;
+}
+
+function normalizeBundledPluginDirNameForFacade(dirName) {
+  const normalized = String(dirName || "").trim();
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.includes("/") ||
+    normalized.includes("\\") ||
+    normalized.includes(":")
+  ) {
+    throw new Error(`Bundled plugin dirName must be a single directory: ${dirName}`);
+  }
+  return normalized;
+}
+
+function resolveBundledPluginSourcePublicSurfacePathForFacade(params = {}) {
+  const artifactBasename = normalizeBundledPluginArtifactSubpathForFacade(params.artifactBasename);
+  const dirName = normalizeBundledPluginDirNameForFacade(params.dirName);
+  const sourceBaseName = artifactBasename.replace(/\.js$/u, "");
+  for (const ext of FACADE_PUBLIC_SURFACE_SOURCE_EXTENSIONS) {
+    const sourceCandidate = path.resolve(
+      String(params.sourceRoot || ""),
+      dirName,
+      `${sourceBaseName}${ext}`,
+    );
+    if (fs.existsSync(sourceCandidate)) {
+      return sourceCandidate;
+    }
+  }
+  return null;
+}
+
+function resolvePackageSourceFallbackForBundledDirForFacade(params = {}) {
+  const normalizedBundledDir = path.resolve(String(params.bundledPluginsDir || ""));
+  const normalizedRootDir = path.resolve(String(params.rootDir || ""));
+  const packageBundledDirs = [
+    path.join(normalizedRootDir, "dist", "extensions"),
+    path.join(normalizedRootDir, "dist-runtime", "extensions"),
+  ];
+  if (!packageBundledDirs.includes(normalizedBundledDir)) {
+    return null;
+  }
+  return resolveBundledPluginSourcePublicSurfacePathForFacade({
+    sourceRoot: path.join(normalizedRootDir, "extensions"),
+    dirName: params.dirName,
+    artifactBasename: params.artifactBasename,
+  });
+}
+
+function resolveBundledPluginPublicSurfacePathForFacade(params = {}) {
+  const artifactBasename = normalizeBundledPluginArtifactSubpathForFacade(params.artifactBasename);
+  const dirName = normalizeBundledPluginDirNameForFacade(params.dirName);
+  const explicitBundledPluginsDir = params.bundledPluginsDir;
+  if (explicitBundledPluginsDir) {
+    const explicitPluginDir = path.resolve(String(explicitBundledPluginsDir), dirName);
+    const explicitBuiltCandidate = path.join(explicitPluginDir, artifactBasename);
+    if (fs.existsSync(explicitBuiltCandidate)) {
+      return explicitBuiltCandidate;
+    }
+    return (
+      resolveBundledPluginSourcePublicSurfacePathForFacade({
+        sourceRoot: explicitBundledPluginsDir,
+        dirName,
+        artifactBasename,
+      }) ??
+      resolvePackageSourceFallbackForBundledDirForFacade({
+        rootDir: params.rootDir,
+        bundledPluginsDir: explicitBundledPluginsDir,
+        dirName,
+        artifactBasename,
+      })
+    );
+  }
+  const rootDir = path.resolve(String(params.rootDir || ""));
+  for (const candidate of [
+    path.resolve(rootDir, "dist", "extensions", dirName, artifactBasename),
+    path.resolve(rootDir, "dist-runtime", "extensions", dirName, artifactBasename),
+  ]) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return resolveBundledPluginSourcePublicSurfacePathForFacade({
+    sourceRoot: path.resolve(rootDir, "extensions"),
+    dirName,
+    artifactBasename,
+  });
+}
+
+function createFacadeResolutionKey(params = {}) {
+  const disabledKey = areBundledPluginsDisabledForFacade(params.env || process.env)
+    ? "disabled"
+    : "enabled";
+  const bundledPluginsDir = params.bundledPluginsDir
+    ? path.resolve(String(params.bundledPluginsDir))
+    : "<default>";
+  return `${params.dirName}::${params.artifactBasename}::${bundledPluginsDir}::${disabledKey}`;
+}
+
+function resolveFacadeBoundaryRoot(params = {}) {
+  if (!params.bundledPluginsDir) {
+    return params.packageRoot;
+  }
+  const resolvedBundledPluginsDir = path.resolve(String(params.bundledPluginsDir));
+  return String(params.modulePath || "").startsWith(`${resolvedBundledPluginsDir}${path.sep}`)
+    ? resolvedBundledPluginsDir
+    : params.packageRoot;
+}
+
+function resolveBundledFacadeModuleLocation(params = {}) {
+  const preferSource = !String(params.currentModulePath || "").includes(
+    `${path.sep}dist${path.sep}`,
+  );
+  const env = params.env || process.env;
+  const packageRoot = String(params.packageRoot || "");
+  const packageSourceRoot = path.resolve(packageRoot, "extensions");
+  const publicSurfaceParams = {
+    rootDir: packageRoot,
+    env,
+    ...(params.bundledPluginsDir ? { bundledPluginsDir: params.bundledPluginsDir } : {}),
+    dirName: params.dirName,
+    artifactBasename: params.artifactBasename,
+  };
+  const modulePath = preferSource
+    ? (resolveBundledPluginSourcePublicSurfacePathForFacade({
+        dirName: params.dirName,
+        artifactBasename: params.artifactBasename,
+        sourceRoot: params.bundledPluginsDir || packageSourceRoot,
+      }) ??
+      (params.bundledPluginsDir && !areBundledPluginsDisabledForFacade(env)
+        ? resolveBundledPluginSourcePublicSurfacePathForFacade({
+            dirName: params.dirName,
+            artifactBasename: params.artifactBasename,
+            sourceRoot: packageSourceRoot,
+          })
+        : null) ??
+      resolveBundledPluginPublicSurfacePathForFacade(publicSurfaceParams))
+    : resolveBundledPluginPublicSurfacePathForFacade(publicSurfaceParams);
+  return modulePath
+    ? {
+        modulePath,
+        boundaryRoot: resolveFacadeBoundaryRoot({
+          modulePath,
+          bundledPluginsDir: params.bundledPluginsDir,
+          packageRoot,
+        }),
+      }
+    : null;
+}
+
+function resolveRegistryPluginModuleLocationFromRecords(params = {}) {
+  const registry = Array.isArray(params.registry) ? params.registry : [];
+  const tiers = [
+    (plugin) => plugin && plugin.id === params.dirName,
+    (plugin) => plugin && path.basename(String(plugin.rootDir || "")) === params.dirName,
+    (plugin) =>
+      plugin && Array.isArray(plugin.channels) && plugin.channels.includes(params.dirName),
+  ];
+  const artifactBasename = normalizeBundledPluginArtifactSubpathForFacade(
+    params.artifactBasename,
+  );
+  const sourceBaseName = artifactBasename.replace(/\.js$/u, "");
+  for (const matchFn of tiers) {
+    for (const record of registry.filter(matchFn)) {
+      const rootDir = path.resolve(String(record.rootDir || ""));
+      const builtCandidate = path.join(rootDir, artifactBasename);
+      if (fs.existsSync(builtCandidate)) {
+        return { modulePath: builtCandidate, boundaryRoot: rootDir };
+      }
+      for (const ext of FACADE_PUBLIC_SURFACE_SOURCE_EXTENSIONS) {
+        const sourceCandidate = path.join(rootDir, `${sourceBaseName}${ext}`);
+        if (fs.existsSync(sourceCandidate)) {
+          return { modulePath: sourceCandidate, boundaryRoot: rootDir };
+        }
+      }
+    }
+  }
+  return null;
+}
+
 const facadeLoaderRuntime = {
   createLazyFacadeArrayValue,
   createLazyFacadeObjectValue,
   listImportedBundledPluginFacadeIds,
   loadFacadeModuleAtLocationSync,
   resetFacadeLoaderStateForTest,
+};
+
+const facadeResolutionSharedRuntime = {
+  createFacadeResolutionKey,
+  resolveBundledFacadeModuleLocation,
+  resolveFacadeBoundaryRoot,
+  resolveRegistryPluginModuleLocationFromRecords,
 };
 
 function buildPluginApi(params = {}) {
@@ -85794,6 +86009,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-test-runtime"
   ) {
     return pluginTestRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/facade-resolution-shared" ||
+    request === "@openclaw/plugin-sdk/facade-resolution-shared"
+  ) {
+    return facadeResolutionSharedRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/facade-loader" ||

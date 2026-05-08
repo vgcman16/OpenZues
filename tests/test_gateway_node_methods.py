@@ -66828,6 +66828,240 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_facade_resolution_shared_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-facade-resolution-shared.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const shared = require("openclaw/plugin-sdk/facade-resolution-shared");
+const scopedShared = require("@openclaw/plugin-sdk/facade-resolution-shared");
+
+const root = {json.dumps(str(tmp_path))};
+function writeFile(filePath) {{
+  fs.mkdirSync(path.dirname(filePath), {{ recursive: true }});
+  fs.writeFileSync(filePath, "module.exports = {{ ok: true }};\\n");
+}}
+function rel(filePath) {{
+  return filePath ? path.relative(root, filePath).replace(/\\\\/g, "/") : null;
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.facade_resolution_shared",
+      description: "Use OpenClaw facade-resolution-shared SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        const packageRoot = path.join(root, "package");
+        const bundledRoot = path.join(root, "bundled");
+        const idRoot = path.join(root, "registry", "id-match");
+        const basenameRoot = path.join(root, "registry", "basename-match");
+        const channelRoot = path.join(root, "registry", "channel-match");
+        writeFile(path.join(packageRoot, "extensions", "source-plugin", "surface.ts"));
+        writeFile(path.join(packageRoot, "dist", "extensions", "built-plugin", "surface.js"));
+        writeFile(path.join(bundledRoot, "explicit-plugin", "surface.js"));
+        writeFile(path.join(idRoot, "surface.js"));
+        writeFile(path.join(basenameRoot, "surface.ts"));
+        writeFile(path.join(channelRoot, "surface.mjs"));
+
+        const sourceLocation = shared.resolveBundledFacadeModuleLocation({{
+          currentModulePath: path.join(
+            packageRoot,
+            "src",
+            "plugin-sdk",
+            "facade-resolution-shared.ts"
+          ),
+          packageRoot,
+          dirName: "source-plugin",
+          artifactBasename: "surface.js"
+        }});
+        const builtLocation = shared.resolveBundledFacadeModuleLocation({{
+          currentModulePath: path.join(
+            packageRoot,
+            "dist",
+            "plugin-sdk",
+            "facade-resolution-shared.js"
+          ),
+          packageRoot,
+          dirName: "built-plugin",
+          artifactBasename: "surface.js"
+        }});
+        const explicitLocation = shared.resolveBundledFacadeModuleLocation({{
+          currentModulePath: path.join(
+            packageRoot,
+            "dist",
+            "plugin-sdk",
+            "facade-resolution-shared.js"
+          ),
+          packageRoot,
+          dirName: "explicit-plugin",
+          artifactBasename: "surface.js",
+          bundledPluginsDir: bundledRoot
+        }});
+        const registryId = shared.resolveRegistryPluginModuleLocationFromRecords({{
+          registry: [{{ id: "id-match", rootDir: idRoot, channels: ["other"] }}],
+          dirName: "id-match",
+          artifactBasename: "./surface.js"
+        }});
+        const registryBasename = shared.resolveRegistryPluginModuleLocationFromRecords({{
+          registry: [{{ id: "other", rootDir: basenameRoot, channels: [] }}],
+          dirName: "basename-match",
+          artifactBasename: "surface.js"
+        }});
+        const registryChannel = shared.resolveRegistryPluginModuleLocationFromRecords({{
+          registry: [{{ id: "other", rootDir: channelRoot, channels: ["channel-plugin"] }}],
+          dirName: "channel-plugin",
+          artifactBasename: "surface.js"
+        }});
+
+        return {{
+          keys: Object.keys(shared).sort(),
+          scopedType: typeof scopedShared.createFacadeResolutionKey,
+          keyDefault: shared.createFacadeResolutionKey({{
+            dirName: "plug",
+            artifactBasename: "surface.js",
+            env: {{}}
+          }}),
+          keyDisabledMatches: shared.createFacadeResolutionKey({{
+            dirName: "plug",
+            artifactBasename: "surface.js",
+            bundledPluginsDir: bundledRoot,
+            env: {{ OPENCLAW_DISABLE_BUNDLED_PLUGINS: "true" }}
+          }}) === `plug::surface.js::${{path.resolve(bundledRoot)}}::disabled`,
+          boundaryInside: rel(shared.resolveFacadeBoundaryRoot({{
+            modulePath: path.join(bundledRoot, "explicit-plugin", "surface.js"),
+            bundledPluginsDir: bundledRoot,
+            packageRoot
+          }})),
+          boundaryOutside: rel(shared.resolveFacadeBoundaryRoot({{
+            modulePath: path.join(root, "elsewhere", "surface.js"),
+            bundledPluginsDir: bundledRoot,
+            packageRoot
+          }})),
+          sourceLocation: {{
+            modulePath: rel(sourceLocation.modulePath),
+            boundaryRoot: rel(sourceLocation.boundaryRoot)
+          }},
+          builtLocation: {{
+            modulePath: rel(builtLocation.modulePath),
+            boundaryRoot: rel(builtLocation.boundaryRoot)
+          }},
+          explicitLocation: {{
+            modulePath: rel(explicitLocation.modulePath),
+            boundaryRoot: rel(explicitLocation.boundaryRoot)
+          }},
+          registryId: {{
+            modulePath: rel(registryId.modulePath),
+            boundaryRoot: rel(registryId.boundaryRoot)
+          }},
+          registryBasename: {{
+            modulePath: rel(registryBasename.modulePath),
+            boundaryRoot: rel(registryBasename.boundaryRoot)
+          }},
+          registryChannel: {{
+            modulePath: rel(registryChannel.modulePath),
+            boundaryRoot: rel(registryChannel.boundaryRoot)
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-facade-resolution-shared-plugin",
+                    "name": "Runtime Facade Resolution Shared Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-facade-resolution-shared-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.facade_resolution_shared"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.facade_resolution_shared"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createFacadeResolutionKey",
+            "resolveBundledFacadeModuleLocation",
+            "resolveFacadeBoundaryRoot",
+            "resolveRegistryPluginModuleLocationFromRecords",
+        ],
+        "scopedType": "function",
+        "keyDefault": "plug::surface.js::<default>::enabled",
+        "keyDisabledMatches": True,
+        "boundaryInside": "bundled",
+        "boundaryOutside": "package",
+        "sourceLocation": {
+            "modulePath": "package/extensions/source-plugin/surface.ts",
+            "boundaryRoot": "package",
+        },
+        "builtLocation": {
+            "modulePath": "package/dist/extensions/built-plugin/surface.js",
+            "boundaryRoot": "package",
+        },
+        "explicitLocation": {
+            "modulePath": "bundled/explicit-plugin/surface.js",
+            "boundaryRoot": "bundled",
+        },
+        "registryId": {
+            "modulePath": "registry/id-match/surface.js",
+            "boundaryRoot": "registry/id-match",
+        },
+        "registryBasename": {
+            "modulePath": "registry/basename-match/surface.ts",
+            "boundaryRoot": "registry/basename-match",
+        },
+        "registryChannel": {
+            "modulePath": "registry/channel-match/surface.mjs",
+            "boundaryRoot": "registry/channel-match",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_web_media_helpers(
     tmp_path,
 ) -> None:
