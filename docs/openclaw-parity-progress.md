@@ -20006,6 +20006,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 559 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `1d19a46c`.
+- Imported plugin SDK `facade-loader` now exposes scoped/unscoped lazy facade
+  object and array loaders, location-based facade module loading with cache
+  semantics, reset support, and imported facade id tracking. This closes
+  `OZ-PLUGIN-00301`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999999999999999992%.
+- Verified the facade-loader helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_facade_loader_helpers -q`
+  (generic fallback returned empty/non-cached proxy behavior before
+  implementation, then `1 passed`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "facade_loader or plugin_test_runtime or resolution_notes"`
+  (`3 passed, 1129 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `29aa7956`.
 
 ## References
 

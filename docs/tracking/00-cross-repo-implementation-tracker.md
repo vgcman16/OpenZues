@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999992% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -81,8 +81,9 @@ source-checkout availability clearing is checkpointed in `e66c5082`, and
 `OZ-PKG-001CH` recurring runner startup checks are checkpointed in `49150d76`;
 `OZ-PLUGIN-00300` resolution-notes subpath shim is checkpointed in
 `9c56ff39`, and `OZ-PKG-001CI` combined update hint formatting is
-checkpointed in `1d19a46c`; continue remaining exact plugin SDK subpaths or
-broader package/provider runtime parity.
+checkpointed in `1d19a46c`. `OZ-PLUGIN-00301` facade-loader is checkpointed
+in `29aa7956`; continue adjacent facade-runtime/facade-resolution-shared or
+remaining exact plugin SDK subpaths.
 
 ## Active Slice Detail
 
@@ -965,6 +966,27 @@ broader package/provider runtime parity.
     `1 passed`), adjacent proof
     `python -m pytest tests\test_gateway_node_methods.py -q -k "resolution_notes or tool_send or web_media"`
     (`3 passed, 1128 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00301` Imported facade-loader subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/facade-loader.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `facade-loader` and receive lazy object/array facade proxies,
+    cached `loadFacadeModuleAtLocationSync`, imported facade id tracking, and
+    reset support without importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `29aa7956`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_facade_loader_helpers -q`
+    (generic fallback returned empty/non-cached proxy behavior before
+    implementation, then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "facade_loader or plugin_test_runtime or resolution_notes"`
+    (`3 passed, 1129 deselected`), `ruff check src\openzues\cli.py
     tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
     focused `git diff --check`.
 

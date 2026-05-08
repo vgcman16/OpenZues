@@ -536,6 +536,8 @@ config schema contracts, and bundled Discord public-surface delegation for
 `src/plugin-sdk/runtime-logger.ts` is checkpointed in `b56d15d7`.
 `resolution-notes` from `src/plugin-sdk/resolution-notes.ts` is checkpointed
 in `9c56ff39`.
+`facade-loader` from `src/plugin-sdk/facade-loader.ts` is checkpointed in
+`29aa7956`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
