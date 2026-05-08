@@ -21163,6 +21163,188 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_feishu_root_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-feishu-root.cjs"
+    runtime_entry.write_text(
+        """
+const feishu = require("openclaw/plugin-sdk/feishu");
+const scopedFeishu = require("@openclaw/plugin-sdk/feishu");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.feishu_root",
+      description: "Use OpenClaw feishu root SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const calls = [];
+        globalThis.__openzuesQaRunnerRuntime = {
+          loadBundledPluginPublicSurfaceModuleSync(params) {
+            calls.push(params);
+            if (params.artifactBasename === "setup-api.js") {
+              return {
+                feishuSetupAdapter: {
+                  channel: "feishu",
+                  resolveAccountId: ({ cfg }) => cfg.accountId || "default"
+                },
+                feishuSetupWizard: {
+                  channel: "feishu",
+                  status: { unconfiguredHint: "Connect Feishu" }
+                }
+              };
+            }
+            return {
+              buildFeishuConversationId: ({ chatId, scope, senderOpenId, topicId }) =>
+                [scope, chatId, topicId || "-", senderOpenId || "-"].join(":"),
+              parseFeishuConversationId: ({ conversationId }) => ({
+                canonicalConversationId: conversationId,
+                chatId: conversationId.split(":")[1],
+                scope: conversationId.split(":")[0]
+              }),
+              parseFeishuDirectConversationId: (raw) =>
+                typeof raw === "string" && raw.startsWith("direct:")
+                  ? raw.slice("direct:".length)
+                  : undefined,
+              parseFeishuTargetId: (raw) =>
+                typeof raw === "string" && raw.trim() ? raw.trim() : undefined,
+              createFeishuThreadBindingManager: ({ accountId }) => ({
+                accountId: accountId || "default"
+              }),
+              feishuSessionBindingAdapterChannels: ["feishu"],
+              feishuThreadBindingTesting: { resetFeishuThreadBindingsForTests: () => 1 }
+            };
+          }
+        };
+
+        const setupKeys = Object.keys(feishu)
+          .filter((key) => key.startsWith("feishuSetup"))
+          .sort();
+        const conversationKeys = Object.keys(feishu)
+          .filter((key) =>
+            key.startsWith("parseFeishu") ||
+            key.startsWith("buildFeishu") ||
+            key.startsWith("createFeishu") ||
+            key.startsWith("feishuSession") ||
+            key.startsWith("feishuThread")
+          )
+          .sort();
+        const adapter = feishu.feishuSetupAdapter;
+        const wizard = scopedFeishu.feishuSetupWizard;
+        const built = feishu.buildFeishuConversationId({
+          chatId: "chat1",
+          scope: "group_topic_sender",
+          senderOpenId: "sender1",
+          topicId: "topic1"
+        });
+        return {
+          setupKeys,
+          conversationKeys,
+          scopedSame:
+            scopedFeishu.feishuSetupAdapter === feishu.feishuSetupAdapter &&
+            scopedFeishu.buildFeishuConversationId === feishu.buildFeishuConversationId,
+          inheritedGenericType: typeof feishu.createDedupeCache,
+          adapter: {
+            channel: adapter.channel,
+            account: adapter.resolveAccountId({ cfg: { accountId: "ops" } })
+          },
+          wizard: {
+            channel: wizard.channel,
+            hint: wizard.status.unconfiguredHint
+          },
+          built,
+          parsed: feishu.parseFeishuConversationId({ conversationId: built }),
+          direct: feishu.parseFeishuDirectConversationId("direct:user1"),
+          target: feishu.parseFeishuTargetId(" chat:ops "),
+          channels: [...scopedFeishu.feishuSessionBindingAdapterChannels],
+          callArtifacts: Array.from(
+            new Set(calls.map((call) => `${call.dirName}/${call.artifactBasename}`))
+          ).sort()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-feishu-root-plugin",
+                    "name": "Runtime Feishu Root Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-feishu-root.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.feishu_root"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.feishu_root"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "setupKeys": ["feishuSetupAdapter", "feishuSetupWizard"],
+        "conversationKeys": [
+            "buildFeishuConversationId",
+            "createFeishuThreadBindingManager",
+            "feishuSessionBindingAdapterChannels",
+            "feishuThreadBindingTesting",
+            "parseFeishuConversationId",
+            "parseFeishuDirectConversationId",
+            "parseFeishuTargetId",
+        ],
+        "scopedSame": True,
+        "inheritedGenericType": "function",
+        "adapter": {"channel": "feishu", "account": "ops"},
+        "wizard": {"channel": "feishu", "hint": "Connect Feishu"},
+        "built": "group_topic_sender:chat1:topic1:sender1",
+        "parsed": {
+            "canonicalConversationId": "group_topic_sender:chat1:topic1:sender1",
+            "chatId": "chat1",
+            "scope": "group_topic_sender",
+        },
+        "direct": "user1",
+        "target": "chat:ops",
+        "channels": ["feishu"],
+        "callArtifacts": ["feishu/contract-api.js", "feishu/setup-api.js"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_helpers(
     tmp_path,
 ) -> None:

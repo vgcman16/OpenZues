@@ -88599,6 +88599,46 @@ Object.defineProperties(telegramRootRuntime, {
   },
 });
 
+const feishuRootRuntime = Object.create(genericSdk);
+Object.defineProperties(feishuRootRuntime, {
+  buildFeishuConversationId: {
+    enumerable: true,
+    value: buildFeishuConversationId,
+  },
+  createFeishuThreadBindingManager: {
+    enumerable: true,
+    value: createFeishuThreadBindingManager,
+  },
+  feishuSessionBindingAdapterChannels: {
+    enumerable: true,
+    value: feishuConversationRuntime.feishuSessionBindingAdapterChannels,
+  },
+  feishuSetupAdapter: {
+    enumerable: true,
+    value: feishuSetupRuntime.feishuSetupAdapter,
+  },
+  feishuSetupWizard: {
+    enumerable: true,
+    value: feishuSetupRuntime.feishuSetupWizard,
+  },
+  feishuThreadBindingTesting: {
+    enumerable: true,
+    value: feishuConversationRuntime.feishuThreadBindingTesting,
+  },
+  parseFeishuConversationId: {
+    enumerable: true,
+    value: parseFeishuConversationId,
+  },
+  parseFeishuDirectConversationId: {
+    enumerable: true,
+    value: parseFeishuDirectConversationId,
+  },
+  parseFeishuTargetId: {
+    enumerable: true,
+    value: parseFeishuTargetId,
+  },
+});
+
 const originalLoad = Module._load;
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
@@ -88638,6 +88678,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/googlechat"
   ) {
     return getGooglechatRootRuntime();
+  }
+  if (
+    request === "openclaw/plugin-sdk/feishu" ||
+    request === "@openclaw/plugin-sdk/feishu"
+  ) {
+    return feishuRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/telegram" ||
