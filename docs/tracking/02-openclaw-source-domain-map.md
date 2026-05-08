@@ -569,6 +569,8 @@ in `41dad57f`.
 checkpointed in `0cfb2157`.
 `telegram-command-ui` from `src/plugin-sdk/telegram-command-ui.ts` is
 checkpointed in `185f5b52`.
+`telegram-account` from `src/plugin-sdk/telegram-account.ts` is checkpointed
+in `49838584`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map

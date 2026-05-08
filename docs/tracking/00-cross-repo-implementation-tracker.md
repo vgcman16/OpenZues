@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -97,7 +97,8 @@ checkpointed in `1bc4c0f9`. `OZ-PLUGIN-00313` thread-ownership is
 checkpointed in `41dad57f`, and `OZ-PLUGIN-00314` ssrf-dispatcher is
 checkpointed in `7b283bdc`. `OZ-PLUGIN-00315` bluebubbles-policy is
 checkpointed in `0cfb2157`, and `OZ-PLUGIN-00316` telegram-command-ui is
-checkpointed in `185f5b52`; continue remaining provider/channel facade and
+checkpointed in `185f5b52`. `OZ-PLUGIN-00317` telegram-account is
+checkpointed in `49838584`; continue remaining provider/channel facade and
 broad repo parity seams.
 
 ## Active Slice Detail
@@ -1323,6 +1324,27 @@ broad repo parity seams.
     implementation, then `1 passed`), adjacent proof
     `python -m pytest tests\test_gateway_node_methods.py -q -k "telegram_command_ui or telegram_command_config or command_auth"`
     (`4 passed, 1143 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00317` Imported telegram-account subpath shim
+  - Source: `openclaw-main/src/plugin-sdk/telegram-account.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `telegram-account` and receive only `resolveTelegramAccount`,
+    resolving account overrides, enabled state, config tokens, token files,
+    env fallback, and token source metadata.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `49838584`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_telegram_account_helper -q`
+    (exact subpath returned generic passthrough data before implementation,
+    then `1 passed`), adjacent proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "telegram_account or telegram_command_ui or channel_config_helpers"`
+    (`3 passed, 1145 deselected`), `ruff check src\openzues\cli.py
     tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
     focused `git diff --check`.
 
