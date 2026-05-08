@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999999999999999999997% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -160,7 +160,8 @@ checkpointed in `09d036fd`. `OZ-PLUGIN-00362` googlechat is checkpointed in
 The current exact SDK-root seam queue is complete. `OZ-RT-001AA`
 `chat.history` large-limit cap is checkpointed in `6a964896`, and
 `OZ-RT-001AB` `chat.history` base64-audio redaction is checkpointed in
-`d8fe12d3`; continue broader provider/runtime breadth.
+`d8fe12d3`; `OZ-RT-001AC` `chat.history` inline-image redaction is
+checkpointed in `cd286b80`; continue broader provider/runtime breadth.
 
 ## Active Slice Detail
 

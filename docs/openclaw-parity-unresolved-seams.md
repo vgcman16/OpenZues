@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.999999999999999999999999999999999999999995%.
+  band of ~80-99.999999999999999999999999999999999999999997%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -2733,6 +2733,18 @@ with focused red/green
 src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
 `mypy src\openzues\services\gateway_node_methods.py`, and focused
 `git diff --check`. Source/test checkpointed in `d8fe12d3`.
+
+Current queue-head adjustment: `chat.history` now also redacts inline image
+content block `data` fields like OpenClaw's display projection sanitizer,
+returning `omitted=true` plus encoded byte length instead of the embedded image
+payload. Verified on 2026-05-08 with focused red/green
+`python -m pytest tests\test_gateway_node_methods.py::test_chat_history_redacts_inline_image_data_blocks -q`
+(`1 passed`), adjacent transcript/read-model proof
+`python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+(`34 passed, 1175 deselected`), `ruff check
+src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+`mypy src\openzues\services\gateway_node_methods.py`, and focused
+`git diff --check`. Source/test checkpointed in `cd286b80`.
 
 Current queue-head adjustment: `chat.history` now replaces single oversized
 projected messages with `[chat.history omitted: message too large]` and
