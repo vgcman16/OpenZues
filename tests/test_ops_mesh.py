@@ -7427,6 +7427,146 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_rou
     }
 
 
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_group_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-tlon-group"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Tlon Native Group Provider",
+        kind="tlon",
+        target="https://zod.tlon.network?ship=~zod",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tlon-code",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "tlon",
+            "account_id": "ship",
+            "peer_kind": "group",
+            "peer_id": "chat/~zod/general",
+        },
+    )
+    tlon_pokes: list[dict[str, object]] = []
+
+    def fake_request_tlon_poke(
+        self: OpsMeshService,
+        config: _TlonRouteConfig,
+        *,
+        app: str,
+        mark: str,
+        json_payload: dict[str, object],
+        timeout_seconds: float,
+    ) -> int:
+        del self, timeout_seconds
+        tlon_pokes.append(
+            {
+                "base_url": config.base_url,
+                "ship": config.ship,
+                "code": config.code,
+                "app": app,
+                "mark": mark,
+                "json": json_payload,
+            }
+        )
+        return 1713980000123
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_tlon_poke",
+        fake_request_tlon_poke,
+        raising=False,
+    )
+    monkeypatch.setattr("openzues.services.ops_mesh.time.time", lambda: 1713980000.123)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="tlon",
+        to="group:~zod/general",
+        message="Group reply",
+        reply_to_id="1713980000123",
+        account_id="ship",
+        idempotency_key="idem-native-tlon-group-reply",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="tlon",
+            account_id="ship",
+            peer_kind="group",
+            peer_id="group:~zod/general",
+        ),
+    )
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-tlon-group-reply",
+        "channel": "tlon",
+        "messageId": "~zod/1713980000123",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "tlon",
+            "target": "group:~zod/general",
+            "accountId": "ship",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "chat/~zod/general",
+        "channelId": "chat/~zod/general",
+        "roomId": "chat/~zod/general",
+        "replyToId": "1.713.980.000.123",
+    }
+    assert tlon_pokes == [
+        {
+            "base_url": "https://zod.tlon.network",
+            "ship": "~zod",
+            "code": "tlon-code",
+            "app": "channels",
+            "mark": "channel-action-1",
+            "json": {
+                "channel": {
+                    "nest": "chat/~zod/general",
+                    "action": {
+                        "post": {
+                            "reply": {
+                                "id": "1.713.980.000.123",
+                                "action": {
+                                    "add": {
+                                        "content": [{"inline": ["Group reply"]}],
+                                        "author": "~zod",
+                                        "sent": 1713980000123,
+                                    }
+                                },
+                            }
+                        }
+                    },
+                }
+            },
+        }
+    ]
+    delivery = await database.get_outbound_delivery(1)
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["replyToId"] == "1.713.980.000.123"
+
+
 def test_ops_mesh_service_imessage_rpc_support_marks_unknown_subcommand_fatal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
