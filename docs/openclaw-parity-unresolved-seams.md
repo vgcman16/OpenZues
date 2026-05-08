@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999991%.
+  band of ~80-99.9999992%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1745,8 +1745,11 @@ the upstream target forms, markdown text becomes Tlon story inline content,
 native transport and provider result metadata with `messageId`, `chatId`, and
 `channelId`. Tlon group/thread replies are now additionally verified with the
 upstream `channel-action-1` reply wrapper and dotted `@ud` numeric reply ids.
-Remaining Tlon runtime parity is now media upload fidelity and inbound/session
-breadth.
+Tlon image-media sends now invoke a fakeable upload hook before building the
+story and persist uploaded media URLs in provider metadata, while preserving
+OpenClaw's fallback-to-original behavior when upload fails. Remaining Tlon
+runtime parity is now the real hosted Memex/custom S3 upload backend and
+inbound/session breadth.
 iMessage config-backed account probes now mirror OpenClaw's `probeIMessage`
 status hook: `channels status --probe --json` discovers configured
 `channels.imessage` accounts from the Gateway config snapshot, checks the
@@ -9760,8 +9763,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   against `/~/login`, PUT upstream-shaped poke actions into `/~/channel/<id>`,
   convert markdown into Tlon story content, and preserve native provider
   result metadata through direct gateway sends. Source/test checkpointed in
-  `bab52a95`; group/thread reply proof checkpointed in `0fd7cbb8`;
+  `bab52a95`; group/thread reply proof checkpointed in `0fd7cbb8`; image
+  media upload-hook checkpointed in `0c18844d`;
   repo-wide parity remains estimated at ~99.9%, with the evidence band
-  tightened to ~80-99.9999991%. Remaining Tlon-specific gaps are media upload
-  fidelity and inbound/session breadth before rotating through broader
-  provider, packaging, and companion seams.
+  tightened to ~80-99.9999992%. Remaining Tlon-specific gaps are the real
+  hosted Memex/custom S3 upload backend and inbound/session breadth before
+  rotating through broader provider, packaging, and companion seams.
