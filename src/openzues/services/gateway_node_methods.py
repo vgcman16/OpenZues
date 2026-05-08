@@ -16834,7 +16834,7 @@ def _project_control_chat_messages(
             continue
         raw_text = str(row.get("content") or "")
         sender_label = (
-            _extract_chat_history_inbound_sender_label(raw_text)
+            _extract_chat_history_message_sender_label(raw_text)
             if role == "user"
             else None
         )
@@ -17732,6 +17732,34 @@ def _extract_chat_history_inbound_sender_label(text: str) -> str | None:
         sender_info.get("id") if sender_info is not None else None,
         conversation_info.get("sender") if conversation_info is not None else None,
     )
+
+
+def _extract_chat_history_structured_sender_label(text: str) -> str | None:
+    if not text.lstrip().startswith("["):
+        return None
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, list):
+        return None
+    for item in parsed:
+        if not isinstance(item, Mapping):
+            continue
+        for key in ("text", "content"):
+            value = item.get(key)
+            if not isinstance(value, str):
+                continue
+            sender_label = _extract_chat_history_inbound_sender_label(value)
+            if sender_label is not None:
+                return sender_label
+    return None
+
+
+def _extract_chat_history_message_sender_label(text: str) -> str | None:
+    return _extract_chat_history_inbound_sender_label(
+        text
+    ) or _extract_chat_history_structured_sender_label(text)
 
 
 def _strip_chat_history_inbound_metadata(text: str) -> str:
