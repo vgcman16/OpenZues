@@ -19741,6 +19741,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `438f3c33`.
+- Native git updates now iterate bounded preflight candidate SHAs in the
+  detached worktree, checking out each candidate, running dependency install
+  and build checks there, selecting the first passing SHA, and rebasing the
+  live checkout to that selected candidate. This closes `OZ-PKG-001BV`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999995%.
+- Verified preflight candidate checkout/build selection with focused
+  red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate -q`
+  (`1 failed` before implementation, then covered green), focused adjacent
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps tests\test_runtime_updates.py::test_runtime_update_run_update_ignores_control_ui_dist_dirty_files tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_worktree_failure -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`42 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `84a78474`.
 
 ## References
 

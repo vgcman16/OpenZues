@@ -10309,3 +10309,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, with the evidence band tightened to
   ~80-99.999999999999999999999%. Continue preflight candidate checkout/build
   selection or startup auto-update policy next.
+- Current queue-head adjustment: native git updates now run candidate checkout,
+  dependency install, and build checks in the preflight worktree, select the
+  first passing candidate, and rebase the live checkout to that SHA. Source/test
+  checkpointed in `84a78474`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999999999999995%.
+  Continue preflight lint/no-good-commit cleanup edge cases or startup
+  auto-update policy next.
