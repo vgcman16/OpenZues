@@ -49513,6 +49513,51 @@ const sessionStoreRuntime = {
   resolveThreadFlag,
 };
 
+function extractTranscriptStemFromSessionsMemoryHit(hitPath) {
+  const normalized = String(hitPath || "").replace(/\\/g, "/");
+  const trimmed = normalized.startsWith("sessions/")
+    ? normalized.slice("sessions/".length)
+    : normalized;
+  const base = path.basename(trimmed);
+  if (base.endsWith(".jsonl")) {
+    const stem = base.slice(0, -".jsonl".length);
+    return stem || null;
+  }
+  if (base.endsWith(".md")) {
+    const stem = base.slice(0, -".md".length);
+    return stem || null;
+  }
+  return null;
+}
+
+function resolveTranscriptStemToSessionKeys(params = {}) {
+  const store = params.store && typeof params.store === "object" ? params.store : {};
+  const stem = String(params.stem || "");
+  const stemAsFile = stem.endsWith(".jsonl") ? stem : `${stem}.jsonl`;
+  const parsedStemId = parseUsageCountedSessionIdFromFileName(stemAsFile);
+  const matches = [];
+  for (const [sessionKey, entry] of Object.entries(store)) {
+    const sessionFile = normalizeOptionalString(entry && entry.sessionFile);
+    if (sessionFile) {
+      const base = path.basename(sessionFile);
+      const fileStem = base.endsWith(".jsonl") ? base.slice(0, -".jsonl".length) : base;
+      if (fileStem === stem) {
+        matches.push(sessionKey);
+        continue;
+      }
+    }
+    if (entry && (entry.sessionId === stem || (parsedStemId && entry.sessionId === parsedStemId))) {
+      matches.push(sessionKey);
+    }
+  }
+  return Array.from(new Set(matches));
+}
+
+const sessionTranscriptHitRuntime = {
+  extractTranscriptStemFromSessionsMemoryHit,
+  resolveTranscriptStemToSessionKeys,
+};
+
 async function resolveForwardedRuntimeMethod(params) {
   const runtime =
     typeof params.getRuntime === "function" ? await params.getRuntime() : params.runtime;
@@ -84780,6 +84825,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/session-store-runtime"
   ) {
     return sessionStoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/session-transcript-hit" ||
+    request === "@openclaw/plugin-sdk/session-transcript-hit"
+  ) {
+    return sessionTranscriptHitRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/session-visibility" ||

@@ -66554,6 +66554,131 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_session_transcript_hit_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-session-transcript-hit.cjs"
+    runtime_entry.write_text(
+        """
+const hit = require("openclaw/plugin-sdk/session-transcript-hit");
+const scopedHit = require("@openclaw/plugin-sdk/session-transcript-hit");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.session_transcript_hit",
+      description: "Use OpenClaw session-transcript-hit SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const store = {
+          "agent/thread-file": {
+            sessionFile: "sessions/thread-file.jsonl",
+            sessionId: "session-other"
+          },
+          "agent/thread-id": {
+            sessionFile: "other.jsonl",
+            sessionId: "thread-id"
+          },
+          "agent/thread-archive": {
+            sessionFile: "",
+            sessionId: "thread-archive"
+          },
+          "agent/duplicate": {
+            sessionFile: "sessions/thread-file.jsonl",
+            sessionId: "thread-file"
+          }
+        };
+        return {
+          keys: Object.keys(hit).sort(),
+          scopedType: typeof scopedHit.extractTranscriptStemFromSessionsMemoryHit,
+          stems: [
+            hit.extractTranscriptStemFromSessionsMemoryHit("sessions/thread-file.jsonl"),
+            hit.extractTranscriptStemFromSessionsMemoryHit("exports/thread-md.md"),
+            hit.extractTranscriptStemFromSessionsMemoryHit("notes/thread.txt")
+          ],
+          fileMatches: hit.resolveTranscriptStemToSessionKeys({
+            store,
+            stem: "thread-file"
+          }),
+          idMatches: hit.resolveTranscriptStemToSessionKeys({
+            store,
+            stem: "thread-id"
+          }),
+          archivedMatches: hit.resolveTranscriptStemToSessionKeys({
+            store,
+            stem: "thread-archive.jsonl"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-session-transcript-hit-plugin",
+                    "name": "Runtime Session Transcript Hit Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-session-transcript-hit-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.session_transcript_hit"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.session_transcript_hit"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "extractTranscriptStemFromSessionsMemoryHit",
+            "resolveTranscriptStemToSessionKeys",
+        ],
+        "scopedType": "function",
+        "stems": ["thread-file", "thread-md", None],
+        "fileMatches": ["agent/thread-file", "agent/duplicate"],
+        "idMatches": ["agent/thread-id"],
+        "archivedMatches": ["agent/thread-archive"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_web_media_helpers(
     tmp_path,
 ) -> None:
