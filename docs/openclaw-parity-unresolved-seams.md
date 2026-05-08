@@ -9924,3 +9924,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.999999999998%. Rotate to the adjacent mixed-case staging-path proof
   next, then continue package/update/release breadth.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  have focused proof for OpenClaw's case-insensitive legacy staging-debris path
+  matching across `Dist`, `Extensions`, and `.OPENCLAW-INSTALL-STAGE-*`
+  segments. Test checkpointed in `9422c6b7`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999985%. Rotate to exact missing package inventory warning
+  breadth next.

@@ -18868,6 +18868,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`5 passed, 530 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `b16db705`.
+- `openzues doctor --json` now has focused proof for OpenClaw's
+  case-insensitive legacy staging-debris path matching across `Dist`,
+  `Extensions`, and `.OPENCLAW-INSTALL-STAGE-*` path segments. This closes
+  `OZ-PKG-001Q`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999985%.
+- Verified the mixed-case staging-debris slice with focused
+  `python -m pytest tests\test_cli.py::test_doctor_json_detects_mixed_case_package_dist_staging_debris -q`
+  (`1 passed`), adjacent package doctor proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris"`
+  (`6 passed, 530 deselected`), `ruff check tests\test_cli.py`, and focused
+  `git diff --check`. Test checkpointed and pushed in `9422c6b7`.
 
 ## References
 
