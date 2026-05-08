@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +20,9 @@ from openzues.database import Database
 logger = logging.getLogger(__name__)
 _UPDATE_LOG_TAIL_CHARS = 8000
 _LOW_DISK_SPACE_WARNING_THRESHOLD_BYTES = 1024 * 1024 * 1024
+_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE_ENV = (
+    "OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE"
+)
 _NPM_GLOBAL_INSTALL_QUIET_FLAGS = ("--no-fund", "--no-audit", "--loglevel=error")
 _NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS = (
     "--omit=optional",
@@ -554,6 +557,32 @@ def _post_package_update_doctor_args() -> list[str]:
     ]
 
 
+def _post_package_update_doctor_env() -> dict[str, str]:
+    return {
+        "NODE_DISABLE_COMPILE_CACHE": "1",
+        "OPENCLAW_UPDATE_IN_PROGRESS": "1",
+        _UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE_ENV: "1",
+    }
+
+
+def _apply_command_env(env: Mapping[str, str] | None) -> dict[str, str | None]:
+    if not env:
+        return {}
+    previous: dict[str, str | None] = {}
+    for key, value in env.items():
+        previous[key] = os.environ.get(key)
+        os.environ[key] = value
+    return previous
+
+
+def _restore_command_env(previous: Mapping[str, str | None]) -> None:
+    for key, value in previous.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
 def _expected_package_version_from_spec(package_spec: str) -> str | None:
     spec = package_spec.strip()
     if "@" not in spec:
@@ -933,6 +962,7 @@ class RuntimeUpdateService:
                 _post_package_update_doctor_args(),
                 cwd=package_root,
                 timeout_ms=timeout_ms,
+                env=_post_package_update_doctor_env(),
             )
             steps.append(doctor_step)
             if _update_step_exit_code(doctor_step) != 0:
@@ -999,9 +1029,14 @@ class RuntimeUpdateService:
         cwd: Path,
         timeout_ms: int | None,
         started_at: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> dict[str, object]:
         started_at = time.monotonic() if started_at is None else started_at
-        result = await self._update_command_runner(argv, cwd, timeout_ms)
+        previous_env = _apply_command_env(env)
+        try:
+            result = await self._update_command_runner(argv, cwd, timeout_ms)
+        finally:
+            _restore_command_env(previous_env)
         return {
             "name": name,
             "command": " ".join(argv),

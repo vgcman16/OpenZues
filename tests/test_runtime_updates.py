@@ -674,6 +674,75 @@ async def test_runtime_update_run_package_update_fails_when_post_update_doctor_f
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_package_update_sets_post_update_doctor_env(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "package-root"
+    package_root.mkdir()
+    (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    monkeypatch.delenv("NODE_DISABLE_COMPILE_CACHE", raising=False)
+    monkeypatch.delenv("OPENCLAW_UPDATE_IN_PROGRESS", raising=False)
+    monkeypatch.delenv("OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE", raising=False)
+    doctor_env: dict[str, str | None] = {}
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        if argv == _post_update_doctor_args():
+            doctor_env.update(
+                {
+                    "NODE_DISABLE_COMPILE_CACHE": os.environ.get(
+                        "NODE_DISABLE_COMPILE_CACHE"
+                    ),
+                    "OPENCLAW_UPDATE_IN_PROGRESS": os.environ.get(
+                        "OPENCLAW_UPDATE_IN_PROGRESS"
+                    ),
+                    "OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE": os.environ.get(
+                        "OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE"
+                    ),
+                }
+            )
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@latest",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "ok"
+    assert doctor_env == {
+        "NODE_DISABLE_COMPILE_CACHE": "1",
+        "OPENCLAW_UPDATE_IN_PROGRESS": "1",
+        "OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE": "1",
+    }
+    assert os.environ.get("NODE_DISABLE_COMPILE_CACHE") is None
+    assert os.environ.get("OPENCLAW_UPDATE_IN_PROGRESS") is None
+    assert os.environ.get("OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE") is None
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_package_update_verifies_expected_version(
     tmp_path,
 ) -> None:
