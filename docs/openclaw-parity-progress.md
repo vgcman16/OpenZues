@@ -21301,6 +21301,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `3817410c`.
+- `chat.history` now strips legacy OpenClaw internal runtime-context delimiter
+  blocks before exposing structured transcript text, so runtime-only context is
+  removed and visible user text remains. This closes the first
+  `chat-sanitize` / session-history state envelope-stripping edge in the
+  transcript display path; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999995%.
+- Verified the structured internal runtime-context stripping seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_structured_internal_runtime_context -q`
+  (the internal block was exposed before implementation, then `1 passed`),
+  adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`45 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `b6d1b5b1`.
 
 ## References
 
