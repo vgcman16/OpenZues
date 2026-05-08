@@ -1990,6 +1990,12 @@ may lag behind this tracker.
   welcome detection, and `QUIT :probe` cleanup.
   - Status: checkpointed in `fd5d246b`
 
+- [x] Twitch route-backed account probe support, preserving OpenClaw's
+  `probeTwitch` status hook over Twitch IRC OAuth PASS/NICK readiness,
+  PING/PONG handling, `001` welcome detection, connected projection, and
+  `QUIT :probe` cleanup.
+  - Status: checkpointed in `5772e6a9`
+
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
   flags in the body while omitting `thread_id` from the body.
@@ -4922,6 +4928,19 @@ may lag behind this tracker.
     `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_irc_probe tests\test_ops_mesh.py::test_ops_mesh_service_irc_probe_waits_for_ready_and_quits -q`
     (`2 passed`), adjacent channel-probe proof (`13 passed, 506 deselected`),
     adjacent IRC ops proof (`2 passed, 375 deselected`), `ruff check`, and
+    `mypy`.
+
+- [x] Twitch route-backed account probe.
+  - Source: `openclaw-main/extensions/twitch/src/probe.ts`,
+    `openclaw-main/extensions/twitch/src/plugin.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`, `tests/test_ops_mesh.py`
+  - Status: checkpointed in `5772e6a9`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_twitch_probe tests\test_ops_mesh.py::test_ops_mesh_service_twitch_probe_waits_for_ready_and_quits -q`
+    (`2 passed`), adjacent channel-probe proof (`14 passed, 506 deselected`),
+    adjacent Twitch ops proof (`3 passed, 375 deselected`), `ruff check`, and
     `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
