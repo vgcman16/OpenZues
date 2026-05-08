@@ -176,6 +176,7 @@ _KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = (
     "tlon",
     "whatsapp",
     "zalo",
+    "qqbot",
     "line",
     "matrix",
 )

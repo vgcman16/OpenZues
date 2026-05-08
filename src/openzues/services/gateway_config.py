@@ -75,6 +75,8 @@ _OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
     "msteams": "msteams",
     "nextcloud-talk": "nextcloud-talk",
     "nostr": "nostr",
+    "qq": "qqbot",
+    "qqbot": "qqbot",
     "signal": "signal",
     "slack": "slack",
     "teams": "msteams",

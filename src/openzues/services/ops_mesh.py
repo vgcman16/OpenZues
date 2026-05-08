@@ -1394,6 +1394,8 @@ def _canonical_native_provider_channel(value: str | None) -> str:
     normalized = str(value or "").strip().lower()
     if normalized in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES:
         return "bluebubbles"
+    if normalized == "qq":
+        return "qqbot"
     return normalized
 
 
@@ -13018,6 +13020,14 @@ class OpsMeshService:
                 env_var="NEXTCLOUD_TALK_BOT_SECRET",
                 env_result_key="envSecret",
             )
+        if normalized_channel == "qqbot":
+            return await self._logout_secret_backed_channel_account(
+                channel="qqbot",
+                account_id=normalized_account_id,
+                fields=("clientSecret", "clientSecretFile"),
+                env_var="QQBOT_CLIENT_SECRET",
+                extra_result={"ok": True},
+            )
         if normalized_channel == "whatsapp":
             return await self._logout_whatsapp_channel_account(normalized_account_id)
         raise RuntimeError(f"channel {normalized_channel} does not support logout")
@@ -13179,6 +13189,7 @@ class OpsMeshService:
         fields: tuple[str, ...],
         env_var: str,
         env_result_key: str = "envToken",
+        extra_result: dict[str, object] | None = None,
     ) -> dict[str, object]:
         await self.stop_channel_runtime_account(channel, account_id)
         env_token = bool(os.environ.get(env_var, "").strip())
@@ -13192,13 +13203,16 @@ class OpsMeshService:
             account_id=account_id,
             fields=fields,
         )
-        return {
+        result: dict[str, object] = {
             "channel": channel,
             "accountId": account_id,
             "cleared": cleared,
             env_result_key: env_token,
             "loggedOut": logged_out,
         }
+        if extra_result:
+            result.update(extra_result)
+        return result
 
     async def _queue_tlon_approval_request(
         self,

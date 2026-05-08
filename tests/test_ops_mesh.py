@@ -9156,6 +9156,65 @@ async def test_ops_mesh_service_channels_logout_clears_whatsapp_managed_auth_dir
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_channels_logout_clears_qqbot_client_secret_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("QQBOT_CLIENT_SECRET", raising=False)
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-qqbot-channel-logout"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.patch_object(
+        {
+            "channels": {
+                "qqbot": {
+                    "appId": "qq-app",
+                    "clientSecret": "qq-secret",
+                    "clientSecretFile": "qq-secret.txt",
+                    "accounts": {
+                        "default": {
+                            "clientSecret": "account-qq-secret",
+                            "clientSecretFile": "account-qq-secret.txt",
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=config_service,
+    )
+
+    logout_result = await service.logout_channel_runtime_account("qqbot", "default")
+
+    assert logout_result == {
+        "channel": "qqbot",
+        "accountId": "default",
+        "ok": True,
+        "cleared": True,
+        "envToken": False,
+        "loggedOut": True,
+    }
+    qqbot_config = config_service.build_snapshot()["channels"]["qqbot"]
+    assert qqbot_config == {"appId": "qq-app"}
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_tlon_native_monitor_streams_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
