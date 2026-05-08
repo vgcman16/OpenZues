@@ -67956,6 +67956,13 @@ const phoneControlRuntime = {
   definePluginEntry,
 };
 
+const lobsterRuntime = {
+  applyWindowsSpawnProgramPolicy,
+  definePluginEntry,
+  materializeWindowsSpawnProgram,
+  resolveWindowsSpawnProgramCandidate,
+};
+
 const copilotProxyRuntime = {
   definePluginEntry,
 };
@@ -89218,6 +89225,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/phone-control"
   ) {
     return phoneControlRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/lobster" ||
+    request === "@openclaw/plugin-sdk/lobster"
+  ) {
+    return lobsterRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/copilot-proxy" ||

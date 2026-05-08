@@ -20575,6 +20575,180 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_lobster_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-lobster.cjs"
+    runtime_entry.write_text(
+        """
+const lobster = require("openclaw/plugin-sdk/lobster");
+const scopedLobster = require("@openclaw/plugin-sdk/lobster");
+
+function summarize(program) {
+  return {
+    command: String(program.command).replace(/\\\\/g, "/"),
+    leadingArgv: (program.leadingArgv || []).map((entry) =>
+      String(entry).replace(/\\\\/g, "/")
+    ),
+    resolution: program.resolution,
+    shell: program.shell ?? null,
+    windowsHide: program.windowsHide ?? null
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.lobster",
+      description: "Use OpenClaw lobster SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const entry = lobster.definePluginEntry({
+          id: "lobster-test",
+          name: "Lobster Test",
+          description: "Lobster helper",
+          register(runtimeApi) {
+            runtimeApi.registeredByLobster = true;
+          }
+        });
+        const runtimeApi = {};
+        entry.register(runtimeApi);
+        const jsCandidate = lobster.resolveWindowsSpawnProgramCandidate({
+          command: "C:\\\\tools\\\\lobster.js",
+          platform: "win32",
+          execPath: "C:\\\\node\\\\node.exe"
+        });
+        const shellFallback = lobster.applyWindowsSpawnProgramPolicy({
+          candidate: {
+            command: "C:\\\\tools\\\\plain.cmd",
+            leadingArgv: [],
+            resolution: "unresolved-wrapper"
+          },
+          allowShellFallback: true
+        });
+        const invocation = lobster.materializeWindowsSpawnProgram(shellFallback, [
+          "--task",
+          "answer"
+        ]);
+        return {
+          keys: Object.keys(lobster).sort(),
+          scopedSame:
+            scopedLobster.definePluginEntry === lobster.definePluginEntry &&
+            scopedLobster.resolveWindowsSpawnProgramCandidate ===
+              lobster.resolveWindowsSpawnProgramCandidate &&
+            scopedLobster.materializeWindowsSpawnProgram ===
+              lobster.materializeWindowsSpawnProgram,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            registerType: typeof entry.register
+          },
+          jsCandidate: summarize(jsCandidate),
+          shellFallback: summarize(shellFallback),
+          invocation: {
+            command: invocation.command.replace(/\\\\/g, "/"),
+            argv: invocation.argv,
+            resolution: invocation.resolution,
+            shell: invocation.shell ?? null,
+            windowsHide: invocation.windowsHide ?? null
+          },
+          runtimeApi
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-lobster-plugin",
+                    "name": "Runtime Lobster Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-lobster.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.lobster"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.lobster"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "applyWindowsSpawnProgramPolicy",
+            "definePluginEntry",
+            "materializeWindowsSpawnProgram",
+            "resolveWindowsSpawnProgramCandidate",
+        ],
+        "scopedSame": True,
+        "entry": {
+            "id": "lobster-test",
+            "name": "Lobster Test",
+            "description": "Lobster helper",
+            "registerType": "function",
+        },
+        "jsCandidate": {
+            "command": "C:/node/node.exe",
+            "leadingArgv": ["C:/tools/lobster.js"],
+            "resolution": "node-entrypoint",
+            "shell": None,
+            "windowsHide": True,
+        },
+        "shellFallback": {
+            "command": "C:/tools/plain.cmd",
+            "leadingArgv": [],
+            "resolution": "shell-fallback",
+            "shell": True,
+            "windowsHide": None,
+        },
+        "invocation": {
+            "command": "C:/tools/plain.cmd",
+            "argv": ["--task", "answer"],
+            "resolution": "shell-fallback",
+            "shell": True,
+            "windowsHide": None,
+        },
+        "runtimeApi": {"registeredByLobster": True},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_ui_helper(
     tmp_path,
 ) -> None:
