@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.999997%.
+  band of ~80-99.999998%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -14,7 +14,7 @@ Current percentage rollup:
   `sessions.spawn`, sandboxed remote media staging, and `tools.invoke`
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
+  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -1727,6 +1727,15 @@ channel CLI parity is provider-specific credential probe breadth beyond
 Slack/Telegram/Discord/Matrix/Zalo/LINE/Google Chat/Feishu-Lark/Mattermost/
 Signal/IRC/Twitch/BlueBubbles and production provider-backed live resolve
 adapters.
+Tlon route-backed account probes now mirror OpenClaw's `probeTlonAccount`
+status hook: `channels status --probe --json` authenticates with `/~/login`
+using the saved route access-code secret, carries the auth cookie into
+`/~/name`, preserves the provider HTTP status in the native-provider-backed
+account probe envelope, and returns non-2xx name responses as
+`Name request failed: <status>` error probes. Remaining channel CLI parity is
+provider-specific credential probe breadth beyond Slack/Telegram/Discord/
+Matrix/Zalo/LINE/Google Chat/Feishu-Lark/Mattermost/Signal/IRC/Twitch/
+BlueBubbles/Tlon and production provider-backed live resolve adapters.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account
