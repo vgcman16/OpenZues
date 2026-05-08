@@ -14046,6 +14046,192 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_openrouter_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-openrouter.cjs"
+    runtime_entry.write_text(
+        """
+const openrouter = require("openclaw/plugin-sdk/openrouter");
+const scopedOpenrouter = require("@openclaw/plugin-sdk/openrouter");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.openrouter",
+      description: "Use OpenClaw OpenRouter SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const provider = openrouter.buildOpenrouterProvider();
+        const providerConfig = openrouter.applyOpenrouterProviderConfig({
+          agents: {
+            defaults: {
+              models: {
+                "openrouter/auto": { alias: "Router" },
+                "demo/model": { alias: "Demo" }
+              }
+            }
+          },
+          models: {
+            providers: {
+              openrouter: {
+                apiKey: "keep-key",
+                models: [{ id: "custom", name: "Custom" }]
+              }
+            }
+          }
+        });
+        const fullConfig = openrouter.applyOpenrouterConfig({
+          agents: {
+            defaults: {
+              model: { primary: "old/model", fallbacks: ["fallback/model"] }
+            }
+          }
+        });
+        return {
+          keys: Object.keys(openrouter).sort(),
+          scopedSame:
+            scopedOpenrouter.buildOpenrouterProvider ===
+            openrouter.buildOpenrouterProvider,
+          defaultModelRef: openrouter.OPENROUTER_DEFAULT_MODEL_REF,
+          provider: {
+            baseUrl: provider.baseUrl,
+            api: provider.api,
+            models: provider.models
+          },
+          providerConfig,
+          fullConfig
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-openrouter-plugin",
+                    "name": "Runtime OpenRouter Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-openrouter.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.openrouter"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.openrouter"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "OPENROUTER_DEFAULT_MODEL_REF",
+            "applyOpenrouterConfig",
+            "applyOpenrouterProviderConfig",
+            "buildOpenrouterProvider",
+        ],
+        "scopedSame": True,
+        "defaultModelRef": "openrouter/auto",
+        "provider": {
+            "baseUrl": "https://openrouter.ai/api/v1",
+            "api": "openai-completions",
+            "models": [
+                {
+                    "id": "auto",
+                    "name": "OpenRouter Auto",
+                    "reasoning": False,
+                    "input": ["text", "image"],
+                    "cost": {
+                        "input": 0,
+                        "output": 0,
+                        "cacheRead": 0,
+                        "cacheWrite": 0,
+                    },
+                    "contextWindow": 200000,
+                    "maxTokens": 8192,
+                },
+                {
+                    "id": "moonshotai/kimi-k2.6",
+                    "name": "MoonshotAI: Kimi K2.6",
+                    "reasoning": True,
+                    "input": ["text", "image"],
+                    "cost": {
+                        "input": 0.8,
+                        "output": 3.5,
+                        "cacheRead": 0.2,
+                        "cacheWrite": 0,
+                    },
+                    "contextWindow": 262144,
+                    "maxTokens": 262144,
+                },
+            ],
+        },
+        "providerConfig": {
+            "agents": {
+                "defaults": {
+                    "models": {
+                        "openrouter/auto": {"alias": "Router"},
+                        "demo/model": {"alias": "Demo"},
+                    }
+                }
+            },
+            "models": {
+                "providers": {
+                    "openrouter": {
+                        "apiKey": "keep-key",
+                        "models": [{"id": "custom", "name": "Custom"}],
+                    }
+                }
+            },
+        },
+        "fullConfig": {
+            "agents": {
+                "defaults": {
+                    "model": {
+                        "primary": "openrouter/auto",
+                        "fallbacks": ["fallback/model"],
+                    },
+                    "models": {"openrouter/auto": {"alias": "OpenRouter"}},
+                }
+            }
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_xai_model_id_helper(
     tmp_path,
 ) -> None:

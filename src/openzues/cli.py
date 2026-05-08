@@ -45630,6 +45630,85 @@ const minimaxRuntime = {
   MINIMAX_TEXT_MODEL_REFS,
 };
 
+const OPENROUTER_DEFAULT_MODEL_REF = "openrouter/auto";
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const OPENROUTER_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+const OPENROUTER_KIMI_K2_6_COST = {
+  input: 0.8,
+  output: 3.5,
+  cacheRead: 0.2,
+  cacheWrite: 0,
+};
+
+function buildOpenrouterProvider() {
+  return {
+    baseUrl: OPENROUTER_BASE_URL,
+    api: "openai-completions",
+    models: [
+      {
+        id: "auto",
+        name: "OpenRouter Auto",
+        reasoning: false,
+        input: ["text", "image"],
+        cost: { ...OPENROUTER_DEFAULT_COST },
+        contextWindow: 200000,
+        maxTokens: 8192,
+      },
+      {
+        id: "moonshotai/kimi-k2.6",
+        name: "MoonshotAI: Kimi K2.6",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { ...OPENROUTER_KIMI_K2_6_COST },
+        contextWindow: 262144,
+        maxTokens: 262144,
+      },
+    ],
+  };
+}
+
+function applyOpenrouterProviderConfig(cfg = {}) {
+  const currentAgents = cfg.agents || {};
+  const currentDefaults = currentAgents.defaults || {};
+  const currentModels = currentDefaults.models || {};
+  const modelEntry = currentModels[OPENROUTER_DEFAULT_MODEL_REF] || {};
+  return {
+    ...cfg,
+    agents: {
+      ...currentAgents,
+      defaults: {
+        ...currentDefaults,
+        models: {
+          ...currentModels,
+          [OPENROUTER_DEFAULT_MODEL_REF]: {
+            ...modelEntry,
+            alias: modelEntry.alias || "OpenRouter",
+          },
+        },
+      },
+    },
+  };
+}
+
+function applyOpenrouterConfig(cfg = {}) {
+  return applyAgentDefaultModelPrimary(
+    applyOpenrouterProviderConfig(cfg),
+    OPENROUTER_DEFAULT_MODEL_REF,
+  );
+}
+
+const openrouterRuntime = {
+  OPENROUTER_DEFAULT_MODEL_REF,
+  applyOpenrouterConfig,
+  applyOpenrouterProviderConfig,
+  buildOpenrouterProvider,
+};
+
 const providerCatalogSharedRuntime = {
   applyProviderNativeStreamingUsageCompat,
   buildManifestModelProviderConfig,
@@ -85748,6 +85827,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/minimax"
   ) {
     return minimaxRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/openrouter" ||
+    request === "@openclaw/plugin-sdk/openrouter"
+  ) {
+    return openrouterRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-catalog-shared" ||
