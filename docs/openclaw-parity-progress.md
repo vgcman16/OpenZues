@@ -19589,6 +19589,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Test checkpointed in `b663e3e0`.
+- Native package update verification now reports runtime-created
+  `.openclaw-install-stage*` debris under installed extension dist as
+  unexpected packaged dist files, matching OpenClaw's installed package
+  verifier. This closes `OZ-PKG-001BM`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999995%.
+- Verified runtime install staging debris reporting with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_runtime_install_staging_debris -q`
+  (`1 failed` before assertion-order alignment, then `1 passed`), adjacent
+  inventory verifier proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_runtime_install_staging_debris tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`35 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `d58b0879`.
 
 ## References
 

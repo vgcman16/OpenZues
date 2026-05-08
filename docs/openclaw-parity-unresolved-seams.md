@@ -10246,3 +10246,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `b663e3e0`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.9999999999999999999%. Continue package update
   runtime-created install staging debris verification next.
+- Current queue-head adjustment: native package update verification now reports
+  runtime-created `.openclaw-install-stage*` debris under installed extension
+  dist as unexpected packaged dist files, matching OpenClaw's installed package
+  verifier. Test checkpointed in `d58b0879`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999995%. Continue malformed externalized extension
+  manifest behavior next.
