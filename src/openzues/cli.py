@@ -1025,14 +1025,18 @@ async def _try_live_hermes_doctor_view(app_settings: Settings) -> HermesDoctorVi
     return cast("HermesDoctorView | None", result)
 
 
-async def _try_live_update_view(app_settings: Settings) -> HermesUpdateView | None:
+async def _try_live_update_view(
+    app_settings: Settings,
+    *,
+    timeout_seconds: float = 10.0,
+) -> HermesUpdateView | None:
     base_url = _control_plane_base_url(app_settings)
     result = await asyncio.to_thread(
         _try_live_api_model,
         base_url,
         "/api/update/status",
         HermesUpdateView,
-        timeout_seconds=10.0,
+        timeout_seconds=timeout_seconds,
     )
     return cast("HermesUpdateView | None", result)
 
@@ -10092,6 +10096,20 @@ def _emit_update_dry_run_preview(payload: dict[str, object], *, json_output: boo
         typer.echo("Notes:")
         for note in notes:
             typer.echo(f"  - {note}")
+
+
+def _parse_openclaw_update_timeout_seconds(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        timeout_seconds = float(value)
+    except ValueError:
+        typer.echo(f'--timeout must be a positive number of seconds (got "{value}")', err=True)
+        raise typer.Exit(code=1) from None
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        typer.echo(f'--timeout must be a positive number of seconds (got "{value}")', err=True)
+        raise typer.Exit(code=1)
+    return timeout_seconds
 
 
 def _openclaw_update_available_hint(payload: Mapping[str, object]) -> str | None:
@@ -98066,9 +98084,20 @@ def update_status(
         "--json",
         help="Emit the runtime update status as JSON.",
     ),
+    timeout: str | None = typer.Option(
+        None,
+        "--timeout",
+        help="Timeout for update checks in seconds.",
+    ),
 ) -> None:
+    timeout_seconds = _parse_openclaw_update_timeout_seconds(timeout)
+
     async def _action(services: CliServices) -> dict[str, object]:
-        view = await _try_live_update_view(services.settings)
+        view = (
+            await _try_live_update_view(services.settings, timeout_seconds=timeout_seconds)
+            if timeout_seconds is not None
+            else await _try_live_update_view(services.settings)
+        )
         if view is None:
             view = await services.hermes_platform.get_update_view()
         config_snapshot: object = {}
