@@ -9717,16 +9717,67 @@ def _openclaw_update_git_branch(root: Path) -> str | None:
     return branch
 
 
+def _openclaw_update_git_head_sha(root: Path) -> str | None:
+    git_dir = root / ".git"
+    head_path = git_dir / "HEAD"
+    if not _doctor_path_exists(head_path):
+        return None
+    try:
+        head = head_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    ref_prefix = "ref: "
+    if head.startswith(ref_prefix):
+        ref_path = git_dir / head.removeprefix(ref_prefix).strip()
+        if not _doctor_path_exists(ref_path):
+            return None
+        try:
+            head = ref_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+    return head if re.fullmatch(r"[0-9a-fA-F]{40}", head) else None
+
+
+def _openclaw_update_git_tag(root: Path) -> str | None:
+    head_sha = _openclaw_update_git_head_sha(root)
+    if head_sha is None:
+        return None
+    refs_tags = root / ".git" / "refs" / "tags"
+    if not _doctor_path_exists(refs_tags):
+        return None
+    try:
+        tag_refs = sorted(path for path in refs_tags.rglob("*") if path.is_file())
+    except OSError:
+        return None
+    for tag_ref in tag_refs:
+        try:
+            tag_sha = tag_ref.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if tag_sha == head_sha:
+            return tag_ref.relative_to(refs_tags).as_posix()
+    return None
+
+
+def _openclaw_update_channel_from_git_tag(tag: str) -> str:
+    return "beta" if re.search(r"(?:^|[.-])beta(?:[.-]|$)", tag, flags=re.IGNORECASE) else "stable"
+
+
 def _openclaw_update_channel_payload(
     *,
     config_channel: str | None,
     install_kind: str,
+    git_tag: str | None,
     git_branch: str | None,
 ) -> dict[str, object]:
     if config_channel is not None:
         channel = config_channel
         source = "config"
         label = f"{channel} (config)"
+    elif install_kind == "git" and git_tag is not None:
+        channel = _openclaw_update_channel_from_git_tag(git_tag)
+        source = "git-tag"
+        label = f"{channel} ({git_tag})"
     elif install_kind == "git" and git_branch is not None:
         channel = "dev"
         source = "git-branch"
@@ -9754,6 +9805,7 @@ def _with_openclaw_update_status_projection(
 ) -> dict[str, object]:
     root = _openzues_package_root()
     install_kind = _openclaw_update_install_kind(root)
+    git_tag = _openclaw_update_git_tag(root) if install_kind == "git" else None
     git_branch = _openclaw_update_git_branch(root) if install_kind == "git" else None
     config_channel = _openclaw_update_config_channel(config_snapshot)
     package_manager = (
@@ -9771,6 +9823,7 @@ def _with_openclaw_update_status_projection(
     next_payload["channel"] = _openclaw_update_channel_payload(
         config_channel=config_channel,
         install_kind=install_kind,
+        git_tag=git_tag,
         git_branch=git_branch,
     )
     next_payload["availability"] = {
