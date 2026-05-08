@@ -784,9 +784,12 @@ def _collect_package_dist_inventory(package_root: Path) -> tuple[list[str], list
     dist_root = package_root / "dist"
     if not _path_exists(dist_root):
         return [], []
-    externalized_extension_ids = _collect_externalized_bundled_extension_ids(package_root)
+    (
+        externalized_extension_ids,
+        externalized_manifest_errors,
+    ) = _collect_externalized_bundled_extension_ids(package_root)
     files: list[str] = []
-    errors: list[str] = []
+    errors: list[str] = [*externalized_manifest_errors]
     for path in dist_root.rglob("*"):
         try:
             relative_path = path.relative_to(package_root).as_posix()
@@ -814,27 +817,41 @@ def _is_legacy_plugin_dependency_dir_path(relative_path: str) -> bool:
     return len(parts) >= 4 and parts[3].lower() == "node_modules"
 
 
-def _collect_externalized_bundled_extension_ids(package_root: Path) -> set[str]:
+def _collect_externalized_bundled_extension_ids(package_root: Path) -> tuple[set[str], list[str]]:
     extensions_path = package_root / "extensions"
     if not _path_exists(extensions_path):
-        return set()
+        return set(), []
     extension_ids: set[str] = set()
+    errors: list[str] = []
     try:
         extension_entries = list(extensions_path.iterdir())
     except OSError:
-        return extension_ids
+        return extension_ids, []
     for extension_entry in extension_entries:
+        manifest_path = extension_entry / "package.json"
         try:
             if not extension_entry.is_dir() or extension_entry.is_symlink():
                 continue
-            parsed = json.loads(
-                (extension_entry / "package.json").read_text(encoding="utf-8")
+            raw_manifest = manifest_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        except OSError:
+            errors.append(
+                "invalid bundled extension manifest "
+                f"{manifest_path.relative_to(package_root).as_posix()}"
             )
-        except (OSError, json.JSONDecodeError):
+            continue
+        try:
+            parsed = json.loads(raw_manifest)
+        except json.JSONDecodeError:
+            errors.append(
+                "invalid bundled extension manifest "
+                f"{manifest_path.relative_to(package_root).as_posix()}"
+            )
             continue
         if _is_publishable_externalized_manifest(parsed):
             extension_ids.add(extension_entry.name)
-    return extension_ids
+    return extension_ids, sorted(set(errors))
 
 
 def _is_publishable_externalized_manifest(value: object) -> bool:
