@@ -29115,6 +29115,8 @@ async def test_tools_invoke_imported_openclaw_command_status_runtime_helpers(
         """
 const statusRuntime = require("openclaw/plugin-sdk/command-status-runtime");
 const scopedStatusRuntime = require("@openclaw/plugin-sdk/command-status-runtime");
+const dottedStatusRuntime = require("openclaw/plugin-sdk/command-status.runtime");
+const scopedDottedStatusRuntime = require("@openclaw/plugin-sdk/command-status.runtime");
 
 module.exports = {
   register(api) {
@@ -29174,9 +29176,16 @@ module.exports = {
         }
         return {
           keys: Object.keys(statusRuntime).sort(),
+          dottedKeys: Object.keys(dottedStatusRuntime).sort(),
           scopedSame:
             scopedStatusRuntime.resolveDirectStatusReplyForSession ===
             statusRuntime.resolveDirectStatusReplyForSession,
+          dottedSame:
+            dottedStatusRuntime.resolveDirectStatusReplyForSession ===
+            statusRuntime.resolveDirectStatusReplyForSession,
+          scopedDottedSame:
+            scopedDottedStatusRuntime.resolveDirectStatusReplyForSession ===
+            dottedStatusRuntime.resolveDirectStatusReplyForSession,
           emptyType: typeof empty,
           calls,
           delegated,
@@ -29240,7 +29249,10 @@ module.exports = {
     assert payload["ok"] is True
     assert payload["result"] == {
         "keys": ["resolveDirectStatusReplyForSession"],
+        "dottedKeys": ["resolveDirectStatusReplyForSession"],
         "scopedSame": True,
+        "dottedSame": True,
+        "scopedDottedSame": True,
         "emptyType": "undefined",
         "calls": [
             {

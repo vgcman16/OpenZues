@@ -86913,7 +86913,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   }
   if (
     request === "openclaw/plugin-sdk/command-status-runtime" ||
-    request === "@openclaw/plugin-sdk/command-status-runtime"
+    request === "@openclaw/plugin-sdk/command-status-runtime" ||
+    request === "openclaw/plugin-sdk/command-status.runtime" ||
+    request === "@openclaw/plugin-sdk/command-status.runtime"
   ) {
     return commandStatusSessionRuntime;
   }
