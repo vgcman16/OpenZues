@@ -14232,6 +14232,177 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_litellm_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-litellm.cjs"
+    runtime_entry.write_text(
+        """
+const litellm = require("openclaw/plugin-sdk/litellm");
+const scopedLitellm = require("@openclaw/plugin-sdk/litellm");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.litellm",
+      description: "Use OpenClaw LiteLLM SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const model = litellm.buildLitellmModelDefinition();
+        const providerConfig = litellm.applyLitellmProviderConfig({
+          models: {
+            providers: {
+              litellm: {
+                baseUrl: " https://litellm.example/v1 ",
+                apiKey: " old-key ",
+                models: [{ id: "custom-model", name: "Custom" }]
+              }
+            }
+          }
+        });
+        const fullConfig = litellm.applyLitellmConfig({
+          agents: {
+            defaults: {
+              model: { fallbacks: ["fallback/model"] }
+            }
+          }
+        });
+        return {
+          keys: Object.keys(litellm).sort(),
+          scopedSame:
+            scopedLitellm.buildLitellmModelDefinition ===
+            litellm.buildLitellmModelDefinition,
+          constants: {
+            baseUrl: litellm.LITELLM_BASE_URL,
+            defaultModelId: litellm.LITELLM_DEFAULT_MODEL_ID,
+            defaultModelRef: litellm.LITELLM_DEFAULT_MODEL_REF
+          },
+          model,
+          providerConfig,
+          fullConfig
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-litellm-plugin",
+                    "name": "Runtime LiteLLM Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-litellm.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.litellm"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.litellm"})
+
+    assert payload["ok"] is True
+    default_model = {
+        "id": "claude-opus-4-6",
+        "name": "Claude Opus 4.6",
+        "reasoning": True,
+        "input": ["text", "image"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 128000,
+        "maxTokens": 8192,
+    }
+    expected_provider = {
+        "baseUrl": "https://litellm.example/v1",
+        "api": "openai-completions",
+        "apiKey": "old-key",
+        "models": [{"id": "custom-model", "name": "Custom"}, default_model],
+    }
+    assert payload["result"] == {
+        "keys": [
+            "LITELLM_BASE_URL",
+            "LITELLM_DEFAULT_MODEL_ID",
+            "LITELLM_DEFAULT_MODEL_REF",
+            "applyLitellmConfig",
+            "applyLitellmProviderConfig",
+            "buildLitellmModelDefinition",
+        ],
+        "scopedSame": True,
+        "constants": {
+            "baseUrl": "http://localhost:4000",
+            "defaultModelId": "claude-opus-4-6",
+            "defaultModelRef": "litellm/claude-opus-4-6",
+        },
+        "model": default_model,
+        "providerConfig": {
+            "models": {"mode": "merge", "providers": {"litellm": expected_provider}},
+            "agents": {
+                "defaults": {
+                    "models": {
+                        "litellm/claude-opus-4-6": {"alias": "LiteLLM"}
+                    }
+                }
+            },
+        },
+        "fullConfig": {
+            "agents": {
+                "defaults": {
+                    "model": {
+                        "fallbacks": ["fallback/model"],
+                        "primary": "litellm/claude-opus-4-6",
+                    },
+                    "models": {
+                        "litellm/claude-opus-4-6": {"alias": "LiteLLM"}
+                    },
+                }
+            },
+            "models": {
+                "mode": "merge",
+                "providers": {
+                    "litellm": {
+                        "baseUrl": "http://localhost:4000",
+                        "api": "openai-completions",
+                        "models": [default_model],
+                    }
+                },
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_xai_model_id_helper(
     tmp_path,
 ) -> None:

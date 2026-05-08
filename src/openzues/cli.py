@@ -45709,6 +45709,69 @@ const openrouterRuntime = {
   buildOpenrouterProvider,
 };
 
+const LITELLM_BASE_URL = "http://localhost:4000";
+const LITELLM_DEFAULT_MODEL_ID = "claude-opus-4-6";
+const LITELLM_DEFAULT_MODEL_REF = `litellm/${LITELLM_DEFAULT_MODEL_ID}`;
+
+function buildLitellmModelDefinition() {
+  return {
+    id: LITELLM_DEFAULT_MODEL_ID,
+    name: "Claude Opus 4.6",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    contextWindow: 128000,
+    maxTokens: 8192,
+  };
+}
+
+function resolveLitellmBaseUrlForConfig(cfg = {}) {
+  const existingProvider =
+    cfg.models && cfg.models.providers && cfg.models.providers.litellm;
+  const resolved =
+    existingProvider && typeof existingProvider.baseUrl === "string"
+      ? existingProvider.baseUrl.trim()
+      : "";
+  return resolved || LITELLM_BASE_URL;
+}
+
+function applyLitellmProviderConfig(cfg = {}) {
+  return applyProviderConfigWithDefaultModelPreset(cfg, {
+    providerId: "litellm",
+    api: "openai-completions",
+    baseUrl: resolveLitellmBaseUrlForConfig(cfg),
+    defaultModel: buildLitellmModelDefinition(),
+    defaultModelId: LITELLM_DEFAULT_MODEL_ID,
+    aliases: [{ modelRef: LITELLM_DEFAULT_MODEL_REF, alias: "LiteLLM" }],
+  });
+}
+
+function applyLitellmConfig(cfg = {}) {
+  return applyProviderConfigWithDefaultModelPreset(cfg, {
+    providerId: "litellm",
+    api: "openai-completions",
+    baseUrl: resolveLitellmBaseUrlForConfig(cfg),
+    defaultModel: buildLitellmModelDefinition(),
+    defaultModelId: LITELLM_DEFAULT_MODEL_ID,
+    aliases: [{ modelRef: LITELLM_DEFAULT_MODEL_REF, alias: "LiteLLM" }],
+    primaryModelRef: LITELLM_DEFAULT_MODEL_REF,
+  });
+}
+
+const litellmRuntime = {
+  LITELLM_BASE_URL,
+  LITELLM_DEFAULT_MODEL_ID,
+  LITELLM_DEFAULT_MODEL_REF,
+  applyLitellmConfig,
+  applyLitellmProviderConfig,
+  buildLitellmModelDefinition,
+};
+
 const providerCatalogSharedRuntime = {
   applyProviderNativeStreamingUsageCompat,
   buildManifestModelProviderConfig,
@@ -85833,6 +85896,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/openrouter"
   ) {
     return openrouterRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/litellm" ||
+    request === "@openclaw/plugin-sdk/litellm"
+  ) {
+    return litellmRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-catalog-shared" ||
