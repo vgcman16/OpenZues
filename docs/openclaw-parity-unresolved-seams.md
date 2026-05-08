@@ -5,10 +5,10 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.999999999999999999999999999999999999999999%.
+  band of ~80-99.9999999999999999999999999999999999999999995%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~98.4% after the latest
+- The chat/session contract subfamily is estimated at ~98.5% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
@@ -11023,3 +11023,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   evidence band tightened to
   ~80-99.99999999999999999999999999999999999999998%. The current exact SDK
   root seam queue is complete; continue broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` now hides empty user transcript
+  rows, OpenClaw heartbeat poll prompts, and short heartbeat acknowledgements
+  from projected history, matching the upstream display-projection
+  heartbeat-filter path. Source/test checkpointed in `7e480dec`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999995%. Continue remaining
+  transcript projection edges plus broader provider/runtime breadth.

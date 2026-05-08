@@ -20,9 +20,9 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999999999999999995% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Chat/session contract subfamily | ~98.5% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -13754,6 +13754,30 @@ breadth.
     or whatsapp_media or send_direct_channel_poll_uses_whatsapp"` (`5
     passed`), `ruff check src\openzues\services\ops_mesh.py
     tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-RT-001AF` Chat history heartbeat and empty-row filtering
+  - Source: `openclaw-main/src/gateway/chat-display-projection.ts`,
+    `openclaw-main/src/auto-reply/heartbeat-filter.ts`, and
+    `openclaw-main/src/auto-reply/heartbeat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` omits empty user transcript rows, OpenClaw
+    heartbeat poll prompts, configured heartbeat prompt rows, task heartbeat
+    prompts, and short assistant heartbeat acknowledgements from projected
+    history while preserving ordinary assistant rows.
+  - Evidence required: focused heartbeat/empty-row history test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `7e480dec`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_empty_user_and_heartbeat_rows -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`37 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
 
 ## Canonical Checklist Format
 

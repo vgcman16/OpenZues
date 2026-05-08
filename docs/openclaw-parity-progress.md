@@ -21172,6 +21172,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `ec0a6950`.
+- `chat.history` now hides empty user transcript rows plus OpenClaw heartbeat
+  poll prompts and short `HEARTBEAT_OK` acknowledgements from the projected
+  chat display, matching OpenClaw's `shouldHideProjectedHistoryMessage` /
+  heartbeat-filter read-model path while preserving ordinary assistant
+  messages. This closes another transcript display-projection edge; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999995%.
+- Verified the heartbeat/empty-row filtering seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_hides_empty_user_and_heartbeat_rows -q`
+  (empty user and heartbeat rows were returned before implementation, then
+  `1 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`37 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `7e480dec`.
 
 ## References
 
