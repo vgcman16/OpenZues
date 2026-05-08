@@ -82861,6 +82861,52 @@ async def test_chat_history_hides_empty_user_and_heartbeat_rows(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_sessions_history_hides_empty_user_and_heartbeat_rows(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-history-heartbeat-hidden.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content="  ",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content=(
+            "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. "
+            "Do not infer or repeat old tasks from prior chats. If nothing needs "
+            "attention, reply HEARTBEAT_OK.\nWhen reading HEARTBEAT.md, use workspace file "
+            "/tmp/HEARTBEAT.md (exact case)."
+        ),
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="HEARTBEAT_OK.",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Disk usage crossed 95 percent.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Disk usage crossed 95 percent."}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_and_sessions_history_strip_tool_result_xml_blocks() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-tool-result-xml"
     shutil.rmtree(tmp_path, ignore_errors=True)

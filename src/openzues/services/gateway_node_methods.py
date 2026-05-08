@@ -16844,7 +16844,11 @@ def _project_sessions_history_messages(
         if not include_tools and _sessions_history_is_tool_role(raw_role_value):
             continue
         text = _chat_history_display_text(str(row.get("content") or ""))
+        if role == "user" and _chat_history_should_hide_user_text(text):
+            continue
         if role == "assistant" and text.strip().upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS:
+            continue
+        if role == "assistant" and _chat_history_is_heartbeat_ok_text(text):
             continue
         structured_content = _sessions_history_structured_content(text)
         if structured_content is not None:
