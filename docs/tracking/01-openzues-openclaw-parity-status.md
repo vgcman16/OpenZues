@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999993% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999994% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1749,6 +1749,10 @@ may lag behind this tracker.
 - [x] Package update version verification, preserving OpenClaw's explicit
   version `global install verify` failure behavior.
   - Status: checkpointed in `1db09c3b`
+
+- [x] Package update failedStep projection, preserving OpenClaw's failed-step
+  result envelope for update failures.
+  - Status: checkpointed in `98e4d5c9`
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
@@ -4439,6 +4443,17 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused red/green package verify proof,
     adjacent package-update proof (`3 passed, 4 deselected`), full runtime
     update suite (`7 passed`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Package update failedStep projection.
+  - Source: `openclaw-main/src/infra/package-update-steps.ts`,
+    `openclaw-main/src/infra/update-runner.ts`
+  - Target: `src/openzues/services/runtime_updates.py`
+  - Test: `tests/test_runtime_updates.py`
+  - Status: checkpointed in `98e4d5c9`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green failedStep proof, full
+    runtime update suite (`7 passed`), `ruff check`, `mypy`, and
+    `git diff --check`.
 
 - [x] Companion node presence alive lifecycle.
   - Source: `openclaw-main/src/gateway/server-node-events.ts`,

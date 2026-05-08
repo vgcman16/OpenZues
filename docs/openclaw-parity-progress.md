@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999993%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999994%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19105,6 +19105,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
   Source/test checkpointed and pushed in `1db09c3b`.
+- Native update result envelopes now project top-level `failedStep` metadata
+  for failed package/git update steps, matching OpenClaw's package update
+  failure result shape. This closes `OZ-PKG-001AI`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999994%.
+- Verified failed-step projection with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_verifies_expected_version -q`
+  (`1 failed` before implementation, then `1 passed`), full runtime update
+  suite `python -m pytest tests\test_runtime_updates.py -q` (`7 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed and pushed in `98e4d5c9`.
 
 ## References
 
