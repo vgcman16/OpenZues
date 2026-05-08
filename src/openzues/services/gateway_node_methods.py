@@ -16807,8 +16807,9 @@ def _project_control_chat_messages(
         role = str(row.get("role") or "").strip()
         if role not in {"user", "assistant"}:
             continue
+        raw_text = str(row.get("content") or "")
         text = _chat_history_display_text(
-            str(row.get("content") or ""),
+            raw_text,
             strip_user_envelope=role == "user",
         )
         if role == "user" and _chat_history_should_hide_user_text(text):
@@ -16823,7 +16824,7 @@ def _project_control_chat_messages(
             _chat_history_json_object(row.get("metadata_json")) if role == "assistant" else None
         )
         structured_result = _chat_history_structured_content(
-            text,
+            raw_text,
             role=role,
             max_chars=max_chars,
         )
@@ -16983,7 +16984,7 @@ def _chat_history_structured_content(
         return None
 
     content = [
-        _sanitize_chat_history_content_block(item, max_chars=max_chars)
+        _sanitize_chat_history_content_block(item, role=role, max_chars=max_chars)
         for item in parsed
     ]
     if role != "assistant":
@@ -16999,6 +17000,7 @@ def _chat_history_structured_content(
 def _sanitize_chat_history_content_block(
     block: Mapping[str, Any],
     *,
+    role: str,
     max_chars: int | None,
 ) -> dict[str, Any]:
     sanitized = dict(block)
@@ -17007,7 +17009,7 @@ def _sanitize_chat_history_content_block(
         value = sanitized.get(key)
         if not isinstance(value, str):
             continue
-        value = _chat_history_display_text(value)
+        value = _chat_history_display_text(value, strip_user_envelope=role == "user")
         if max_chars is not None and not preserve_exact_tool_payload:
             value = _chat_history_truncated_text(value, max_chars)
         sanitized[key] = value

@@ -83010,6 +83010,36 @@ async def test_chat_history_strips_user_channel_envelope_and_message_id(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_chat_history_strips_structured_user_channel_envelope(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-chat-history-structured-channel-envelope.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content=json.dumps(
+            [
+                {
+                    "type": "text",
+                    "text": "[Slack 2026-05-08 12:00] [message_id: hidden]\nvisible ask",
+                }
+            ]
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "visible ask"}]}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sessions_history_hides_empty_user_and_heartbeat_rows(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-history-heartbeat-hidden.db")
     await database.initialize()
