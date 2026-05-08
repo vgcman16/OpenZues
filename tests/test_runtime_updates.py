@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -324,6 +325,71 @@ async def test_runtime_update_run_package_update_cleans_stale_global_rename_dirs
     assert not stale_dir.exists()
     assert matching_file.exists()
     assert unrelated_dir.exists()
+    assert command_calls == [
+        (["pnpm", "add", "-g", "openzues@latest"], package_root, 1000),
+        (_post_update_doctor_args(), package_root, 1000),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_package_update_reports_low_disk_warning(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    prefix = tmp_path / "prefix"
+    global_root = prefix / "lib" / "node_modules"
+    package_root = global_root / "openzues"
+    _write_package_root(package_root, "2026.5.1")
+    checked_paths: list[Path] = []
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+
+    def fake_disk_usage(path: str | os.PathLike[str]) -> object:
+        checked_paths.append(Path(path))
+        return SimpleNamespace(
+            total=2 * 1024 * 1024 * 1024,
+            used=1792 * 1024 * 1024,
+            free=256 * 1024 * 1024,
+        )
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        command_calls.append((argv, cwd, timeout_ms))
+        if argv == _post_update_doctor_args():
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    monkeypatch.setattr("openzues.services.runtime_updates.shutil.disk_usage", fake_disk_usage)
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@latest",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "ok"
+    assert checked_paths == [global_root]
+    assert result["warnings"] == [
+        f"Low disk space near {global_root}: 256 MiB available; "
+        "global package update may fail."
+    ]
     assert command_calls == [
         (["pnpm", "add", "-g", "openzues@latest"], package_root, 1000),
         (_post_update_doctor_args(), package_root, 1000),

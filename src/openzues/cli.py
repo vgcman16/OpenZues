@@ -10099,7 +10099,14 @@ def _emit_update_dry_run_preview(payload: dict[str, object], *, json_output: boo
 
 
 def _emit_update_run_result(payload: dict[str, object], *, json_output: bool) -> None:
+    warnings = [
+        str(warning)
+        for warning in _object_list(payload.get("warnings"))
+        if str(warning).strip()
+    ]
     if json_output:
+        for warning in warnings:
+            typer.echo(f"Warning: {warning}", err=True)
         _emit_payload(payload, json_output=True)
         return
     status = str(payload.get("status") or "unknown")
@@ -10115,6 +10122,10 @@ def _emit_update_run_result(payload: dict[str, object], *, json_output: bool) ->
     steps = payload.get("steps")
     if isinstance(steps, list):
         typer.echo(f"steps: {len(steps)}")
+    if warnings:
+        typer.echo("warnings:")
+        for warning in warnings:
+            typer.echo(f"  - {warning}")
 
 
 def _openclaw_post_update_plugins_payload(

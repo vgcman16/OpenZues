@@ -19,6 +19,7 @@ from openzues.database import Database
 
 logger = logging.getLogger(__name__)
 _UPDATE_LOG_TAIL_CHARS = 8000
+_LOW_DISK_SPACE_WARNING_THRESHOLD_BYTES = 1024 * 1024 * 1024
 _NPM_GLOBAL_INSTALL_QUIET_FLAGS = ("--no-fund", "--no-audit", "--loglevel=error")
 _NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS = (
     "--omit=optional",
@@ -44,6 +45,14 @@ class _StagedNpmInstall:
     prefix: Path
     layout: _NpmGlobalPrefixLayout
     package_root: Path
+
+
+@dataclass(slots=True)
+class _DiskSpaceSnapshot:
+    target_path: Path
+    checked_path: Path
+    available_bytes: int
+    total_bytes: int | None
 
 
 def _utcnow_iso() -> str:
@@ -139,6 +148,76 @@ def _read_package_name(package_root: Path) -> str:
         return package_root.name
     name = parsed.get("name")
     return name.strip() if isinstance(name, str) and name.strip() else package_root.name
+
+
+def _find_existing_disk_space_path(target_path: Path) -> Path | None:
+    current = target_path.resolve(strict=False)
+    while True:
+        try:
+            if current.is_dir():
+                return current
+            if current.exists():
+                return current.parent
+        except OSError:
+            pass
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+
+
+def _try_read_disk_space(target_path: Path) -> _DiskSpaceSnapshot | None:
+    checked_path = _find_existing_disk_space_path(target_path)
+    if checked_path is None:
+        return None
+    try:
+        usage = shutil.disk_usage(checked_path)
+    except OSError:
+        return None
+    available_bytes = getattr(usage, "free", None)
+    total_bytes = getattr(usage, "total", None)
+    if (
+        isinstance(available_bytes, bool)
+        or not isinstance(available_bytes, int)
+        or available_bytes < 0
+    ):
+        return None
+    if isinstance(total_bytes, bool) or not isinstance(total_bytes, int) or total_bytes < 0:
+        total_bytes = None
+    return _DiskSpaceSnapshot(
+        target_path=target_path,
+        checked_path=checked_path,
+        available_bytes=available_bytes,
+        total_bytes=total_bytes,
+    )
+
+
+def _format_disk_space_bytes(bytes_value: int) -> str:
+    mib = bytes_value / (1024 * 1024)
+    if mib < 1024:
+        return f"{max(0, round(mib))} MiB"
+    gib = mib / 1024
+    precision = 1 if gib < 10 else 0
+    return f"{gib:.{precision}f} GiB"
+
+
+def _create_low_disk_space_warning(
+    *,
+    target_path: Path,
+    purpose: str,
+    threshold_bytes: int = _LOW_DISK_SPACE_WARNING_THRESHOLD_BYTES,
+) -> str | None:
+    snapshot = _try_read_disk_space(target_path)
+    if snapshot is None or snapshot.available_bytes >= threshold_bytes:
+        return None
+    target_resolved = snapshot.target_path.resolve(strict=False)
+    checked_resolved = snapshot.checked_path.resolve(strict=False)
+    if target_resolved == checked_resolved:
+        location = str(snapshot.checked_path)
+    else:
+        location = f"{snapshot.target_path} (volume checked at {snapshot.checked_path})"
+    available = _format_disk_space_bytes(snapshot.available_bytes)
+    return f"Low disk space near {location}: {available} available; {purpose} may fail."
 
 
 def _package_name_parts(package_name: str) -> tuple[str, ...]:
@@ -690,6 +769,13 @@ class RuntimeUpdateService:
         before = {"sha": None, "version": _read_package_version(package_root)}
         package_name = _read_package_name(package_root)
         _cleanup_global_rename_dirs(package_root, package_name)
+        warnings: list[str] = []
+        disk_warning = _create_low_disk_space_warning(
+            target_path=package_root.parent,
+            purpose="global package update",
+        )
+        if disk_warning is not None:
+            warnings.append(disk_warning)
         manager = package_manager.strip().lower()
         staged_install: _StagedNpmInstall | None = None
         if manager == "npm":
@@ -707,6 +793,7 @@ class RuntimeUpdateService:
                     before=before,
                     after=None,
                     steps=steps,
+                    warnings=warnings,
                     started_at=started_at,
                 )
         argv = _global_package_update_args(
@@ -724,6 +811,7 @@ class RuntimeUpdateService:
                 before=before,
                 after=None,
                 steps=steps,
+                warnings=warnings,
                 started_at=started_at,
             )
 
@@ -754,6 +842,7 @@ class RuntimeUpdateService:
                             before=before,
                             after=None,
                             steps=steps,
+                            warnings=warnings,
                             started_at=started_at,
                         )
                     assert staged_install is not None
@@ -781,6 +870,7 @@ class RuntimeUpdateService:
                     before=before,
                     after=None,
                     steps=steps,
+                    warnings=warnings,
                     started_at=started_at,
                 )
 
@@ -815,6 +905,7 @@ class RuntimeUpdateService:
                     before=before,
                     after=live_after,
                     steps=steps,
+                    warnings=warnings,
                     started_at=started_at,
                 )
             if staged_install is not None:
@@ -834,6 +925,7 @@ class RuntimeUpdateService:
                         before=before,
                         after=live_after,
                         steps=steps,
+                        warnings=warnings,
                         started_at=started_at,
                     )
             doctor_step = await self._run_update_command_step_at(
@@ -853,6 +945,7 @@ class RuntimeUpdateService:
                     before=before,
                     after=live_after,
                     steps=steps,
+                    warnings=warnings,
                     started_at=started_at,
                 )
             return self._build_package_update_result(
@@ -863,6 +956,7 @@ class RuntimeUpdateService:
                 before=before,
                 after=after,
                 steps=steps,
+                warnings=warnings,
                 started_at=started_at,
             )
         finally:
@@ -929,6 +1023,7 @@ class RuntimeUpdateService:
         before: dict[str, str | None],
         after: dict[str, str | None] | None,
         steps: list[dict[str, object]],
+        warnings: list[str] | None = None,
         started_at: float,
     ) -> dict[str, object]:
         result: dict[str, object] = {
@@ -940,6 +1035,8 @@ class RuntimeUpdateService:
             "steps": steps,
             "durationMs": int((time.monotonic() - started_at) * 1000),
         }
+        if warnings:
+            result["warnings"] = list(warnings)
         if reason is not None:
             result["reason"] = reason
         if status == "error":
@@ -958,6 +1055,7 @@ class RuntimeUpdateService:
         before: dict[str, str | None],
         after: dict[str, str | None] | None,
         steps: list[dict[str, object]],
+        warnings: list[str] | None = None,
         started_at: float,
     ) -> dict[str, object]:
         result: dict[str, object] = {
@@ -969,6 +1067,8 @@ class RuntimeUpdateService:
             "steps": steps,
             "durationMs": int((time.monotonic() - started_at) * 1000),
         }
+        if warnings:
+            result["warnings"] = list(warnings)
         if reason is not None:
             result["reason"] = reason
         if status == "error":

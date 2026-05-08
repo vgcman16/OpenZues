@@ -25583,6 +25583,7 @@ def test_update_json_dispatches_package_update_service(
                 "root": str(package_root),
                 "steps": [{"name": "global update"}],
                 "durationMs": 12,
+                "warnings": ["Low disk space near package root: 256 MiB available."],
             }
 
     async def fake_run_with_services(action):
@@ -25608,6 +25609,8 @@ def test_update_json_dispatches_package_update_service(
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["mode"] == "pnpm"
+    assert payload["warnings"] == ["Low disk space near package root: 256 MiB available."]
+    assert "Warning: Low disk space near package root: 256 MiB available." in result.stderr
 
 
 def test_update_json_runs_post_update_plugin_sync_for_package_update(
