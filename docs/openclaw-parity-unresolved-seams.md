@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999997%.
+  band of ~80-99.99999998%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -1788,6 +1788,12 @@ Unsupported channels keep the existing precise runtime-start error. Source/test
 checkpointed in `810a6af0`; the channel queue should now rotate to
 provider-specific runtime breadth, channel stop/logout depth, or broader
 packaging/companion seams.
+`channels.stop` now dispatches through a fakeable runtime stop adapter when
+wired, app construction binds it to OpsMesh, and the Tlon implementation closes
+the matching SSE monitor account while preserving idempotent stopped responses
+for channels without a native monitor. Source/test checkpointed in `1365c028`;
+the adjacent lifecycle queue should now rotate to channel logout depth or
+broader provider/packaging seams.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account

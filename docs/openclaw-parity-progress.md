@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999997%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18511,6 +18511,33 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `810a6af0`.
+- `channels.stop` now uses the same fakeable runtime adapter shape as
+  `channels.start` when a production stop owner is wired. App construction
+  connects it to `OpsMeshService.stop_channel_runtime_account`; the Tlon
+  implementation closes the matching route-backed SSE monitor handle and keeps
+  idempotent `{stopped: true}` behavior for channels without a native monitor.
+  This closes `OZ-PROV-001DO`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999998%. The adjacent lifecycle
+  queue can now rotate to channel logout depth or broader provider/packaging
+  seams.
+- Verified the `channels.stop` native runtime slice with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_channels_stop_dispatches_runtime_stop_service_with_default_account -q`
+  and
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_channels_stop_closes_tlon_monitor_for_account -q`
+  (`1 failed` each before implementation, then `1 passed` each), existing
+  idempotent stop proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_channels_stop_returns_idempotent_stopped_payload -q`
+  (`1 passed`), adjacent gateway method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_start or channels_stop or channels_logout"`
+  (`9 passed, 1118 deselected`), adjacent Tlon monitor proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon_monitor or channels_start_starts_tlon or channels_stop_closes_tlon or tlon_native_monitor"`
+  (`4 passed, 401 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_gateway_node_methods.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `1365c028`.
 
 ## References
 
