@@ -24554,6 +24554,17 @@ def test_update_status_json_includes_openclaw_channel_projection(
         "root": str(package_root),
         "installKind": "git",
         "packageManager": "unknown",
+        "git": {
+            "root": str(package_root),
+            "sha": None,
+            "tag": None,
+            "branch": None,
+            "upstream": None,
+            "dirty": None,
+            "ahead": None,
+            "behind": None,
+            "fetchOk": None,
+        },
         "deps": {
             "manager": "unknown",
             "status": "unknown",
@@ -24786,6 +24797,65 @@ def test_update_status_json_uses_packed_git_tag_channel_label(
         "source": "git-tag",
         "label": "stable (v1.2.3)",
         "config": None,
+    }
+
+
+def test_update_status_json_projects_git_tag_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    tag_sha = "fedcbafedcbafedcbafedcbafedcbafedcbafedc"
+    git_dir.mkdir(parents=True)
+    (git_dir / "HEAD").write_text(f"{tag_sha}\n", encoding="utf-8")
+    refs_tags = git_dir / "refs" / "tags"
+    refs_tags.mkdir(parents=True)
+    (refs_tags / "v2.0.0").write_text(f"{tag_sha}\n", encoding="utf-8")
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["update"]["git"] == {
+        "root": str(package_root),
+        "sha": tag_sha,
+        "tag": "v2.0.0",
+        "branch": None,
+        "upstream": None,
+        "dirty": None,
+        "ahead": None,
+        "behind": None,
+        "fetchOk": None,
     }
 
 

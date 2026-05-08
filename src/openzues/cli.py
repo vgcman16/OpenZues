@@ -9787,6 +9787,25 @@ def _openclaw_update_channel_from_git_tag(tag: str) -> str:
     return "beta" if re.search(r"(?:^|[.-])beta(?:[.-]|$)", tag, flags=re.IGNORECASE) else "stable"
 
 
+def _openclaw_update_git_payload(
+    root: Path,
+    *,
+    git_tag: str | None,
+    git_branch: str | None,
+) -> dict[str, object]:
+    return {
+        "root": str(root),
+        "sha": _openclaw_update_git_head_sha(root),
+        "tag": git_tag,
+        "branch": git_branch,
+        "upstream": None,
+        "dirty": None,
+        "ahead": None,
+        "behind": None,
+        "fetchOk": None,
+    }
+
+
 def _openclaw_update_channel_payload(
     *,
     config_channel: str | None,
@@ -9841,6 +9860,12 @@ def _with_openclaw_update_status_projection(
         "installKind": install_kind,
         "packageManager": package_manager,
     }
+    if install_kind == "git":
+        update_payload["git"] = _openclaw_update_git_payload(
+            root,
+            git_tag=git_tag,
+            git_branch=git_branch,
+        )
     if install_kind != "unknown":
         update_payload["deps"] = _openclaw_update_deps_status(root, package_manager)
     next_payload["update"] = update_payload
