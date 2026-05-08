@@ -2390,6 +2390,7 @@ def create_app(
             config_service=active_gateway_config_service,
             channel_start_service=active_ops_mesh_service.start_channel_runtime_account,
             channel_stop_service=active_ops_mesh_service.stop_channel_runtime_account,
+            channel_logout_service=active_ops_mesh_service.logout_channel_runtime_account,
             health_service=active_gateway_health_service,
             gateway_identity_service=active_gateway_identity_service,
             logs_service=active_gateway_logs_service,

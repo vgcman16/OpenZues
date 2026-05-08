@@ -12912,6 +12912,113 @@ class OpsMeshService:
             "stopped": True,
         }
 
+    def _clear_channel_secret_config(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+        fields: tuple[str, ...],
+    ) -> bool:
+        if self.gateway_config_service is None:
+            return False
+        snapshot = self.gateway_config_service.build_snapshot()
+        next_snapshot = json.loads(json.dumps(snapshot))
+        if not isinstance(next_snapshot, dict):
+            return False
+        channels = next_snapshot.get("channels")
+        if not isinstance(channels, dict):
+            return False
+        section = channels.get(channel)
+        if not isinstance(section, dict):
+            return False
+
+        cleared = False
+        if account_id == DEFAULT_ACCOUNT_ID:
+            for field_name in fields:
+                if section.pop(field_name, None) is not None:
+                    cleared = True
+
+        accounts = section.get("accounts")
+        if isinstance(accounts, dict):
+            account_section = accounts.get(account_id)
+            if isinstance(account_section, dict):
+                for field_name in fields:
+                    if account_section.pop(field_name, None) is not None:
+                        cleared = True
+                if not account_section:
+                    accounts.pop(account_id, None)
+            if not accounts:
+                section.pop("accounts", None)
+
+        if not cleared:
+            return False
+        if not section:
+            channels.pop(channel, None)
+        if not channels:
+            next_snapshot.pop("channels", None)
+        self.gateway_config_service.set_raw(
+            json.dumps(next_snapshot),
+            base_hash=self.gateway_config_service._snapshot_hash(snapshot),
+        )
+        return True
+
+    def _channel_secret_configured(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+        fields: tuple[str, ...],
+    ) -> bool:
+        if self.gateway_config_service is None:
+            return False
+        snapshot = self.gateway_config_service.build_snapshot()
+        channels = snapshot.get("channels")
+        section = channels.get(channel) if isinstance(channels, dict) else None
+        if not isinstance(section, dict):
+            return False
+        if account_id == DEFAULT_ACCOUNT_ID and any(
+            str(section.get(field_name) or "").strip() for field_name in fields
+        ):
+            return True
+        accounts = section.get("accounts")
+        account_section = accounts.get(account_id) if isinstance(accounts, dict) else None
+        if not isinstance(account_section, dict):
+            return False
+        return any(str(account_section.get(field_name) or "").strip() for field_name in fields)
+
+    async def logout_channel_runtime_account(
+        self,
+        channel: str,
+        account_id: str,
+    ) -> dict[str, object]:
+        normalized_channel = _canonical_native_provider_channel(channel)
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        if normalized_channel != "telegram":
+            raise RuntimeError(f"channel {normalized_channel} does not support logout")
+        await self.stop_channel_runtime_account(normalized_channel, normalized_account_id)
+        fields = ("botToken",)
+        env_token = bool(os.environ.get("TELEGRAM_BOT_TOKEN", "").strip())
+        cleared = self._clear_channel_secret_config(
+            channel="telegram",
+            account_id=normalized_account_id,
+            fields=fields,
+        )
+        logged_out = not env_token and not self._channel_secret_configured(
+            channel="telegram",
+            account_id=normalized_account_id,
+            fields=fields,
+        )
+        return {
+            "channel": normalized_channel,
+            "accountId": normalized_account_id,
+            "cleared": cleared,
+            "envToken": env_token,
+            "loggedOut": logged_out,
+        }
+
     async def _queue_tlon_approval_request(
         self,
         request: GatewayTlonApprovalQueueRequest,

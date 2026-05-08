@@ -79188,6 +79188,41 @@ async def test_channels_logout_allows_blank_account_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_channels_logout_dispatches_runtime_logout_service_with_default_account() -> None:
+    logouts: list[tuple[str, str]] = []
+
+    async def fake_channel_logout(channel: str, account_id: str) -> dict[str, object]:
+        logouts.append((channel, account_id))
+        return {
+            "channel": channel,
+            "accountId": account_id,
+            "cleared": True,
+            "loggedOut": True,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        channel_logout_service=fake_channel_logout,
+    )
+
+    result = await service.call(
+        "channels.logout",
+        {
+            "channel": "Telegram",
+            "accountId": "   ",
+        },
+    )
+
+    assert logouts == [("telegram", "default")]
+    assert result == {
+        "channel": "telegram",
+        "accountId": "default",
+        "cleared": True,
+        "loggedOut": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_channels_start_allows_blank_account_id_and_fails_runtime_boundary() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
