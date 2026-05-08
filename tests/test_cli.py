@@ -1586,6 +1586,69 @@ def test_doctor_json_enforces_missing_bundled_runtime_sidecar(
     assert sidecar_check["detail"] == expected_warning
 
 
+def test_doctor_json_ignores_private_qa_bundled_runtime_sidecars(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    qa_package = package_root / "dist" / "extensions" / "qa-lab" / "package.json"
+    qa_package.parent.mkdir(parents=True)
+    qa_package.write_text("{}", encoding="utf-8")
+    (package_root / "dist" / "postinstall-inventory.json").write_text(
+        "[]",
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    assert package_distribution["status"] == "ok"
+    assert package_distribution["warnings"] == []
+    sidecar_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "bundled_runtime_sidecars"
+    )
+    assert sidecar_check["status"] == "ok"
+    assert sidecar_check["detail"] == (
+        "Bundled runtime sidecars are present or not required."
+    )
+
+
 def test_doctor_json_reports_source_install_pnpm_workspace_warnings(
     tmp_path,
     monkeypatch,
