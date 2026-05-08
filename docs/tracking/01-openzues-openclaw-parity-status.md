@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999993% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999994% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1693,6 +1693,10 @@ may lag behind this tracker.
 - [x] Unsafe package dist symlink diagnostics, preserving OpenClaw's unsafe
   packaged path warning.
   - Status: checkpointed in `a9c7884f`
+
+- [x] Externalized bundled extension dist omission, preserving OpenClaw's core
+  package inventory boundary for publishable extensions.
+  - Status: checkpointed in `06ba5480`
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
@@ -4202,6 +4206,19 @@ may lag behind this tracker.
     tests\test_cli.py::test_doctor_json_warns_on_unsafe_package_dist_symlink
     -q` (`1 failed` before implementation, then `1 passed`), adjacent package
     doctor proof (`9 passed, 530 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] Externalized bundled extension dist omission.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `06ba5480`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green `python -m pytest
+    tests\test_cli.py::test_doctor_json_omits_externalized_bundled_extension_dist_trees
+    -q` (`1 failed` before implementation, then `1 passed`), adjacent package
+    doctor proof (`10 passed, 530 deselected`), `ruff check`, `mypy`, and
     `git diff --check`.
 
 - [x] Companion node presence alive lifecycle.

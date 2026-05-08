@@ -9951,3 +9951,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `a9c7884f`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.9999999999993%. Rotate to externalized bundled
   extension dist omission next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  omit publishable externalized bundled extension dist trees while still
+  counting bundled and `bundle.includeInCore=true` extension runtime files.
+  Source/test checkpointed in `06ba5480`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.9999999999994%.
+  Rotate to private QA/plugin-sdk omitted dist paths next.

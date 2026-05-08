@@ -18921,6 +18921,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`9 passed, 530 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `a9c7884f`.
+- `openzues doctor --json` package dist inventory comparison now omits
+  publishable externalized bundled extension dist trees while preserving
+  bundled and `bundle.includeInCore=true` extension runtime files in the core
+  package inventory. This closes `OZ-PKG-001U`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999994%.
+- Verified the externalized extension omission slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_omits_externalized_bundled_extension_dist_trees -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory or omits_local_build_metadata or unsafe_package_dist_symlink or externalized_bundled_extension"`
+  (`10 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `06ba5480`.
 
 ## References
 
