@@ -87118,6 +87118,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return testingRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/test-utils" ||
+    request === "@openclaw/plugin-sdk/test-utils"
+  ) {
+    return testingRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/channel-targets" ||
     request === "@openclaw/plugin-sdk/channel-targets"
   ) {

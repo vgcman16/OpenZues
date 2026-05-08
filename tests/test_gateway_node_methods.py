@@ -36151,6 +36151,117 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_utils_compat_alias(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-test-utils-compat.cjs"
+    runtime_entry.write_text(
+        """
+const testing = require("openclaw/plugin-sdk/testing");
+const testUtils = require("openclaw/plugin-sdk/test-utils");
+const scopedTestUtils = require("@openclaw/plugin-sdk/test-utils");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_utils_compat",
+      description: "Use OpenClaw test-utils compatibility SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const testingKeys = Object.keys(testing).sort();
+        const testUtilsKeys = Object.keys(testUtils).sort();
+        return {
+          sameExports:
+            JSON.stringify(testUtilsKeys) === JSON.stringify(testingKeys),
+          missingFromAlias: testingKeys.filter(
+            (key) => !Object.prototype.hasOwnProperty.call(testUtils, key)
+          ),
+          extraOnAlias: testUtilsKeys.filter(
+            (key) => !Object.prototype.hasOwnProperty.call(testing, key)
+          ),
+          scopedSame:
+            scopedTestUtils.createEmptyPluginRegistry ===
+            testUtils.createEmptyPluginRegistry,
+          helperResults: {
+            semver: testUtils.parseSemver("v2.3.4"),
+            unique: testUtils.assertUniqueValues(["alpha", "beta"], "token"),
+            sidecarCount: testUtils.BUNDLED_RUNTIME_SIDECAR_PATHS.length,
+            testingSidecarCount: testing.BUNDLED_RUNTIME_SIDECAR_PATHS.length
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-utils-compat-plugin",
+                    "name": "Runtime Test Utils Compat Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-test-utils-compat.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_utils_compat"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.test_utils_compat"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "sameExports": True,
+        "missingFromAlias": [],
+        "extraOnAlias": [],
+        "scopedSame": True,
+        "helperResults": {
+            "semver": {"major": 2, "minor": 3, "patch": 4},
+            "unique": ["alpha", "beta"],
+            "sidecarCount": payload["result"]["helperResults"][
+                "testingSidecarCount"
+            ],
+            "testingSidecarCount": payload["result"]["helperResults"][
+                "testingSidecarCount"
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:
