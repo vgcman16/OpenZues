@@ -10853,3 +10853,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `2723c527`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.99999999999999999999999999999999999997%. Continue
   remaining exact SDK helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `feishu` now exposes the
+  exact root setup and conversation facade by composing the already verified
+  Feishu setup and conversation subpath runtimes while preserving inherited
+  generic SDK helpers. Source/test checkpointed in `45877663`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999998%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.

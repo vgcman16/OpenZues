@@ -20894,6 +20894,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 1189 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `2723c527`.
+- Imported plugin SDK `feishu` now exposes the exact root setup and
+  conversation facade by composing the already verified Feishu setup and
+  conversation subpath runtimes while preserving inherited generic SDK helpers.
+  This closes `OZ-PLUGIN-00364`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999998%.
+- Verified the Feishu root helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_feishu_root_helpers -q`
+  (the exact root import returned generic placeholders before implementation,
+  then `1 passed`), adjacent Feishu proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "feishu_root_helpers or feishu_setup_helpers or feishu_conversation_helpers or feishu_security_helpers"`
+  (`4 passed, 1189 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `45877663`.
 
 ## References
 

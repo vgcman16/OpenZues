@@ -6816,6 +6816,24 @@ may lag behind this tracker.
     `1 passed`), adjacent Telegram proof (`3 passed, 1189 deselected`), `ruff
     check`, `mypy`, and focused `git diff --check`.
 
+- [x] Imported plugin SDK feishu root shim.
+  - Source: `openclaw-main/src/plugin-sdk/feishu.ts`,
+    `openclaw-main/src/plugin-sdk/feishu-setup.ts`,
+    `openclaw-main/src/plugin-sdk/feishu-conversation.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `feishu` imports expose root
+    `feishuSetupAdapter`, `feishuSetupWizard`, Feishu conversation parsing and
+    thread-binding helpers, and inherited generic SDK helper exports.
+  - Evidence required: focused Feishu root import test, adjacent Feishu proof,
+    ruff, mypy
+  - Status: checkpointed in `45877663`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Feishu root red/green proof (exact root
+    import returned generic placeholders before implementation, then `1
+    passed`), adjacent Feishu proof (`4 passed, 1189 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
+
 ## Update Rule
 
 Only move a row to `[x]` when implementation, focused proof, adjacent proof,
