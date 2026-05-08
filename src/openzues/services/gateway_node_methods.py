@@ -16887,7 +16887,7 @@ def _project_sessions_history_messages(
             continue
         if role == "assistant" and _chat_history_is_heartbeat_ok_text(text):
             continue
-        structured_content = _sessions_history_structured_content(raw_text)
+        structured_content = _sessions_history_structured_content(raw_text, role=role)
         if structured_content is not None:
             if role == "user" and _chat_history_should_hide_structured_user_content(
                 structured_content["content"]
@@ -17106,7 +17106,9 @@ def _assistant_structured_content_is_suppressed(content: list[dict[str, Any]]) -
     return bool(joined) and joined.upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS
 
 
-def _sessions_history_structured_content(text: str) -> dict[str, Any] | None:
+def _sessions_history_structured_content(
+    text: str, *, role: str
+) -> dict[str, Any] | None:
     if not text.lstrip().startswith("["):
         return None
     try:
@@ -17118,7 +17120,9 @@ def _sessions_history_structured_content(text: str) -> dict[str, Any] | None:
     redacted = False
     content: list[dict[str, Any]] = []
     for item in parsed:
-        block, block_redacted = _sessions_history_sanitize_tool_call_block(item)
+        block, block_redacted = _sessions_history_sanitize_tool_call_block(
+            item, role=role
+        )
         redacted = redacted or block_redacted
         content.append(block)
     return {"content": content, "redacted": redacted}
@@ -17126,12 +17130,17 @@ def _sessions_history_structured_content(text: str) -> dict[str, Any] | None:
 
 def _sessions_history_sanitize_tool_call_block(
     block: Mapping[str, Any],
+    *,
+    role: str,
 ) -> tuple[dict[str, Any], bool]:
     next_block = dict(block)
     for key in ("text", "content"):
         value = next_block.get(key)
         if isinstance(value, str):
-            next_block[key] = _chat_history_display_text(value)
+            next_block[key] = _chat_history_display_text(
+                value,
+                strip_user_envelope=role == "user",
+            )
     block_type = _string_or_none(block.get("type"))
     if block_type not in {"toolCall", "toolUse", "functionCall"}:
         return next_block, False
