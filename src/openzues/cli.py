@@ -87457,6 +87457,51 @@ const matrixRuntimeSharedRuntime = {
   formatZonedTimestamp,
 };
 
+function loadMatrixRuntimeHeavyModule() {
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: "matrix",
+    artifactBasename: "runtime-heavy-api.js",
+  });
+}
+
+function autoPrepareLegacyMatrixCrypto(...args) {
+  return loadMatrixRuntimeHeavyModule().autoPrepareLegacyMatrixCrypto(...args);
+}
+
+function detectLegacyMatrixCrypto(...args) {
+  return loadMatrixRuntimeHeavyModule().detectLegacyMatrixCrypto(...args);
+}
+
+function autoMigrateLegacyMatrixState(...args) {
+  return loadMatrixRuntimeHeavyModule().autoMigrateLegacyMatrixState(...args);
+}
+
+function detectLegacyMatrixState(...args) {
+  return loadMatrixRuntimeHeavyModule().detectLegacyMatrixState(...args);
+}
+
+function hasActionableMatrixMigration(...args) {
+  return loadMatrixRuntimeHeavyModule().hasActionableMatrixMigration(...args);
+}
+
+function hasPendingMatrixMigration(...args) {
+  return loadMatrixRuntimeHeavyModule().hasPendingMatrixMigration(...args);
+}
+
+function maybeCreateMatrixMigrationSnapshot(...args) {
+  return loadMatrixRuntimeHeavyModule().maybeCreateMatrixMigrationSnapshot(...args);
+}
+
+const matrixRuntimeHeavyRuntime = {
+  autoMigrateLegacyMatrixState,
+  autoPrepareLegacyMatrixCrypto,
+  detectLegacyMatrixCrypto,
+  detectLegacyMatrixState,
+  hasActionableMatrixMigration,
+  hasPendingMatrixMigration,
+  maybeCreateMatrixMigrationSnapshot,
+};
+
 const REQUIRED_MATRIX_PACKAGES = [
   "matrix-js-sdk",
   "@matrix-org/matrix-sdk-crypto-nodejs",
@@ -90018,6 +90063,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/matrix-runtime-shared"
   ) {
     return matrixRuntimeSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/matrix-runtime-heavy" ||
+    request === "@openclaw/plugin-sdk/matrix-runtime-heavy"
+  ) {
+    return matrixRuntimeHeavyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/matrix-deps" ||

@@ -21163,6 +21163,207 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_matrix_runtime_heavy_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-matrix-runtime-heavy.cjs"
+    runtime_entry.write_text(
+        """
+globalThis.__openzuesQaRunnerRuntime = {
+  calls: [],
+  loadBundledPluginPublicSurfaceModuleSync(params) {
+    this.calls.push(params);
+    return {
+      autoPrepareLegacyMatrixCrypto: async ({ cfg }) => ({
+        migrated: !!cfg.enabled,
+        changes: ["crypto"],
+        warnings: []
+      }),
+      detectLegacyMatrixCrypto: ({ cfg }) => ({
+        inspectorAvailable: true,
+        plans: [{ accountId: cfg.accountId || "default" }],
+        warnings: []
+      }),
+      autoMigrateLegacyMatrixState: async () => ({
+        migrated: true,
+        changes: ["state"],
+        warnings: []
+      }),
+      detectLegacyMatrixState: ({ cfg }) => ({
+        accountId: cfg.accountId || "default",
+        legacyStoragePath: "legacy",
+        legacyCryptoPath: "legacy/crypto",
+        targetRootDir: "root",
+        targetStoragePath: "root/storage",
+        targetCryptoPath: "root/crypto"
+      }),
+      hasActionableMatrixMigration: () => true,
+      hasPendingMatrixMigration: () => false,
+      maybeCreateMatrixMigrationSnapshot: async ({ trigger }) => ({
+        created: true,
+        archivePath: `archives/${trigger}.zip`,
+        markerPath: `markers/${trigger}.json`
+      })
+    };
+  }
+};
+
+const matrixHeavy = require("openclaw/plugin-sdk/matrix-runtime-heavy");
+const scopedMatrixHeavy = require("@openclaw/plugin-sdk/matrix-runtime-heavy");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.matrix_heavy",
+      description: "Use OpenClaw matrix-runtime-heavy SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const keys = Object.keys(matrixHeavy).sort();
+        const beforeCalls = globalThis.__openzuesQaRunnerRuntime.calls.length;
+        const cryptoMigration = await matrixHeavy.autoPrepareLegacyMatrixCrypto({
+          cfg: { enabled: true, accountId: "ops" }
+        });
+        const cryptoDetection = scopedMatrixHeavy.detectLegacyMatrixCrypto({
+          cfg: { accountId: "ops" }
+        });
+        const stateMigration = await matrixHeavy.autoMigrateLegacyMatrixState({
+          cfg: { accountId: "ops" }
+        });
+        const stateDetection = matrixHeavy.detectLegacyMatrixState({
+          cfg: { accountId: "ops" }
+        });
+        const actionable = scopedMatrixHeavy.hasActionableMatrixMigration({ cfg: {} });
+        const pending = matrixHeavy.hasPendingMatrixMigration({ cfg: {} });
+        const snapshot = await scopedMatrixHeavy.maybeCreateMatrixMigrationSnapshot({
+          trigger: "startup"
+        });
+        return {
+          keys,
+          scopedSame:
+            scopedMatrixHeavy.detectLegacyMatrixState ===
+              matrixHeavy.detectLegacyMatrixState,
+          beforeCalls,
+          cryptoMigration,
+          cryptoDetection,
+          stateMigration,
+          stateDetection,
+          actionable,
+          pending,
+          snapshot,
+          callSummary: globalThis.__openzuesQaRunnerRuntime.calls.map((call) => ({
+            dirName: call.dirName,
+            artifact: call.artifactBasename
+          }))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-matrix-heavy-plugin",
+                    "name": "Runtime Matrix Heavy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-matrix-heavy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.matrix_heavy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.matrix_heavy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "autoMigrateLegacyMatrixState",
+            "autoPrepareLegacyMatrixCrypto",
+            "detectLegacyMatrixCrypto",
+            "detectLegacyMatrixState",
+            "hasActionableMatrixMigration",
+            "hasPendingMatrixMigration",
+            "maybeCreateMatrixMigrationSnapshot",
+        ],
+        "scopedSame": True,
+        "beforeCalls": 0,
+        "cryptoMigration": {
+            "migrated": True,
+            "changes": ["crypto"],
+            "warnings": [],
+        },
+        "cryptoDetection": {
+            "inspectorAvailable": True,
+            "plans": [{"accountId": "ops"}],
+            "warnings": [],
+        },
+        "stateMigration": {
+            "migrated": True,
+            "changes": ["state"],
+            "warnings": [],
+        },
+        "stateDetection": {
+            "accountId": "ops",
+            "legacyStoragePath": "legacy",
+            "legacyCryptoPath": "legacy/crypto",
+            "targetRootDir": "root",
+            "targetStoragePath": "root/storage",
+            "targetCryptoPath": "root/crypto",
+        },
+        "actionable": True,
+        "pending": False,
+        "snapshot": {
+            "created": True,
+            "archivePath": "archives/startup.zip",
+            "markerPath": "markers/startup.json",
+        },
+        "callSummary": [
+            {"dirName": "matrix", "artifact": "runtime-heavy-api.js"},
+            {"dirName": "matrix", "artifact": "runtime-heavy-api.js"},
+            {"dirName": "matrix", "artifact": "runtime-heavy-api.js"},
+            {"dirName": "matrix", "artifact": "runtime-heavy-api.js"},
+            {"dirName": "matrix", "artifact": "runtime-heavy-api.js"},
+            {"dirName": "matrix", "artifact": "runtime-heavy-api.js"},
+            {"dirName": "matrix", "artifact": "runtime-heavy-api.js"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_xiaomi_helpers(
     tmp_path,
 ) -> None:
