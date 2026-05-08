@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999999995%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999999997%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -20646,6 +20646,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 1170 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `0beb9dbc`.
+- Imported plugin SDK `voice-call` now exposes the exact scoped/unscoped
+  bundled voice-call plugin-entry, TTS schema, HTTP body, SSRF fetch, and sleep
+  helper facade instead of the broad generic SDK passthrough. This closes
+  `OZ-PLUGIN-00345`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999999999999999999999999997%.
+- Verified the voice-call helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_voice_call_helpers -q`
+  (the fallback returned schema passthrough functions without `safeParse`
+  before implementation, then `1 passed`), adjacent webhook/TTS/Lobster proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "voice_call_helpers or lobster_helpers or webhook_ingress or channel_secret_tts"`
+  (`4 passed, 1170 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `bdbc7724`.
 
 ## References
 

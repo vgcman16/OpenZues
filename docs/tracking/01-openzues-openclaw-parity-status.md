@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999995% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999997% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6473,6 +6473,25 @@ may lag behind this tracker.
     returned the generic SDK facade before implementation, then `1 passed`),
     adjacent Windows-spawn/plugin-entry proof (`3 passed, 1170 deselected`),
     `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK voice-call shim.
+  - Source: `openclaw-main/src/plugin-sdk/voice-call.ts`,
+    `openclaw-main/src/config/zod-schema.core.ts`,
+    `openclaw-main/src/infra/http-body.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `voice-call` imports expose bundled
+    voice-call `definePluginEntry`, TTS schema helpers, HTTP body limit
+    helpers, SSRF fetch helper, and `sleep`.
+  - Evidence required: focused voice-call import test, adjacent webhook/TTS
+    proof, ruff, mypy
+  - Status: checkpointed in `bdbc7724`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused voice-call red/green proof (fallback
+    returned schema passthrough functions without `safeParse` before
+    implementation, then `1 passed`), adjacent webhook/TTS/Lobster proof (`4
+    passed, 1170 deselected`), `ruff check`, `mypy`, and focused `git diff
+    --check`.
 
 ## Update Rule
 
