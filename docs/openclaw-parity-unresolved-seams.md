@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999998%.
+  band of ~80-99.99999999%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -1794,6 +1794,13 @@ the matching SSE monitor account while preserving idempotent stopped responses
 for channels without a native monitor. Source/test checkpointed in `1365c028`;
 the adjacent lifecycle queue should now rotate to channel logout depth or
 broader provider/packaging seams.
+`channels.logout` now dispatches through a fakeable runtime logout adapter when
+wired, app construction binds Telegram logout to OpsMesh, and the Telegram
+implementation mirrors OpenClaw's `logoutAccount` config cleanup by clearing
+saved `channels.telegram.botToken` before returning `{cleared, envToken,
+loggedOut}`. Source/test checkpointed in `2d26bdc4`; the adjacent provider
+queue should now rotate to remaining logout-capable channel configs or broader
+provider/packaging seams.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account
