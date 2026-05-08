@@ -6834,6 +6834,23 @@ may lag behind this tracker.
     passed`), adjacent Feishu proof (`4 passed, 1189 deselected`), `ruff
     check`, `mypy`, and focused `git diff --check`.
 
+- [x] Imported plugin SDK root shim.
+  - Source: `openclaw-main/src/plugin-sdk/index.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped root imports expose the upstream tiny
+    enumerable helper set (`emptyPluginConfigSchema`, context-engine helpers,
+    diagnostic event subscription, and schema enum helpers) while inherited
+    generic SDK properties remain reachable for legacy consumers.
+  - Evidence required: focused root SDK import test, adjacent root/compat
+    proof, ruff, mypy
+  - Status: checkpointed in `b0df7421`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused root SDK red/green proof (root import
+    returned the broad generic enumerable surface before implementation, then
+    `1 passed`), adjacent root/compat proof (`2 passed, 1192 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
 ## Update Rule
 
 Only move a row to `[x]` when implementation, focused proof, adjacent proof,

@@ -20908,6 +20908,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1189 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `45877663`.
+- Imported root `openclaw/plugin-sdk` now exposes the exact tiny upstream
+  enumerable helper surface while inheriting legacy generic SDK properties for
+  existing consumers. This closes `OZ-PLUGIN-00365`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999%.
+- Verified the root plugin SDK helper with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_plugin_sdk_root_helpers -q`
+  (the root import returned the broad generic enumerable surface before
+  implementation, then `1 passed`), adjacent root/compat proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "plugin_sdk_root_helpers or agent_config_primitives_helpers or compat_helpers or diagnostic_event_helpers"`
+  (`2 passed, 1192 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `b0df7421`.
 
 ## References
 

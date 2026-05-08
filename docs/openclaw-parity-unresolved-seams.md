@@ -10860,3 +10860,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.99999999999999999999999999999999999998%. Continue remaining exact SDK
   helper seams and provider/runtime breadth.
+- Current queue-head adjustment: root `openclaw/plugin-sdk` now exposes the
+  exact tiny upstream enumerable helper surface while inheriting legacy generic
+  SDK properties for existing consumers. Source/test checkpointed in
+  `b0df7421`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99999999999999999999999999999999999999%. Continue
+  remaining exact SDK helper seams and provider/runtime breadth.
