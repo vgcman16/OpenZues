@@ -19624,6 +19624,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `733c7b15`.
+- Native doctor package distribution diagnostics now warn on malformed bundled
+  extension manifests while still ignoring missing manifests, keeping doctor
+  package inventory behavior aligned with the runtime update verifier and
+  OpenClaw's non-`ENOENT` manifest failure posture. This closes
+  `OZ-PKG-001BO`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999999999998%.
+- Verified doctor malformed extension manifest diagnostics with focused
+  red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_warns_on_malformed_externalized_extension_manifest -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package
+  distribution doctor proof
+  `python -m pytest tests\test_cli.py::test_doctor_json_omits_externalized_bundled_extension_dist_trees tests\test_cli.py::test_doctor_json_warns_on_malformed_externalized_extension_manifest tests\test_cli.py::test_doctor_json_omits_private_qa_package_dist_artifacts tests\test_cli.py::test_doctor_json_warns_on_package_dist_inventory_file_drift tests\test_cli.py::test_doctor_json_warns_on_package_dist_legacy_staging_debris tests\test_cli.py::test_doctor_json_warns_on_unsafe_package_dist_symlink -q`
+  (`6 passed`), adjacent package distribution sweep
+  `python -m pytest tests\test_cli.py -q -k "package_dist or package_distribution"`
+  (`8 passed, 548 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `df582190`.
 
 ## References
 

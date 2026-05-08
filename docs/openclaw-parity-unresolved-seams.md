@@ -10260,3 +10260,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `733c7b15`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.99999999999999999997%. Continue the adjacent doctor
   malformed externalized manifest behavior next.
+- Current queue-head adjustment: native doctor package distribution diagnostics
+  now warn on malformed bundled extension manifests while preserving missing
+  manifest omission, aligning the doctor inventory collector with package
+  update verification and OpenClaw's non-`ENOENT` manifest posture. Source/test
+  checkpointed in `df582190`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.99999999999999999998%. Continue
+  npm shim rollback proof next.
