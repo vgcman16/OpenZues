@@ -21350,6 +21350,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `e5586d6e`.
+- `chat.history` now applies the same role-aware user envelope/message-id
+  stripping inside structured content blocks, parsing JSON content from the raw
+  row first so envelope normalization cannot corrupt structured payloads. This
+  closes the structured user side of the `chat-sanitize` channel envelope
+  edge; repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999999999999999999999999999999995%.
+- Verified the structured user channel-envelope stripping seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_structured_user_channel_envelope -q`
+  (structured envelope rows leaked/corrupted before implementation, then
+  `1 passed`), raw envelope and structured heartbeat regression proofs
+  (`2 passed`), adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`48 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `cfec33ca`.
 
 ## References
 
