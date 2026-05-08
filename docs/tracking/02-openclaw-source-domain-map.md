@@ -557,6 +557,8 @@ is checkpointed in `2938b03a`.
 checkpointed in `0561baa6`.
 `copilot-proxy` from `src/plugin-sdk/copilot-proxy.ts` is checkpointed in
 `808c9260`.
+`private-qa-bundled-env` from `src/plugin-sdk/private-qa-bundled-env.ts` is
+checkpointed in `fc6c72d4`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
