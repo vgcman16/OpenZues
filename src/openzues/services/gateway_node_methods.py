@@ -16833,6 +16833,11 @@ def _project_control_chat_messages(
         if role not in {"user", "assistant"}:
             continue
         raw_text = str(row.get("content") or "")
+        sender_label = (
+            _extract_chat_history_inbound_sender_label(raw_text)
+            if role == "user"
+            else None
+        )
         text = _chat_history_display_text(
             raw_text,
             strip_user_envelope=role == "user",
@@ -16870,6 +16875,7 @@ def _project_control_chat_messages(
                     usage=usage,
                     cost=cost,
                     metadata=metadata,
+                    sender_label=sender_label,
                 )
             )
             continue
@@ -16882,6 +16888,7 @@ def _project_control_chat_messages(
                 usage=usage,
                 cost=cost,
                 metadata=metadata,
+                sender_label=sender_label,
             )
         )
 
@@ -17362,6 +17369,7 @@ def _chat_history_message_payload(
     usage: dict[str, Any] | None = None,
     cost: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
+    sender_label: str | None = None,
 ) -> dict[str, Any]:
     return _chat_history_content_payload(
         role,
@@ -17369,6 +17377,7 @@ def _chat_history_message_payload(
         usage=usage,
         cost=cost,
         metadata=metadata,
+        sender_label=sender_label,
     )
 
 
@@ -17379,8 +17388,11 @@ def _chat_history_content_payload(
     usage: dict[str, Any] | None = None,
     cost: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
+    sender_label: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {"role": role, "content": content}
+    if sender_label is not None:
+        payload["senderLabel"] = sender_label
     if usage is not None:
         payload["usage"] = usage
     if cost is not None:
@@ -17399,6 +17411,7 @@ def _bounded_chat_history_content_payload(
     usage: dict[str, Any] | None = None,
     cost: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
+    sender_label: str | None = None,
 ) -> dict[str, Any]:
     payload = _chat_history_content_payload(
         role,
@@ -17406,6 +17419,7 @@ def _bounded_chat_history_content_payload(
         usage=usage,
         cost=cost,
         metadata=metadata,
+        sender_label=sender_label,
     )
     encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     if len(encoded) <= _CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES:
@@ -17425,6 +17439,7 @@ def _bounded_chat_history_message_payload(
     usage: dict[str, Any] | None = None,
     cost: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
+    sender_label: str | None = None,
 ) -> dict[str, Any]:
     return _bounded_chat_history_content_payload(
         role,
@@ -17432,6 +17447,7 @@ def _bounded_chat_history_message_payload(
         usage=usage,
         cost=cost,
         metadata=metadata,
+        sender_label=sender_label,
     )
 
 
@@ -17641,6 +17657,74 @@ def _strip_chat_history_active_memory_prompt_prefix_blocks(
         result.append(lines[index])
         index += 1
     return result
+
+
+def _restore_chat_history_neutralized_markdown_fences(value: object) -> object:
+    if isinstance(value, str):
+        return value.replace("`\u200b``", "```")
+    if isinstance(value, list):
+        return [_restore_chat_history_neutralized_markdown_fences(item) for item in value]
+    if isinstance(value, Mapping):
+        return {
+            key: _restore_chat_history_neutralized_markdown_fences(item)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _parse_chat_history_inbound_meta_block(
+    lines: Sequence[str], sentinel: str
+) -> dict[str, Any] | None:
+    for index, line in enumerate(lines):
+        if line.strip() != sentinel:
+            continue
+        if index + 1 >= len(lines) or lines[index + 1].strip() != "```json":
+            return None
+        end = index + 2
+        while end < len(lines) and lines[end].strip() != "```":
+            end += 1
+        if end >= len(lines):
+            return None
+        json_text = "\n".join(lines[index + 2 : end]).strip()
+        if not json_text:
+            return None
+        try:
+            parsed = json.loads(json_text)
+        except (TypeError, ValueError):
+            return None
+        restored = _restore_chat_history_neutralized_markdown_fences(parsed)
+        return dict(restored) if isinstance(restored, Mapping) else None
+    return None
+
+
+def _chat_history_first_non_empty_string(*values: object) -> str | None:
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        trimmed = value.strip()
+        if trimmed:
+            return trimmed
+    return None
+
+
+def _extract_chat_history_inbound_sender_label(text: str) -> str | None:
+    if not text or _CHAT_HISTORY_INBOUND_META_FAST_RE.search(text) is None:
+        return None
+    lines = text.split("\n")
+    sender_info = _parse_chat_history_inbound_meta_block(
+        lines, "Sender (untrusted metadata):"
+    )
+    conversation_info = _parse_chat_history_inbound_meta_block(
+        lines, "Conversation info (untrusted metadata):"
+    )
+    return _chat_history_first_non_empty_string(
+        sender_info.get("label") if sender_info is not None else None,
+        sender_info.get("name") if sender_info is not None else None,
+        sender_info.get("username") if sender_info is not None else None,
+        sender_info.get("e164") if sender_info is not None else None,
+        sender_info.get("id") if sender_info is not None else None,
+        conversation_info.get("sender") if conversation_info is not None else None,
+    )
 
 
 def _strip_chat_history_inbound_metadata(text: str) -> str:

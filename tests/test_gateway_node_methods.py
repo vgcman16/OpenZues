@@ -83062,7 +83062,44 @@ async def test_chat_history_strips_inbound_metadata_prefix(tmp_path) -> None:
     payload = await service.call("chat.history", {"sessionKey": session_key})
 
     assert payload["messages"] == [
-        {"role": "user", "content": [{"type": "text", "text": "hi"}]}
+        {
+            "role": "user",
+            "senderLabel": "openclaw-control-ui",
+            "content": [{"type": "text", "text": "hi"}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_history_projects_inbound_sender_label(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-chat-history-inbound-sender-label.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content=(
+            "Thread starter (untrusted, for context):\n"
+            '```json\n{"seed":1}\n```\n\n'
+            "Sender (untrusted metadata):\n"
+            '```json\n{"name":"alice"}\n```\n\n'
+            "Actual user message"
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "senderLabel": "alice",
+            "content": [{"type": "text", "text": "Actual user message"}],
+        }
     ]
 
 
