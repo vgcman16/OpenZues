@@ -88278,8 +88278,41 @@ const genericSdk = new Proxy(
   },
 );
 
+const optionalChannelRootRuntimeCache = new Map();
+
+function getOptionalChannelRootRuntime(params) {
+  const channel = params.channel;
+  if (optionalChannelRootRuntimeCache.has(channel)) {
+    return optionalChannelRootRuntimeCache.get(channel);
+  }
+  const setup = createOptionalChannelSetupSurface(params);
+  const runtime = Object.create(genericSdk);
+  Object.defineProperties(runtime, {
+    [`${channel}SetupAdapter`]: {
+      enumerable: true,
+      value: setup.setupAdapter,
+    },
+    [`${channel}SetupWizard`]: {
+      enumerable: true,
+      value: setup.setupWizard,
+    },
+  });
+  optionalChannelRootRuntimeCache.set(channel, runtime);
+  return runtime;
+}
+
 const originalLoad = Module._load;
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
+  if (
+    request === "openclaw/plugin-sdk/twitch" ||
+    request === "@openclaw/plugin-sdk/twitch"
+  ) {
+    return getOptionalChannelRootRuntime({
+      channel: "twitch",
+      label: "Twitch",
+      npmSpec: "@openclaw/twitch",
+    });
+  }
   if (
     request === "openclaw/plugin-sdk/text-runtime" ||
     request === "@openclaw/plugin-sdk/text-runtime"

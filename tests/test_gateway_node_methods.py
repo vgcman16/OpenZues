@@ -21163,6 +21163,120 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_twitch_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-twitch.cjs"
+    runtime_entry.write_text(
+        """
+const twitch = require("openclaw/plugin-sdk/twitch");
+const scopedTwitch = require("@openclaw/plugin-sdk/twitch");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.twitch",
+      description: "Use OpenClaw twitch SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const setupKeys = Object.keys(twitch)
+          .filter((key) => key.startsWith("twitchSetup"))
+          .sort();
+        const adapter = twitch.twitchSetupAdapter;
+        const wizard = scopedTwitch.twitchSetupWizard;
+        let applyError = "";
+        try {
+          adapter.applyAccountConfig({});
+        } catch (error) {
+          applyError = error.message;
+        }
+        return {
+          setupKeys,
+          scopedSame:
+            scopedTwitch.twitchSetupAdapter === twitch.twitchSetupAdapter,
+          inheritedGenericType: typeof twitch.formatDocsLink,
+          account: adapter.resolveAccountId({ accountId: "ops" }),
+          validation: adapter.validateInput({}),
+          applyError,
+          wizard: {
+            channel: wizard.channel,
+            credentials: wizard.credentials.length,
+            hint: wizard.status.unconfiguredHint,
+            lines: wizard.status.resolveStatusLines()
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-twitch-plugin",
+                    "name": "Runtime Twitch Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-twitch.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.twitch"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.twitch"})
+
+    message = "Twitch setup requires @openclaw/twitch to be installed."
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "setupKeys": ["twitchSetupAdapter", "twitchSetupWizard"],
+        "scopedSame": True,
+        "inheritedGenericType": "function",
+        "account": "ops",
+        "validation": message,
+        "applyError": message,
+        "wizard": {
+            "channel": "twitch",
+            "credentials": 0,
+            "hint": message,
+            "lines": [message],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_memory_core_bundled_runtime_helpers(
     tmp_path,
 ) -> None:
