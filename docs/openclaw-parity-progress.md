@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999997%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19227,6 +19227,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\schemas.py tests\test_cli.py`, `mypy src\openzues\cli.py
   src\openzues\schemas.py`, and focused `git diff --check`. Source/test
   checkpointed in `15161172`.
+- Post-update package doctor execution now receives OpenClaw-shaped update
+  marker environment flags, including `NODE_DISABLE_COMPILE_CACHE`,
+  `OPENCLAW_UPDATE_IN_PROGRESS`, and
+  `OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE`, and the scoped env is
+  restored after the command runner returns. This closes `OZ-PKG-001AQ`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.999999999999998%.
+- Verified post-update doctor env with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_sets_post_update_doctor_env -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent doctor failure
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_fails_when_post_update_doctor_fails -q`
+  (`1 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`13 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed in `51b3bc19`.
 
 ## References
 
