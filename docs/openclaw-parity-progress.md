@@ -19857,6 +19857,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
   `mypy src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `1f45d307`.
+- Native git preflight edge failures now have focused proof for OpenClaw's
+  `no-target-sha` dev-target-ref failure and `preflight-no-good-commit`
+  candidate exhaustion result. This closes `OZ-PKG-001CB`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999997%.
+- Verified preflight edge failures with focused proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_target_sha_for_dev_target_ref tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_no_good_commit -q`
+  (`2 passed`), adjacent runtime proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_reports_no_target_sha_for_dev_target_ref tests\test_runtime_updates.py::test_runtime_update_run_update_reports_preflight_no_good_commit tests\test_runtime_updates.py::test_runtime_update_run_update_uses_dev_target_ref_without_rebase tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_errors_when_preflight_has_no_candidates -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`51 passed`), `ruff
+  check tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Test checkpointed in `7b15fafc`.
 
 ## References
 
