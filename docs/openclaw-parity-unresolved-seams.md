@@ -10204,3 +10204,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, with the evidence band tightened to
   ~80-99.999999999999999998%. Continue externalized bundled extension omission
   in package update inventory collection next.
+- Current queue-head adjustment: native package update inventory comparison now
+  omits bundled extension dist files for source extensions marked as externally
+  published, matching OpenClaw's externalized extension inventory filter.
+  Source/test checkpointed in `a06dd570`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999%. Continue legacy bundled runtime sidecar
+  verification for older package roots without inventory next.

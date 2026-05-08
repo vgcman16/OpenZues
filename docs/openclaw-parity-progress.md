@@ -19491,6 +19491,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `691fdabd`.
+- Native package update inventory comparison now omits bundled extension dist
+  files when the source extension manifest marks the extension as externally
+  published, matching OpenClaw's externalized extension inventory filter. This
+  closes `OZ-PKG-001BG`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.999999999999999999%.
+- Verified externalized extension dist omission with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent inventory
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_ignores_dist_inventory_omissions tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink tests\test_runtime_updates.py::test_runtime_update_run_package_update_reports_dist_inventory_file_drift -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`28 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `a06dd570`.
 
 ## References
 
