@@ -1468,14 +1468,19 @@ class RuntimeUpdateService:
                 "channel": channel,
             }
         package_root = self._package_root
+        now = self._now()
+        state = await self._read_startup_auto_update_state()
         if _path_exists(package_root / ".git"):
+            next_state = dict(state)
+            next_state["lastCheckedAt"] = _datetime_iso(now)
+            self._clear_startup_update_available_state(next_state)
+            self._clear_startup_auto_update_state(next_state)
+            await self._write_startup_auto_update_state(next_state)
             return {"status": "skipped", "reason": "not-package-install"}
         package_name = _read_package_name(package_root)
         current_version = _read_package_version(package_root)
         if not current_version:
             return {"status": "skipped", "reason": "current-version-unavailable"}
-        now = self._now()
-        state = await self._read_startup_auto_update_state()
         last_checked_at = _parse_datetime(state.get("lastCheckedAt"))
         check_interval_seconds = (
             _startup_auto_check_interval_hours(config_snapshot, channel) * _ONE_HOUR_SECONDS

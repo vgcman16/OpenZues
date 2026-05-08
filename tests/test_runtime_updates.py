@@ -453,6 +453,79 @@ async def test_runtime_update_startup_update_hints_clear_available_state_when_up
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_startup_update_hints_clear_available_state_for_source_checkout(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "source-openzues"
+    package_root.mkdir()
+    (package_root / ".git").mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "openzues", "version": "1.0.0"}),
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "update-check.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "lastCheckedAt": "2026-01-17T00:00:00+00:00",
+                "lastAvailableVersion": "2.0.0",
+                "lastAvailableTag": "latest",
+                "autoFirstSeenVersion": "2.0.0",
+                "autoFirstSeenTag": "latest",
+                "autoFirstSeenAt": "2026-01-17T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        raise AssertionError("source checkout startup hints should not run commands")
+
+    async def fake_version_resolver(
+        package_name: str,
+        tag: str,
+        timeout_ms: int | None,
+    ) -> str | None:
+        raise AssertionError("source checkout startup hints should not resolve versions")
+
+    async def restart_callback() -> None:
+        raise AssertionError("startup update hints should not restart inline")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+        config_snapshot_loader=lambda: {"update": {"channel": "stable"}},
+        package_root=package_root,
+        package_version_resolver=fake_version_resolver,
+        update_state_path=state_path,
+        now_provider=lambda: "2026-01-18T00:00:00+00:00",
+    )
+
+    result = await service.run_startup_auto_update_check(timeout_ms=1000)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert result == {
+        "status": "skipped",
+        "reason": "not-package-install",
+    }
+    assert state["lastCheckedAt"] == "2026-01-18T00:00:00+00:00"
+    assert "lastAvailableVersion" not in state
+    assert "lastAvailableTag" not in state
+    assert "autoFirstSeenVersion" not in state
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_startup_auto_update_defers_stable_until_rollout_window(
     tmp_path,
 ) -> None:
