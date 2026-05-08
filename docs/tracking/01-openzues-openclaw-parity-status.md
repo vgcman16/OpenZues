@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999998% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6600,6 +6600,25 @@ may lag behind this tracker.
     import returned the generic SDK facade before implementation, then `1
     passed`), adjacent Feishu/setup proof (`4 passed, 1176 deselected`), `ruff
     check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK zalo-setup shim.
+  - Source: `openclaw-main/src/plugin-sdk/zalo-setup.ts`,
+    `openclaw-main/extensions/zalo/setup-api.ts`,
+    `openclaw-main/extensions/zalo/contract-api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `zalo-setup` imports expose direct
+    `evaluateZaloGroupAccess` and `resolveZaloRuntimeGroupPolicy` facade
+    functions plus lazy `zaloSetupAdapter` and `zaloSetupWizard` objects backed
+    by Zalo public-surface artifacts.
+  - Evidence required: focused Zalo setup import test, adjacent provider/setup
+    proof, ruff, mypy
+  - Status: checkpointed in `759e64fe`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Zalo setup red/green proof (exact import
+    returned the generic SDK facade before implementation, then `1 passed`),
+    adjacent Zalo/setup proof (`6 passed, 1175 deselected`), `ruff check`,
+    `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 

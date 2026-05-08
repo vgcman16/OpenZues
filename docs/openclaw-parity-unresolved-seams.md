@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999999999999999999999999998%.
+  band of ~80-99.99999999999999999999999999999999999%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.4% after the latest
@@ -10777,4 +10777,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   SDK passthrough. Source/test checkpointed in `5bd3b500`; repo-wide parity
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.99999999999999999999999999999999998%. Continue remaining exact SDK
+  helper seams and provider/runtime breadth.
+- Current queue-head adjustment: imported plugin SDK `zalo-setup` now exposes
+  the exact Zalo setup and group-access facade instead of the broad generic SDK
+  passthrough. Source/test checkpointed in `759e64fe`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999%. Continue remaining exact SDK
   helper seams and provider/runtime breadth.
