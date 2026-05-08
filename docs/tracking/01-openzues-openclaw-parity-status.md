@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99997% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99998% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1974,6 +1974,11 @@ may lag behind this tracker.
   `probeFeishu` status hook over the Open API `openclaw_bot/ping` endpoint
   with bot name/open-id projection.
   - Status: checkpointed in `bf1d1d3c`
+
+- [x] Mattermost route-backed account probe support, preserving OpenClaw's
+  `probeMattermost` status hook over `/api/v4/users/me` with bot user
+  projection.
+  - Status: checkpointed in `ba0205fc`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -4870,6 +4875,18 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused
     `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_feishu_probe -q`
     (`1 passed`), adjacent channel-probe proof (`10 passed, 506 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Mattermost route-backed account probe.
+  - Source: `openclaw-main/extensions/mattermost/src/mattermost/probe.ts`,
+    `openclaw-main/extensions/mattermost/src/channel.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `ba0205fc`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_mattermost_probe -q`
+    (`1 passed`), adjacent channel-probe proof (`11 passed, 506 deselected`),
     `ruff check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
