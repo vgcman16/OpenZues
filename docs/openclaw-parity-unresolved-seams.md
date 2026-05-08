@@ -10141,3 +10141,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   checkpointed in `de046811`; repo-wide parity remains estimated at ~99.9%,
   with the evidence band tightened to ~80-99.9999999999999999%. Continue
   broader release/update packaging breadth next.
+- Current queue-head adjustment: native npm package updates now have focused
+  proof that OpenZues falls back to ambient `npm` when the package-root shape
+  implies an npm prefix but the owning npm binary is absent. Test checkpointed
+  in `0826cfaa`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999999995%. Continue broader
+  release/update packaging breadth next.

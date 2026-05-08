@@ -19343,6 +19343,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `de046811`.
+- Native npm package updates now have focused proof that npm ownership is not
+  inferred from global-root shape alone when the owning `npm.cmd` is absent;
+  OpenZues falls back to ambient `npm`, matching OpenClaw's fail-open command
+  selection. This closes `OZ-PKG-001AX`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.99999999999999995%.
+- Verified ambient npm fallback with focused
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_uses_ambient_npm_when_owner_absent -q`
+  (`1 passed`), adjacent owning/ambient npm proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_prefers_owning_npm_cmd tests\test_runtime_updates.py::test_runtime_update_run_package_update_uses_ambient_npm_when_owner_absent -q`
+  (`2 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`19 passed`),
+  `ruff check tests\test_runtime_updates.py
+  src\openzues\services\runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `0826cfaa`.
 
 ## References
 
