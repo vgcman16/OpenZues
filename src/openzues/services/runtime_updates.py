@@ -1330,6 +1330,23 @@ class RuntimeUpdateService:
             )
             steps.append(cleanup_step)
             shutil.rmtree(preflight_root, ignore_errors=True)
+            if _update_step_exit_code(cleanup_step) != 0 and not preflight_root.exists():
+                cleanup_log = cleanup_step.get("log")
+                if isinstance(cleanup_log, dict):
+                    cleanup_log["exitCode"] = 0
+                    fallback_message = (
+                        "windows fallback cleanup removed preflight tree"
+                        if os.name == "nt"
+                        else "fallback cleanup removed preflight tree"
+                    )
+                    stderr_tail = cleanup_log.get("stderrTail")
+                    cleanup_log["stderrTail"] = _trim_update_log_tail(
+                        "\n".join(
+                            str(part)
+                            for part in (stderr_tail, fallback_message)
+                            if part
+                        )
+                    )
 
         if selected_sha is None:
             return self._build_update_command_result(

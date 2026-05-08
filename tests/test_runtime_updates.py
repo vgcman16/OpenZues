@@ -581,6 +581,50 @@ async def test_runtime_update_run_update_aborts_failed_rebase(
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_run_update_repairs_failed_preflight_cleanup(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        if argv == ["git", "rev-parse", "@{upstream}"]:
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        if argv[:2] == ["git", "rev-list"]:
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        if argv[:3] == ["git", "worktree", "remove"]:
+            return {"stdout": "", "stderr": "remove failed\n", "exitCode": 1}
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("run_update should report restart posture, not exec immediately")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a", "rev-b"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "ok"
+    cleanup_step = next(step for step in result["steps"] if step["name"] == "preflight cleanup")
+    cleanup_log = cleanup_step["log"]
+    assert isinstance(cleanup_log, dict)
+    assert cleanup_log["exitCode"] == 0
+    assert "fallback cleanup removed preflight tree" in str(cleanup_log["stderrTail"])
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_run_package_update_executes_global_install_step(
     tmp_path,
 ) -> None:
