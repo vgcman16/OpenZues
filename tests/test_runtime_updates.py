@@ -335,6 +335,7 @@ async def test_runtime_update_run_package_update_verifies_expected_version(
 
     assert result["status"] == "error"
     assert result["reason"] == "global-install-verify-failed"
+    assert result["failedStep"]["name"] == "global install verify"
     assert [step["name"] for step in result["steps"]] == [
         "global update",
         "global install verify",

@@ -92,6 +92,14 @@ def _update_step_stdout_tail(step: dict[str, object]) -> str | None:
     return stdout_tail.strip() or None
 
 
+def _first_failed_update_step(steps: list[dict[str, object]]) -> dict[str, object] | None:
+    for step in steps:
+        exit_code = _update_step_exit_code(step)
+        if exit_code is not None and exit_code != 0:
+            return step
+    return None
+
+
 def _read_package_version(package_root: Path) -> str | None:
     package_json = package_root / "package.json"
     try:
@@ -497,6 +505,10 @@ class RuntimeUpdateService:
         }
         if reason is not None:
             result["reason"] = reason
+        if status == "error":
+            failed_step = _first_failed_update_step(steps)
+            if failed_step is not None:
+                result["failedStep"] = failed_step
         return result
 
     def _build_package_update_result(
@@ -522,6 +534,10 @@ class RuntimeUpdateService:
         }
         if reason is not None:
             result["reason"] = reason
+        if status == "error":
+            failed_step = _first_failed_update_step(steps)
+            if failed_step is not None:
+                result["failedStep"] = failed_step
         return result
 
     async def start(self) -> None:
