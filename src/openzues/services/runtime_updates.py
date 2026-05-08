@@ -784,6 +784,7 @@ def _collect_package_dist_inventory(package_root: Path) -> tuple[list[str], list
     dist_root = package_root / "dist"
     if not _path_exists(dist_root):
         return [], []
+    externalized_extension_ids = _collect_externalized_bundled_extension_ids(package_root)
     files: list[str] = []
     errors: list[str] = []
     for path in dist_root.rglob("*"):
@@ -796,7 +797,7 @@ def _collect_package_dist_inventory(package_root: Path) -> tuple[list[str], list
                 continue
         except OSError:
             continue
-        if not _is_packaged_dist_file(relative_path):
+        if not _is_packaged_dist_file(relative_path, externalized_extension_ids):
             continue
         files.append(relative_path)
     return sorted(set(files)), sorted(set(errors))
@@ -811,8 +812,64 @@ def _is_legacy_plugin_dependency_dir_path(relative_path: str) -> bool:
     return len(parts) >= 4 and parts[3].lower() == "node_modules"
 
 
-def _is_packaged_dist_file(relative_path: str) -> bool:
+def _collect_externalized_bundled_extension_ids(package_root: Path) -> set[str]:
+    extensions_path = package_root / "extensions"
+    if not _path_exists(extensions_path):
+        return set()
+    extension_ids: set[str] = set()
+    try:
+        extension_entries = list(extensions_path.iterdir())
+    except OSError:
+        return extension_ids
+    for extension_entry in extension_entries:
+        try:
+            if not extension_entry.is_dir() or extension_entry.is_symlink():
+                continue
+            parsed = json.loads(
+                (extension_entry / "package.json").read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            continue
+        if _is_publishable_externalized_manifest(parsed):
+            extension_ids.add(extension_entry.name)
+    return extension_ids
+
+
+def _is_publishable_externalized_manifest(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    openclaw = value.get("openclaw")
+    if not isinstance(openclaw, Mapping):
+        return False
+    release = openclaw.get("release")
+    if not isinstance(release, Mapping):
+        return False
+    bundle = openclaw.get("bundle")
+    if isinstance(bundle, Mapping) and bundle.get("includeInCore") is True:
+        return False
+    return release.get("publishToNpm") is True or release.get("publishToClawHub") is True
+
+
+def _is_externalized_bundled_extension_dist_path(
+    relative_path: str,
+    externalized_extension_ids: set[str],
+) -> bool:
+    parts = relative_path.split("/")
+    return (
+        len(parts) >= 3
+        and parts[0] == "dist"
+        and parts[1] == "extensions"
+        and parts[2] in externalized_extension_ids
+    )
+
+
+def _is_packaged_dist_file(
+    relative_path: str,
+    externalized_extension_ids: set[str],
+) -> bool:
     if not relative_path.startswith("dist/"):
+        return False
+    if _is_externalized_bundled_extension_dist_path(relative_path, externalized_extension_ids):
         return False
     if relative_path == _PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix():
         return False
