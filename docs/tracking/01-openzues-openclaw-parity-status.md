@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999997% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999998% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6346,6 +6346,28 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused LINE surface red/green proof (exact
     imports returned generic or wrong-shaped data before implementation, then
     `1 passed`), adjacent provider facade proof (`4 passed, 1162 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK line root/core barrel shim.
+  - Source: `openclaw-main/src/plugin-sdk/line.ts`,
+    `openclaw-main/src/plugin-sdk/line-core.ts`,
+    `openclaw-main/src/plugin-sdk/channel-plugin-common.ts`,
+    `openclaw-main/src/plugin-sdk/status-helpers.ts`,
+    `openclaw-main/src/plugin-sdk/setup.ts`,
+    `openclaw-main/extensions/line/src/accounts.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `line`/`line-core` imports expose exact
+    root/core barrel keys for channel config helpers, credential cleanup,
+    status summaries, runtime group policy helpers, LINE surface reexports,
+    setup helpers, and docs-link formatting.
+  - Evidence required: focused LINE root/core import test, adjacent LINE/setup
+    proof, ruff, mypy
+  - Status: checkpointed in `696e61f2`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused LINE root/core red/green proof (exact
+    imports returned generic or wrong-shaped data before implementation, then
+    `1 passed`), adjacent LINE/setup proof (`4 passed, 1163 deselected`),
     `ruff check`, `mypy`, and focused `git diff --check`.
 
 ## Update Rule
