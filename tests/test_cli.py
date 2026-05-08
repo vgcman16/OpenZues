@@ -25632,6 +25632,57 @@ def test_update_status_timeout_option_reaches_live_probe(
     assert seen["timeout_seconds"] == 9.0
 
 
+def test_update_status_inherits_parent_json_and_timeout_options(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    seen: dict[str, float] = {}
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            msg = "fallback update view should not be called when live status responds"
+            raise AssertionError(msg)
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(
+        _settings: object,
+        *,
+        timeout_seconds: float = 10.0,
+    ) -> FakeUpdateView:
+        seen["timeout_seconds"] = timeout_seconds
+        return FakeUpdateView()
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--json", "--timeout", "9", "status"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen["timeout_seconds"] == 9.0
+    payload = json.loads(result.stdout)
+    assert payload["headline"] == "OpenZues runtime update status is steady."
+
+
 def test_update_status_json_uses_git_branch_channel_label(
     tmp_path,
     monkeypatch,

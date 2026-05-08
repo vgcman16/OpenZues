@@ -98073,6 +98073,10 @@ def update_root(
         help="Skip confirmation prompts.",
     ),
 ) -> None:
+    ctx.obj = {
+        "json_output": json_output,
+        "timeout": timeout,
+    }
     if ctx.invoked_subcommand is not None:
         return
     _ = yes
@@ -98102,6 +98106,7 @@ def update_root(
 
 @update_app.command("status")
 def update_status(
+    ctx: typer.Context,
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -98113,7 +98118,21 @@ def update_status(
         help="Timeout for update checks in seconds.",
     ),
 ) -> None:
-    timeout_seconds = _parse_openclaw_update_timeout_seconds(timeout)
+    parent_options = (
+        ctx.parent.obj
+        if ctx.parent is not None and isinstance(ctx.parent.obj, Mapping)
+        else {}
+    )
+    parent_timeout = parent_options.get("timeout")
+    effective_timeout = (
+        timeout
+        if timeout is not None
+        else parent_timeout
+        if isinstance(parent_timeout, str)
+        else None
+    )
+    effective_json_output = json_output or parent_options.get("json_output") is True
+    timeout_seconds = _parse_openclaw_update_timeout_seconds(effective_timeout)
 
     async def _action(services: CliServices) -> dict[str, object]:
         view = (
@@ -98136,7 +98155,7 @@ def update_status(
         )
 
     payload = _run(_run_with_services(_action))
-    _emit_update_status(payload, json_output=json_output)
+    _emit_update_status(payload, json_output=effective_json_output)
 
 
 @setup_app.callback()
