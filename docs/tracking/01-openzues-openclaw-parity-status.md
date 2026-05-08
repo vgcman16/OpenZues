@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999999999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999999995% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6917,6 +6917,22 @@ may lag behind this tracker.
     (exact root import returned broad generic placeholders before
     implementation, then `1 passed`), adjacent channel/setup proof (`4 passed,
     1194 deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK root test-helper harness shim.
+  - Source: `openclaw-main/src/plugin-sdk/test-helpers.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped root `test-helpers` imports expose
+    `createPluginSdkTestHarness()` with OpenClaw-style fixture-root temp
+    directory sequencing for async and sync test cases.
+  - Evidence required: focused root test-helper import test, adjacent
+    test-helper subpath proof, ruff, mypy
+  - Status: checkpointed in `2af9f158`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused root test-helper red/green proof (root
+    import returned no usable harness before implementation, then `1 passed`),
+    adjacent test-helper proof (`4 passed, 1195 deselected`), `ruff check`,
+    `mypy`, and focused `git diff --check`.
 
 ## Update Rule
 

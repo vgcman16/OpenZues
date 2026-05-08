@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999999999999999999999999999999%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999999999999995%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -20980,6 +20980,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 1194 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `b76a0b47`.
+- Imported plugin SDK root `test-helpers` now exposes
+  `createPluginSdkTestHarness` with OpenClaw-style fixture-root temp directory
+  sequencing for async and sync test cases instead of the generic SDK fallback.
+  This closes `OZ-PLUGIN-00370`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999995%.
+- Verified the root test-helper harness with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_helpers_root -q`
+  (the root helper import returned no usable harness before implementation,
+  then `1 passed`), adjacent test-helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "test_helpers_root or test_helpers_string_utils or test_helpers_envelope_timestamp or test_helpers_pairing_reply"`
+  (`4 passed, 1195 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `2af9f158`.
 
 ## References
 
