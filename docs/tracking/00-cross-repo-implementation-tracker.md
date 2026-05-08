@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999999999997% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -156,7 +156,9 @@ checkpointed in `09d036fd`. `OZ-PLUGIN-00362` googlechat is checkpointed in
 `OZ-PLUGIN-00374` memory-core is checkpointed in `21cbfac2`.
 `OZ-PLUGIN-00375` mattermost is checkpointed in `5500bc77`.
 `OZ-PLUGIN-00376` zalo is checkpointed in `e789e816`.
-Continue remaining exact SDK helper seams and provider/runtime breadth.
+`OZ-PLUGIN-00377` bluebubbles is checkpointed in `f5b4121a`.
+The current exact SDK-root seam queue is complete; continue broader
+provider/runtime breadth.
 
 ## Active Slice Detail
 
