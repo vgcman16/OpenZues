@@ -82949,6 +82949,44 @@ async def test_chat_history_preserves_empty_structured_assistant_content(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_chat_history_strips_structured_internal_runtime_context(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-chat-history-internal-context.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content=json.dumps(
+            [
+                {
+                    "type": "text",
+                    "text": "\n".join(
+                        [
+                            "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>",
+                            "secret runtime context",
+                            "<<<END_OPENCLAW_INTERNAL_CONTEXT>>>",
+                            "",
+                            "visible ask",
+                        ]
+                    ),
+                }
+            ]
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "visible ask"}]}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sessions_history_hides_empty_user_and_heartbeat_rows(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-history-heartbeat-hidden.db")
     await database.initialize()

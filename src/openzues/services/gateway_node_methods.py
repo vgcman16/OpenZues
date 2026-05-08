@@ -326,6 +326,8 @@ _OPENCLAW_HEARTBEAT_TASK_PROMPT_ACK = (
     "After completing all due tasks, reply HEARTBEAT_OK."
 )
 _OPENCLAW_HEARTBEAT_ACK_MAX_CHARS = 300
+_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_BEGIN = "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>"
+_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_END = "<<<END_OPENCLAW_INTERNAL_CONTEXT>>>"
 _CHAT_HISTORY_INLINE_DIRECTIVE_RE = re.compile(
     r"\[\[\s*(?:reply_to(?:_current|\s*:\s*[^\]]+)?|audio_as_voice)\s*\]\]",
     re.IGNORECASE,
@@ -17388,9 +17390,59 @@ def _chat_history_display_text(text: str) -> str:
     return _CHAT_HISTORY_INLINE_DIRECTIVE_RE.sub(
         "",
         _sanitize_assistant_visible_history_text(
-            _strip_trailing_untrusted_context_metadata(text)
+            _strip_trailing_untrusted_context_metadata(
+                _strip_chat_history_internal_runtime_context(text)
+            )
         ),
     )
+
+
+def _chat_history_delimited_token_index(text: str, token: str, start: int) -> int:
+    token_re = re.compile(rf"(?:^|\r?\n){re.escape(token)}(?=\r?\n|$)")
+    match = token_re.search(text, max(0, start))
+    if match is None:
+        return -1
+    return match.end() - len(token)
+
+
+def _strip_chat_history_internal_runtime_context(text: str) -> str:
+    next_text = text
+    while True:
+        start = _chat_history_delimited_token_index(
+            next_text,
+            _OPENCLAW_INTERNAL_RUNTIME_CONTEXT_BEGIN,
+            0,
+        )
+        if start == -1:
+            return next_text
+        cursor = start + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_BEGIN)
+        depth = 1
+        finish = -1
+        while depth > 0:
+            next_begin = _chat_history_delimited_token_index(
+                next_text,
+                _OPENCLAW_INTERNAL_RUNTIME_CONTEXT_BEGIN,
+                cursor,
+            )
+            next_end = _chat_history_delimited_token_index(
+                next_text,
+                _OPENCLAW_INTERNAL_RUNTIME_CONTEXT_END,
+                cursor,
+            )
+            if next_end == -1:
+                break
+            if next_begin != -1 and next_begin < next_end:
+                depth += 1
+                cursor = next_begin + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_BEGIN)
+                continue
+            depth -= 1
+            finish = next_end
+            cursor = next_end + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_END)
+        before = next_text[:start].rstrip()
+        if finish == -1 or depth != 0:
+            return before
+        after = next_text[finish + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_END) :].lstrip()
+        next_text = f"{before}\n\n{after}" if before and after else f"{before}{after}"
 
 
 def _chat_history_should_hide_user_text(text: str) -> bool:
