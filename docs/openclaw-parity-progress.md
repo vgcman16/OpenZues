@@ -18935,6 +18935,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`10 passed, 530 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed and pushed in `06ba5480`.
+- `openzues doctor --json` package dist inventory comparison now omits
+  OpenClaw's private QA extension/plugin-sdk/runtime dist artifacts, including
+  `dist/extensions/qa-*`, private `dist/plugin-sdk/qa-*` files, private
+  `dist/plugin-sdk/extensions/qa-*` trees, and `dist/qa-runtime-*` chunks.
+  This closes `OZ-PKG-001V`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9999999999995%.
+- Verified the private QA dist omission slice with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_json_omits_private_qa_package_dist_artifacts -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package doctor
+  proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution_diagnostics or invalid_package_dist_inventory or source_install_pnpm_workspace_warnings or package_dist_inventory_file_drift or package_dist_legacy_staging_debris or mixed_case_package_dist_staging_debris or missing_package_dist_inventory or omits_local_build_metadata or unsafe_package_dist_symlink or externalized_bundled_extension or private_qa_package_dist"`
+  (`11 passed, 530 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed and pushed in `bde731a9`.
 
 ## References
 

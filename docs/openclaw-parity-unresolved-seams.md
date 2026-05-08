@@ -9957,3 +9957,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Source/test checkpointed in `06ba5480`; repo-wide parity remains estimated
   at ~99.9%, with the evidence band tightened to ~80-99.9999999999994%.
   Rotate to private QA/plugin-sdk omitted dist paths next.
+- Current queue-head adjustment: package distribution doctor diagnostics now
+  omit private QA extension/plugin-sdk/runtime dist artifacts from package
+  inventory drift checks. Source/test checkpointed in `bde731a9`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999995%. Re-check packaging queue for the next source-backed
+  release/update seam.
