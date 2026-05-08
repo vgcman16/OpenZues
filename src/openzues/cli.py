@@ -88979,6 +88979,80 @@ const pluginSdkApiBaselineRuntime = {
   writePluginSdkApiBaselineStatefile,
 };
 
+const nextcloudTalkRootRuntime = Object.assign(Object.create(genericSdk), {
+  BlockStreamingCoalesceSchema,
+  DEFAULT_ACCOUNT_ID,
+  DmConfigSchema,
+  DmPolicySchema,
+  GROUP_POLICY_BLOCKED_LABEL,
+  GroupPolicySchema,
+  MarkdownConfigSchema,
+  ReplyRuntimeConfigSchemaShape,
+  ToolPolicySchema,
+  WEBHOOK_RATE_LIMIT_DEFAULTS,
+  addWildcardAllowFrom,
+  applyAccountNameToChannelSection,
+  buildBaseChannelStatusSummary,
+  buildChannelConfigSchema,
+  buildChannelKeyCandidates,
+  buildRuntimeAccountStatusSnapshot,
+  buildSecretInputSchema,
+  buildSingleChannelSecretPromptState,
+  clearAccountEntryFields,
+  createAccountListHelpers,
+  createAuthRateLimiter,
+  createChannelPairingController,
+  createChannelReplyPipeline,
+  createLoggerBackedRuntime,
+  createNormalizedOutboundDeliverer,
+  createPersistentDedupe,
+  createSetupInputPresenceValidator,
+  createTopLevelChannelDmPolicy,
+  deleteAccountFromConfigSection,
+  deliverFormattedTextWithAttachments,
+  dispatchInboundReplyWithBase,
+  emptyPluginConfigSchema,
+  evaluateMatchedGroupAccessForPolicy,
+  fetchWithSsrFGuard,
+  formatDocsLink,
+  formatPairingApproveHint,
+  formatTextWithAttachmentLinks,
+  hasConfiguredSecretInput,
+  isRequestBodyLimitError,
+  listConfiguredAccountIds,
+  logInboundDrop,
+  mapAllowFromEntries,
+  mergeAllowFromEntries,
+  normalizeAccountId,
+  normalizeChannelSlug,
+  normalizeResolvedSecretInputString,
+  normalizeSecretInputString,
+  patchScopedAccountConfig,
+  promptParsedAllowFromForAccount,
+  promptSingleChannelSecretInput,
+  readRequestBodyWithLimit,
+  readStoreAllowFromForDmPolicy,
+  requestBodyErrorToText,
+  requireOpenAllowFrom,
+  resolveAccountWithDefaultFallback,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveChannelEntryMatchWithFallback,
+  resolveDefaultGroupPolicy,
+  resolveDmGroupAccessWithCommandGate,
+  resolveInboundMentionDecision,
+  resolveMentionGating,
+  resolveMentionGatingWithBypass,
+  resolveNestedAllowlistDecision,
+  resolveOutboundMediaUrls,
+  resolveSetupAccountId,
+  runSingleChannelSecretStep,
+  setAccountEnabledInConfigSection,
+  setSetupChannelEnabled,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  waitForAbortSignal,
+  warnMissingProviderGroupPolicyFallbackOnce,
+});
+
 const originalLoad = Module._load;
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   if (
@@ -89036,6 +89110,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/api-baseline"
   ) {
     return pluginSdkApiBaselineRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/nextcloud-talk" ||
+    request === "@openclaw/plugin-sdk/nextcloud-talk"
+  ) {
+    return nextcloudTalkRootRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/tlon" ||

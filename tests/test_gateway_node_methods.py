@@ -21541,6 +21541,148 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_nextcloud_talk_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-nextcloud-talk.cjs"
+    runtime_entry.write_text(
+        """
+const talk = require("openclaw/plugin-sdk/nextcloud-talk");
+const scopedTalk = require("@openclaw/plugin-sdk/nextcloud-talk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.nextcloud_talk",
+      description: "Use OpenClaw Nextcloud Talk root SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = talk.setSetupChannelEnabled({}, "nextcloud-talk", true);
+        const emptySchema = talk.emptyPluginConfigSchema();
+        return {
+          keyCount: Object.keys(talk).length,
+          hasCoreHelpers: [
+            "createAuthRateLimiter",
+            "resolveMentionGating",
+            "buildChannelConfigSchema",
+            "buildSecretInputSchema",
+            "createChannelReplyPipeline",
+            "createPersistentDedupe",
+            "dispatchInboundReplyWithBase",
+            "createLoggerBackedRuntime",
+            "buildRuntimeAccountStatusSnapshot"
+          ].every((key) => typeof talk[key] === "function"),
+          scopedSame:
+            scopedTalk.createAuthRateLimiter === talk.createAuthRateLimiter &&
+            scopedTalk.createChannelReplyPipeline === talk.createChannelReplyPipeline,
+          defaultAccountId: talk.DEFAULT_ACCOUNT_ID,
+          normalizedAccountId: talk.normalizeAccountId(" Team One "),
+          docsLink: talk.formatDocsLink("/channels/nextcloud-talk", "Nextcloud Talk"),
+          allowFrom: {
+            mapped: talk.mapAllowFromEntries([1, "Two"]),
+            wildcard: talk.addWildcardAllowFrom(["alice"]),
+            merged: talk.mergeAllowFromEntries(["alice"], ["alice", "bob"])
+          },
+          groupPolicyBlockedLabel: talk.GROUP_POLICY_BLOCKED_LABEL,
+          enabled: cfg.channels["nextcloud-talk"].enabled,
+          emptySchema: {
+            empty: emptySchema.safeParse({}).success,
+            nonEmpty: emptySchema.safeParse({ unexpected: true }).success
+          },
+          webhookPayloadTooLarge: talk.requestBodyErrorToText("PAYLOAD_TOO_LARGE"),
+          schemaTypes: {
+            toolPolicy: typeof talk.ToolPolicySchema.safeParse,
+            dmPolicy: typeof talk.DmPolicySchema.safeParse,
+            replyRuntimeShape: typeof talk.ReplyRuntimeConfigSchemaShape
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-nextcloud-talk-plugin",
+                    "name": "Runtime Nextcloud Talk Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-nextcloud-talk.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.nextcloud_talk"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.nextcloud_talk"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keyCount": 71,
+        "hasCoreHelpers": True,
+        "scopedSame": True,
+        "defaultAccountId": "default",
+        "normalizedAccountId": "team-one",
+        "docsLink": (
+            "Nextcloud Talk (https://docs.openclaw.ai/channels/nextcloud-talk)"
+        ),
+        "allowFrom": {
+            "mapped": ["1", "Two"],
+            "wildcard": ["alice", "*"],
+            "merged": ["alice", "bob"],
+        },
+        "groupPolicyBlockedLabel": {
+            "channel": "channel messages",
+            "group": "group messages",
+            "guild": "guild messages",
+            "room": "room messages",
+            "space": "space messages",
+        },
+        "enabled": True,
+        "emptySchema": {"empty": True, "nonEmpty": False},
+        "webhookPayloadTooLarge": "Payload too large",
+        "schemaTypes": {
+            "toolPolicy": "function",
+            "dmPolicy": "function",
+            "replyRuntimeShape": "object",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_feishu_root_helpers(
     tmp_path,
 ) -> None:
