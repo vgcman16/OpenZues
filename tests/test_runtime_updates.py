@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -60,6 +61,13 @@ def _write_package_root(package_root: Path, version: str, *, name: str = "openzu
         encoding="utf-8",
     )
     (package_root / "dist" / "index.js").write_text("export {};\n", encoding="utf-8")
+    _write_package_dist_inventory(package_root, ["dist/index.js"])
+
+
+def _write_package_dist_inventory(package_root: Path, entries: list[str] | None = None) -> None:
+    inventory_path = package_root / "dist" / "postinstall-inventory.json"
+    inventory_path.parent.mkdir(parents=True, exist_ok=True)
+    inventory_path.write_text(json.dumps(entries or []) + "\n", encoding="utf-8")
 
 
 def _staged_global_root(stage_prefix: Path) -> Path:
@@ -222,6 +230,7 @@ async def test_runtime_update_run_package_update_executes_global_install_step(
     package_root = tmp_path / "package-root"
     package_root.mkdir()
     (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
     command_calls: list[tuple[list[str], Path, int | None]] = []
 
     async def fake_command_runner(
@@ -631,6 +640,7 @@ async def test_runtime_update_run_package_update_fails_when_post_update_doctor_f
     package_root = tmp_path / "package-root"
     package_root.mkdir()
     (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
     command_calls: list[tuple[list[str], Path, int | None]] = []
 
     async def fake_command_runner(
@@ -683,6 +693,7 @@ async def test_runtime_update_run_package_update_sets_post_update_doctor_env(
     package_root = tmp_path / "package-root"
     package_root.mkdir()
     (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
     monkeypatch.delenv("NODE_DISABLE_COMPILE_CACHE", raising=False)
     monkeypatch.delenv("OPENCLAW_UPDATE_IN_PROGRESS", raising=False)
     monkeypatch.delenv("OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE", raising=False)
@@ -752,6 +763,7 @@ async def test_runtime_update_run_package_update_disables_corepack_download_prom
     package_root = tmp_path / "package-root"
     package_root.mkdir()
     (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
     monkeypatch.delenv("COREPACK_ENABLE_DOWNLOAD_PROMPT", raising=False)
     install_env: dict[str, str | None] = {}
 
@@ -804,6 +816,7 @@ async def test_runtime_update_run_package_update_preserves_corepack_download_pro
     package_root = tmp_path / "package-root"
     package_root.mkdir()
     (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
     monkeypatch.setenv("COREPACK_ENABLE_DOWNLOAD_PROMPT", "1")
     install_env: dict[str, str | None] = {}
 
@@ -856,6 +869,7 @@ async def test_runtime_update_run_package_update_sets_windows_install_env(
     package_root = tmp_path / "package-root"
     package_root.mkdir()
     (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
     monkeypatch.setenv("NPM_CONFIG_UPDATE_NOTIFIER", "true")
     monkeypatch.delenv("NPM_CONFIG_FUND", raising=False)
     monkeypatch.delenv("NPM_CONFIG_AUDIT", raising=False)
@@ -928,6 +942,7 @@ async def test_runtime_update_run_package_update_prepends_portable_git_paths(
     package_root = tmp_path / "package-root"
     package_root.mkdir()
     (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
     local_app_data = tmp_path / "LocalAppData"
     portable_git_root = local_app_data / "OpenClaw" / "deps" / "portable-git"
     expected_prepend = [
@@ -1095,6 +1110,7 @@ async def test_runtime_update_run_package_update_verifies_expected_version(
     package_root = tmp_path / "package-root"
     package_root.mkdir()
     (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
 
     async def fake_command_runner(
         argv: list[str],
@@ -1148,6 +1164,7 @@ async def test_runtime_update_run_package_update_reports_missing_expected_versio
     package_root = tmp_path / "package-root"
     package_root.mkdir()
     (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
 
     async def fake_command_runner(
         argv: list[str],
@@ -1198,6 +1215,7 @@ async def test_runtime_update_run_package_update_rejects_source_checkout_root(
     (package_root / "src").mkdir()
     (package_root / "extensions").mkdir()
     (package_root / "package.json").write_text('{"version":"2026.5.2"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
 
     async def fake_command_runner(
         argv: list[str],
@@ -1232,6 +1250,52 @@ async def test_runtime_update_run_package_update_rejects_source_checkout_root(
     assert result["steps"][1]["name"] == "global install verify"
     assert result["steps"][1]["log"]["stderrTail"] == (
         f"global package root resolves to source checkout: {package_root.resolve()}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_package_update_reports_missing_dist_inventory(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "package-root"
+    package_root.mkdir()
+    (package_root / "package.json").write_text('{"version":"2026.4.15"}', encoding="utf-8")
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del argv, cwd, timeout_ms
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@latest",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "error"
+    assert result["reason"] == "global-install-verify-failed"
+    assert result["steps"][1]["name"] == "global install verify"
+    assert result["steps"][1]["log"]["stderrTail"] == (
+        "missing package dist inventory dist/postinstall-inventory.json"
     )
 
 

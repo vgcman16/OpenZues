@@ -28,6 +28,8 @@ _NPM_GLOBAL_INSTALL_OMIT_OPTIONAL_FLAGS = (
     "--omit=optional",
     *_NPM_GLOBAL_INSTALL_QUIET_FLAGS,
 )
+_PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.json"
+_FIRST_PACKAGED_DIST_INVENTORY_VERSION = (2026, 4, 15)
 
 
 RuntimeUpdateCommandRunner = Callable[
@@ -655,6 +657,32 @@ def _expected_package_version_from_spec(package_spec: str) -> str | None:
     return candidate
 
 
+def _parse_package_semver(value: str | None) -> tuple[int, int, int] | None:
+    if value is None:
+        return None
+    pieces = value.strip().split(".")
+    if len(pieces) < 3:
+        return None
+    parsed: list[int] = []
+    for piece in pieces[:3]:
+        digits = []
+        for char in piece:
+            if not char.isdigit():
+                break
+            digits.append(char)
+        if not digits:
+            return None
+        parsed.append(int("".join(digits)))
+    return (parsed[0], parsed[1], parsed[2])
+
+
+def _should_require_packaged_dist_inventory(version: str | None) -> bool:
+    parsed = _parse_package_semver(version)
+    if parsed is None:
+        return False
+    return parsed >= _FIRST_PACKAGED_DIST_INVENTORY_VERSION
+
+
 def _collect_package_update_verify_errors(
     package_root: Path,
     *,
@@ -673,6 +701,14 @@ def _collect_package_update_verify_errors(
     if expected_version is not None and installed_version != expected_version:
         found = installed_version or "<missing>"
         errors.append(f"expected installed version {expected_version}, found {found}")
+    if (
+        _should_require_packaged_dist_inventory(installed_version)
+        or _should_require_packaged_dist_inventory(expected_version)
+    ) and not _path_exists(package_root / _PACKAGE_DIST_INVENTORY_RELATIVE_PATH):
+        errors.append(
+            "missing package dist inventory "
+            f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
+        )
     return errors
 
 
