@@ -62,6 +62,7 @@ from openzues.services.ops_mesh import (
     GatewayMSTeamsFeedbackReflectionRequest,
     GatewayMSTeamsInboundMediaFetchRequest,
     OpsMeshService,
+    _IrcRouteConfig,
     _saved_outbound_delivery_replay_message,
     _serialize_task,
     build_ops_mesh,
@@ -27237,6 +27238,73 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_irc_native_rout
             "target": "#ops-room",
             "message": "IRC **native** parity.\n\n[reply:abc123]",
         }
+    ]
+
+
+def test_ops_mesh_service_irc_probe_waits_for_ready_and_quits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent_lines: list[str] = []
+    connection_calls: list[tuple[tuple[str, int], float]] = []
+
+    class FakeIrcSocket:
+        def __init__(self) -> None:
+            self._chunks = [
+                b"PING :irc.example.net\r\n",
+                b":irc.example.net 001 openzues :welcome\r\n",
+            ]
+
+        def __enter__(self) -> FakeIrcSocket:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def settimeout(self, timeout: float) -> None:
+            assert timeout == 2.5
+
+        def sendall(self, data: bytes) -> None:
+            sent_lines.append(data.decode("utf-8").strip())
+
+        def recv(self, size: int) -> bytes:
+            assert size == 4096
+            return self._chunks.pop(0)
+
+    def fake_create_connection(
+        address: tuple[str, int],
+        *,
+        timeout: float,
+    ) -> FakeIrcSocket:
+        connection_calls.append((address, timeout))
+        return FakeIrcSocket()
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.socket.create_connection",
+        fake_create_connection,
+    )
+
+    latency_ms = OpsMeshService.__new__(OpsMeshService)._probe_irc_connection(
+        _IrcRouteConfig(
+            host="irc.example.net",
+            port=6667,
+            tls=False,
+            nick="openzues",
+            username="openzues",
+            realname="OpenZues",
+            password="irc-server-password",
+        ),
+        timeout_seconds=2.5,
+    )
+
+    assert latency_ms >= 0
+    assert connection_calls == [(("irc.example.net", 6667), 2.5)]
+    assert sent_lines == [
+        "PASS irc-server-password",
+        "NICK openzues",
+        "USER openzues 0 * :OpenZues",
+        "PONG :irc.example.net",
+        "QUIT :probe",
     ]
 
 

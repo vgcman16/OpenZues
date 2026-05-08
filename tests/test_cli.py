@@ -1829,6 +1829,105 @@ def test_channels_status_json_uses_route_backed_signal_probe(
     assert isinstance(rpc_payload["id"], str)
 
 
+def test_channels_status_json_uses_route_backed_irc_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI IRC Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="IRC Native Probe Route",
+            kind="irc",
+            target="ircs://irc.example.net:6697?nick=openzues&username=openzues",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "irc",
+                "account_id": "irc-bot",
+                "peer_kind": "channel",
+                "peer_id": "irc:channel:ops-room",
+                "summary": "irc-bot channel ops-room",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="irc-server-password",
+            vault_secret_id=None,
+        )
+    )
+    irc_probes: list[dict[str, object]] = []
+
+    def fake_probe_irc_connection(
+        self: object,
+        config: object,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        irc_probes.append(
+            {
+                "host": config.host,
+                "port": config.port,
+                "tls": config.tls,
+                "nick": config.nick,
+                "username": config.username,
+                "realname": config.realname,
+                "password": config.password,
+                "timeout": timeout_seconds,
+            }
+        )
+        return 45
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._probe_irc_connection",
+        fake_probe_irc_connection,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["irc"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "irc",
+        "runtime": "native-provider-backed",
+        "accountId": "irc-bot",
+        "host": "irc.example.net",
+        "port": 6697,
+        "tls": True,
+        "nick": "openzues",
+        "latencyMs": 45,
+        "timeoutMs": 2500,
+    }
+    assert irc_probes == [
+        {
+            "host": "irc.example.net",
+            "port": 6697,
+            "tls": True,
+            "nick": "openzues",
+            "username": "openzues",
+            "realname": "OpenZues",
+            "password": "irc-server-password",
+            "timeout": 2.5,
+        }
+    ]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,

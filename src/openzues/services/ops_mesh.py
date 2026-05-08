@@ -19,6 +19,7 @@ import socket
 import ssl
 import subprocess
 import tempfile
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
@@ -389,6 +390,7 @@ PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "discord",
     "feishu",
     "googlechat",
+    "irc",
     "line",
     "matrix",
     "mattermost",
@@ -6924,6 +6926,34 @@ def _irc_normalize_target(raw_target: str | None) -> str | None:
     ):
         return None
     return target
+
+
+def _irc_command_from_line(raw_line: str) -> str:
+    line = str(raw_line or "").strip()
+    if not line:
+        return ""
+    if line.startswith(":"):
+        parts = line.split(" ", 2)
+        return parts[1].upper() if len(parts) > 1 else ""
+    return line.split(" ", 1)[0].upper()
+
+
+def _irc_ping_payload(raw_line: str) -> str:
+    line = str(raw_line or "").strip()
+    _, _, payload = line.partition(" ")
+    payload = payload.strip()
+    if payload.startswith(":"):
+        payload = payload[1:].strip()
+    return _irc_wire_value(payload or "openzues", "PING payload")
+
+
+def _irc_error_detail(raw_line: str) -> str:
+    line = str(raw_line or "").strip()
+    if " :" in line:
+        detail = line.split(" :", 1)[1].strip()
+    else:
+        detail = line
+    return detail or "login rejected"
 
 
 def _irc_route_config(target: str | None, secret_token: str | None) -> _IrcRouteConfig:
@@ -14693,6 +14723,24 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "irc":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_irc_provider_route,
+                    route,
+                    secret_token_value,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         if route_kind == "zalo":
             try:
                 return await asyncio.to_thread(
@@ -15679,6 +15727,47 @@ class OpsMeshService:
             **payload,
             "ok": True,
             "status": "ok",
+        }
+
+    def _probe_irc_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        config = _irc_route_config(str(route.get("target") or ""), secret_token)
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "irc",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "host": config.host,
+            "port": config.port,
+            "tls": config.tls,
+            "nick": config.nick,
+            "timeoutMs": timeout_ms,
+        }
+        try:
+            latency_ms = self._probe_irc_connection(
+                config,
+                timeout_seconds=max(float(timeout_ms) / 1000.0, 0.001),
+            )
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
+            "latencyMs": latency_ms,
         }
 
     def _probe_matrix_provider_route(
@@ -24248,6 +24337,65 @@ class OpsMeshService:
                     send_session(raw_socket)
         except OSError as exc:
             raise RuntimeError(f"IRC provider request failed: {exc}") from exc
+
+    def _probe_irc_connection(
+        self,
+        config: _IrcRouteConfig,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        safe_host = _irc_wire_value(config.host, "host")
+        safe_nick = _irc_wire_value(config.nick, "nick")
+        safe_username = _irc_wire_value(config.username, "username")
+        safe_realname = _irc_wire_value(config.realname, "realname")
+        timeout = max(float(timeout_seconds), 0.001)
+
+        def send_line(connection: socket.socket, line: str) -> None:
+            connection.sendall(f"{line}\r\n".encode())
+
+        def probe_session(connection: socket.socket) -> None:
+            if config.password:
+                send_line(connection, f"PASS {_irc_wire_value(config.password, 'password')}")
+            send_line(connection, f"NICK {safe_nick}")
+            send_line(connection, f"USER {safe_username} 0 * :{safe_realname}")
+
+            buffer = ""
+            login_error_codes = {"432", "433", "436", "464", "465"}
+            while True:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    raise RuntimeError("IRC connection closed before ready")
+                buffer += chunk.decode("utf-8", errors="replace")
+                while "\n" in buffer:
+                    raw_line, buffer = buffer.split("\n", 1)
+                    raw_line = raw_line.rstrip("\r")
+                    if not raw_line:
+                        continue
+                    command = _irc_command_from_line(raw_line)
+                    if command == "PING":
+                        send_line(connection, f"PONG :{_irc_ping_payload(raw_line)}")
+                        continue
+                    if command == "001":
+                        send_line(connection, "QUIT :probe")
+                        return
+                    if command in login_error_codes:
+                        detail = _irc_error_detail(raw_line)
+                        raise RuntimeError(f"IRC login failed ({command}): {detail}")
+
+        started = time.monotonic()
+        try:
+            with socket.create_connection((safe_host, config.port), timeout=timeout) as raw_socket:
+                raw_socket.settimeout(timeout)
+                if config.tls:
+                    context = ssl.create_default_context()
+                    with context.wrap_socket(raw_socket, server_hostname=safe_host) as tls_socket:
+                        probe_session(tls_socket)
+                else:
+                    probe_session(raw_socket)
+        except OSError as exc:
+            raise RuntimeError(f"IRC provider request failed: {exc}") from exc
+        return max(int((time.monotonic() - started) * 1000), 0)
 
     def _send_twitch_chat_message(
         self,
