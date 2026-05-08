@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999993% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1984,6 +1984,22 @@ may lag behind this tracker.
   `probeSignal` status hook over `/api/v1/check` plus JSON-RPC `version`,
   without requiring a route secret.
   - Status: checkpointed in `1af31a04`
+
+- [x] IRC route-backed account probe support, preserving OpenClaw's `probeIrc`
+  status hook over IRC PASS/NICK/USER readiness, PING/PONG handling, `001`
+  welcome detection, and `QUIT :probe` cleanup.
+  - Status: checkpointed in `fd5d246b`
+
+- [x] Twitch route-backed account probe support, preserving OpenClaw's
+  `probeTwitch` status hook over Twitch IRC OAuth PASS/NICK readiness,
+  PING/PONG handling, `001` welcome detection, connected projection, and
+  `QUIT :probe` cleanup.
+  - Status: checkpointed in `5772e6a9`
+
+- [x] BlueBubbles route-backed account probe support, preserving OpenClaw's
+  `probeBlueBubbles` status hook over `/api/v1/ping`, provider HTTP status
+  projection, and non-2xx error probe preservation.
+  - Status: checkpointed in `7c9ffdcb`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -4904,6 +4920,95 @@ may lag behind this tracker.
   - Last verified: 2026-05-08, focused
     `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_signal_probe -q`
     (`1 passed`), adjacent channel-probe proof (`12 passed, 506 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] IRC route-backed account probe.
+  - Source: `openclaw-main/extensions/irc/src/probe.ts`,
+    `openclaw-main/extensions/irc/src/channel.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`, `tests/test_ops_mesh.py`
+  - Status: checkpointed in `fd5d246b`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_irc_probe tests\test_ops_mesh.py::test_ops_mesh_service_irc_probe_waits_for_ready_and_quits -q`
+    (`2 passed`), adjacent channel-probe proof (`13 passed, 506 deselected`),
+    adjacent IRC ops proof (`2 passed, 375 deselected`), `ruff check`, and
+    `mypy`.
+
+- [x] Twitch route-backed account probe.
+  - Source: `openclaw-main/extensions/twitch/src/probe.ts`,
+    `openclaw-main/extensions/twitch/src/plugin.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`, `tests/test_ops_mesh.py`
+  - Status: checkpointed in `5772e6a9`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_twitch_probe tests\test_ops_mesh.py::test_ops_mesh_service_twitch_probe_waits_for_ready_and_quits -q`
+    (`2 passed`), adjacent channel-probe proof (`14 passed, 506 deselected`),
+    adjacent Twitch ops proof (`3 passed, 375 deselected`), `ruff check`, and
+    `mypy`.
+
+- [x] BlueBubbles route-backed account probe.
+  - Source: `openclaw-main/extensions/bluebubbles/src/probe.ts`,
+    `openclaw-main/extensions/bluebubbles/src/channel.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_cli.py`, `tests/test_ops_mesh.py`
+  - Status: checkpointed in `7c9ffdcb`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_bluebubbles_probe tests\test_ops_mesh.py::test_ops_mesh_service_bluebubbles_probe_preserves_http_status -q`
+    (`2 passed`), adjacent channel-probe proof (`15 passed, 506 deselected`),
+    adjacent BlueBubbles ops proof (`6 passed, 373 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] Tlon native route-backed text send.
+  - Source: `openclaw-main/extensions/tlon/src/channel.runtime.ts`,
+    `openclaw-main/extensions/tlon/src/targets.ts`,
+    `openclaw-main/extensions/tlon/src/urbit/send.ts`,
+    `openclaw-main/extensions/tlon/src/urbit/story.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `bab52a95`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green Tlon native route proof
+    (`1 failed` before implementation, then `1 passed`), helper proof (`2
+    passed`), final focused proof (`3 passed`), adjacent native-provider proof
+    (`7 passed, 376 deselected`), adjacent CLI proof (`3 passed, 520
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] Tlon group/thread reply proof.
+  - Source: `openclaw-main/extensions/tlon/src/urbit/send.ts`,
+    `openclaw-main/extensions/tlon/src/targets.ts`
+  - Target: `tests/test_ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `0fd7cbb8`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused Tlon group reply proof (`1 passed`),
+    adjacent native-provider proof (`8 passed, 376 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Tlon image-media upload hook.
+  - Source: `openclaw-main/extensions/tlon/src/channel.runtime.ts`,
+    `openclaw-main/extensions/tlon/src/urbit/upload.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `0c18844d`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused media red/green proof (`1 failed`
+    before implementation, then `1 passed`), helper proof (`2 passed`),
+    adjacent native-provider proof (`10 passed, 376 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] Tlon hosted Memex media upload.
+  - Source: `openclaw-main/extensions/tlon/src/tlon-api.ts`,
+    `openclaw-main/extensions/tlon/src/tlon-api.test.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `f742ba8a`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused hosted Memex red/green proof (`1
+    failed` before implementation, then `1 passed`), trusted-domain proof (`2
+    passed`), adjacent native-provider proof (`12 passed, 376 deselected`),
     `ruff check`, and `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and

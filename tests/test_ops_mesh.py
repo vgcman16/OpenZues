@@ -9,6 +9,7 @@ import json
 import re
 import secrets
 import shutil
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
@@ -62,8 +63,11 @@ from openzues.services.ops_mesh import (
     GatewayMSTeamsFeedbackReflectionRequest,
     GatewayMSTeamsInboundMediaFetchRequest,
     OpsMeshService,
+    _IrcRouteConfig,
     _saved_outbound_delivery_replay_message,
     _serialize_task,
+    _TlonRouteConfig,
+    _TwitchRouteConfig,
     build_ops_mesh,
 )
 from openzues.services.session_keys import build_launch_session_key, resolve_thread_session_keys
@@ -7056,6 +7060,932 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_nat
     assert delivery["route_kind"] == "announce"
     assert delivery["delivery_message_id"] == "bb-msg-1"
     assert route["last_result"] == "Delivered gateway/send provider runtime"
+
+
+def test_ops_mesh_service_bluebubbles_probe_preserves_http_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, float]] = []
+
+    def fake_urlopen(request: Request, timeout: float) -> object:
+        requests.append((request.full_url, request.get_method(), timeout))
+        raise HTTPError(
+            request.full_url,
+            503,
+            "Service Unavailable",
+            {},
+            io.BytesIO(b"not ready"),
+        )
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    status = OpsMeshService.__new__(OpsMeshService)._probe_bluebubbles_ping(
+        "http://127.0.0.1:1234",
+        "bluebubbles-password",
+        timeout_seconds=2.5,
+    )
+
+    assert status == 503
+    assert requests == [
+        (
+            "http://127.0.0.1:1234/api/v1/ping?password=bluebubbles-password",
+            "GET",
+            2.5,
+        )
+    ]
+
+
+def test_ops_mesh_service_tlon_probe_authenticates_then_requests_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, dict[str, str], bytes | None, float]] = []
+
+    class FakeTlonResponse:
+        def __init__(
+            self,
+            *,
+            status: int,
+            body: bytes = b"",
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.status = status
+            self._body = body
+            self.headers = headers or {}
+
+        def __enter__(self) -> FakeTlonResponse:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeTlonResponse:
+        request_body = request.data
+        requests.append(
+            (
+                request.full_url,
+                request.get_method(),
+                dict(request.header_items()),
+                request_body if isinstance(request_body, bytes) else None,
+                timeout,
+            )
+        )
+        if request.full_url.endswith("/~/login"):
+            return FakeTlonResponse(
+                status=200,
+                body=b"ok",
+                headers={"Set-Cookie": "urbauth-ship=secret; Path=/"},
+            )
+        return FakeTlonResponse(status=204)
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    status = OpsMeshService.__new__(OpsMeshService)._request_tlon_name_status(
+        _TlonRouteConfig(
+            base_url="https://zod.tlon.network",
+            ship="~zod",
+            code="tlon-code",
+        ),
+        timeout_seconds=2.5,
+    )
+
+    assert status == 204
+    assert requests == [
+        (
+            "https://zod.tlon.network/~/login",
+            "POST",
+            {
+                "Accept": "text/plain",
+                "Content-type": "application/x-www-form-urlencoded",
+            },
+            b"password=tlon-code",
+            2.5,
+        ),
+        (
+            "https://zod.tlon.network/~/name",
+            "GET",
+            {
+                "Accept": "text/plain",
+                "Cookie": "urbauth-ship=secret; Path=/",
+            },
+            None,
+            2.5,
+        ),
+    ]
+
+
+def test_ops_mesh_service_tlon_poke_authenticates_then_puts_channel_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, dict[str, str], bytes | None, float]] = []
+
+    class FakeTlonResponse:
+        def __init__(
+            self,
+            *,
+            status: int,
+            body: bytes = b"",
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.status = status
+            self._body = body
+            self.headers = headers or {}
+
+        def __enter__(self) -> FakeTlonResponse:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeTlonResponse:
+        request_body = request.data
+        requests.append(
+            (
+                request.full_url,
+                request.get_method(),
+                dict(request.header_items()),
+                request_body if isinstance(request_body, bytes) else None,
+                timeout,
+            )
+        )
+        if request.full_url.endswith("/~/login"):
+            return FakeTlonResponse(
+                status=200,
+                body=b"ok",
+                headers={"Set-Cookie": "urbauth-ship=secret; Path=/"},
+            )
+        return FakeTlonResponse(status=204)
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+    monkeypatch.setattr("openzues.services.ops_mesh.time.time", lambda: 1713980000.123)
+    monkeypatch.setattr("openzues.services.ops_mesh.uuid.uuid4", lambda: "poke-uuid")
+
+    poke_id = OpsMeshService.__new__(OpsMeshService)._request_tlon_poke(
+        _TlonRouteConfig(
+            base_url="https://zod.tlon.network",
+            ship="~zod",
+            code="tlon-code",
+        ),
+        app="chat",
+        mark="chat-dm-action",
+        json_payload={"ship": "~sampel-palnet"},
+        timeout_seconds=2.5,
+    )
+
+    assert poke_id == 1713980000123
+    assert requests[0] == (
+        "https://zod.tlon.network/~/login",
+        "POST",
+        {
+            "Accept": "text/plain",
+            "Content-type": "application/x-www-form-urlencoded",
+        },
+        b"password=tlon-code",
+        2.5,
+    )
+    target, method, headers, body, timeout = requests[1]
+    assert target == "https://zod.tlon.network/~/channel/1713980000-poke-uuid"
+    assert method == "PUT"
+    assert headers == {
+        "Content-type": "application/json",
+        "Cookie": "urbauth-ship=secret",
+    }
+    assert timeout == 2.5
+    assert body is not None
+    assert json.loads(body.decode("utf-8")) == [
+        {
+            "id": 1713980000123,
+            "action": "poke",
+            "ship": "zod",
+            "app": "chat",
+            "mark": "chat-dm-action",
+            "json": {"ship": "~sampel-palnet"},
+        }
+    ]
+
+
+def test_ops_mesh_service_tlon_image_upload_fetches_then_uploads_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, float]] = []
+    uploads: list[dict[str, object]] = []
+
+    class FakeImageResponse:
+        status = 200
+        headers = {"Content-Type": "image/png"}
+
+        def __enter__(self) -> FakeImageResponse:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def read(self) -> bytes:
+            return b"image-bytes"
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeImageResponse:
+        requests.append((request.full_url, request.get_method(), timeout))
+        return FakeImageResponse()
+
+    def fake_upload_tlon_media_bytes(
+        self: OpsMeshService,
+        config: _TlonRouteConfig,
+        *,
+        media_bytes: bytes,
+        filename: str,
+        content_type: str,
+        timeout_seconds: float,
+    ) -> str:
+        del self
+        uploads.append(
+            {
+                "ship": config.ship,
+                "media_bytes": media_bytes,
+                "filename": filename,
+                "content_type": content_type,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return "https://memex.tlon.network/files/photo.png"
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_tlon_media_bytes",
+        fake_upload_tlon_media_bytes,
+    )
+
+    uploaded = OpsMeshService.__new__(OpsMeshService)._upload_tlon_image_from_url(
+        _TlonRouteConfig(
+            base_url="https://zod.tlon.network",
+            ship="~zod",
+            code="tlon-code",
+        ),
+        "https://example.com/path/photo.png?sig=1",
+        timeout_seconds=2.5,
+    )
+
+    assert uploaded == "https://memex.tlon.network/files/photo.png"
+    assert requests == [("https://example.com/path/photo.png?sig=1", "GET", 2.5)]
+    assert uploads == [
+        {
+            "ship": "~zod",
+            "media_bytes": b"image-bytes",
+            "filename": "photo.png",
+            "content_type": "image/png",
+            "timeout_seconds": 2.5,
+        }
+    ]
+
+
+def test_ops_mesh_service_tlon_media_bytes_uploads_via_hosted_memex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, dict[str, str], bytes | None, float]] = []
+
+    class FakeResponse:
+        def __init__(
+            self,
+            *,
+            status: int,
+            body: bytes = b"",
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.status = status
+            self._body = body
+            self.headers = headers or {}
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        request_body = request.data
+        requests.append(
+            (
+                request.full_url,
+                request.get_method(),
+                dict(request.header_items()),
+                request_body if isinstance(request_body, bytes) else None,
+                timeout,
+            )
+        )
+        if request.full_url.endswith("/~/login"):
+            return FakeResponse(
+                status=200,
+                body=b"ok",
+                headers={"Set-Cookie": "urbauth-ship=secret; Path=/"},
+            )
+        if request.full_url.endswith("/~/scry/storage/configuration.json"):
+            return FakeResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "currentBucket": "uploads",
+                        "buckets": ["uploads"],
+                        "publicUrlBase": "https://files.tlon.network/",
+                        "presignedUrl": "https://files.tlon.network/presigned",
+                        "region": "us-east-1",
+                        "service": "presigned-url",
+                    }
+                ).encode("utf-8"),
+            )
+        if request.full_url.endswith("/~/scry/storage/credentials.json"):
+            return FakeResponse(status=200, body=b'{"storage-update": {}}')
+        if request.full_url.endswith("/~/scry/genuine/secret.json"):
+            return FakeResponse(status=200, body=b'{"secret": "genuine-secret"}')
+        if request.full_url == "https://memex.tlon.network/v1/zod/upload":
+            return FakeResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "url": "https://uploads.tlon.network/put",
+                        "filePath": "https://memex.tlon.network/files/uploaded.png",
+                    }
+                ).encode("utf-8"),
+            )
+        if request.full_url == "https://uploads.tlon.network/put":
+            return FakeResponse(status=200)
+        raise AssertionError(f"Unexpected request: {request.full_url}")
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+    monkeypatch.setattr("openzues.services.ops_mesh.time.time", lambda: 1713980000.123)
+    monkeypatch.setattr("openzues.services.ops_mesh.uuid.uuid4", lambda: "upload-uuid")
+
+    uploaded = OpsMeshService.__new__(OpsMeshService)._upload_tlon_media_bytes(
+        _TlonRouteConfig(
+            base_url="https://groups.tlon.network",
+            ship="~zod",
+            code="tlon-code",
+        ),
+        media_bytes=b"image-bytes",
+        filename="photo.png",
+        content_type="image/png",
+        timeout_seconds=2.5,
+    )
+
+    assert uploaded == "https://memex.tlon.network/files/uploaded.png"
+    assert requests[0] == (
+        "https://groups.tlon.network/~/login",
+        "POST",
+        {
+            "Accept": "text/plain",
+            "Content-type": "application/x-www-form-urlencoded",
+        },
+        b"password=tlon-code",
+        2.5,
+    )
+    memex_request = requests[4]
+    assert memex_request[0] == "https://memex.tlon.network/v1/zod/upload"
+    assert memex_request[1] == "PUT"
+    assert memex_request[2] == {"Content-type": "application/json"}
+    assert memex_request[4] == 2.5
+    assert memex_request[3] is not None
+    assert json.loads(memex_request[3].decode("utf-8")) == {
+        "token": "genuine-secret",
+        "contentLength": 11,
+        "contentType": "image/png",
+        "fileName": "zod/1713980000123-upload-uuid-photo.png",
+    }
+    upload_request = requests[5]
+    assert upload_request == (
+        "https://uploads.tlon.network/put",
+        "PUT",
+        {
+            "Cache-control": "public, max-age=3600",
+            "Content-type": "image/png",
+        },
+        b"image-bytes",
+        2.5,
+    )
+
+
+def test_ops_mesh_service_tlon_media_bytes_rejects_untrusted_memex_upload_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def __init__(
+            self,
+            *,
+            status: int,
+            body: bytes = b"",
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.status = status
+            self._body = body
+            self.headers = headers or {}
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del timeout
+        if request.full_url.endswith("/~/login"):
+            return FakeResponse(
+                status=200,
+                headers={"Set-Cookie": "urbauth-ship=secret; Path=/"},
+            )
+        if request.full_url.endswith("/~/scry/storage/configuration.json"):
+            return FakeResponse(status=200, body=b'{"service": "presigned-url"}')
+        if request.full_url.endswith("/~/scry/storage/credentials.json"):
+            return FakeResponse(status=200, body=b'{"storage-update": {}}')
+        if request.full_url.endswith("/~/scry/genuine/secret.json"):
+            return FakeResponse(status=200, body=b'{"secret": "genuine-secret"}')
+        if request.full_url == "https://memex.tlon.network/v1/zod/upload":
+            return FakeResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "url": "https://evil.example/upload",
+                        "filePath": "https://memex.tlon.network/files/uploaded.png",
+                    }
+                ).encode("utf-8"),
+            )
+        raise AssertionError(f"Unexpected request: {request.full_url}")
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError, match="trusted hosted Tlon domain"):
+        OpsMeshService.__new__(OpsMeshService)._upload_tlon_media_bytes(
+            _TlonRouteConfig(
+                base_url="https://groups.tlon.network",
+                ship="~zod",
+                code="tlon-code",
+            ),
+            media_bytes=b"image-bytes",
+            filename="photo.png",
+            content_type="image/png",
+            timeout_seconds=2.5,
+        )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-tlon"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Tlon Native Provider",
+        kind="tlon",
+        target="https://zod.tlon.network?ship=~zod",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tlon-code",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "tlon",
+            "account_id": "ship",
+            "peer_kind": "direct",
+            "peer_id": "~sampel-palnet",
+        },
+    )
+    tlon_pokes: list[dict[str, object]] = []
+
+    def fake_request_tlon_poke(
+        self: OpsMeshService,
+        config: _TlonRouteConfig,
+        *,
+        app: str,
+        mark: str,
+        json_payload: dict[str, object],
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        tlon_pokes.append(
+            {
+                "base_url": config.base_url,
+                "ship": config.ship,
+                "code": config.code,
+                "app": app,
+                "mark": mark,
+                "json": json_payload,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return 1713980000123
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_tlon_poke",
+        fake_request_tlon_poke,
+        raising=False,
+    )
+    monkeypatch.setattr("openzues.services.ops_mesh.time.time", lambda: 1713980000.123)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="tlon",
+        to="tlon:dm/~sampel-palnet",
+        message="Tlon **native** parity from ~zod.",
+        account_id="ship",
+        idempotency_key="idem-native-tlon-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="tlon",
+            account_id="ship",
+            peer_kind="direct",
+            peer_id="tlon:dm/~sampel-palnet",
+        ),
+    )
+    message_id = str(result["messageId"])
+    assert message_id.startswith("~zod/")
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-tlon-send",
+        "channel": "tlon",
+        "messageId": message_id,
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "tlon",
+            "target": "tlon:dm/~sampel-palnet",
+            "accountId": "ship",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "~sampel-palnet",
+        "channelId": "~sampel-palnet",
+    }
+    assert tlon_pokes == [
+        {
+            "base_url": "https://zod.tlon.network",
+            "ship": "~zod",
+            "code": "tlon-code",
+            "app": "chat",
+            "mark": "chat-dm-action",
+            "json": {
+                "ship": "~sampel-palnet",
+                "diff": {
+                    "id": message_id,
+                    "delta": {
+                        "add": {
+                            "memo": {
+                                "content": [
+                                    {
+                                        "inline": [
+                                            "Tlon ",
+                                            {"bold": ["native"]},
+                                            " parity from ",
+                                            {"ship": "~zod"},
+                                            ".",
+                                        ]
+                                    }
+                                ],
+                                "author": "~zod",
+                                "sent": 1713980000123,
+                            },
+                            "kind": None,
+                            "time": None,
+                        }
+                    },
+                },
+            },
+            "timeout_seconds": 15.0,
+        }
+    ]
+    delivery = await database.get_outbound_delivery(1)
+    assert delivery is not None
+    assert delivery["delivery_message_id"] == message_id
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": message_id,
+        "channel": "tlon",
+        "chatId": "~sampel-palnet",
+        "channelId": "~sampel-palnet",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_tlon_group_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-tlon-group"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Tlon Native Group Provider",
+        kind="tlon",
+        target="https://zod.tlon.network?ship=~zod",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tlon-code",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "tlon",
+            "account_id": "ship",
+            "peer_kind": "group",
+            "peer_id": "chat/~zod/general",
+        },
+    )
+    tlon_pokes: list[dict[str, object]] = []
+
+    def fake_request_tlon_poke(
+        self: OpsMeshService,
+        config: _TlonRouteConfig,
+        *,
+        app: str,
+        mark: str,
+        json_payload: dict[str, object],
+        timeout_seconds: float,
+    ) -> int:
+        del self, timeout_seconds
+        tlon_pokes.append(
+            {
+                "base_url": config.base_url,
+                "ship": config.ship,
+                "code": config.code,
+                "app": app,
+                "mark": mark,
+                "json": json_payload,
+            }
+        )
+        return 1713980000123
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_tlon_poke",
+        fake_request_tlon_poke,
+        raising=False,
+    )
+    monkeypatch.setattr("openzues.services.ops_mesh.time.time", lambda: 1713980000.123)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="tlon",
+        to="group:~zod/general",
+        message="Group reply",
+        reply_to_id="1713980000123",
+        account_id="ship",
+        idempotency_key="idem-native-tlon-group-reply",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="tlon",
+            account_id="ship",
+            peer_kind="group",
+            peer_id="group:~zod/general",
+        ),
+    )
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-tlon-group-reply",
+        "channel": "tlon",
+        "messageId": "~zod/1713980000123",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "tlon",
+            "target": "group:~zod/general",
+            "accountId": "ship",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "chat/~zod/general",
+        "channelId": "chat/~zod/general",
+        "roomId": "chat/~zod/general",
+        "replyToId": "1.713.980.000.123",
+    }
+    assert tlon_pokes == [
+        {
+            "base_url": "https://zod.tlon.network",
+            "ship": "~zod",
+            "code": "tlon-code",
+            "app": "channels",
+            "mark": "channel-action-1",
+            "json": {
+                "channel": {
+                    "nest": "chat/~zod/general",
+                    "action": {
+                        "post": {
+                            "reply": {
+                                "id": "1.713.980.000.123",
+                                "action": {
+                                    "add": {
+                                        "content": [{"inline": ["Group reply"]}],
+                                        "author": "~zod",
+                                        "sent": 1713980000123,
+                                    }
+                                },
+                            }
+                        }
+                    },
+                }
+            },
+        }
+    ]
+    delivery = await database.get_outbound_delivery(1)
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["replyToId"] == "1.713.980.000.123"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uploads_tlon_image_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-tlon-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Tlon Native Media Provider",
+        kind="tlon",
+        target="https://zod.tlon.network?ship=~zod",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tlon-code",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "tlon",
+            "account_id": "ship",
+            "peer_kind": "direct",
+            "peer_id": "~sampel-palnet",
+        },
+    )
+    uploaded_urls: list[tuple[str, str]] = []
+    tlon_pokes: list[dict[str, object]] = []
+
+    def fake_upload_tlon_image_from_url(
+        self: OpsMeshService,
+        config: _TlonRouteConfig,
+        image_url: str,
+        *,
+        timeout_seconds: float,
+    ) -> str:
+        del self, timeout_seconds
+        uploaded_urls.append((config.ship, image_url))
+        return "https://memex.tlon.network/files/uploaded.png"
+
+    def fake_request_tlon_poke(
+        self: OpsMeshService,
+        config: _TlonRouteConfig,
+        *,
+        app: str,
+        mark: str,
+        json_payload: dict[str, object],
+        timeout_seconds: float,
+    ) -> int:
+        del self, config, timeout_seconds
+        tlon_pokes.append({"app": app, "mark": mark, "json": json_payload})
+        return 1713980000123
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_tlon_image_from_url",
+        fake_upload_tlon_image_from_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_tlon_poke",
+        fake_request_tlon_poke,
+        raising=False,
+    )
+    monkeypatch.setattr("openzues.services.ops_mesh.time.time", lambda: 1713980000.123)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="tlon",
+        to="~sampel-palnet",
+        message="Photo",
+        media_urls=["https://example.com/path/photo.png"],
+        account_id="ship",
+        idempotency_key="idem-native-tlon-media",
+    )
+
+    assert result["messageId"] == "~zod/1.713.980.000.123"
+    assert result["mediaUrls"] == ["https://memex.tlon.network/files/uploaded.png"]
+    assert uploaded_urls == [("~zod", "https://example.com/path/photo.png")]
+    assert tlon_pokes[0]["app"] == "chat"
+    payload = tlon_pokes[0]["json"]
+    assert isinstance(payload, dict)
+    diff = payload["diff"]
+    assert isinstance(diff, dict)
+    delta = diff["delta"]
+    assert isinstance(delta, dict)
+    add = delta["add"]
+    assert isinstance(add, dict)
+    memo = add["memo"]
+    assert isinstance(memo, dict)
+    assert memo["content"] == [
+        {"inline": ["Photo"]},
+        {
+            "block": {
+                "image": {
+                    "src": "https://memex.tlon.network/files/uploaded.png",
+                    "height": 0,
+                    "width": 0,
+                    "alt": "",
+                }
+            }
+        },
+    ]
+
+
+def test_ops_mesh_service_imessage_rpc_support_marks_unknown_subcommand_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[list[str], float]] = []
+
+    def fake_run(
+        command: list[str],
+        *,
+        capture_output: bool,
+        check: bool,
+        text: bool,
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        assert capture_output is True
+        assert check is False
+        assert text is True
+        commands.append((command, timeout))
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr='unknown command "rpc" for "imsg"',
+        )
+
+    monkeypatch.setattr("openzues.services.ops_mesh.subprocess.run", fake_run)
+
+    result = OpsMeshService.__new__(OpsMeshService)._probe_imessage_rpc_support(
+        "imsg-test",
+        2500,
+    )
+
+    assert result == {
+        "supported": False,
+        "fatal": True,
+        "error": 'imsg CLI does not support the "rpc" subcommand (update imsg)',
+    }
+    assert commands == [(["imsg-test", "rpc", "--help"], 2.5)]
 
 
 @pytest.mark.asyncio
@@ -27240,6 +28170,73 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_irc_native_rout
     ]
 
 
+def test_ops_mesh_service_irc_probe_waits_for_ready_and_quits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent_lines: list[str] = []
+    connection_calls: list[tuple[tuple[str, int], float]] = []
+
+    class FakeIrcSocket:
+        def __init__(self) -> None:
+            self._chunks = [
+                b"PING :irc.example.net\r\n",
+                b":irc.example.net 001 openzues :welcome\r\n",
+            ]
+
+        def __enter__(self) -> FakeIrcSocket:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def settimeout(self, timeout: float) -> None:
+            assert timeout == 2.5
+
+        def sendall(self, data: bytes) -> None:
+            sent_lines.append(data.decode("utf-8").strip())
+
+        def recv(self, size: int) -> bytes:
+            assert size == 4096
+            return self._chunks.pop(0)
+
+    def fake_create_connection(
+        address: tuple[str, int],
+        *,
+        timeout: float,
+    ) -> FakeIrcSocket:
+        connection_calls.append((address, timeout))
+        return FakeIrcSocket()
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.socket.create_connection",
+        fake_create_connection,
+    )
+
+    latency_ms = OpsMeshService.__new__(OpsMeshService)._probe_irc_connection(
+        _IrcRouteConfig(
+            host="irc.example.net",
+            port=6667,
+            tls=False,
+            nick="openzues",
+            username="openzues",
+            realname="OpenZues",
+            password="irc-server-password",
+        ),
+        timeout_seconds=2.5,
+    )
+
+    assert latency_ms >= 0
+    assert connection_calls == [(("irc.example.net", 6667), 2.5)]
+    assert sent_lines == [
+        "PASS irc-server-password",
+        "NICK openzues",
+        "USER openzues 0 * :OpenZues",
+        "PONG :irc.example.net",
+        "QUIT :probe",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_twitch_native_route(
     monkeypatch: pytest.MonkeyPatch,
@@ -27324,6 +28321,85 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_twitch_native_r
             "channel": "openzues",
             "message": "Twitch native parity. https://cdn.example.com/clip.png",
         }
+    ]
+
+
+def test_ops_mesh_service_twitch_probe_waits_for_ready_and_quits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent_lines: list[str] = []
+    connection_calls: list[tuple[tuple[str, int], float]] = []
+    wrapped_hosts: list[str] = []
+
+    class FakeTwitchSocket:
+        def __init__(self) -> None:
+            self._chunks = [
+                b"PING :tmi.twitch.tv\r\n",
+                b":tmi.twitch.tv 001 openzues :Welcome, GLHF!\r\n",
+            ]
+
+        def __enter__(self) -> FakeTwitchSocket:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            del exc_type, exc, traceback
+            return False
+
+        def settimeout(self, timeout: float) -> None:
+            assert timeout == 2.5
+
+        def sendall(self, data: bytes) -> None:
+            sent_lines.append(data.decode("utf-8").strip())
+
+        def recv(self, size: int) -> bytes:
+            assert size == 4096
+            return self._chunks.pop(0)
+
+    class FakeSslContext:
+        def wrap_socket(
+            self,
+            raw_socket: FakeTwitchSocket,
+            *,
+            server_hostname: str,
+        ) -> FakeTwitchSocket:
+            wrapped_hosts.append(server_hostname)
+            return raw_socket
+
+    def fake_create_connection(
+        address: tuple[str, int],
+        *,
+        timeout: float,
+    ) -> FakeTwitchSocket:
+        connection_calls.append((address, timeout))
+        return FakeTwitchSocket()
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.socket.create_connection",
+        fake_create_connection,
+    )
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.ssl.create_default_context",
+        lambda: FakeSslContext(),
+    )
+
+    elapsed_ms = OpsMeshService.__new__(OpsMeshService)._probe_twitch_connection(
+        _TwitchRouteConfig(
+            username="openzues",
+            client_id="twitch-client-id",
+            token="raw-token",
+            default_channel="openzues",
+        ),
+        timeout_seconds=2.5,
+    )
+
+    assert elapsed_ms >= 0
+    assert connection_calls == [(("irc.chat.twitch.tv", 6697), 2.5)]
+    assert wrapped_hosts == ["irc.chat.twitch.tv"]
+    assert sent_lines == [
+        "PASS oauth:raw-token",
+        "NICK openzues",
+        "PONG :tmi.twitch.tv",
+        "QUIT :probe",
     ]
 
 

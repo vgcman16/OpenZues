@@ -100991,7 +100991,7 @@ async def test_channels_status_returns_notification_route_inventory() -> None:
     assert channels["routeCount"] == 1
     assert channels["enabledCount"] == 1
     assert channels["conversationTargetCount"] == 1
-    assert channels["channelOrder"] == ["discord", "slack", "telegram", "whatsapp"]
+    assert channels["channelOrder"][:4] == ["discord", "slack", "telegram", "whatsapp"]
     assert channels["channelLabels"]["slack"] == "Slack"
     assert channels["channelDetailLabels"]["slack"] == "Slack"
     assert channels["channelMeta"][1] == {

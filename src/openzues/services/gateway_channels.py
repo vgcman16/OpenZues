@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
 from openzues.schemas import NotificationRouteView
@@ -79,6 +79,16 @@ _CHANNEL_META = (
         "detailLabel": "Twitch",
     },
     {
+        "id": "imessage",
+        "label": "iMessage",
+        "detailLabel": "iMessage",
+    },
+    {
+        "id": "tlon",
+        "label": "Tlon",
+        "detailLabel": "Tlon (Urbit)",
+    },
+    {
         "id": "line",
         "label": "LINE",
         "detailLabel": "LINE",
@@ -107,6 +117,132 @@ def _new_channel_account_summary(account_id: str) -> dict[str, Any]:
         "enabledRouteCount": 0,
         "conversationTargetCount": 0,
     }
+
+
+_IMESSAGE_CONFIGURED_FIELDS = (
+    "cliPath",
+    "dbPath",
+    "service",
+    "region",
+    "dmPolicy",
+    "groupPolicy",
+)
+_IMESSAGE_CONFIGURED_LIST_FIELDS = (
+    "allowFrom",
+    "groupAllowFrom",
+    "attachmentRoots",
+    "remoteAttachmentRoots",
+)
+
+
+def _normalized_config_account_id(account_id: str | None) -> str:
+    return str(account_id or "").strip() or DEFAULT_ACCOUNT_ID
+
+
+def _config_string(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def imessage_account_configured(config: Mapping[str, Any]) -> bool:
+    for field_name in _IMESSAGE_CONFIGURED_FIELDS:
+        if _config_string(config.get(field_name)) is not None:
+            return True
+    for field_name in _IMESSAGE_CONFIGURED_LIST_FIELDS:
+        value = config.get(field_name)
+        if isinstance(value, list) and value:
+            return True
+    groups = config.get("groups")
+    if isinstance(groups, dict) and groups:
+        return True
+    for field_name in ("includeAttachments",):
+        if isinstance(config.get(field_name), bool):
+            return True
+    for field_name in ("mediaMaxMb", "textChunkLimit"):
+        if isinstance(config.get(field_name), int | float) and not isinstance(
+            config.get(field_name),
+            bool,
+        ):
+            return True
+    return False
+
+
+def _imessage_channel_config(snapshot: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, Mapping):
+        return None
+    channel_config = channels.get("imessage")
+    return channel_config if isinstance(channel_config, Mapping) else None
+
+
+def resolve_imessage_account_config(
+    snapshot: Mapping[str, Any],
+    account_id: str | None,
+) -> dict[str, Any] | None:
+    channel_config = _imessage_channel_config(snapshot)
+    if channel_config is None:
+        return None
+    normalized_account_id = _normalized_config_account_id(account_id)
+    merged = {
+        str(key): value
+        for key, value in channel_config.items()
+        if str(key) != "accounts"
+    }
+    if normalized_account_id != DEFAULT_ACCOUNT_ID:
+        accounts = channel_config.get("accounts")
+        if not isinstance(accounts, Mapping):
+            return None
+        account_config = accounts.get(normalized_account_id)
+        if not isinstance(account_config, Mapping):
+            return None
+        merged.update({str(key): value for key, value in account_config.items()})
+    return merged
+
+
+def configured_imessage_account_summaries(
+    snapshot: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    channel_config = _imessage_channel_config(snapshot)
+    if channel_config is None:
+        return {}
+    account_ids: set[str] = set()
+    base_config = resolve_imessage_account_config(snapshot, DEFAULT_ACCOUNT_ID)
+    if base_config is not None and imessage_account_configured(base_config):
+        account_ids.add(DEFAULT_ACCOUNT_ID)
+    accounts = channel_config.get("accounts")
+    if isinstance(accounts, Mapping):
+        account_ids.update(str(account_id) for account_id in accounts if str(account_id).strip())
+    summaries: dict[str, dict[str, Any]] = {}
+    for account_id in sorted(account_ids):
+        account_config = resolve_imessage_account_config(snapshot, account_id)
+        if account_config is None:
+            continue
+        enabled = channel_config.get("enabled") is not False and account_config.get(
+            "enabled"
+        ) is not False
+        if not enabled:
+            continue
+        summary = _new_channel_account_summary(account_id)
+        summary.update(
+            {
+                "configured": imessage_account_configured(account_config),
+                "enabled": enabled,
+                "source": "config",
+            }
+        )
+        name = _config_string(account_config.get("name"))
+        if name is not None:
+            summary["name"] = name
+        cli_path = _config_string(account_config.get("cliPath"))
+        if cli_path is not None:
+            summary["cliPath"] = cli_path
+        db_path = _config_string(account_config.get("dbPath"))
+        if db_path is not None:
+            summary["dbPath"] = db_path
+        summaries[account_id] = summary
+    return summaries
 
 
 class GatewayChannelAccountProbe(Protocol):
@@ -152,10 +288,12 @@ class GatewayChannelsService:
         list_notification_route_views: Callable[[], Awaitable[list[NotificationRouteView]]],
         probe_account: GatewayChannelAccountProbe | None = None,
         resolve_targets: GatewayChannelTargetResolver | None = None,
+        config_snapshot: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._list_notification_route_views = list_notification_route_views
         self._probe_account = probe_account
         self._resolve_targets = resolve_targets
+        self._config_snapshot = config_snapshot
 
     async def build_snapshot(
         self,
@@ -208,11 +346,35 @@ class GatewayChannelsService:
             account_summary = accounts_for_channel.get(account_id)
             if account_summary is None:
                 account_summary = _new_channel_account_summary(account_id)
-                accounts_for_channel[account_id] = account_summary
+            accounts_for_channel[account_id] = account_summary
             account_summary["routeCount"] += 1
             account_summary["conversationTargetCount"] += 1
             if route.enabled:
                 account_summary["enabledRouteCount"] += 1
+
+        if self._config_snapshot is not None:
+            try:
+                config_snapshot = self._config_snapshot()
+            except Exception:  # pragma: no cover - defensive adapter boundary
+                config_snapshot = {}
+            imessage_accounts = configured_imessage_account_summaries(config_snapshot)
+            if imessage_accounts:
+                channel_id = "imessage"
+                summary = channel_summaries[channel_id]
+                accounts_for_channel = account_summaries[channel_id]
+                for account_id, account_summary in imessage_accounts.items():
+                    existing = accounts_for_channel.get(account_id)
+                    if existing is None:
+                        accounts_for_channel[account_id] = account_summary
+                    else:
+                        existing.update(
+                            {
+                                key: value
+                                for key, value in account_summary.items()
+                                if key not in {"routeCount", "enabledRouteCount"}
+                            }
+                        )
+                summary["configuredAccountCount"] = len(imessage_accounts)
 
         channel_order = [*known_channel_ids, *sorted(extra_channel_ids)]
         channel_labels = {

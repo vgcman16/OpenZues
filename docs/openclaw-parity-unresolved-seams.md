@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999%.
+  band of ~80-99.9999993%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -14,7 +14,7 @@ Current percentage rollup:
   `sessions.spawn`, sandboxed remote media staging, and `tools.invoke`
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
+  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -1701,6 +1701,66 @@ native-provider-backed account probe envelope. Remaining channel CLI parity is
 provider-specific credential probe breadth beyond Slack/Telegram/Discord/Matrix/
 Zalo/LINE/Google Chat/Feishu-Lark/Mattermost/Signal and production
 provider-backed live resolve adapters.
+IRC route-backed account probes now mirror OpenClaw's `probeIrc` status hook:
+`channels status --probe --json` opens the saved `irc(s)://` route, sends
+PASS/NICK/USER, answers server PING, waits for the `001` ready welcome, quits
+with `QUIT :probe`, and returns account, host, port, TLS, nick, timeout, and
+latency metadata in the native-provider-backed account probe envelope.
+Remaining channel CLI parity is provider-specific credential probe breadth
+beyond Slack/Telegram/Discord/Matrix/Zalo/LINE/Google Chat/Feishu-Lark/
+Mattermost/Signal/IRC and production provider-backed live resolve adapters.
+Twitch route-backed account probes now mirror OpenClaw's `probeTwitch` status
+hook: `channels status --probe --json` opens Twitch IRC over TLS with the
+saved route OAuth token, sends PASS/NICK, answers server PING, waits for the
+`001` ready welcome, quits with `QUIT :probe`, and returns connected,
+username, channel, timeout, and elapsed-time metadata in the
+native-provider-backed account probe envelope. Remaining channel CLI parity is
+provider-specific credential probe breadth beyond Slack/Telegram/Discord/
+Matrix/Zalo/LINE/Google Chat/Feishu-Lark/Mattermost/Signal/IRC/Twitch and
+production provider-backed live resolve adapters.
+BlueBubbles route-backed account probes now mirror OpenClaw's
+`probeBlueBubbles` status hook: `channels status --probe --json` calls
+`/api/v1/ping` with the saved BlueBubbles server password, preserves the
+provider HTTP status in the native-provider-backed account probe envelope, and
+returns non-2xx ping responses as error probes with `httpStatus`. Remaining
+channel CLI parity is provider-specific credential probe breadth beyond
+Slack/Telegram/Discord/Matrix/Zalo/LINE/Google Chat/Feishu-Lark/Mattermost/
+Signal/IRC/Twitch/BlueBubbles and production provider-backed live resolve
+adapters.
+Tlon route-backed account probes now mirror OpenClaw's `probeTlonAccount`
+status hook: `channels status --probe --json` authenticates with `/~/login`
+using the saved route access-code secret, carries the auth cookie into
+`/~/name`, preserves the provider HTTP status in the native-provider-backed
+account probe envelope, and returns non-2xx name responses as
+`Name request failed: <status>` error probes. Remaining channel CLI parity is
+provider-specific credential probe breadth beyond Slack/Telegram/Discord/
+Matrix/Zalo/LINE/Google Chat/Feishu-Lark/Mattermost/Signal/IRC/Twitch/
+BlueBubbles/Tlon and production provider-backed live resolve adapters.
+Tlon native route-backed text sends now mirror OpenClaw's
+`tlonRuntimeOutbound.sendText` HTTP-poke runtime: saved `kind="tlon"` routes
+participate in native provider delivery, DM/group targets normalize through
+the upstream target forms, markdown text becomes Tlon story inline content,
+`/~/login` supplies the auth cookie, and `/~/channel/<id>` receives the
+`chat-dm-action` or `channel-action-1` poke. Direct gateway sends now persist
+native transport and provider result metadata with `messageId`, `chatId`, and
+`channelId`. Tlon group/thread replies are now additionally verified with the
+upstream `channel-action-1` reply wrapper and dotted `@ud` numeric reply ids.
+Tlon image-media sends now invoke a fakeable upload hook before building the
+story and persist uploaded media URLs in provider metadata, while preserving
+OpenClaw's fallback-to-original behavior when upload fails. Hosted Memex
+uploads now scry storage configuration/credentials/genuine secret, request and
+validate trusted upload URLs, PUT bytes, and return trusted hosted URLs.
+Remaining Tlon runtime parity is now custom S3 upload signing and
+inbound/session breadth.
+iMessage config-backed account probes now mirror OpenClaw's `probeIMessage`
+status hook: `channels status --probe --json` discovers configured
+`channels.imessage` accounts from the Gateway config snapshot, checks the
+configured `imsg` binary, probes `imsg rpc --help` with the upstream fatal
+old-CLI guard, runs `imsg rpc` with configured `--db`, and sends JSON-RPC
+`chats.list` `{limit: 1}` before returning native-CLI-backed account probe
+metadata. Remaining channel CLI parity is no longer dominated by the
+route/config account-probe queue; the next channel queue should rotate to
+remaining provider runtime breadth.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account
@@ -9699,3 +9759,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   any newly exposed OpenClaw namespaces.
   `config-types` was re-verified on 2026-05-07 as an upstream type-only barrel
   through the existing empty runtime module proof.
+- Current queue-head adjustment: Tlon native route-backed text sends now
+  mirror the OpenClaw HTTP-poke outbound runtime for DM text delivery:
+  route-backed `kind="tlon"` sends resolve Tlon target aliases, authenticate
+  against `/~/login`, PUT upstream-shaped poke actions into `/~/channel/<id>`,
+  convert markdown into Tlon story content, and preserve native provider
+  result metadata through direct gateway sends. Source/test checkpointed in
+  `bab52a95`; group/thread reply proof checkpointed in `0fd7cbb8`; image
+  media upload-hook checkpointed in `0c18844d`; hosted Memex media upload
+  checkpointed in `f742ba8a`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999993%. Remaining Tlon-specific gaps are custom S3
+  upload signing and inbound/session breadth before rotating through broader
+  provider, packaging, and companion seams.

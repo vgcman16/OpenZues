@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999993% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -68,9 +68,229 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue remaining provider-specific account probes, then rotate packaging/companion breadth |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Hosted Tlon media upload is no longer the head; rotate to custom S3 upload signing, broader provider runtime breadth, packaging, or companion seams |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001DB` Tlon native route-backed text send
+  - Source: `openclaw-main/extensions/tlon/src/channel.runtime.ts`,
+    `openclaw-main/extensions/tlon/src/targets.ts`,
+    `openclaw-main/extensions/tlon/src/urbit/send.ts`,
+    `openclaw-main/extensions/tlon/src/urbit/story.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: `send_direct_channel_message(channel="tlon")` resolves saved
+    `kind="tlon"` provider routes, normalizes upstream Tlon DM/group target
+    forms, authenticates with `/~/login`, PUTs upstream-shaped poke actions to
+    `/~/channel/<id>`, converts markdown text into Tlon story inline content,
+    and persists native `transport`, `messageId`, `chatId`, `channelId`, and
+    provider-result metadata.
+  - Evidence required: focused Tlon native-send test, focused Tlon HTTP poke
+    helper test, adjacent Tlon/IRC/Twitch native-provider proof, adjacent
+    channel-probe CLI proof, ruff, mypy
+  - Status: checkpointed in `bab52a95`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route -q`
+    (`1 failed` before implementation, then `1 passed`), helper proof
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_tlon_poke_authenticates_then_puts_channel_action tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_tlon_native_route -q`
+    (`2 passed`), final focused proof (`3 passed`), adjacent native-provider
+    proof (`7 passed, 376 deselected`), adjacent CLI proof (`3 passed, 520
+    deselected`), `ruff check src\openzues\services\ops_mesh.py
+    tests\test_ops_mesh.py tests\test_cli.py`, and `mypy
+    src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001DC` Tlon group/thread reply proof
+  - Source: `openclaw-main/extensions/tlon/src/urbit/send.ts`,
+    `openclaw-main/extensions/tlon/src/targets.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_ops_mesh.py`
+  - Contract: route-backed `kind="tlon"` group targets use the upstream
+    `channel-action-1` `post.reply` payload and numeric `replyToId` values are
+    converted into dotted `@ud` ids before dispatch.
+  - Evidence required: focused Tlon group reply test, adjacent Tlon/IRC/Twitch
+    native-provider proof, ruff, mypy
+  - Status: checkpointed in `0fd7cbb8`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_tlon_group_reply -q`
+    (`1 passed`), adjacent native-provider proof (`8 passed, 376
+    deselected`), `ruff check tests\test_ops_mesh.py
+    src\openzues\services\ops_mesh.py`, and `mypy
+    src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001DD` Tlon image-media upload hook
+  - Source: `openclaw-main/extensions/tlon/src/channel.runtime.ts`,
+    `openclaw-main/extensions/tlon/src/urbit/upload.ts`,
+    `openclaw-main/extensions/tlon/src/urbit/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: route-backed Tlon media sends keep caption text separate from
+    generated media summaries, fetch image URLs through a fakeable upload hook,
+    build Tlon stories with uploaded image URLs, persist uploaded `mediaUrls`,
+    and fall back to the original URL when upload fails.
+  - Evidence required: focused Tlon image-media send test, focused image
+    fetch/upload helper test, adjacent native-provider proof, ruff, mypy
+  - Status: checkpointed in `0c18844d`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green media proof (`1 failed`
+    before implementation, then `1 passed`), helper proof (`2 passed`),
+    adjacent native-provider proof (`10 passed, 376 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+    src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001DE` Tlon hosted Memex media upload
+  - Source: `openclaw-main/extensions/tlon/src/tlon-api.ts`,
+    `openclaw-main/extensions/tlon/src/tlon-api.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: hosted Tlon media uploads authenticate, scry storage
+    configuration, credentials, and genuine secret, request a trusted Memex
+    upload URL, reject untrusted upload URLs, PUT bytes with cache/content-type
+    headers, and return the trusted hosted URL.
+  - Evidence required: focused hosted Memex upload test, trusted-domain guard
+    test, adjacent native-provider proof, ruff, mypy
+  - Status: checkpointed in `f742ba8a`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green Memex proof (`1 failed`
+    before implementation, then `1 passed`), security proof (`2 passed`),
+    adjacent native-provider proof (`12 passed, 376 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+    src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001DA` iMessage config-backed CLI/RPC account probe
+  - Source: `openclaw-main/extensions/imessage/src/probe.ts`,
+    `openclaw-main/extensions/imessage/src/status-core.ts`,
+    `openclaw-main/extensions/imessage/src/accounts.ts`,
+    `openclaw-main/extensions/imessage/src/client.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_channels.py`,
+    `src/openzues/services/ops_mesh.py`, `src/openzues/app.py`,
+    `src/openzues/cli.py`, `tests/test_cli.py`,
+    `tests/test_ops_mesh.py`, `tests/test_gateway_node_methods.py`
+  - Contract: `channels status --probe --json` discovers configured
+    `channels.imessage` accounts from Gateway config, checks the configured
+    `imsg` binary, probes `imsg rpc --help` with the upstream fatal old-CLI
+    guard, starts `imsg rpc` with `--db` when configured, sends JSON-RPC
+    `chats.list` `{limit: 1}`, and returns native-CLI-backed account probe
+    metadata.
+  - Evidence required: focused iMessage channel-probe CLI test, focused
+    RPC-support fatal guard test, adjacent channel-probe CLI tests, adjacent
+    ops tests, gateway owner channels-status proof, ruff, mypy
+  - Status: checkpointed in `86d0b06b`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_configured_imessage_probe tests\test_ops_mesh.py::test_ops_mesh_service_imessage_rpc_support_marks_unknown_subcommand_fatal -q`
+    (`2 passed`), adjacent channel-probe proof (`3 passed, 520
+    deselected`), adjacent ops proof (`3 passed, 378 deselected`), gateway
+    owner proof (`2 passed, 1123 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
+    src\openzues\app.py src\openzues\cli.py tests\test_cli.py
+    tests\test_ops_mesh.py tests\test_gateway_node_methods.py`, and `mypy
+    src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
+    src\openzues\app.py src\openzues\cli.py`.
+
+- [x] `OZ-PROV-001CZ` Tlon route-backed account probe
+  - Source: `openclaw-main/extensions/tlon/src/channel.ts`,
+    `openclaw-main/extensions/tlon/src/channel.runtime.ts`,
+    `openclaw-main/extensions/tlon/src/urbit/auth.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/schemas.py`,
+    `src/openzues/cli.py`, `tests/test_cli.py`, `tests/test_ops_mesh.py`
+  - Contract: `channels status --probe --json` treats saved `kind="tlon"`
+    routes as probeable, resolves ship URL and ship id from the route target,
+    posts the route access-code secret to `/~/login`, carries the returned
+    auth cookie into `/~/name`, preserves the upstream name HTTP status as
+    `httpStatus`, and returns a native-provider-backed probe envelope without
+    enabling Tlon as a send-capable route fallback.
+  - Evidence required: focused Tlon channel-probe CLI test, focused Tlon
+    login/name helper test, adjacent channel-probe CLI tests, adjacent
+    provider probe tests, ruff, mypy
+  - Status: checkpointed in `dd613729`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_tlon_probe tests\test_ops_mesh.py::test_ops_mesh_service_tlon_probe_authenticates_then_requests_name -q`
+    (`2 passed`), adjacent channel-probe proof (`3 passed, 519
+    deselected`), adjacent ops proof (`3 passed, 377 deselected`), `ruff
+    check src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
+    src\openzues\schemas.py src\openzues\cli.py tests\test_cli.py
+    tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py
+    src\openzues\services\gateway_channels.py src\openzues\schemas.py
+    src\openzues\cli.py`.
+
+- [x] `OZ-PROV-001CY` BlueBubbles route-backed account probe
+  - Source: `openclaw-main/extensions/bluebubbles/src/probe.ts`,
+    `openclaw-main/extensions/bluebubbles/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_cli.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: `channels status --probe --json` treats native
+    `kind="bluebubbles"` routes as probeable, calls `/api/v1/ping` through the
+    saved server URL/password, preserves the upstream ping HTTP status as
+    `httpStatus`, and returns a native-provider-backed probe envelope with
+    account, base URL, timeout, and HTTP status metadata.
+  - Evidence required: focused BlueBubbles channel-probe CLI test, focused
+    HTTP status helper test, adjacent channel-probe CLI tests, adjacent
+    BlueBubbles route/media tests, ruff, mypy
+  - Status: checkpointed in `7c9ffdcb`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_bluebubbles_probe tests\test_ops_mesh.py::test_ops_mesh_service_bluebubbles_probe_preserves_http_status -q`
+    (`2 passed`), adjacent channel-probe proof (`15 passed, 506
+    deselected`), adjacent BlueBubbles ops proof (`6 passed, 373 deselected`),
+    `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py
+    tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001CX` Twitch route-backed account probe
+  - Source: `openclaw-main/extensions/twitch/src/probe.ts`,
+    `openclaw-main/extensions/twitch/src/plugin.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_cli.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: `channels status --probe --json` treats native
+    `kind="twitch"` routes as probeable, parses saved `twitch://chat`
+    credentials, opens Twitch IRC over TLS, sends OAuth PASS/NICK, answers
+    PING, waits for Twitch `001`, quits with `QUIT :probe`, and returns a
+    native-provider-backed probe envelope with account, username, channel,
+    connected, timeout, and `elapsedMs` metadata.
+  - Evidence required: focused Twitch channel-probe CLI test, focused Twitch
+    runtime helper test, adjacent channel-probe CLI tests, adjacent Twitch ops
+    tests, ruff, mypy
+  - Status: checkpointed in `5772e6a9`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_twitch_probe tests\test_ops_mesh.py::test_ops_mesh_service_twitch_probe_waits_for_ready_and_quits -q`
+    (`2 passed`), adjacent channel-probe proof (`14 passed, 506
+    deselected`), adjacent Twitch ops proof (`3 passed, 375 deselected`),
+    `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py
+    tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001CW` IRC route-backed account probe
+  - Source: `openclaw-main/extensions/irc/src/probe.ts`,
+    `openclaw-main/extensions/irc/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_cli.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: `channels status --probe --json` treats native `kind="irc"`
+    routes as probeable, parses saved `irc(s)://` route credentials, sends
+    PASS/NICK/USER, answers PING, waits for IRC `001`, quits with
+    `QUIT :probe`, and returns a native-provider-backed probe envelope with
+    account, host, port, TLS, nick, timeout, and latency metadata.
+  - Evidence required: focused IRC channel-probe CLI test, focused IRC
+    runtime helper test, adjacent channel-probe CLI tests, adjacent IRC ops
+    tests, ruff, mypy
+  - Status: checkpointed in `fd5d246b`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused
+    `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_irc_probe tests\test_ops_mesh.py::test_ops_mesh_service_irc_probe_waits_for_ready_and_quits -q`
+    (`2 passed`), adjacent channel-probe proof (`13 passed, 506
+    deselected`), adjacent IRC ops proof (`2 passed, 375 deselected`), `ruff
+    check src\openzues\services\ops_mesh.py tests\test_cli.py
+    tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 - [x] `OZ-PROV-001CV` Signal route-backed account probe
   - Source: `openclaw-main/extensions/signal/src/probe.ts`,

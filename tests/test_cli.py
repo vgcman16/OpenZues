@@ -1829,6 +1829,448 @@ def test_channels_status_json_uses_route_backed_signal_probe(
     assert isinstance(rpc_payload["id"], str)
 
 
+def test_channels_status_json_uses_route_backed_irc_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI IRC Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="IRC Native Probe Route",
+            kind="irc",
+            target="ircs://irc.example.net:6697?nick=openzues&username=openzues",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "irc",
+                "account_id": "irc-bot",
+                "peer_kind": "channel",
+                "peer_id": "irc:channel:ops-room",
+                "summary": "irc-bot channel ops-room",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="irc-server-password",
+            vault_secret_id=None,
+        )
+    )
+    irc_probes: list[dict[str, object]] = []
+
+    def fake_probe_irc_connection(
+        self: object,
+        config: object,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        irc_probes.append(
+            {
+                "host": config.host,
+                "port": config.port,
+                "tls": config.tls,
+                "nick": config.nick,
+                "username": config.username,
+                "realname": config.realname,
+                "password": config.password,
+                "timeout": timeout_seconds,
+            }
+        )
+        return 45
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._probe_irc_connection",
+        fake_probe_irc_connection,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["irc"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "irc",
+        "runtime": "native-provider-backed",
+        "accountId": "irc-bot",
+        "host": "irc.example.net",
+        "port": 6697,
+        "tls": True,
+        "nick": "openzues",
+        "latencyMs": 45,
+        "timeoutMs": 2500,
+    }
+    assert irc_probes == [
+        {
+            "host": "irc.example.net",
+            "port": 6697,
+            "tls": True,
+            "nick": "openzues",
+            "username": "openzues",
+            "realname": "OpenZues",
+            "password": "irc-server-password",
+            "timeout": 2.5,
+        }
+    ]
+
+
+def test_channels_status_json_uses_route_backed_twitch_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Twitch Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Twitch Native Probe Route",
+            kind="twitch",
+            target="twitch://chat?username=openzues&clientId=twitch-client-id&channel=OpenZues",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "twitch",
+                "account_id": "twitch-bot",
+                "peer_kind": "channel",
+                "peer_id": "twitch:#OpenZues",
+                "summary": "twitch-bot channel OpenZues",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="oauth:twitch-token",
+            vault_secret_id=None,
+        )
+    )
+    twitch_probes: list[dict[str, object]] = []
+
+    def fake_probe_twitch_connection(
+        self: object,
+        config: object,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        twitch_probes.append(
+            {
+                "username": config.username,
+                "clientId": config.client_id,
+                "token": config.token,
+                "channel": config.default_channel,
+                "timeout": timeout_seconds,
+            }
+        )
+        return 37
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._probe_twitch_connection",
+        fake_probe_twitch_connection,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["twitch"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "twitch",
+        "runtime": "native-provider-backed",
+        "accountId": "twitch-bot",
+        "connected": True,
+        "username": "openzues",
+        "channel": "openzues",
+        "elapsedMs": 37,
+        "timeoutMs": 2500,
+    }
+    assert twitch_probes == [
+        {
+            "username": "openzues",
+            "clientId": "twitch-client-id",
+            "token": "oauth:twitch-token",
+            "channel": "openzues",
+            "timeout": 2.5,
+        }
+    ]
+
+
+def test_channels_status_json_uses_route_backed_bluebubbles_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI BlueBubbles Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="BlueBubbles Native Probe Route",
+            kind="bluebubbles",
+            target="http://127.0.0.1:1234",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "bluebubbles",
+                "account_id": "personal",
+                "peer_kind": "direct",
+                "peer_id": "bluebubbles:chat:+15551234567",
+                "summary": "personal BlueBubbles direct",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="bluebubbles-password",
+            vault_secret_id=None,
+        )
+    )
+    bluebubbles_probes: list[tuple[str, str, float]] = []
+
+    def fake_probe_bluebubbles_ping(
+        self: object,
+        target: str,
+        secret_token: str,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        bluebubbles_probes.append((target, secret_token, timeout_seconds))
+        return 200
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._probe_bluebubbles_ping",
+        fake_probe_bluebubbles_ping,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["bluebubbles"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "bluebubbles",
+        "runtime": "native-provider-backed",
+        "accountId": "personal",
+        "baseUrl": "http://127.0.0.1:1234",
+        "httpStatus": 200,
+        "timeoutMs": 2500,
+    }
+    assert bluebubbles_probes == [
+        ("http://127.0.0.1:1234", "bluebubbles-password", 2.5)
+    ]
+
+
+def test_channels_status_json_uses_route_backed_tlon_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Tlon Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Tlon Native Probe Route",
+            kind="tlon",
+            target="https://zod.tlon.network?ship=~zod",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "tlon",
+                "account_id": "ship",
+                "peer_kind": "direct",
+                "peer_id": "tlon:~sampel-palnet",
+                "summary": "ship Tlon DM",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="tlon-code",
+            vault_secret_id=None,
+        )
+    )
+    tlon_probes: list[tuple[str, str, float]] = []
+
+    def fake_request_tlon_name_status(
+        self: object,
+        config,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        tlon_probes.append((str(config.base_url), str(config.code), timeout_seconds))
+        return 200
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._request_tlon_name_status",
+        fake_request_tlon_name_status,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["tlon"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "tlon",
+        "runtime": "native-provider-backed",
+        "accountId": "ship",
+        "ship": "~zod",
+        "baseUrl": "https://zod.tlon.network",
+        "httpStatus": 200,
+        "timeoutMs": 2500,
+    }
+    assert tlon_probes == [("https://zod.tlon.network", "tlon-code", 2.5)]
+
+
+def test_channels_status_json_uses_configured_imessage_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI iMessage Probe")
+    config_path = data_dir / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config = {
+        "basePath": "",
+        "assistantName": "OpenZues",
+        "assistantAvatar": "/static/favicon.svg",
+        "assistantAgentId": "openzues",
+        "serverVersion": "2026.3.23-1",
+        "localMediaPreviewRoots": [],
+        "embedSandbox": "scripts",
+        "allowExternalEmbedUrls": False,
+        "channels": {
+            "imessage": {
+                "cliPath": "imsg-test",
+                "dbPath": "C:\\Messages\\chat.db",
+            }
+        },
+    }
+    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    binary_checks: list[str] = []
+    rpc_support_checks: list[tuple[str, int]] = []
+    chats_list_requests: list[tuple[str, str | None, int]] = []
+
+    def fake_imessage_binary_available(self: object, cli_path: str) -> bool:
+        del self
+        binary_checks.append(cli_path)
+        return True
+
+    def fake_probe_imessage_rpc_support(
+        self: object,
+        cli_path: str,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        del self
+        rpc_support_checks.append((cli_path, timeout_ms))
+        return {"supported": True}
+
+    def fake_request_imessage_chats_list(
+        self: object,
+        config,
+        *,
+        timeout_ms: int,
+    ) -> None:
+        del self
+        chats_list_requests.append((str(config.cli_path), config.db_path, timeout_ms))
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._imessage_binary_available",
+        fake_imessage_binary_available,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._probe_imessage_rpc_support",
+        fake_probe_imessage_rpc_support,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._request_imessage_chats_list",
+        fake_request_imessage_chats_list,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["imessage"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "imessage",
+        "runtime": "native-cli-backed",
+        "accountId": "default",
+        "cliPath": "imsg-test",
+        "dbPath": "C:\\Messages\\chat.db",
+        "timeoutMs": 2500,
+    }
+    assert binary_checks == ["imsg-test"]
+    assert rpc_support_checks == [("imsg-test", 2500)]
+    assert chats_list_requests == [("imsg-test", "C:\\Messages\\chat.db", 2500)]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,

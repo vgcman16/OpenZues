@@ -15,10 +15,13 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import socket
 import ssl
 import subprocess
 import tempfile
+import threading
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
@@ -85,6 +88,10 @@ from openzues.schemas import (
 from openzues.services.continuity import build_continuity_packet
 from openzues.services.ecc_catalog import build_ecc_workspace_lines
 from openzues.services.gateway_canvas_documents import resolve_canvas_http_path_to_local_path
+from openzues.services.gateway_channels import (
+    imessage_account_configured,
+    resolve_imessage_account_config,
+)
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_cron import cron_expression_next_run_at
 from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
@@ -365,6 +372,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "signal",
     "irc",
     "twitch",
+    "tlon",
     "line",
     "matrix",
 }
@@ -381,19 +389,24 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "zalo",
     "msteams",
     "twitch",
+    "tlon",
 }
 SLACK_THREAD_TS_PATTERN = re.compile(r"^\d+\.\d+$")
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
+    "bluebubbles",
     "slack",
     "telegram",
     "discord",
     "feishu",
     "googlechat",
+    "irc",
     "line",
     "matrix",
     "mattermost",
     "msteams",
     "signal",
+    "twitch",
+    "tlon",
     "zalo",
 }
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
@@ -434,6 +447,28 @@ class _TwitchRouteConfig:
     client_id: str
     token: str
     default_channel: str | None
+
+
+@dataclass(frozen=True)
+class _TlonRouteConfig:
+    base_url: str
+    ship: str
+    code: str
+
+
+@dataclass(frozen=True)
+class _TlonParsedTarget:
+    kind: Literal["dm", "group"]
+    ship: str | None = None
+    nest: str | None = None
+    host_ship: str | None = None
+    channel_name: str | None = None
+
+
+@dataclass(frozen=True)
+class _IMessageProbeConfig:
+    cli_path: str
+    db_path: str | None
 
 
 @dataclass(frozen=True)
@@ -1924,6 +1959,9 @@ def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPee
         )
     ):
         return "direct"
+    tlon_target = _tlon_parse_target(normalized)
+    if tlon_target is not None:
+        return "direct" if tlon_target.kind == "dm" else "group"
     if normalized.startswith("group:"):
         return "group"
     return "channel"
@@ -6926,6 +6964,34 @@ def _irc_normalize_target(raw_target: str | None) -> str | None:
     return target
 
 
+def _irc_command_from_line(raw_line: str) -> str:
+    line = str(raw_line or "").strip()
+    if not line:
+        return ""
+    if line.startswith(":"):
+        parts = line.split(" ", 2)
+        return parts[1].upper() if len(parts) > 1 else ""
+    return line.split(" ", 1)[0].upper()
+
+
+def _irc_ping_payload(raw_line: str) -> str:
+    line = str(raw_line or "").strip()
+    _, _, payload = line.partition(" ")
+    payload = payload.strip()
+    if payload.startswith(":"):
+        payload = payload[1:].strip()
+    return _irc_wire_value(payload or "openzues", "PING payload")
+
+
+def _irc_error_detail(raw_line: str) -> str:
+    line = str(raw_line or "").strip()
+    if " :" in line:
+        detail = line.split(" :", 1)[1].strip()
+    else:
+        detail = line
+    return detail or "login rejected"
+
+
 def _irc_route_config(target: str | None, secret_token: str | None) -> _IrcRouteConfig:
     parsed = urlparse(str(target or "").strip())
     scheme = parsed.scheme.lower()
@@ -7004,6 +7070,430 @@ def _twitch_route_config(target: str | None, secret_token: str | None) -> _Twitc
         client_id=_irc_wire_value(client_id, "Twitch clientId"),
         token=_irc_wire_value(token, "Twitch token"),
         default_channel=default_channel,
+    )
+
+
+def _tlon_query_value(query: Mapping[str, str], *names: str) -> str | None:
+    lowered = {key.lower(): value for key, value in query.items()}
+    for name in names:
+        value = lowered.get(name.lower())
+        if value is not None and value.strip():
+            return value.strip()
+    return None
+
+
+TLON_TARGET_HINT = (
+    "dm/~sampel-palnet | ~sampel-palnet | chat/~host-ship/channel | "
+    "group:~host-ship/channel"
+)
+TLON_MEMEX_BASE_URL = "https://memex.tlon.network"
+
+
+def _tlon_normalize_ship(raw_ship: str | None) -> str | None:
+    normalized = str(raw_ship or "").strip()
+    if not normalized:
+        return None
+    if not normalized.startswith("~"):
+        normalized = f"~{normalized}"
+    if not re.fullmatch(r"~[a-z-]+", normalized, flags=re.IGNORECASE):
+        raise RuntimeError("Tlon route ship is invalid.")
+    return normalized
+
+
+def _tlon_http_base_url(raw_url: str | None) -> str:
+    normalized = str(raw_url or "").strip()
+    parsed = urlparse(normalized)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError("Tlon route target must include an http(s) ship URL.")
+    return parsed._replace(query="", fragment="").geturl().rstrip("/")
+
+
+def _tlon_route_config(target: str | None, secret_token: str | None) -> _TlonRouteConfig:
+    raw_target = str(target or "").strip()
+    parsed = urlparse(raw_target)
+    query = {key: value for key, value in parse_qsl(parsed.query, keep_blank_values=False)}
+    if parsed.scheme.lower() == "tlon":
+        base_url = _tlon_http_base_url(_tlon_query_value(query, "url", "baseUrl", "base_url"))
+    else:
+        base_url = _tlon_http_base_url(raw_target)
+    ship = _tlon_normalize_ship(_tlon_query_value(query, "ship", "shipName", "ship_name"))
+    if ship is None:
+        raise RuntimeError("Tlon route target is missing ship.")
+    code = str(secret_token or "").strip() or (
+        _tlon_query_value(query, "code", "accessCode", "access_code") or ""
+    )
+    if not code:
+        raise RuntimeError("Tlon route is missing an access code secret.")
+    return _TlonRouteConfig(base_url=base_url, ship=ship, code=code)
+
+
+def _tlon_normalize_target_ship(raw_ship: str | None) -> str | None:
+    try:
+        return _tlon_normalize_ship(raw_ship)
+    except RuntimeError:
+        return None
+
+
+def _tlon_parse_channel_nest(raw: str | None) -> tuple[str, str] | None:
+    match = re.fullmatch(r"chat/([^/]+)/([^/]+)", str(raw or "").strip(), flags=re.IGNORECASE)
+    if match is None:
+        return None
+    host_ship = _tlon_normalize_target_ship(match.group(1))
+    channel_name = match.group(2).strip()
+    if host_ship is None or not channel_name:
+        return None
+    return host_ship, channel_name
+
+
+def _tlon_make_group_target(host_ship: str, channel_name: str) -> _TlonParsedTarget:
+    return _TlonParsedTarget(
+        kind="group",
+        nest=f"chat/{host_ship}/{channel_name}",
+        host_ship=host_ship,
+        channel_name=channel_name,
+    )
+
+
+def _tlon_parse_target(raw: str | None) -> _TlonParsedTarget | None:
+    trimmed = str(raw or "").strip()
+    if not trimmed:
+        return None
+    without_prefix = re.sub(r"^tlon:", "", trimmed, count=1, flags=re.IGNORECASE)
+
+    dm_match = re.match(r"^dm[/:](.+)$", without_prefix, flags=re.IGNORECASE)
+    if dm_match is not None:
+        ship = _tlon_normalize_target_ship(dm_match.group(1))
+        return _TlonParsedTarget(kind="dm", ship=ship) if ship is not None else None
+
+    group_match = re.match(
+        r"^(group|room)[/:](.+)$",
+        without_prefix,
+        flags=re.IGNORECASE,
+    )
+    if group_match is not None:
+        group_target = group_match.group(2).strip()
+        if group_target.lower().startswith("chat/"):
+            parsed = _tlon_parse_channel_nest(group_target)
+            if parsed is None:
+                return None
+            return _tlon_make_group_target(*parsed)
+        parts = group_target.split("/")
+        if len(parts) != 2:
+            return None
+        host_ship = _tlon_normalize_target_ship(parts[0])
+        channel_name = parts[1].strip()
+        if host_ship is None or not channel_name:
+            return None
+        return _tlon_make_group_target(host_ship, channel_name)
+
+    if without_prefix.lower().startswith("chat/"):
+        parsed = _tlon_parse_channel_nest(without_prefix)
+        if parsed is None:
+            return None
+        return _tlon_make_group_target(*parsed)
+
+    ship = _tlon_normalize_target_ship(without_prefix)
+    return _TlonParsedTarget(kind="dm", ship=ship) if ship is not None else None
+
+
+def _tlon_targets_match(route_peer_id: str, event_peer_id: str) -> bool:
+    route_target = _tlon_parse_target(route_peer_id)
+    event_target = _tlon_parse_target(event_peer_id)
+    if route_target is None or event_target is None:
+        return False
+    if route_target.kind != event_target.kind:
+        return False
+    if route_target.kind == "dm":
+        return str(route_target.ship or "").lower() == str(event_target.ship or "").lower()
+    return str(route_target.nest or "").lower() == str(event_target.nest or "").lower()
+
+
+def _tlon_ud(value: int) -> str:
+    digits = str(abs(int(value)))
+    groups: list[str] = []
+    while digits:
+        groups.append(digits[-3:])
+        digits = digits[:-3]
+    formatted = ".".join(reversed(groups or ["0"]))
+    return f"-{formatted}" if value < 0 else formatted
+
+
+def _tlon_merge_adjacent_strings(items: list[object]) -> list[object]:
+    merged: list[object] = []
+    for item in items:
+        if isinstance(item, str) and merged and isinstance(merged[-1], str):
+            merged[-1] = f"{merged[-1]}{item}"
+        else:
+            merged.append(item)
+    return merged
+
+
+def _tlon_parse_inline_markdown(text: str) -> list[object]:
+    result: list[object] = []
+    remaining = str(text or "")
+    while remaining:
+        ship_match = re.match(r"^(~[a-z][-a-z0-9]*)", remaining, flags=re.IGNORECASE)
+        if ship_match is not None:
+            result.append({"ship": ship_match.group(1)})
+            remaining = remaining[len(ship_match.group(0)) :]
+            continue
+        bold_match = re.match(r"^\*\*(.+?)\*\*|^__(.+?)__", remaining)
+        if bold_match is not None:
+            content = str(bold_match.group(1) or bold_match.group(2) or "")
+            result.append({"bold": _tlon_parse_inline_markdown(content)})
+            remaining = remaining[len(bold_match.group(0)) :]
+            continue
+        italics_match = re.match(r"^\*([^*]+?)\*|^_([^_]+?)_(?![a-zA-Z0-9])", remaining)
+        if italics_match is not None:
+            content = str(italics_match.group(1) or italics_match.group(2) or "")
+            result.append({"italics": _tlon_parse_inline_markdown(content)})
+            remaining = remaining[len(italics_match.group(0)) :]
+            continue
+        strike_match = re.match(r"^~~(.+?)~~", remaining)
+        if strike_match is not None:
+            result.append({"strike": _tlon_parse_inline_markdown(strike_match.group(1))})
+            remaining = remaining[len(strike_match.group(0)) :]
+            continue
+        code_match = re.match(r"^`([^`]+)`", remaining)
+        if code_match is not None:
+            result.append({"inline-code": code_match.group(1)})
+            remaining = remaining[len(code_match.group(0)) :]
+            continue
+        image_match = re.match(r"^!\[([^\]]*)]\(([^)]+)\)", remaining)
+        if image_match is not None:
+            result.append(
+                {
+                    "__image": {
+                        "src": image_match.group(2),
+                        "alt": image_match.group(1),
+                    }
+                }
+            )
+            remaining = remaining[len(image_match.group(0)) :]
+            continue
+        link_match = re.match(r"^\[([^\]]+)]\(([^)]+)\)", remaining)
+        if link_match is not None:
+            result.append(
+                {
+                    "link": {
+                        "href": link_match.group(2),
+                        "content": link_match.group(1),
+                    }
+                }
+            )
+            remaining = remaining[len(link_match.group(0)) :]
+            continue
+        url_match = re.match(r"^(https?://[^\s<>\"\]]+)", remaining)
+        if url_match is not None:
+            result.append(
+                {
+                    "link": {
+                        "href": url_match.group(1),
+                        "content": url_match.group(1),
+                    }
+                }
+            )
+            remaining = remaining[len(url_match.group(0)) :]
+            continue
+        plain_match = re.match(r"^[^*_`~[#~\n:/]+", remaining)
+        if plain_match is not None:
+            result.append(plain_match.group(0))
+            remaining = remaining[len(plain_match.group(0)) :]
+            continue
+        if remaining[0] == "\n":
+            result.append({"break": None})
+        else:
+            result.append(remaining[0])
+        remaining = remaining[1:]
+    return _tlon_merge_adjacent_strings(result)
+
+
+def _tlon_image_block(src: str, alt: str = "") -> dict[str, object]:
+    return {"block": {"image": {"src": src, "height": 0, "width": 0, "alt": alt}}}
+
+
+def _tlon_markdown_to_story(markdown: str) -> list[dict[str, object]]:
+    story: list[dict[str, object]] = []
+    lines = str(markdown or "").split("\n")
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("```"):
+            lang = line[3:].strip() or "plaintext"
+            code_lines: list[str] = []
+            index += 1
+            while index < len(lines) and not lines[index].startswith("```"):
+                code_lines.append(lines[index])
+                index += 1
+            story.append({"block": {"code": {"code": "\n".join(code_lines), "lang": lang}}})
+            index += 1
+            continue
+        header_match = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if header_match is not None:
+            tag = f"h{len(header_match.group(1))}"
+            story.append(
+                {
+                    "block": {
+                        "header": {
+                            "tag": tag,
+                            "content": _tlon_parse_inline_markdown(header_match.group(2)),
+                        }
+                    }
+                }
+            )
+            index += 1
+            continue
+        if re.fullmatch(r"(-{3,}|\*{3,})", line.strip()):
+            story.append({"block": {"rule": None}})
+            index += 1
+            continue
+        if line.startswith("> "):
+            quote_lines: list[str] = []
+            while index < len(lines) and lines[index].startswith("> "):
+                quote_lines.append(lines[index][2:])
+                index += 1
+            story.append(
+                {
+                    "inline": [
+                        {"blockquote": _tlon_parse_inline_markdown("\n".join(quote_lines))}
+                    ]
+                }
+            )
+            continue
+        if not line.strip():
+            index += 1
+            continue
+
+        paragraph_lines: list[str] = []
+        while (
+            index < len(lines)
+            and lines[index].strip()
+            and not lines[index].startswith("#")
+            and not lines[index].startswith("```")
+            and not lines[index].startswith("> ")
+            and not re.fullmatch(r"(-{3,}|\*{3,})", lines[index].strip())
+        ):
+            paragraph_lines.append(lines[index])
+            index += 1
+        inlines = _tlon_parse_inline_markdown("\n".join(paragraph_lines))
+        clean_inlines: list[object] = []
+        image_blocks: list[dict[str, object]] = []
+        for inline in inlines:
+            if isinstance(inline, dict) and isinstance(inline.get("__image"), dict):
+                image = cast(dict[str, object], inline["__image"])
+                image_blocks.append(
+                    _tlon_image_block(str(image.get("src") or ""), str(image.get("alt") or ""))
+                )
+            else:
+                clean_inlines.append(inline)
+        if clean_inlines:
+            story.append({"inline": clean_inlines})
+        story.extend(image_blocks)
+    return story
+
+
+def _tlon_media_story(
+    *,
+    text: str,
+    media_urls: list[str],
+) -> list[dict[str, object]]:
+    story = _tlon_markdown_to_story(text.strip()) if text.strip() else []
+    for media_url in media_urls:
+        if re.search(r"\.(?:jpg|jpeg|png|gif|webp|svg|bmp|ico)(?:\?.*)?$", media_url, re.I):
+            story.append(_tlon_image_block(media_url))
+        else:
+            story.append({"inline": [{"link": {"href": media_url, "content": media_url}}]})
+    return story or [{"inline": [""]}]
+
+
+def _tlon_hostname_matches_domain_boundary(hostname: str, domain: str) -> bool:
+    normalized_hostname = str(hostname or "").strip().lower()
+    normalized_domain = str(domain or "").strip().lower()
+    return normalized_hostname == normalized_domain or normalized_hostname.endswith(
+        f".{normalized_domain}"
+    )
+
+
+def _tlon_is_hosted_tlon_hostname(hostname: str) -> bool:
+    return _tlon_hostname_matches_domain_boundary(
+        hostname,
+        "tlon.network",
+    ) or _tlon_hostname_matches_domain_boundary(hostname, "test.tlon.systems")
+
+
+def _tlon_is_hosted_ship_url(ship_url: str) -> bool:
+    parsed = urlparse(str(ship_url or "").strip())
+    return bool(parsed.hostname and _tlon_is_hosted_tlon_hostname(parsed.hostname))
+
+
+def _tlon_assert_trusted_memex_url(raw_url: str, label: str) -> str:
+    parsed = urlparse(str(raw_url or "").strip())
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
+        raise RuntimeError(f"{label} must use https")
+    if not parsed.hostname or not _tlon_is_hosted_tlon_hostname(parsed.hostname):
+        raise RuntimeError(f"{label} must target a trusted hosted Tlon domain")
+    if parsed.port not in {None, 443}:
+        raise RuntimeError(f"{label} must not specify a non-standard port")
+    return parsed.geturl()
+
+
+def _tlon_safe_upload_filename(filename: str, content_type: str) -> str:
+    safe_name = Path(str(filename or "").replace("\\", "/")).name.strip()
+    if safe_name:
+        return safe_name
+    extension = {
+        "image/gif": ".gif",
+        "image/heic": ".heic",
+        "image/heif": ".heif",
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }.get(str(content_type or "").strip().lower(), ".jpg")
+    return f"upload{extension}"
+
+
+def _tlon_storage_update_payload(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    update = value.get("storage-update")
+    return update if isinstance(update, dict) else value
+
+
+def _tlon_has_custom_storage_credentials(value: object) -> bool:
+    payload = _tlon_storage_update_payload(value)
+    credentials = payload.get("credentials", payload)
+    if not isinstance(credentials, dict):
+        return False
+    return all(
+        str(credentials.get(key) or "").strip()
+        for key in ("endpoint", "accessKeyId", "secretAccessKey")
+    )
+
+
+def _tlon_storage_service(value: object) -> str:
+    payload = _tlon_storage_update_payload(value)
+    configuration = payload.get("configuration", payload)
+    if not isinstance(configuration, dict):
+        return ""
+    return str(configuration.get("service") or "").strip()
+
+
+def _tlon_genuine_secret(value: object) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        return str(value.get("secret") or "").strip() or None
+    return None
+
+
+def _tlon_is_image_url(media_url: str) -> bool:
+    return bool(
+        re.search(
+            r"\.(?:jpg|jpeg|png|gif|webp|svg|bmp|ico)(?:\?.*)?$",
+            media_url,
+            re.IGNORECASE,
+        )
     )
 
 
@@ -9124,6 +9614,8 @@ def _conversation_target_peer_id_matches(
         route_twitch_target = str(_twitch_normalize_channel(route_peer_id) or "").strip()
         event_twitch_target = str(_twitch_normalize_channel(event_peer_id) or "").strip()
         return bool(route_twitch_target and route_twitch_target == event_twitch_target)
+    if channel == "tlon":
+        return _tlon_targets_match(route_peer_id, event_peer_id)
     if channel == "msteams":
         route_msteams_user = _msteams_user_target_id(route_peer_id)
         event_msteams_user = _msteams_user_target_id(event_peer_id)
@@ -14441,7 +14933,10 @@ class OpsMeshService:
             if not bool(route.get("enabled")):
                 continue
             route_kind = str(route.get("kind") or "").strip().lower()
-            if route_kind != normalized_channel or route_kind not in NATIVE_PROVIDER_ROUTE_KINDS:
+            provider_probe_route_kinds = (
+                NATIVE_PROVIDER_ROUTE_KINDS | PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS
+            )
+            if route_kind != normalized_channel or route_kind not in provider_probe_route_kinds:
                 continue
             route_target = _normalize_conversation_target(route.get("conversation_target"))
             if route_target is None:
@@ -14514,6 +15009,12 @@ class OpsMeshService:
             normalize_optional_account_id(str(account_id or "").strip())
             or DEFAULT_ACCOUNT_ID
         )
+        if normalized_channel == "imessage":
+            return await asyncio.to_thread(
+                self._probe_imessage_config_account,
+                normalized_account_id,
+                timeout_ms,
+            )
         route = await self._provider_route_for_channel_account(
             channel=normalized_channel,
             account_id=normalized_account_id,
@@ -14550,6 +15051,24 @@ class OpsMeshService:
                 "timeoutMs": timeout_ms,
             }
         secret_token_value = str(secret_token or "")
+        if route_kind == "bluebubbles":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_bluebubbles_provider_route,
+                    route,
+                    secret_token_value,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         if route_kind == "telegram":
             try:
                 return await asyncio.to_thread(
@@ -14681,6 +15200,60 @@ class OpsMeshService:
                 return await asyncio.to_thread(
                     self._probe_signal_provider_route,
                     route,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        if route_kind == "irc":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_irc_provider_route,
+                    route,
+                    secret_token_value,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        if route_kind == "twitch":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_twitch_provider_route,
+                    route,
+                    secret_token_value,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        if route_kind == "tlon":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_tlon_provider_route,
+                    route,
+                    secret_token_value,
                     timeout_ms,
                 )
             except Exception as exc:
@@ -15681,6 +16254,261 @@ class OpsMeshService:
             "status": "ok",
         }
 
+    def _probe_irc_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        config = _irc_route_config(str(route.get("target") or ""), secret_token)
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "irc",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "host": config.host,
+            "port": config.port,
+            "tls": config.tls,
+            "nick": config.nick,
+            "timeoutMs": timeout_ms,
+        }
+        try:
+            latency_ms = self._probe_irc_connection(
+                config,
+                timeout_seconds=max(float(timeout_ms) / 1000.0, 0.001),
+            )
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
+            "latencyMs": latency_ms,
+        }
+
+    def _probe_bluebubbles_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        base_url = str(route.get("target") or "").strip().rstrip("/")
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "bluebubbles",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "baseUrl": base_url,
+            "timeoutMs": timeout_ms,
+        }
+        try:
+            http_status = self._probe_bluebubbles_ping(
+                base_url,
+                secret_token,
+                timeout_seconds=max(float(timeout_ms) / 1000.0, 0.001),
+            )
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        payload["httpStatus"] = http_status
+        if http_status < 200 or http_status >= 300:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": f"HTTP {http_status}",
+            }
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
+        }
+
+    def _probe_twitch_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        config = _twitch_route_config(str(route.get("target") or ""), secret_token)
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "twitch",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "username": config.username,
+            "timeoutMs": timeout_ms,
+        }
+        if config.default_channel:
+            payload["channel"] = config.default_channel
+        try:
+            elapsed_ms = self._probe_twitch_connection(
+                config,
+                timeout_seconds=max(float(timeout_ms) / 1000.0, 0.001),
+            )
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
+            "connected": True,
+            "elapsedMs": elapsed_ms,
+        }
+
+    def _probe_tlon_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        config = _tlon_route_config(str(route.get("target") or ""), secret_token)
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "tlon",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "ship": config.ship,
+            "baseUrl": config.base_url,
+            "timeoutMs": timeout_ms,
+        }
+        try:
+            http_status = self._request_tlon_name_status(
+                config,
+                timeout_seconds=max(float(timeout_ms) / 1000.0, 0.001),
+            )
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        payload["httpStatus"] = http_status
+        if http_status < 200 or http_status >= 300:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": f"Name request failed: {http_status}",
+            }
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
+        }
+
+    def _probe_imessage_config_account(
+        self,
+        account_id: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        payload: dict[str, Any] = {
+            "provider": "imessage",
+            "runtime": "native-cli-backed",
+            "accountId": normalized_account_id,
+            "timeoutMs": timeout_ms,
+        }
+        if self.gateway_config_service is None:
+            return {
+                **payload,
+                "ok": False,
+                "status": "unavailable",
+                "reason": "imessage_config_unavailable",
+                "error": "iMessage config is unavailable.",
+            }
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "unavailable",
+                "reason": "imessage_config_unavailable",
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        account_config = resolve_imessage_account_config(snapshot, normalized_account_id)
+        if account_config is None or not imessage_account_configured(account_config):
+            return {
+                **payload,
+                "ok": False,
+                "status": "unavailable",
+                "reason": "imessage_account_not_configured",
+                "error": "iMessage account is not configured.",
+            }
+        cli_path = str(account_config.get("cliPath") or "").strip() or "imsg"
+        db_path = str(account_config.get("dbPath") or "").strip() or None
+        probe_config = _IMessageProbeConfig(cli_path=cli_path, db_path=db_path)
+        payload["cliPath"] = cli_path
+        if db_path is not None:
+            payload["dbPath"] = db_path
+        if not self._imessage_binary_available(cli_path):
+            return {
+                **payload,
+                "ok": False,
+                "status": "unavailable",
+                "error": f"imsg not found ({cli_path})",
+            }
+        rpc_support = self._probe_imessage_rpc_support(cli_path, timeout_ms)
+        if rpc_support.get("supported") is not True:
+            result = {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(rpc_support.get("error") or "imsg rpc unavailable"),
+            }
+            if rpc_support.get("fatal") is True:
+                result["fatal"] = True
+            return result
+        try:
+            self._request_imessage_chats_list(probe_config, timeout_ms=timeout_ms)
+        except Exception as exc:
+            return {
+                **payload,
+                "ok": False,
+                "status": "error",
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        return {
+            **payload,
+            "ok": True,
+            "status": "ok",
+        }
+
     def _probe_matrix_provider_route(
         self,
         route: dict[str, Any],
@@ -15933,6 +16761,8 @@ class OpsMeshService:
             return self._post_irc_provider_event
         if route_kind == "twitch":
             return self._post_twitch_provider_event
+        if route_kind == "tlon":
+            return self._post_tlon_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
         if route_kind == "matrix":
@@ -24249,6 +25079,65 @@ class OpsMeshService:
         except OSError as exc:
             raise RuntimeError(f"IRC provider request failed: {exc}") from exc
 
+    def _probe_irc_connection(
+        self,
+        config: _IrcRouteConfig,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        safe_host = _irc_wire_value(config.host, "host")
+        safe_nick = _irc_wire_value(config.nick, "nick")
+        safe_username = _irc_wire_value(config.username, "username")
+        safe_realname = _irc_wire_value(config.realname, "realname")
+        timeout = max(float(timeout_seconds), 0.001)
+
+        def send_line(connection: socket.socket, line: str) -> None:
+            connection.sendall(f"{line}\r\n".encode())
+
+        def probe_session(connection: socket.socket) -> None:
+            if config.password:
+                send_line(connection, f"PASS {_irc_wire_value(config.password, 'password')}")
+            send_line(connection, f"NICK {safe_nick}")
+            send_line(connection, f"USER {safe_username} 0 * :{safe_realname}")
+
+            buffer = ""
+            login_error_codes = {"432", "433", "436", "464", "465"}
+            while True:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    raise RuntimeError("IRC connection closed before ready")
+                buffer += chunk.decode("utf-8", errors="replace")
+                while "\n" in buffer:
+                    raw_line, buffer = buffer.split("\n", 1)
+                    raw_line = raw_line.rstrip("\r")
+                    if not raw_line:
+                        continue
+                    command = _irc_command_from_line(raw_line)
+                    if command == "PING":
+                        send_line(connection, f"PONG :{_irc_ping_payload(raw_line)}")
+                        continue
+                    if command == "001":
+                        send_line(connection, "QUIT :probe")
+                        return
+                    if command in login_error_codes:
+                        detail = _irc_error_detail(raw_line)
+                        raise RuntimeError(f"IRC login failed ({command}): {detail}")
+
+        started = time.monotonic()
+        try:
+            with socket.create_connection((safe_host, config.port), timeout=timeout) as raw_socket:
+                raw_socket.settimeout(timeout)
+                if config.tls:
+                    context = ssl.create_default_context()
+                    with context.wrap_socket(raw_socket, server_hostname=safe_host) as tls_socket:
+                        probe_session(tls_socket)
+                else:
+                    probe_session(raw_socket)
+        except OSError as exc:
+            raise RuntimeError(f"IRC provider request failed: {exc}") from exc
+        return max(int((time.monotonic() - started) * 1000), 0)
+
     def _send_twitch_chat_message(
         self,
         *,
@@ -24294,6 +25183,511 @@ class OpsMeshService:
             raise RuntimeError(f"Twitch provider request failed: {exc}") from exc
         return message_id
 
+    def _probe_twitch_connection(
+        self,
+        config: _TwitchRouteConfig,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        safe_username = _irc_wire_value(config.username.lower(), "Twitch username")
+        normalized_token = _irc_wire_value(config.token, "Twitch token")
+        pass_token = (
+            normalized_token
+            if normalized_token.lower().startswith("oauth:")
+            else f"oauth:{normalized_token}"
+        )
+        timeout = max(float(timeout_seconds), 0.001)
+
+        def send_line(connection: socket.socket, line: str) -> None:
+            connection.sendall(f"{line}\r\n".encode())
+
+        def probe_session(connection: socket.socket) -> None:
+            send_line(connection, f"PASS {pass_token}")
+            send_line(connection, f"NICK {safe_username}")
+
+            buffer = ""
+            while True:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    raise RuntimeError("Twitch connection closed before ready")
+                buffer += chunk.decode("utf-8", errors="replace")
+                while "\n" in buffer:
+                    raw_line, buffer = buffer.split("\n", 1)
+                    raw_line = raw_line.rstrip("\r")
+                    if not raw_line:
+                        continue
+                    command = _irc_command_from_line(raw_line)
+                    if command == "PING":
+                        send_line(connection, f"PONG :{_irc_ping_payload(raw_line)}")
+                        continue
+                    if command == "001":
+                        send_line(connection, "QUIT :probe")
+                        return
+                    if command == "ERROR":
+                        raise RuntimeError(_irc_error_detail(raw_line))
+                    if command == "NOTICE":
+                        detail = _irc_error_detail(raw_line)
+                        detail_lower = detail.lower()
+                        if "auth" in detail_lower or "login" in detail_lower:
+                            raise RuntimeError(detail)
+
+        started = time.monotonic()
+        try:
+            with socket.create_connection(
+                ("irc.chat.twitch.tv", 6697),
+                timeout=timeout,
+            ) as raw_socket:
+                raw_socket.settimeout(timeout)
+                context = ssl.create_default_context()
+                with context.wrap_socket(
+                    raw_socket,
+                    server_hostname="irc.chat.twitch.tv",
+                ) as tls_socket:
+                    probe_session(tls_socket)
+        except OSError as exc:
+            raise RuntimeError(f"Twitch provider request failed: {exc}") from exc
+        return max(int((time.monotonic() - started) * 1000), 0)
+
+    def _request_tlon_name_status(
+        self,
+        config: _TlonRouteConfig,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        base_url = _tlon_http_base_url(config.base_url)
+        timeout = max(float(timeout_seconds), 0.001)
+        cookie = self._request_tlon_auth_cookie(config, timeout_seconds=timeout)
+
+        name_request = Request(
+            f"{base_url}/~/name",
+            headers={
+                "Accept": "text/plain",
+                "Cookie": cookie,
+            },
+            method="GET",
+        )
+        try:
+            with urlopen(name_request, timeout=timeout) as response:
+                response.read()
+                return int(getattr(response, "status", getattr(response, "code", 0)))
+        except HTTPError as exc:
+            return int(exc.code)
+        except URLError as exc:
+            raise RuntimeError(f"Tlon name request failed: {exc.reason}") from exc
+
+    def _request_tlon_auth_cookie(
+        self,
+        config: _TlonRouteConfig,
+        *,
+        timeout_seconds: float,
+    ) -> str:
+        del self
+        base_url = _tlon_http_base_url(config.base_url)
+        timeout = max(float(timeout_seconds), 0.001)
+        login_request = Request(
+            f"{base_url}/~/login",
+            data=urlencode({"password": config.code}).encode("utf-8"),
+            headers={
+                "Accept": "text/plain",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(login_request, timeout=timeout) as response:
+                login_status = int(getattr(response, "status", getattr(response, "code", 0)))
+                if login_status < 200 or login_status >= 300:
+                    raise RuntimeError(f"Login failed with status {login_status}")
+                response.read()
+                cookie = str(response.headers.get("Set-Cookie") or "").strip()
+        except HTTPError as exc:
+            raise RuntimeError(f"Login failed with status {exc.code}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Tlon login failed: {exc.reason}") from exc
+        if not cookie:
+            raise RuntimeError("No authentication cookie received")
+        return cookie
+
+    def _request_tlon_poke(
+        self,
+        config: _TlonRouteConfig,
+        *,
+        app: str,
+        mark: str,
+        json_payload: dict[str, object],
+        timeout_seconds: float,
+    ) -> int:
+        base_url = _tlon_http_base_url(config.base_url)
+        timeout = max(float(timeout_seconds), 0.001)
+        cookie = self._request_tlon_auth_cookie(config, timeout_seconds=timeout)
+        channel_id = f"{int(time.time())}-{uuid.uuid4()}"
+        poke_id = int(time.time() * 1000)
+        body = [
+            {
+                "id": poke_id,
+                "action": "poke",
+                "ship": config.ship.lstrip("~"),
+                "app": app,
+                "mark": mark,
+                "json": json_payload,
+            }
+        ]
+        poke_request = Request(
+            f"{base_url}/~/channel/{channel_id}",
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Cookie": cookie.split(";", 1)[0],
+            },
+            method="PUT",
+        )
+        try:
+            with urlopen(poke_request, timeout=timeout) as response:
+                status = int(getattr(response, "status", getattr(response, "code", 0)))
+                response.read()
+                if status < 200 or (status >= 300 and status != 204):
+                    raise RuntimeError(f"Poke failed with status {status}")
+        except HTTPError as exc:
+            error_text = exc.read().decode("utf-8", "replace").strip()
+            suffix = f" - {error_text}" if error_text else ""
+            raise RuntimeError(f"Poke failed: {exc.code}{suffix}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Tlon poke failed: {exc.reason}") from exc
+        return poke_id
+
+    def _upload_tlon_image_from_url(
+        self,
+        config: _TlonRouteConfig,
+        image_url: str,
+        *,
+        timeout_seconds: float,
+    ) -> str:
+        parsed = urlparse(str(image_url or "").strip())
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            return image_url
+        timeout = max(float(timeout_seconds), 0.001)
+        try:
+            request = Request(image_url, method="GET")
+            with urlopen(request, timeout=timeout) as response:
+                status = int(getattr(response, "status", getattr(response, "code", 0)))
+                if status < 200 or status >= 300:
+                    response.read()
+                    return image_url
+                media_bytes = response.read()
+                content_type = str(response.headers.get("Content-Type") or "image/png").strip()
+        except (HTTPError, URLError, OSError, ValueError):
+            return image_url
+        filename = Path(unquote(parsed.path)).name or f"upload-{int(time.time() * 1000)}.png"
+        try:
+            return self._upload_tlon_media_bytes(
+                config,
+                media_bytes=media_bytes,
+                filename=filename,
+                content_type=content_type or "image/png",
+                timeout_seconds=timeout,
+            )
+        except Exception:
+            return image_url
+
+    def _upload_tlon_media_bytes(
+        self,
+        config: _TlonRouteConfig,
+        *,
+        media_bytes: bytes,
+        filename: str,
+        content_type: str,
+        timeout_seconds: float,
+    ) -> str:
+        timeout = max(float(timeout_seconds), 0.001)
+        cookie = self._request_tlon_auth_cookie(config, timeout_seconds=timeout)
+        storage_config = self._request_tlon_scry_json(
+            config,
+            cookie=cookie,
+            path="/storage/configuration.json",
+            timeout_seconds=timeout,
+        )
+        storage_credentials = self._request_tlon_scry_json(
+            config,
+            cookie=cookie,
+            path="/storage/credentials.json",
+            timeout_seconds=timeout,
+        )
+        ship_name = config.ship.lstrip("~")
+        safe_filename = _tlon_safe_upload_filename(filename, content_type)
+        file_key = f"{ship_name}/{int(time.time() * 1000)}-{uuid.uuid4()}-{safe_filename}"
+        use_memex = _tlon_is_hosted_ship_url(config.base_url) and (
+            _tlon_storage_service(storage_config) == "presigned-url"
+            or not _tlon_has_custom_storage_credentials(storage_credentials)
+        )
+        if use_memex:
+            secret_payload = self._request_tlon_scry_json(
+                config,
+                cookie=cookie,
+                path="/genuine/secret.json",
+                timeout_seconds=timeout,
+            )
+            genuine_secret = _tlon_genuine_secret(secret_payload)
+            if genuine_secret is None:
+                raise RuntimeError("Missing genuine secret")
+            memex_response = self._request_tlon_json_url(
+                f"{TLON_MEMEX_BASE_URL}/v1/{ship_name}/upload",
+                method="PUT",
+                payload={
+                    "token": genuine_secret,
+                    "contentLength": len(media_bytes),
+                    "contentType": content_type,
+                    "fileName": file_key,
+                },
+                timeout_seconds=timeout,
+            )
+            if not isinstance(memex_response, dict):
+                raise RuntimeError("Invalid response from Memex")
+            upload_url = str(memex_response.get("url") or "").strip()
+            hosted_url = str(memex_response.get("filePath") or "").strip()
+            if not upload_url or not hosted_url:
+                raise RuntimeError("Invalid response from Memex")
+            trusted_upload_url = _tlon_assert_trusted_memex_url(
+                upload_url,
+                "Memex upload URL",
+            )
+            trusted_hosted_url = _tlon_assert_trusted_memex_url(
+                hosted_url,
+                "Memex hosted URL",
+            )
+            self._put_tlon_media_bytes(
+                trusted_upload_url,
+                media_bytes=media_bytes,
+                content_type=content_type,
+                timeout_seconds=timeout,
+            )
+            return trusted_hosted_url
+        if not _tlon_has_custom_storage_credentials(storage_credentials):
+            raise RuntimeError("No storage credentials configured")
+        raise RuntimeError("Tlon custom S3 upload storage runtime is unavailable.")
+
+    def _request_tlon_scry_json(
+        self,
+        config: _TlonRouteConfig,
+        *,
+        cookie: str,
+        path: str,
+        timeout_seconds: float,
+    ) -> object:
+        del self
+        base_url = _tlon_http_base_url(config.base_url)
+        timeout = max(float(timeout_seconds), 0.001)
+        scry_request = Request(
+            f"{base_url}/~/scry{path}",
+            headers={"Cookie": cookie},
+            method="GET",
+        )
+        try:
+            with urlopen(scry_request, timeout=timeout) as response:
+                status = int(getattr(response, "status", getattr(response, "code", 0)))
+                body = response.read()
+        except HTTPError as exc:
+            raise RuntimeError(f"Scry failed: {exc.code} for path {path}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Tlon scry failed: {exc.reason}") from exc
+        if status < 200 or status >= 300:
+            raise RuntimeError(f"Scry failed: {status} for path {path}")
+        return json.loads(body.decode("utf-8"))
+
+    def _request_tlon_json_url(
+        self,
+        target: str,
+        *,
+        method: str,
+        payload: dict[str, object],
+        timeout_seconds: float,
+    ) -> object:
+        del self
+        timeout = max(float(timeout_seconds), 0.001)
+        request = Request(
+            target,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method=method,
+        )
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                status = int(getattr(response, "status", getattr(response, "code", 0)))
+                body = response.read()
+        except HTTPError as exc:
+            raise RuntimeError(f"Tlon JSON request failed: {exc.code}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Tlon JSON request failed: {exc.reason}") from exc
+        if status < 200 or status >= 300:
+            raise RuntimeError(f"Tlon JSON request failed: {status}")
+        return json.loads(body.decode("utf-8"))
+
+    def _put_tlon_media_bytes(
+        self,
+        target: str,
+        *,
+        media_bytes: bytes,
+        content_type: str,
+        timeout_seconds: float,
+    ) -> None:
+        del self
+        timeout = max(float(timeout_seconds), 0.001)
+        upload_request = Request(
+            target,
+            data=media_bytes,
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "Content-Type": content_type,
+            },
+            method="PUT",
+        )
+        try:
+            with urlopen(upload_request, timeout=timeout) as response:
+                status = int(getattr(response, "status", getattr(response, "code", 0)))
+                response.read()
+        except HTTPError as exc:
+            raise RuntimeError(f"Upload failed: {exc.code}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Upload failed: {exc.reason}") from exc
+        if status < 200 or status >= 300:
+            raise RuntimeError(f"Upload failed: {status}")
+
+    def _imessage_binary_available(self, cli_path: str) -> bool:
+        del self
+        normalized = str(cli_path or "").strip()
+        if not normalized:
+            return False
+        candidate = Path(normalized).expanduser()
+        if candidate.is_absolute() or any(separator in normalized for separator in ("\\", "/")):
+            return candidate.exists()
+        return shutil.which(normalized) is not None
+
+    def _probe_imessage_rpc_support(
+        self,
+        cli_path: str,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        del self
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        try:
+            completed = subprocess.run(
+                [cli_path, "rpc", "--help"],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "supported": False,
+                "error": "imsg rpc --help timed out",
+            }
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {
+                "supported": False,
+                "error": str(exc).strip() or type(exc).__name__,
+            }
+        combined = f"{completed.stdout or ''}\n{completed.stderr or ''}".strip()
+        normalized = combined.lower()
+        if "unknown command" in normalized and "rpc" in normalized:
+            return {
+                "supported": False,
+                "fatal": True,
+                "error": 'imsg CLI does not support the "rpc" subcommand (update imsg)',
+            }
+        if completed.returncode == 0:
+            return {"supported": True}
+        return {
+            "supported": False,
+            "error": combined
+            or f"imsg rpc --help failed (code {completed.returncode})",
+        }
+
+    def _request_imessage_chats_list(
+        self,
+        config: _IMessageProbeConfig,
+        *,
+        timeout_ms: int,
+    ) -> None:
+        del self
+        args = [config.cli_path, "rpc"]
+        if config.db_path:
+            args.extend(["--db", config.db_path])
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        process = subprocess.Popen(  # noqa: S603
+            args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        line_box: list[str] = []
+        error_box: list[BaseException] = []
+
+        def read_line() -> None:
+            try:
+                assert process.stdout is not None
+                line_box.append(process.stdout.readline())
+            except BaseException as exc:  # pragma: no cover - defensive thread boundary
+                error_box.append(exc)
+
+        try:
+            assert process.stdin is not None
+            process.stdin.write(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "chats.list",
+                        "params": {"limit": 1},
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+            process.stdin.flush()
+            reader = threading.Thread(target=read_line, daemon=True)
+            reader.start()
+            reader.join(timeout_seconds)
+            if reader.is_alive():
+                raise RuntimeError("imsg rpc timeout (chats.list)")
+            if error_box:
+                raise RuntimeError(str(error_box[0]))
+            raw_line = (line_box[0] if line_box else "").strip()
+            if not raw_line:
+                raise RuntimeError("imsg rpc closed")
+            try:
+                response = json.loads(raw_line)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"imsg rpc returned invalid JSON: {raw_line}") from exc
+            if not isinstance(response, dict):
+                raise RuntimeError("imsg rpc returned a non-object response")
+            error = response.get("error")
+            if isinstance(error, dict):
+                message = str(error.get("message") or "imsg rpc error")
+                code = error.get("code")
+                data = error.get("data")
+                suffixes: list[str] = []
+                if isinstance(code, int) and not isinstance(code, bool):
+                    suffixes.append(f"code={code}")
+                if data not in (None, "", [], {}):
+                    suffixes.append(data if isinstance(data, str) else json.dumps(data))
+                raise RuntimeError(
+                    f"{message}: {' '.join(suffixes)}" if suffixes else message
+                )
+        finally:
+            try:
+                if process.stdin is not None:
+                    process.stdin.close()
+            except OSError:
+                pass
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+
     def _request_json_provider_url(
         self,
         target: str,
@@ -24335,6 +25729,26 @@ class OpsMeshService:
             raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
+    def _probe_bluebubbles_ping(
+        self,
+        target: str,
+        secret_token: str,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        del self
+        request = Request(
+            _bluebubbles_api_endpoint(target, "api/v1/ping", password=secret_token),
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                return int(response.status)
+        except HTTPError as exc:
+            return int(exc.code)
+        except URLError as exc:
+            raise RuntimeError(f"BlueBubbles provider request failed: {exc.reason}") from exc
 
     def _request_bytes_provider_url(
         self,
@@ -29464,6 +30878,141 @@ class OpsMeshService:
         if media_urls:
             native_result["mediaUrls"] = media_urls
         return native_result
+
+    def _post_tlon_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Tlon native provider route does not support polls.")
+        config = _tlon_route_config(str(route.get("target") or ""), secret_token)
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        target = _tlon_parse_target(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if target is None:
+            raise RuntimeError(f"Invalid Tlon target. Use {TLON_TARGET_HINT}.")
+        text = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if not text and not media_urls:
+            raise RuntimeError("Tlon send requires text or media.")
+        sent_at = int(time.time() * 1000)
+        story_media_urls = [
+            self._upload_tlon_image_from_url(
+                config,
+                media_url,
+                timeout_seconds=15.0,
+            )
+            if _tlon_is_image_url(media_url)
+            else media_url
+            for media_url in media_urls
+        ]
+        story = _tlon_media_story(text=text, media_urls=story_media_urls)
+        if target.kind == "dm":
+            to_ship = str(target.ship or "")
+            message_id = f"{config.ship}/{_tlon_ud(sent_at)}"
+            action: dict[str, object] = {
+                "ship": to_ship,
+                "diff": {
+                    "id": message_id,
+                    "delta": {
+                        "add": {
+                            "memo": {
+                                "content": story,
+                                "author": config.ship,
+                                "sent": sent_at,
+                            },
+                            "kind": None,
+                            "time": None,
+                        }
+                    },
+                },
+            }
+            self._request_tlon_poke(
+                config,
+                app="chat",
+                mark="chat-dm-action",
+                json_payload=action,
+                timeout_seconds=15.0,
+            )
+            native_result: dict[str, object] = {
+                "runtime": "native-provider-backed",
+                "messageId": message_id,
+                "channel": "tlon",
+                "chatId": to_ship,
+                "channelId": to_ship,
+            }
+            if story_media_urls:
+                native_result["mediaUrls"] = story_media_urls
+            return native_result
+
+        reply_to_id = str(event.get("replyToId") or event.get("threadId") or "").strip()
+        formatted_reply_id = _tlon_ud(int(reply_to_id)) if reply_to_id.isdigit() else reply_to_id
+        host_ship = str(target.host_ship or "")
+        channel_name = str(target.channel_name or "")
+        nest = str(target.nest or f"chat/{host_ship}/{channel_name}")
+        post_action: dict[str, object]
+        if formatted_reply_id:
+            post_action = {
+                "post": {
+                    "reply": {
+                        "id": formatted_reply_id,
+                        "action": {
+                            "add": {
+                                "content": story,
+                                "author": config.ship,
+                                "sent": sent_at,
+                            }
+                        },
+                    }
+                }
+            }
+        else:
+            post_action = {
+                "post": {
+                    "add": {
+                        "content": story,
+                        "author": config.ship,
+                        "sent": sent_at,
+                        "kind": "/chat",
+                        "blob": None,
+                        "meta": None,
+                    }
+                }
+            }
+        action = {"channel": {"nest": nest, "action": post_action}}
+        self._request_tlon_poke(
+            config,
+            app="channels",
+            mark="channel-action-1",
+            json_payload=action,
+            timeout_seconds=15.0,
+        )
+        message_id = f"{config.ship}/{sent_at}"
+        group_native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "channel": "tlon",
+            "chatId": nest,
+            "channelId": nest,
+            "roomId": nest,
+        }
+        if formatted_reply_id:
+            group_native_result["replyToId"] = formatted_reply_id
+        if story_media_urls:
+            group_native_result["mediaUrls"] = story_media_urls
+        return group_native_result
 
     def _post_line_provider_event(
         self,
