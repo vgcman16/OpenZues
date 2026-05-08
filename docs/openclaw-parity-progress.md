@@ -19895,6 +19895,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\runtime_updates.py src\openzues\app.py
   src\openzues\cli.py`, and focused `git diff --check`. Source/test
   checkpointed in `822eb6a9`.
+- Startup auto-update now persists OpenClaw-shaped `update-check.json` state,
+  defers stable auto-apply until the first-seen delay plus deterministic jitter
+  is due, records attempt/success timestamps, and suppresses repeat beta
+  attempts for the same version inside `betaCheckIntervalHours`. This closes
+  `OZ-PKG-001CD`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.99999999999999999999999%.
+- Verified startup auto-update throttling with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_stable_until_rollout_window tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent runtime proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_dispatches_beta_package_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_stable_until_rollout_window tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step -q`
+  (`5 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`55 passed`),
+  adjacent CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_runtime_update_service or update_json_passes_effective_git_channel_to_runtime or update_dry_run_json_uses_stored_update_channel"`
+  (`3 passed, 558 deselected`), `ruff check
+  src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+  `mypy src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `a1bb5d30`.
 
 ## References
 

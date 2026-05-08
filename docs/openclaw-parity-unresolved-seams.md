@@ -10367,3 +10367,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.99999999999999999999998%. Continue stable rollout state/delay and
   recent-attempt throttling next.
+- Current queue-head adjustment: startup auto-update now persists
+  OpenClaw-shaped update-check state, defers stable auto-apply until the
+  first-seen delay plus deterministic jitter is due, records attempt/success
+  timestamps, and suppresses repeat beta attempts inside the configured
+  interval. Source/test checkpointed in `a1bb5d30`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999%. Continue startup update availability
+  hint/cache and check-interval behavior next.

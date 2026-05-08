@@ -41,6 +41,10 @@ tag selection, beta stable-fallback, detached checkout, and `no-release-tag`.
 `src/infra/update-startup.ts`, `src/infra/update-startup.test.ts`, and
 `src/infra/update-check.ts` is checkpointed in `822eb6a9`; it covers
 config-enabled package auto-update dispatch and `OPENCLAW_NO_AUTO_UPDATE`.
+`OZ-PKG-001CD` startup auto-update throttling from
+`src/infra/update-startup.ts` and `src/infra/update-startup.test.ts` is
+checkpointed in `a1bb5d30`; it covers stable first-seen delay/jitter and beta
+recent-attempt suppression.
 
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is

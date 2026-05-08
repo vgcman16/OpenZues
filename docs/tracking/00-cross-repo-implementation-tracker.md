@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -73,8 +73,9 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 Latest queue addendum: `OZ-PKG-001CA` stable/beta release-channel git updates
 are checkpointed in `1f45d307`, and `OZ-PKG-001CB` preflight edge-failure
 proof is checkpointed in `7b15fafc`. `OZ-PKG-001CC` startup auto-update
-dispatch is checkpointed in `822eb6a9`; continue stable rollout state/delay and
-recent-attempt throttling.
+dispatch is checkpointed in `822eb6a9`, and `OZ-PKG-001CD` startup throttling
+state is checkpointed in `a1bb5d30`; continue startup update availability
+hint/cache and check-interval behavior.
 
 ## Active Slice Detail
 
@@ -11024,6 +11025,35 @@ recent-attempt throttling.
     src\openzues\cli.py tests\test_runtime_updates.py`, `mypy
     src\openzues\services\runtime_updates.py src\openzues\app.py
     src\openzues\cli.py`, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001CD` startup auto-update throttling state
+  - Source: `openclaw-main/src/infra/update-startup.ts`,
+    `openclaw-main/src/infra/update-startup.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `tests/test_runtime_updates.py`
+  - Contract: startup auto-update persists `update-check.json` style state,
+    records first-seen version/tag/time and install id, defers stable updates
+    until delay plus deterministic jitter is due, records attempt/success
+    timestamps, and skips repeat beta attempts for the same version inside
+    `betaCheckIntervalHours`.
+  - Evidence required: focused stable-delay and beta-recent-attempt tests,
+    adjacent runtime proof, full runtime update suite, ruff, mypy
+  - Status: checkpointed in `a1bb5d30`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_stable_until_rollout_window tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt -q`
+    (`2 failed` before implementation, then `2 passed`), adjacent runtime
+    proof
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_dispatches_beta_package_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_stable_until_rollout_window tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_defers_recent_beta_attempt tests\test_runtime_updates.py::test_runtime_update_run_package_update_executes_global_install_step -q`
+    (`5 passed`), full runtime update suite
+    `python -m pytest tests\test_runtime_updates.py -q` (`55 passed`),
+    adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_runtime_update_service or update_json_passes_effective_git_channel_to_runtime or update_dry_run_json_uses_stored_update_channel"`
+    (`3 passed, 558 deselected`), `ruff check
+    src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+    `mypy src\openzues\services\runtime_updates.py`, and focused
+    `git diff --check`.
 
 - [x] `OZ-PROV-001M` Slack agent-request thread metadata
   - Source: `openclaw-main/src/agents/subagent-announce-delivery.ts`,
