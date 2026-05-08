@@ -60836,11 +60836,118 @@ function resolveBundledExplicitWebSearchProvidersFromPublicArtifacts(_params = {
   );
 }
 
-function listImportedBundledPluginFacadeIds() {
-  return [];
+const loadedFacadeModules = new Map();
+const loadedFacadePluginIds = new Set();
+
+function createLazyFacadeValueLoader(load) {
+  let loaded = false;
+  let value;
+  return () => {
+    if (!loaded) {
+      value = load();
+      loaded = true;
+    }
+    return value;
+  };
 }
 
-function resetFacadeRuntimeStateForTest() {}
+function createLazyFacadeProxyValue(params = {}) {
+  const resolve = createLazyFacadeValueLoader(params.load || (() => params.target || {}));
+  return new Proxy(params.target || {}, {
+    defineProperty(_target, property, descriptor) {
+      return Reflect.defineProperty(resolve(), property, descriptor);
+    },
+    deleteProperty(_target, property) {
+      return Reflect.deleteProperty(resolve(), property);
+    },
+    get(_target, property, receiver) {
+      return Reflect.get(resolve(), property, receiver);
+    },
+    getOwnPropertyDescriptor(_target, property) {
+      return Reflect.getOwnPropertyDescriptor(resolve(), property);
+    },
+    getPrototypeOf() {
+      return Reflect.getPrototypeOf(resolve());
+    },
+    has(_target, property) {
+      return Reflect.has(resolve(), property);
+    },
+    isExtensible() {
+      return Reflect.isExtensible(resolve());
+    },
+    ownKeys() {
+      return Reflect.ownKeys(resolve());
+    },
+    preventExtensions() {
+      return Reflect.preventExtensions(resolve());
+    },
+    set(_target, property, value, receiver) {
+      return Reflect.set(resolve(), property, value, receiver);
+    },
+    setPrototypeOf(_target, prototype) {
+      return Reflect.setPrototypeOf(resolve(), prototype);
+    },
+  });
+}
+
+function createLazyFacadeObjectValue(load) {
+  return createLazyFacadeProxyValue({ load, target: {} });
+}
+
+function createLazyFacadeArrayValue(load) {
+  return createLazyFacadeProxyValue({ load, target: [] });
+}
+
+function loadFacadeModuleAtLocationSync(params = {}) {
+  const location = params.location || {};
+  const modulePath = location.modulePath;
+  if (!modulePath) {
+    throw new Error("Unable to load facade module without a modulePath");
+  }
+  const cached = loadedFacadeModules.get(modulePath);
+  if (cached) {
+    return cached;
+  }
+  const sentinel = {};
+  loadedFacadeModules.set(modulePath, sentinel);
+  try {
+    const loaded =
+      typeof params.loadModule === "function" ? params.loadModule(modulePath) : require(modulePath);
+    Object.assign(sentinel, loaded || {});
+    const trackedPluginId =
+      typeof params.trackedPluginId === "function"
+        ? params.trackedPluginId()
+        : params.trackedPluginId;
+    if (trackedPluginId) {
+      loadedFacadePluginIds.add(String(trackedPluginId));
+    }
+    return sentinel;
+  } catch (error) {
+    loadedFacadeModules.delete(modulePath);
+    throw error;
+  }
+}
+
+function listImportedBundledPluginFacadeIds() {
+  return Array.from(loadedFacadePluginIds).sort((left, right) => left.localeCompare(right));
+}
+
+function resetFacadeLoaderStateForTest() {
+  loadedFacadeModules.clear();
+  loadedFacadePluginIds.clear();
+}
+
+function resetFacadeRuntimeStateForTest() {
+  resetFacadeLoaderStateForTest();
+}
+
+const facadeLoaderRuntime = {
+  createLazyFacadeArrayValue,
+  createLazyFacadeObjectValue,
+  listImportedBundledPluginFacadeIds,
+  loadFacadeModuleAtLocationSync,
+  resetFacadeLoaderStateForTest,
+};
 
 function buildPluginApi(params = {}) {
   const handlers = params.handlers || {};
@@ -85626,6 +85733,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-test-runtime"
   ) {
     return pluginTestRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/facade-loader" ||
+    request === "@openclaw/plugin-sdk/facade-loader"
+  ) {
+    return facadeLoaderRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-http-test-mocks" ||

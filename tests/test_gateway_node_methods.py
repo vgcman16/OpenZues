@@ -66406,6 +66406,154 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_facade_loader_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    facade_root = tmp_path / "facade-root"
+    facade_root.mkdir()
+    facade_file = facade_root / "facade.cjs"
+    facade_file.write_text("module.exports = { answer: 7 };\n", encoding="utf-8")
+    runtime_entry = tmp_path / "runtime-plugin-facade-loader.cjs"
+    runtime_entry.write_text(
+        f"""
+const loader = require("openclaw/plugin-sdk/facade-loader");
+const scopedLoader = require("@openclaw/plugin-sdk/facade-loader");
+
+const location = {{
+  modulePath: {json.dumps(str(facade_file))},
+  boundaryRoot: {json.dumps(str(facade_root))}
+}};
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.facade_loader",
+      description: "Use OpenClaw facade-loader SDK shim",
+      parameters: {{ type: "object" }},
+      execute() {{
+        if (typeof loader.resetFacadeLoaderStateForTest === "function") {{
+          loader.resetFacadeLoaderStateForTest();
+        }}
+        let objectLoadCount = 0;
+        const lazyObject = loader.createLazyFacadeObjectValue(() => {{
+          objectLoadCount += 1;
+          return {{
+            value: 42,
+            call(value) {{
+              return `ok:${{value}}`;
+            }}
+          }};
+        }});
+        let arrayLoadCount = 0;
+        const lazyArray = loader.createLazyFacadeArrayValue(() => {{
+          arrayLoadCount += 1;
+          return ["first", "second"];
+        }});
+        const firstLoaded = loader.loadFacadeModuleAtLocationSync({{
+          location,
+          trackedPluginId: () => "demo-facade",
+          loadModule(modulePath) {{
+            return {{ answer: modulePath.endsWith("facade.cjs") ? 7 : 0 }};
+          }}
+        }});
+        const secondLoaded = loader.loadFacadeModuleAtLocationSync({{
+          location,
+          trackedPluginId: "demo-facade-ignored",
+          loadModule() {{
+            return {{ answer: 99 }};
+          }}
+        }});
+        return {{
+          keys: Object.keys(loader).sort(),
+          scopedType: typeof scopedLoader.createLazyFacadeObjectValue,
+          objectValue: lazyObject.value,
+          objectCall: lazyObject.call("value"),
+          objectKeys: Object.keys(lazyObject),
+          objectLoadCount,
+          arrayLength: lazyArray.length,
+          arraySecond: lazyArray[1],
+          arrayLoadCount,
+          loadedSame: firstLoaded === secondLoaded,
+          loadedAnswer: secondLoaded.answer,
+          facadeIds: loader.listImportedBundledPluginFacadeIds()
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-facade-loader-plugin",
+                    "name": "Runtime Facade Loader Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-facade-loader-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.facade_loader"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.facade_loader"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createLazyFacadeArrayValue",
+            "createLazyFacadeObjectValue",
+            "listImportedBundledPluginFacadeIds",
+            "loadFacadeModuleAtLocationSync",
+            "resetFacadeLoaderStateForTest",
+        ],
+        "scopedType": "function",
+        "objectValue": 42,
+        "objectCall": "ok:value",
+        "objectKeys": ["value", "call"],
+        "objectLoadCount": 1,
+        "arrayLength": 2,
+        "arraySecond": "second",
+        "arrayLoadCount": 1,
+        "loadedSame": True,
+        "loadedAnswer": 7,
+        "facadeIds": ["demo-facade"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_web_media_helpers(
     tmp_path,
 ) -> None:
