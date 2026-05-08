@@ -20,9 +20,9 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999999999999999985% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Chat/session contract subfamily | ~99.85% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Chat/session contract subfamily | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -14095,6 +14095,31 @@ breadth.
     (`1 passed`), adjacent
     `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
     (`51 passed, 1175 deselected`), `ruff check
+    src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001AU` Chat history inbound sender label projection
+  - Source: `openclaw-main/src/auto-reply/reply/strip-inbound-meta.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.ts`,
+    `openclaw-main/src/gateway/chat-sanitize.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `chat.history` projects `senderLabel` from inbound sender or
+    conversation metadata before stripping AI-facing metadata blocks from
+    visible transcript content.
+  - Evidence required: focused chat sender-label test, adjacent
+    transcript/read-model proof, ruff, mypy
+  - Status: checkpointed in `ee8a3679`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_projects_inbound_sender_label -q`
+    (`1 failed` before implementation, then `1 passed`),
+    inbound-prefix/structured chat regression proof (`3 passed`), sessions
+    envelope regression proof (`2 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+    (`52 passed, 1175 deselected`), `ruff check
     src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
     `mypy src\openzues\services\gateway_node_methods.py`, and focused
     `git diff --check`.

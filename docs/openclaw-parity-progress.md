@@ -21420,6 +21420,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `fc562e74`.
+- `chat.history` now projects OpenClaw-style `senderLabel` from inbound sender
+  metadata before stripping AI-facing metadata blocks from visible transcript
+  text. This closes the raw chat-history sender label side of upstream
+  `extractInboundSenderLabel`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999999999%.
+- Verified the `chat.history` inbound sender label seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_projects_inbound_sender_label -q`
+  (content stripped correctly but `senderLabel` was absent before
+  implementation, then `1 passed`), inbound-prefix/structured chat regression
+  proof (`3 passed` after updating the prefix expectation to include the
+  newly projected label), sessions envelope regression proof (`2 passed`),
+  adjacent transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`52 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `ee8a3679`.
 
 ## References
 
