@@ -683,6 +683,26 @@ def _should_require_packaged_dist_inventory(version: str | None) -> bool:
     return parsed >= _FIRST_PACKAGED_DIST_INVENTORY_VERSION
 
 
+def _read_package_dist_inventory_if_present(
+    package_root: Path,
+) -> tuple[list[str] | None, str | None]:
+    inventory_path = package_root / _PACKAGE_DIST_INVENTORY_RELATIVE_PATH
+    if not _path_exists(inventory_path):
+        return None, None
+    invalid_message = (
+        "invalid package dist inventory "
+        f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
+    )
+    try:
+        parsed = json.loads(inventory_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, invalid_message
+    if not isinstance(parsed, list) or any(not isinstance(entry, str) for entry in parsed):
+        return None, invalid_message
+    inventory_files = sorted({entry.replace("\\", "/") for entry in parsed})
+    return inventory_files, None
+
+
 def _collect_package_update_verify_errors(
     package_root: Path,
     *,
@@ -701,6 +721,11 @@ def _collect_package_update_verify_errors(
     if expected_version is not None and installed_version != expected_version:
         found = installed_version or "<missing>"
         errors.append(f"expected installed version {expected_version}, found {found}")
+    inventory_files, inventory_error = _read_package_dist_inventory_if_present(package_root)
+    del inventory_files
+    if inventory_error is not None:
+        errors.append(inventory_error)
+        return errors
     if (
         _should_require_packaged_dist_inventory(installed_version)
         or _should_require_packaged_dist_inventory(expected_version)
