@@ -332,6 +332,26 @@ _CHAT_HISTORY_INLINE_DIRECTIVE_RE = re.compile(
     r"\[\[\s*(?:reply_to(?:_current|\s*:\s*[^\]]+)?|audio_as_voice)\s*\]\]",
     re.IGNORECASE,
 )
+_CHAT_HISTORY_ENVELOPE_RE = re.compile(r"^\[([^\]]+)\]\s*")
+_CHAT_HISTORY_MESSAGE_ID_LINE_RE = re.compile(
+    r"^\s*\[message_id:\s*[^\]]+\]\s*$",
+    re.IGNORECASE,
+)
+_CHAT_HISTORY_ENVELOPE_CHANNELS = {
+    "WebChat",
+    "WhatsApp",
+    "Telegram",
+    "Signal",
+    "Slack",
+    "Discord",
+    "Google Chat",
+    "iMessage",
+    "Teams",
+    "Matrix",
+    "Zalo",
+    "Zalo Personal",
+    "BlueBubbles",
+}
 _GATEWAY_SEND_AUDIO_DIRECTIVE_RE = re.compile(
     r"\[\[\s*audio_as_voice\s*\]\]",
     re.IGNORECASE,
@@ -16787,7 +16807,10 @@ def _project_control_chat_messages(
         role = str(row.get("role") or "").strip()
         if role not in {"user", "assistant"}:
             continue
-        text = _chat_history_display_text(str(row.get("content") or ""))
+        text = _chat_history_display_text(
+            str(row.get("content") or ""),
+            strip_user_envelope=role == "user",
+        )
         if role == "user" and _chat_history_should_hide_user_text(text):
             continue
         if role == "assistant" and text.strip().upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS:
@@ -17390,15 +17413,50 @@ def _json_utf8_byte_count(value: object) -> int:
     return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
 
 
-def _chat_history_display_text(text: str) -> str:
+def _chat_history_display_text(text: str, *, strip_user_envelope: bool = False) -> str:
+    stripped = _strip_chat_history_internal_runtime_context(text)
+    if strip_user_envelope:
+        stripped = _strip_chat_history_message_id_hints(
+            _strip_chat_history_user_envelope(stripped)
+        )
     return _CHAT_HISTORY_INLINE_DIRECTIVE_RE.sub(
         "",
         _sanitize_assistant_visible_history_text(
             _strip_trailing_untrusted_context_metadata(
-                _strip_chat_history_internal_runtime_context(text)
+                stripped
             )
         ),
     )
+
+
+def _chat_history_looks_like_envelope_header(header: str) -> bool:
+    if re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z\b", header):
+        return True
+    if re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}\b", header):
+        return True
+    return any(
+        header.startswith(f"{channel} ") for channel in _CHAT_HISTORY_ENVELOPE_CHANNELS
+    )
+
+
+def _strip_chat_history_user_envelope(text: str) -> str:
+    match = _CHAT_HISTORY_ENVELOPE_RE.match(text)
+    if match is None:
+        return text
+    header = match.group(1) or ""
+    if not _chat_history_looks_like_envelope_header(header):
+        return text
+    return text[match.end() :]
+
+
+def _strip_chat_history_message_id_hints(text: str) -> str:
+    if "[message_id:" not in text.lower():
+        return text
+    lines = text.splitlines()
+    filtered = [
+        line for line in lines if _CHAT_HISTORY_MESSAGE_ID_LINE_RE.match(line) is None
+    ]
+    return text if len(filtered) == len(lines) else "\n".join(filtered)
 
 
 def _chat_history_delimited_token_index(text: str, token: str, start: int) -> int:
