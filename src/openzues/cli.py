@@ -10211,6 +10211,20 @@ def _openclaw_update_attach_requested_channel(
     return result
 
 
+def _openclaw_update_read_stored_channel_for_preview() -> str | None:
+    async def read_channel(services: object) -> str | None:
+        config_service = getattr(services, "gateway_config", None)
+        build_snapshot = getattr(config_service, "build_snapshot", None)
+        if not callable(build_snapshot):
+            return None
+        return _openclaw_update_config_channel(build_snapshot())
+
+    try:
+        return _run(_run_with_services(read_channel))
+    except Exception:
+        return None
+
+
 def _parse_openclaw_update_timeout_seconds(value: str | None) -> float | None:
     if value is None:
         return None
@@ -10335,6 +10349,7 @@ def _openclaw_update_channel_to_package_tag(channel: str) -> str:
 def _openclaw_update_dry_run_preview(
     *,
     requested_channel: str | None,
+    stored_channel: str | None,
     tag_override: str | None,
     restart: bool,
 ) -> dict[str, object]:
@@ -10347,7 +10362,7 @@ def _openclaw_update_dry_run_preview(
     update_install_kind = (
         "git" if switch_to_git else "package" if switch_to_package else install_kind
     )
-    default_channel = "dev" if update_install_kind == "git" else "stable"
+    default_channel = stored_channel or ("dev" if update_install_kind == "git" else "stable")
     effective_channel = requested_channel or default_channel
     explicit_tag = _openclaw_update_normalize_package_target(tag_override)
     target_tag = explicit_tag or _openclaw_update_channel_to_package_tag(effective_channel)
@@ -10365,7 +10380,7 @@ def _openclaw_update_dry_run_preview(
         )
 
     actions: list[str] = []
-    if requested_channel is not None:
+    if requested_channel is not None and requested_channel != stored_channel:
         actions.append(f"Persist update.channel={requested_channel} in config")
     if switch_to_git:
         actions.append("Switch install mode from package to git checkout (dev channel)")
@@ -10403,7 +10418,7 @@ def _openclaw_update_dry_run_preview(
         "switchToPackage": switch_to_package,
         "restart": restart,
         "requestedChannel": requested_channel,
-        "storedChannel": None,
+        "storedChannel": stored_channel,
         "effectiveChannel": effective_channel,
         "tag": package_install_spec or target_tag,
         "currentVersion": current_version,
@@ -98187,8 +98202,10 @@ def update_root(
         raise typer.Exit(code=1)
     timeout_seconds = _parse_openclaw_update_timeout_seconds(timeout)
     if dry_run:
+        stored_channel = _openclaw_update_read_stored_channel_for_preview()
         payload = _openclaw_update_dry_run_preview(
             requested_channel=requested_channel,
+            stored_channel=stored_channel,
             tag_override=tag,
             restart=restart,
         )
