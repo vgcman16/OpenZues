@@ -214,12 +214,63 @@ async def test_runtime_update_run_update_executes_native_git_install_build_steps
         "build",
     ]
     assert command_calls == [
-        (["git", "status", "--porcelain"], tmp_path, 1000),
+        (["git", "status", "--porcelain", "--", ":!dist/control-ui/"], tmp_path, 1000),
         (["git", "fetch", "--all", "--prune", "--tags"], tmp_path, 1000),
         (["git", "pull", "--ff-only"], tmp_path, 1000),
         ([sys.executable, "-m", "pip", "install", "-e", "."], tmp_path, 1000),
         ([sys.executable, "-m", "compileall", "-q", "src"], tmp_path, 1000),
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_ignores_control_ui_dist_dirty_files(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+    revision_probe = RevisionProbe("rev-a", "rev-b")
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        command_calls.append((argv, cwd, timeout_ms))
+        if argv[:3] == ["git", "status", "--porcelain"] and ":!dist/control-ui/" in argv:
+            return {"stdout": "", "stderr": "", "exitCode": 0}
+        if argv[:3] == ["git", "status", "--porcelain"]:
+            return {"stdout": " M dist/control-ui/app.js\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("run_update should report restart posture, not exec immediately")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=revision_probe,
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "ok"
+    assert [step["name"] for step in result["steps"]] == [
+        "git status",
+        "git fetch",
+        "git pull",
+        "deps install",
+        "build",
+    ]
+    assert command_calls[0] == (
+        ["git", "status", "--porcelain", "--", ":!dist/control-ui/"],
+        tmp_path,
+        1000,
+    )
 
 
 @pytest.mark.asyncio
@@ -2222,4 +2273,4 @@ async def test_runtime_update_run_update_skips_dirty_worktree_before_fetch(
     assert result["status"] == "skipped"
     assert result["reason"] == "dirty"
     assert [step["name"] for step in result["steps"]] == ["git status"]
-    assert command_calls == [["git", "status", "--porcelain"]]
+    assert command_calls == [["git", "status", "--porcelain", "--", ":!dist/control-ui/"]]

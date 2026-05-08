@@ -1144,7 +1144,7 @@ class RuntimeUpdateService:
 
         status_step = await self._run_update_command_step(
             "git status",
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "--", ":!dist/control-ui/"],
             timeout_ms=timeout_ms,
         )
         steps.append(status_step)
