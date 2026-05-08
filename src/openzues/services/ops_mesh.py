@@ -13010,6 +13010,14 @@ class OpsMeshService:
                 fields=("channelAccessToken", "channelSecret", "tokenFile", "secretFile"),
                 env_var="LINE_CHANNEL_ACCESS_TOKEN",
             )
+        if normalized_channel == "nextcloud-talk":
+            return await self._logout_secret_backed_channel_account(
+                channel="nextcloud-talk",
+                account_id=normalized_account_id,
+                fields=("botSecret",),
+                env_var="NEXTCLOUD_TALK_BOT_SECRET",
+                env_result_key="envSecret",
+            )
         raise RuntimeError(f"channel {normalized_channel} does not support logout")
 
     async def _logout_secret_backed_channel_account(
@@ -13019,6 +13027,7 @@ class OpsMeshService:
         account_id: str,
         fields: tuple[str, ...],
         env_var: str,
+        env_result_key: str = "envToken",
     ) -> dict[str, object]:
         await self.stop_channel_runtime_account(channel, account_id)
         env_token = bool(os.environ.get(env_var, "").strip())
@@ -13036,7 +13045,7 @@ class OpsMeshService:
             "channel": channel,
             "accountId": account_id,
             "cleared": cleared,
-            "envToken": env_token,
+            env_result_key: env_token,
             "loggedOut": logged_out,
         }
 

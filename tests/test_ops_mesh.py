@@ -9056,6 +9056,62 @@ async def test_ops_mesh_service_channels_logout_clears_line_token_and_secret_con
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_channels_logout_clears_nextcloud_talk_bot_secret_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NEXTCLOUD_TALK_BOT_SECRET", raising=False)
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-nextcloud-talk-channel-logout"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.patch_object(
+        {
+            "channels": {
+                "nextcloud-talk": {
+                    "baseUrl": "https://nextcloud.example.com",
+                    "botSecret": "talk-secret",
+                    "accounts": {
+                        "default": {
+                            "botSecret": "account-talk-secret",
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=config_service,
+    )
+
+    logout_result = await service.logout_channel_runtime_account("nextcloud-talk", "default")
+
+    assert logout_result == {
+        "channel": "nextcloud-talk",
+        "accountId": "default",
+        "cleared": True,
+        "envSecret": False,
+        "loggedOut": True,
+    }
+    nextcloud_config = config_service.build_snapshot()["channels"]["nextcloud-talk"]
+    assert nextcloud_config == {"baseUrl": "https://nextcloud.example.com"}
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_tlon_native_monitor_streams_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
