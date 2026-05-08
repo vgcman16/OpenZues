@@ -8174,6 +8174,55 @@ _PACKAGE_DIST_OMITTED_PRIVATE_QA_PLUGIN_SDK_FILES = {
     "dist/plugin-sdk/src/plugin-sdk/qa-runtime.d.ts",
 }
 _PACKAGE_DIST_OMITTED_PRIVATE_QA_DIST_PREFIXES = ("dist/qa-runtime-",)
+_PACKAGE_DIST_OMITTED_PRIVATE_QA_BUNDLED_PLUGIN_ROOTS = {
+    "dist/extensions/qa-channel",
+    "dist/extensions/qa-lab",
+    "dist/extensions/qa-matrix",
+}
+_PACKAGE_DIST_BUNDLED_RUNTIME_SIDECAR_PATHS = (
+    "dist/extensions/acpx/runtime-api.js",
+    "dist/extensions/bluebubbles/runtime-api.js",
+    "dist/extensions/browser/runtime-api.js",
+    "dist/extensions/copilot-proxy/runtime-api.js",
+    "dist/extensions/diffs/runtime-api.js",
+    "dist/extensions/discord/runtime-api.js",
+    "dist/extensions/discord/runtime-setter-api.js",
+    "dist/extensions/feishu/runtime-api.js",
+    "dist/extensions/google/runtime-api.js",
+    "dist/extensions/googlechat/runtime-api.js",
+    "dist/extensions/imessage/runtime-api.js",
+    "dist/extensions/irc/runtime-api.js",
+    "dist/extensions/line/runtime-api.js",
+    "dist/extensions/lmstudio/runtime-api.js",
+    "dist/extensions/lobster/runtime-api.js",
+    "dist/extensions/matrix/helper-api.js",
+    "dist/extensions/matrix/runtime-api.js",
+    "dist/extensions/matrix/runtime-setter-api.js",
+    "dist/extensions/matrix/thread-bindings-runtime.js",
+    "dist/extensions/mattermost/runtime-api.js",
+    "dist/extensions/memory-core/runtime-api.js",
+    "dist/extensions/msteams/runtime-api.js",
+    "dist/extensions/nextcloud-talk/runtime-api.js",
+    "dist/extensions/nostr/runtime-api.js",
+    "dist/extensions/ollama/runtime-api.js",
+    "dist/extensions/open-prose/runtime-api.js",
+    "dist/extensions/qqbot/runtime-api.js",
+    "dist/extensions/signal/runtime-api.js",
+    "dist/extensions/slack/runtime-api.js",
+    "dist/extensions/slack/runtime-setter-api.js",
+    "dist/extensions/telegram/runtime-api.js",
+    "dist/extensions/telegram/runtime-setter-api.js",
+    "dist/extensions/tlon/runtime-api.js",
+    "dist/extensions/tokenjuice/runtime-api.js",
+    "dist/extensions/twitch/runtime-api.js",
+    "dist/extensions/voice-call/runtime-api.js",
+    "dist/extensions/webhooks/runtime-api.js",
+    "dist/extensions/whatsapp/light-runtime-api.js",
+    "dist/extensions/whatsapp/runtime-api.js",
+    "dist/extensions/zai/runtime-api.js",
+    "dist/extensions/zalo/runtime-api.js",
+    "dist/extensions/zalouser/runtime-api.js",
+)
 
 
 def _openzues_package_root() -> Path:
@@ -8428,6 +8477,44 @@ def _doctor_missing_package_dist_inventory_warning() -> str:
     )
 
 
+def _doctor_package_dist_plugin_root(relative_path: str) -> str | None:
+    parts = relative_path.split("/")
+    if len(parts) < 3 or parts[0] != "dist" or parts[1] != "extensions":
+        return None
+    return "/".join(parts[:3])
+
+
+def _doctor_collect_critical_bundled_runtime_sidecars(root: Path) -> list[str]:
+    expected: list[str] = []
+    for relative_path in _PACKAGE_DIST_BUNDLED_RUNTIME_SIDECAR_PATHS:
+        plugin_root = _doctor_package_dist_plugin_root(relative_path)
+        if plugin_root is None:
+            continue
+        if plugin_root in _PACKAGE_DIST_OMITTED_PRIVATE_QA_BUNDLED_PLUGIN_ROOTS:
+            continue
+        plugin_path = root / Path(plugin_root)
+        if _doctor_path_exists(plugin_path / "package.json") or _doctor_path_exists(
+            plugin_path / "openclaw.plugin.json"
+        ):
+            expected.append(relative_path)
+    return sorted(set(expected))
+
+
+def _doctor_missing_bundled_runtime_sidecar_warnings(
+    root: Path,
+    inventory_expected_files: Sequence[str] | None,
+) -> list[str]:
+    expected = _doctor_collect_critical_bundled_runtime_sidecars(root)
+    if inventory_expected_files is not None:
+        inventory_set = set(inventory_expected_files)
+        expected = [path for path in expected if path not in inventory_set]
+    warnings: list[str] = []
+    for relative_path in expected:
+        if not _doctor_path_exists(root / Path(relative_path)):
+            warnings.append(f"missing bundled runtime sidecar {relative_path}")
+    return warnings
+
+
 def _doctor_resolved_source_checkout_warning(root: Path) -> str | None:
     try:
         resolved_root = root.resolve(strict=False)
@@ -8609,6 +8696,15 @@ def _build_doctor_package_distribution_payload(
             inventory_expected_files,
         )
         warnings.extend(inventory_file_warnings)
+    sidecar_warnings = (
+        _doctor_missing_bundled_runtime_sidecar_warnings(
+            root,
+            inventory_expected_files,
+        )
+        if inventory_required
+        else []
+    )
+    warnings.extend(sidecar_warnings)
     if source_install is not None:
         source_install_warnings = source_install.get("warnings")
         if isinstance(source_install_warnings, list):
@@ -8715,6 +8811,16 @@ def _build_doctor_package_distribution_payload(
                 detail="; ".join(unsafe_path_warnings)
                 if unsafe_path_warnings
                 else "No unsafe package dist paths found.",
+            )
+        )
+        checks.append(
+            _doctor_package_distribution_check(
+                key="bundled_runtime_sidecars",
+                status="warning" if sidecar_warnings else "ok",
+                path=dist_path / "extensions",
+                detail="; ".join(sidecar_warnings)
+                if sidecar_warnings
+                else "Bundled runtime sidecars are present or not required.",
             )
         )
     payload: dict[str, object] = {
