@@ -9215,6 +9215,65 @@ async def test_ops_mesh_service_channels_logout_clears_qqbot_client_secret_confi
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_channels_logout_clears_zalouser_profile_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-zalouser-channel-logout"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    state_dir = tmp_path / "state"
+    credentials_dir = state_dir / "plugin-state" / "credentials" / "zalouser"
+    credentials_dir.mkdir(parents=True)
+    credentials_path = credentials_dir / "credentials-work-profile.json"
+    credentials_path.write_text(
+        '{"imei":"imei","cookie":[],"userAgent":"OpenZues","createdAt":"2026-05-08"}'
+    )
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    monkeypatch.delenv("ZALOUSER_PROFILE", raising=False)
+    monkeypatch.delenv("ZCA_PROFILE", raising=False)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.patch_object(
+        {
+            "channels": {
+                "zalouser": {
+                    "profile": "work-profile",
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=config_service,
+    )
+
+    logout_result = await service.logout_channel_runtime_account("zalouser", "default")
+
+    assert logout_result == {
+        "channel": "zalouser",
+        "accountId": "default",
+        "profile": "work-profile",
+        "cleared": True,
+        "loggedOut": True,
+        "message": "Logged out and cleared local session.",
+    }
+    assert not credentials_path.exists()
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_tlon_native_monitor_streams_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

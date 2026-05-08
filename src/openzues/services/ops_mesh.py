@@ -1396,6 +1396,8 @@ def _canonical_native_provider_channel(value: str | None) -> str:
         return "bluebubbles"
     if normalized == "qq":
         return "qqbot"
+    if normalized == "zalo-user":
+        return "zalouser"
     return normalized
 
 
@@ -13030,6 +13032,8 @@ class OpsMeshService:
             )
         if normalized_channel == "whatsapp":
             return await self._logout_whatsapp_channel_account(normalized_account_id)
+        if normalized_channel == "zalouser":
+            return await self._logout_zalouser_channel_account(normalized_account_id)
         raise RuntimeError(f"channel {normalized_channel} does not support logout")
 
     async def _logout_whatsapp_channel_account(self, account_id: str) -> dict[str, object]:
@@ -13179,6 +13183,98 @@ class OpsMeshService:
         if managed_auth_dir is None:
             return False
         shutil.rmtree(managed_auth_dir, ignore_errors=True)
+        return True
+
+    async def _logout_zalouser_channel_account(self, account_id: str) -> dict[str, object]:
+        await self.stop_channel_runtime_account("zalouser", account_id)
+        profile = self._resolve_zalouser_profile(account_id)
+        credentials_path = self._zalouser_credentials_path(profile)
+        cleared = self._clear_zalouser_credentials(credentials_path)
+        return {
+            "channel": "zalouser",
+            "accountId": account_id,
+            "profile": profile,
+            "cleared": cleared,
+            "loggedOut": True,
+            "message": (
+                "Logged out and cleared local session."
+                if cleared
+                else "No local session to clear."
+            ),
+        }
+
+    def _resolve_zalouser_profile(self, account_id: str) -> str:
+        configured_profile = self._zalouser_profile_from_config(account_id)
+        if configured_profile:
+            return configured_profile
+        env_profile = os.environ.get("ZALOUSER_PROFILE", "").strip()
+        if env_profile:
+            return env_profile
+        legacy_env_profile = os.environ.get("ZCA_PROFILE", "").strip()
+        if legacy_env_profile:
+            return legacy_env_profile
+        if account_id != DEFAULT_ACCOUNT_ID:
+            return account_id
+        return DEFAULT_ACCOUNT_ID
+
+    def _zalouser_profile_from_config(self, account_id: str) -> str | None:
+        if self.gateway_config_service is None:
+            return None
+        snapshot = self.gateway_config_service.build_snapshot()
+        channels = snapshot.get("channels")
+        section = channels.get("zalouser") if isinstance(channels, dict) else None
+        if not isinstance(section, dict):
+            return None
+        account_config: dict[str, object] = dict(section)
+        accounts = section.get("accounts")
+        account_section = accounts.get(account_id) if isinstance(accounts, dict) else None
+        if isinstance(account_section, dict):
+            account_config.update(account_section)
+        raw_profile = account_config.get("profile")
+        if isinstance(raw_profile, str) and raw_profile.strip():
+            return raw_profile.strip()
+        return None
+
+    def _resolve_openclaw_state_dir(self) -> Path:
+        state_dir = os.environ.get("OPENCLAW_STATE_DIR", "").strip()
+        if state_dir:
+            return Path(os.path.expandvars(os.path.expanduser(state_dir))).resolve()
+        data_dir = getattr(self.gateway_config_service, "_data_dir", None)
+        if isinstance(data_dir, Path):
+            return (data_dir / "state").resolve()
+        return (Path.home() / ".openclaw").resolve()
+
+    def _zalouser_credentials_path(self, profile: str) -> Path:
+        normalized_profile = profile.strip().lower()
+        filename = (
+            "credentials.json"
+            if not normalized_profile or normalized_profile == DEFAULT_ACCOUNT_ID
+            else f"credentials-{quote(normalized_profile, safe='')}.json"
+        )
+        return (
+            self._resolve_openclaw_state_dir()
+            / "plugin-state"
+            / "credentials"
+            / "zalouser"
+            / filename
+        ).resolve()
+
+    def _clear_zalouser_credentials(self, credentials_path: Path) -> bool:
+        if (
+            not credentials_path.exists()
+            or not credentials_path.is_file()
+            or credentials_path.is_symlink()
+        ):
+            return False
+        credentials_dir = (
+            self._resolve_openclaw_state_dir()
+            / "plugin-state"
+            / "credentials"
+            / "zalouser"
+        ).resolve()
+        if not self._is_relative_to_path(credentials_path, credentials_dir):
+            return False
+        credentials_path.unlink(missing_ok=True)
         return True
 
     async def _logout_secret_backed_channel_account(

@@ -79260,6 +79260,43 @@ async def test_channels_logout_accepts_qqbot_runtime_logout_channel() -> None:
 
 
 @pytest.mark.asyncio
+async def test_channels_logout_accepts_zalouser_runtime_logout_channel() -> None:
+    logouts: list[tuple[str, str]] = []
+
+    async def fake_channel_logout(channel: str, account_id: str) -> dict[str, object]:
+        logouts.append((channel, account_id))
+        return {
+            "channel": channel,
+            "accountId": account_id,
+            "profile": "work-profile",
+            "cleared": True,
+            "loggedOut": True,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        channel_logout_service=fake_channel_logout,
+    )
+
+    result = await service.call(
+        "channels.logout",
+        {
+            "channel": "zalouser",
+            "accountId": "default",
+        },
+    )
+
+    assert logouts == [("zalouser", "default")]
+    assert result == {
+        "channel": "zalouser",
+        "accountId": "default",
+        "profile": "work-profile",
+        "cleared": True,
+        "loggedOut": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_channels_start_allows_blank_account_id_and_fails_runtime_boundary() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
