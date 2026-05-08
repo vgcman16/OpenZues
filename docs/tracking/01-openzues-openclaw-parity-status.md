@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999999995% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999999997% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.4% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -6866,6 +6866,23 @@ may lag behind this tracker.
     (exact helper import returned generic placeholder behavior before
     implementation, then `1 passed`), adjacent QA runtime proof (`3 passed,
     1192 deselected`), `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK browser facade test helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/browser-facade-test-helpers.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped `browser-facade-test-helpers` imports expose
+    upstream-shaped browser host-inspection facade mocking, delegation
+    assertions, and unavailable-facade checks.
+  - Evidence required: focused browser facade test-helper import test,
+    adjacent browser host/node proof, ruff, mypy
+  - Status: checkpointed in `4e950ba5`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused browser facade test-helper red/green
+    proof (exact helper import returned generic placeholder behavior before
+    implementation, then `1 passed`), adjacent browser facade proof (`3
+    passed, 1193 deselected`), `ruff check`, `mypy`, and focused `git diff
+    --check`.
 
 ## Update Rule
 
