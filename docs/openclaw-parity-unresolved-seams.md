@@ -10175,3 +10175,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.99999999999999999%. Continue missing/unexpected packaged dist file
   verification next.
+- Current queue-head adjustment: native package update verification now
+  compares valid package dist inventories against installed `dist` files and
+  reports missing/unexpected packaged file drift before post-update
+  doctor/swap, matching OpenClaw's package update verifier. Source/test
+  checkpointed in `1e373c7f`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.999999999999999995%. Continue
+  supplemental bundled runtime sidecar verification when inventory omits
+  critical sidecars next.
