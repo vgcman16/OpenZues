@@ -10322,3 +10322,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity remains estimated at ~99.9%, with the evidence band tightened to
   ~80-99.9999999999999999999996%. Continue preflight lint/no-good-commit
   cleanup edge cases or startup auto-update policy next.
+- Current queue-head adjustment: native git preflight cleanup now repairs
+  failed `git worktree remove` by removing the temp preflight tree directly and
+  annotating the cleanup log, matching OpenClaw's fallback cleanup posture.
+  Source/test checkpointed in `48ee7b20`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999997%. Continue no-good-commit verification,
+  dev-target refs, or startup auto-update policy next.

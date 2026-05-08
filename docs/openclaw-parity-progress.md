@@ -19775,6 +19775,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Source/test checkpointed in `3a61f139`.
+- Native git update preflight cleanup now repairs failed `git worktree remove`
+  steps by removing the temp preflight tree directly and annotating the cleanup
+  log, matching OpenClaw's fallback cleanup posture. This closes
+  `OZ-PKG-001BX`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999999999999999999997%.
+- Verified preflight cleanup repair with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_repairs_failed_preflight_cleanup -q`
+  (`1 failed` before implementation, then covered green), adjacent git update
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_repairs_failed_preflight_cleanup tests\test_runtime_updates.py::test_runtime_update_run_update_selects_first_good_preflight_candidate tests\test_runtime_updates.py::test_runtime_update_run_update_aborts_failed_rebase -q`
+  (`3 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`44 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `48ee7b20`.
 
 ## References
 
