@@ -67266,6 +67266,91 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_helpers_string_utils(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-helpers-string-utils.cjs"
+    runtime_entry.write_text(
+        """
+const strings = require("openclaw/plugin-sdk/test-helpers/string-utils");
+const scopedStrings = require("@openclaw/plugin-sdk/test-helpers/string-utils");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_helpers_string_utils",
+      description: "Use OpenClaw test-helpers/string-utils SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(strings).sort(),
+          scopedType: typeof scopedStrings.uniqueSortedStrings,
+          unique: strings.uniqueSortedStrings(["b", "a", "b", "c", "a"])
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-helpers-string-utils-plugin",
+                    "name": "Runtime Test Helpers String Utils Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-test-helpers-string-utils-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_helpers_string_utils"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.test_helpers_string_utils"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["uniqueSortedStrings"],
+        "scopedType": "function",
+        "unique": ["a", "b", "c"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_web_media_helpers(
     tmp_path,
 ) -> None:
