@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999998%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999999%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -19245,6 +19245,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
   Source/test checkpointed in `51b3bc19`.
+- Update dry-run previews now read the stored `update.channel` from gateway
+  config and use it as the effective channel when no `--channel` override is
+  passed, including the resulting package install spec and `storedChannel`
+  projection. This closes `OZ-PKG-001AR`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.999999999999999%.
+- Verified stored update-channel dry-run preview with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_uses_stored_update_channel -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent main package
+  dry-run proof
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_maps_main_package_install_spec -q`
+  (`1 passed`), adjacent update CLI selection
+  `python -m pytest tests\test_cli.py -q -k "update_dry_run or update_json_persists_requested_package_channel_after_success or update_json_dispatches_package_update_service or post_update_plugin_sync or update_status"`
+  (`22 passed, 533 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `c95b2810`.
 
 ## References
 
