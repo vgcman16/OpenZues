@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999993%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999994%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -18317,6 +18317,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `f742ba8a`.
+- Tlon custom S3 media uploads now mirror the remaining OpenClaw uploadFile
+  branch: when storage credentials are configured, OpenZues resolves the
+  current bucket/public URL/region, builds the upstream-style file key, presigns
+  a path-style S3-compatible PUT, uploads the bytes, and returns the configured
+  public URL. This closes `OZ-PROV-001DF`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.9999994%. The Tlon
+  outbound text/media upload mini-queue is no longer the provider head;
+  remaining Tlon-specific breadth is inbound/session lifecycle depth.
+- Verified the Tlon custom S3 upload slice with focused red/green proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_tlon_media_bytes_uses_custom_s3_credentials -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent
+  native-provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "tlon or irc_native_route or twitch_native_route"`
+  (`13 passed, 376 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `dc999418`.
 
 ## References
 
