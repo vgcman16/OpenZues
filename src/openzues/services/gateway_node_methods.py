@@ -312,6 +312,20 @@ _SESSIONS_SPAWN_UNSUPPORTED_PARAM_KEYS = {
     "reply_to",
 }
 _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS = {"NO_REPLY", "ANNOUNCE_SKIP", "REPLY_SKIP"}
+_OPENCLAW_HEARTBEAT_TOKEN = "HEARTBEAT_OK"
+_OPENCLAW_HEARTBEAT_TRANSCRIPT_PROMPT = "[OpenClaw heartbeat poll]"
+_OPENCLAW_HEARTBEAT_PROMPT = (
+    "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. "
+    "Do not infer or repeat old tasks from prior chats. If nothing needs "
+    "attention, reply HEARTBEAT_OK."
+)
+_OPENCLAW_HEARTBEAT_TASK_PROMPT_PREFIX = (
+    "Run the following periodic tasks (only those due based on their intervals):"
+)
+_OPENCLAW_HEARTBEAT_TASK_PROMPT_ACK = (
+    "After completing all due tasks, reply HEARTBEAT_OK."
+)
+_OPENCLAW_HEARTBEAT_ACK_MAX_CHARS = 300
 _CHAT_HISTORY_INLINE_DIRECTIVE_RE = re.compile(
     r"\[\[\s*(?:reply_to(?:_current|\s*:\s*[^\]]+)?|audio_as_voice)\s*\]\]",
     re.IGNORECASE,
@@ -16772,7 +16786,11 @@ def _project_control_chat_messages(
         if role not in {"user", "assistant"}:
             continue
         text = _chat_history_display_text(str(row.get("content") or ""))
+        if role == "user" and _chat_history_should_hide_user_text(text):
+            continue
         if role == "assistant" and text.strip().upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS:
+            continue
+        if role == "assistant" and _chat_history_is_heartbeat_ok_text(text):
             continue
         usage = _chat_history_json_object(row.get("usage_json")) if role == "assistant" else None
         cost = _chat_history_json_object(row.get("cost_json")) if role == "assistant" else None
@@ -17330,6 +17348,52 @@ def _chat_history_display_text(text: str) -> str:
             _strip_trailing_untrusted_context_metadata(text)
         ),
     )
+
+
+def _chat_history_should_hide_user_text(text: str) -> bool:
+    trimmed = text.strip()
+    if not trimmed:
+        return True
+    if trimmed == _OPENCLAW_HEARTBEAT_TRANSCRIPT_PROMPT:
+        return True
+    if trimmed.startswith(_OPENCLAW_HEARTBEAT_PROMPT):
+        return True
+    return trimmed.startswith(_OPENCLAW_HEARTBEAT_TASK_PROMPT_PREFIX) and (
+        _OPENCLAW_HEARTBEAT_TASK_PROMPT_ACK in trimmed
+    )
+
+
+def _chat_history_is_heartbeat_ok_text(text: str) -> bool:
+    stripped = _strip_chat_history_heartbeat_token(text)
+    return stripped is not None and len(stripped.strip()) <= _OPENCLAW_HEARTBEAT_ACK_MAX_CHARS
+
+
+def _strip_chat_history_heartbeat_token(text: str) -> str | None:
+    current = text.strip()
+    if not current or _OPENCLAW_HEARTBEAT_TOKEN not in current.upper():
+        return None
+    token_pattern = re.escape(_OPENCLAW_HEARTBEAT_TOKEN)
+    removed = False
+    changed = True
+    while changed:
+        changed = False
+        next_text = current.strip()
+        at_start = re.match(token_pattern, next_text, flags=re.IGNORECASE)
+        if at_start is not None:
+            current = next_text[at_start.end() :].lstrip()
+            removed = True
+            changed = True
+            continue
+        at_end = re.search(
+            rf"{token_pattern}[^\w]{{0,4}}$",
+            next_text,
+            flags=re.IGNORECASE,
+        )
+        if at_end is not None:
+            current = next_text[: at_end.start()].rstrip()
+            removed = True
+            changed = True
+    return current if removed else None
 
 
 def _sanitize_assistant_visible_history_text(text: str) -> str:
