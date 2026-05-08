@@ -19556,6 +19556,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy
   src\openzues\services\runtime_updates.py`, and focused
   `git diff --check`. Test checkpointed in `beadafaa`.
+- Native package update verification now has focused proof that publishable
+  bundled extension dist remains part of the installed package inventory when
+  the source manifest sets `openclaw.bundle.includeInCore=true`, matching
+  OpenClaw's externalized-extension guard. This closes `OZ-PKG-001BK`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.9999999999999999998%.
+- Verified `includeInCore` package update inventory behavior with focused
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_include_in_core_extension_dist -q`
+  (`1 passed`), adjacent externalized/includeInCore/unsafe-path proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_keeps_include_in_core_extension_dist tests\test_runtime_updates.py::test_runtime_update_run_package_update_omits_externalized_symlink_before_safety tests\test_runtime_updates.py::test_runtime_update_run_package_update_rejects_unsafe_dist_symlink -q`
+  (`4 passed`), full runtime update suite
+  `python -m pytest tests\test_runtime_updates.py -q` (`32 passed`),
+  `ruff check src\openzues\services\runtime_updates.py
+  tests\test_runtime_updates.py`, `mypy
+  src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Test checkpointed in `c83c2a72`.
 
 ## References
 

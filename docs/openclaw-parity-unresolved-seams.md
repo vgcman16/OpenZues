@@ -10232,3 +10232,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `beadafaa`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.9999999999999999997%. Continue package update
   externalized `includeInCore` guard and private QA omission proof next.
+- Current queue-head adjustment: native package update verification now has
+  focused proof that publishable bundled extension dist remains packaged when
+  the source extension manifest sets `openclaw.bundle.includeInCore=true`,
+  matching OpenClaw's externalized-extension guard. Test checkpointed in
+  `c83c2a72`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.9999999999999999998%. Continue package update
+  private QA sidecar omission proof next.
