@@ -20,8 +20,8 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Runtime/CLI/doctor native bridge | ~99.99% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.99% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.995% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.995% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
@@ -7993,6 +7993,28 @@ may lag behind this tracker.
     passed, 412 deselected`), `ruff check
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Doctor preflight git update offer.
+  - Source: `openclaw-main/src/flows/doctor-health.ts`,
+    `openclaw-main/src/commands/doctor-update.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: interactive source-checkout `openzues doctor` prompts to run a
+    git update before standalone checks, dispatches the native update service
+    when accepted, skips standalone doctor after successful update because
+    post-update doctor already ran, emits a package-manager update note for
+    non-git installs, and suppresses prompts for JSON, repair,
+    non-interactive, or update-in-progress contexts.
+  - Evidence required: focused doctor preflight proof, adjacent doctor/update
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `cfef9ae1`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_cli.py::test_doctor_interactive_git_checkout_offers_update_before_doctor tests\test_cli.py::test_doctor_preflight_update_offer_respects_noninteractive_guards -q`
+    (`2 failed` before implementation, then `2 passed`), adjacent CLI
+    doctor/update proof (`6 passed, 571 deselected`), `ruff check
+    src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
 
 ## Update Rule
 

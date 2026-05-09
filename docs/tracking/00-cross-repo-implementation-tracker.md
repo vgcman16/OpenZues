@@ -24,8 +24,8 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.99% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.99% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.995% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.995% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.1% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -183,6 +183,10 @@ follow-up proof is checkpointed in `04472a9c`.
 is source/test checkpointed in `92aadaf9`. Continue companion QR remote
 secret diagnostics, provider-specific media/reply edges, or the next
 package startup/update edge.
+`OZ-PKG-001CM` interactive doctor preflight git update offer is source/test
+checkpointed in `cfef9ae1`; runtime/CLI/doctor and CLI/operator parity move
+to ~99.995%. Continue provider-specific media/reply edges, companion breadth,
+or the next package startup/update edge.
 Provider runtime addendum: `OZ-PROV-001DV` Slack `message.action send` and
 `upload-file` auto-threading from `toolContext` is source/test checkpointed in
 `8db0f19b`. `OZ-PROV-001DW` direct outbound reply policy metadata is
@@ -560,6 +564,28 @@ runtime/CLI ergonomics edge.
     src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
     `mypy src\openzues\services\runtime_updates.py`, and focused
     `git diff --check`.
+
+- [x] `OZ-PKG-001CM` Doctor preflight git update offer
+  - Source: `openclaw-main/src/flows/doctor-health.ts`,
+    `openclaw-main/src/commands/doctor-update.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: interactive source-checkout `openzues doctor` prompts to run a
+    git update before standalone checks, dispatches the native update service
+    when accepted, skips standalone doctor after successful update because
+    post-update doctor already ran, emits a package-manager update note for
+    non-git installs, and suppresses prompts for JSON, repair,
+    non-interactive, or update-in-progress contexts.
+  - Evidence required: focused doctor preflight proof, adjacent doctor/update
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `cfef9ae1`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_cli.py::test_doctor_interactive_git_checkout_offers_update_before_doctor tests\test_cli.py::test_doctor_preflight_update_offer_respects_noninteractive_guards -q`
+    (`2 failed` before implementation, then `2 passed`), adjacent CLI
+    doctor/update proof (`6 passed, 571 deselected`), `ruff check
+    src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
 
 - [x] `OZ-PROV-001DW` Direct outbound reply policy metadata
   - Source: `openclaw-main/src/channels/plugins/outbound.types.ts`,

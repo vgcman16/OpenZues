@@ -13,7 +13,7 @@ Current percentage rollup:
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
   monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.995% after the
   runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
@@ -125,7 +125,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
-- The CLI/operator control-plane family is estimated at ~99.99% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.995% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
@@ -11339,3 +11339,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and CLI/operator control-plane parity moves to ~99.99%.
   Continue provider-specific media/reply edges, companion breadth, or the next
   runtime/CLI ergonomics edge.
+- Current queue-head adjustment: `openzues doctor` now mirrors OpenClaw's
+  interactive git-checkout update offer before standalone doctor checks.
+  Accepted updates dispatch the native runtime update service, successful
+  updates skip the standalone doctor because post-update doctor already ran,
+  package installs get a package-manager update note, and non-interactive,
+  JSON, repair, or in-progress update contexts suppress the prompt. Source/test
+  checkpointed in `cfef9ae1`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor plus CLI/operator parity move to ~99.995%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.
