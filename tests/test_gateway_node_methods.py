@@ -109921,6 +109921,21 @@ async def test_commands_list_supports_scope_filters_and_omits_args_when_requeste
     assert all("args" not in command for command in native_payload["commands"])
 
 
+@pytest.mark.asyncio
+async def test_commands_list_applies_slack_native_command_aliases() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    payload = await service.call(
+        "commands.list",
+        {"provider": "slack", "scope": "native", "includeArgs": False},
+    )
+
+    commands = payload["commands"]
+    status_command = next(command for command in commands if command["name"] == "status")
+    assert status_command["nativeName"] == "agentstatus"
+    assert not any(command["nativeName"] == "status" for command in commands)
+
+
 class _FakeBrowserRuntime:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str | None]] = []

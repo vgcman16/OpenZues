@@ -39,10 +39,15 @@ class GatewayCommandSpec:
     source: Literal["native", "plugin", "skill"] = "native"
     scope: Literal["native", "text", "both"] = "native"
 
-    def as_payload(self, *, include_args: bool) -> dict[str, Any]:
+    def as_payload(
+        self,
+        *,
+        include_args: bool,
+        native_name: str | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "name": self.name,
-            "nativeName": self.name,
+            "nativeName": native_name or self.name,
             "description": self.description,
             "category": self.category,
             "source": self.source,
@@ -56,6 +61,23 @@ class GatewayCommandSpec:
 
 def _bool_arg(name: str, description: str) -> GatewayCommandArgSpec:
     return GatewayCommandArgSpec(name=name, description=description, type="boolean")
+
+
+_PROVIDER_NATIVE_COMMAND_ALIASES: dict[str, dict[str, str]] = {
+    "slack": {
+        "status": "agentstatus",
+    },
+}
+
+
+def _provider_native_command_name(spec: GatewayCommandSpec, provider: str | None) -> str:
+    normalized_provider = str(provider or "").strip().lower()
+    if not normalized_provider:
+        return spec.name
+    return _PROVIDER_NATIVE_COMMAND_ALIASES.get(normalized_provider, {}).get(
+        spec.name,
+        spec.name,
+    )
 
 
 def _array_arg(
@@ -1130,14 +1152,16 @@ class GatewayCommandsService:
         provider: str | None = None,
         scope: Literal["both", "native", "text"] = "both",
     ) -> dict[str, Any]:
-        del provider
         if agent_id is not None and agent_id != _SUPPORTED_AGENT_ID:
             raise ValueError(f'unknown agent id "{agent_id}"')
         if scope == "text":
             return {"commands": []}
         return {
             "commands": [
-                spec.as_payload(include_args=include_args)
+                spec.as_payload(
+                    include_args=include_args,
+                    native_name=_provider_native_command_name(spec, provider),
+                )
                 for spec in _COMMAND_SPECS
                 if spec.scope in {"native", "both"}
             ]
