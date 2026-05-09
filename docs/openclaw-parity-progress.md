@@ -22152,6 +22152,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
   `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `f6cad264`.
+- Slack external arg-menu options payloads now acknowledge OpenClaw's
+  `block_suggestion` empty-result path for missing or unavailable external menu
+  tokens, returning Slack-shaped `options: []` instead of reporting the payload
+  type as unsupported. This closes `OZ-PROV-001EN`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth remains
+  ~99.9%.
+- Verified the Slack external arg options seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_interactions_route_acknowledges_external_arg_options_without_token -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent provider/
+  interaction proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_command_arg or block_suggestion or slack_slash or slack_interactions_route or slack_block_action or slack_view_submission or slack_modal or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`42 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+  `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `151bb0e5`.
 
 ## References
 

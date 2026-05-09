@@ -354,6 +354,17 @@ Slack provider/interaction proof, `ruff check`, `mypy`, and focused
 Continue Slack external arg-menu options, provider-specific media/reply edges,
 companion breadth, or the next package startup/update edge.
 
+Current queue-head adjustment: Slack external arg-menu options payloads now
+acknowledge OpenClaw's `block_suggestion` empty-result path for missing or
+unavailable external menu tokens, returning Slack-shaped `options: []` instead
+of reporting the payload type as unsupported. Verified on 2026-05-09 with a
+focused red/green Slack interaction route proof, adjacent Slack provider/
+interaction proof, `ruff check`, `mypy`, and focused `git diff --check`;
+source/test checkpointed in `151bb0e5`. This closes `OZ-PROV-001EN`;
+provider-native inbound/outbound breadth remains ~99.9%. Continue full
+external arg-menu choice-store hydration, provider-specific media/reply edges,
+companion breadth, or the next package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps

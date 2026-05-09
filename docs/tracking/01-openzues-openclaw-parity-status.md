@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.995% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.995% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
@@ -8328,6 +8328,22 @@ may lag behind this tracker.
   - Weight: 1
   - Last verified: 2026-05-09, focused red/green interaction proofs, adjacent
     provider/interaction proof, ruff, mypy, and focused `git diff --check`.
+
+- [x] Slack external arg-menu empty options.
+  - Source: `openclaw-main/extensions/slack/src/monitor/slash.ts`,
+    `openclaw-main/extensions/slack/src/monitor/external-arg-menu-store.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Slack `block_suggestion` payloads for external arg menus return
+    Slack-shaped `options: []` when the external menu token is missing or
+    unavailable instead of reporting the interaction as unsupported.
+  - Evidence required: focused interaction route proof, adjacent Slack
+    interaction/slash proof, ruff, mypy
+  - Status: checkpointed in `151bb0e5`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green interaction route proof,
+    adjacent provider/interaction proof, ruff, mypy, and focused
+    `git diff --check`.
 
 - [x] Doctor preflight git update offer.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,
