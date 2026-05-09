@@ -325,6 +325,11 @@ def _slack_signing_secret_from_snapshot(
     for candidate in (account_config.get("signingSecret"), slack_config.get("signingSecret")):
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip()
+        if isinstance(candidate, Mapping):
+            source = str(candidate.get("source") or "").strip().lower()
+            env_id = str(candidate.get("id") or "").strip()
+            if source == "env" and env_id:
+                return os.environ.get(env_id, "").strip()
     return None
 
 
@@ -4529,6 +4534,8 @@ def create_app(
         )
         if signing_secret is None:
             return None
+        if not signing_secret:
+            return JSONResponse({"error": "Invalid Slack signature"}, status_code=401)
         if _valid_slack_request_signature(
             body=body,
             timestamp=request.headers.get("x-slack-request-timestamp"),
