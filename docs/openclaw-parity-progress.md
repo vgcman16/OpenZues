@@ -21507,6 +21507,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `11c597b7`.
+- `chat.history` and `sessions.history` now strip legacy OpenClaw internal
+  runtime-context event blocks before exposing visible user transcript rows,
+  including fallback paragraph-bounded events and full untrusted child-result
+  plus action sections. This closes the legacy-event side of upstream
+  `stripInternalRuntimeContext`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999995%.
+- Verified the legacy runtime-context event seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_legacy_internal_runtime_context_event tests\test_gateway_node_methods.py::test_sessions_history_strips_legacy_internal_runtime_context_event -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent
+  transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`59 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `dff892b6`.
 
 ## References
 

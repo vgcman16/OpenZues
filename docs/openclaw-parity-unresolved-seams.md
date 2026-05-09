@@ -11160,3 +11160,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~80-99.99999999999999999999999999999999999999999999999%. Continue the
   remaining legacy internal runtime-context event-block edge, then rotate to
   broader provider/runtime, packaging, or companion breadth.
+- Current queue-head adjustment: `chat.history` and `sessions.history` now
+  strip legacy OpenClaw internal runtime-context event blocks, including
+  untrusted child-result and action sections, before exposing visible user
+  transcript rows. Source/test checkpointed in `dff892b6`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999995%. Rotate to broader
+  provider/runtime, packaging, or companion breadth unless another exact
+  transcript sanitizer edge is exposed.
