@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.999999999999999999999999999999999999999999999998%.
+  band of ~80-99.999999999999999999999999999999999999999999999999%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.96% after the latest
@@ -11191,3 +11191,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, with the evidence band tightened to
   ~80-99.999999999999999999999999999999999999999999999998%. Continue
   companion device-pairing breadth or the next packaging startup/update edge.
+- Current queue-head adjustment: device pairing now preserves OpenClaw-style
+  `publicKey` through pending request storage, refresh/list snapshots,
+  approval, paired-device storage, and `device.pair.*` projections. Source/test
+  checkpointed in `bef0652f`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999999%. Continue
+  companion QR/setup-code remote secret/rendered QR breadth, packaging
+  startup/update edges, or provider/runtime breadth next.

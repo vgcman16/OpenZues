@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999999999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.999999999999999999999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -67,7 +67,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Git dev branch normalization checkpointed in `c77f60e0`; Git dev target ref checkout checkpointed in `8f305c47`; Git preflight cleanup repair checkpointed in `48ee7b20`; Git rebase abort cleanup checkpointed in `3a61f139`; Git preflight candidate selection checkpointed in `84a78474`; Git preflight worktree guard checkpointed in `438f3c33`; Git preflight candidate guard checkpointed in `254fcc9d`; Beta package latest fallback checkpointed in `93061087`; git update no-upstream guard checkpointed in `2603380f`; git update control-ui clean-check exclusion checkpointed in `5171f2f2`; npm shim rollback proof checkpointed in `03f1ee46`; doctor malformed extension manifest warning checkpointed in `df582190`; package update malformed extension manifest rejection checkpointed in `733c7b15`; package update staging debris verifier checkpointed in `d58b0879`; package update private QA omission proof checkpointed in `b663e3e0`; package update includeInCore inventory guard checkpointed in `c83c2a72`; package update staged crash cleanup proof checkpointed in `beadafaa`; package update omitted-subtree safety ordering checkpointed in `2830b5ef`; package update legacy sidecar enforcement checkpointed in `603cdb2a`; package update externalized extension omission checkpointed in `a06dd570`; package update unsafe dist path rejection checkpointed in `691fdabd`; package update inventory omission filters checkpointed in `e7d960e0`; package update supplemental sidecar enforcement checkpointed in `9ba6843f`; package update dist inventory file drift checkpointed in `1e373c7f`; package update invalid dist-inventory rejection checkpointed in `2f59d485`; package update missing dist-inventory gate checkpointed in `d7e87c9b`; source-checkout package update verifier checkpointed in `a330fecc`; missing-version verifier wording checkpointed in `ad9ba5a5`; ambient npm fallback proof checkpointed in `0826cfaa`; owning npm command checkpointed in `de046811`; owning npm root detection checkpointed in `76e2a21c`; portable Git PATH prepending checkpointed in `e692f8b6`; Windows package install env checkpointed in `80e49178`; Corepack prompt preservation checkpointed in `9fd00cad`; Corepack prompt suppression checkpointed in `0f2cb0c1`; stored-channel dry-run preview checkpointed in `c95b2810`; post-update doctor env checkpointed in `51b3bc19`; requested update-channel persistence checkpointed in `15161172`; low package-update disk warning checkpointed in `3083362b`; stale global rename-dir cleanup checkpointed in `5a31c97f`; non-interactive update doctor checkpointed in `837bbd30`; package update doctor repair checkpointed in `45009862`; post-update plugin sync checkpointed in `aa71bcbc`; staged npm package swap checkpointed in `954d74ea`; package update failedStep projection checkpointed in `98e4d5c9`; package update version verification checkpointed in `1db09c3b`; npm update omit-optional fallback checkpointed in `f3177330`; package update runtime path checkpointed in `1291d361`; inherited update status parent options checkpointed in `f088293f`; root update runtime dispatch checkpointed in `0c88812c`; explicit update install-spec preservation checkpointed in `3227786a`; update package-spec env override checkpointed in `949de445`; update-status timeout option checkpointed in `6418d7f3`; update dry-run preview package-spec mapping checkpointed in `08e8f76f`; private QA sidecar omission proof checkpointed in `ad248bf4`; bundled runtime sidecar enforcement checkpointed in `07b17ad0`; source-checkout package-root warning checkpointed in `912aee5e`; private QA dist omission checkpointed in `bde731a9`; externalized extension dist omission checkpointed in `06ba5480`; unsafe dist symlink detection checkpointed in `a9c7884f`; local build metadata omission checkpointed in `6e8bb491`; exact missing inventory warning checkpointed in `76cdb404`; mixed-case staging-debris proof checkpointed in `9422c6b7`; package dist staging-debris detection checkpointed in `b16db705`; package dist inventory drift checkpointed in `69b23cb9`; human git update hint proof checkpointed in `d5ea6096`; human update-available hint checkpointed in `20e9c885`; config channel precedence proof checkpointed in `d9150777`; git availability projection checkpointed in `de37e6f8`; registry availability projection checkpointed in `55a785a8`; update-status git metadata checkpointed in `b31d8f41`; packed git-tag update-status projection checkpointed in `71029a02`; update-status git-tag channel projection checkpointed in `dce24b5e`; source-install package doctor warnings checkpointed in `4c1d7a2a`; update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue companion device-pairing breadth or next startup/update edge |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
-| OZ-COMP-001 | Companion apps/nodes parity | QR approval guidance checkpointed in `d6052fda`; QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code remote secret/rendered QR breadth later |
+| OZ-COMP-001 | Companion apps/nodes parity | QR approval guidance checkpointed in `d6052fda`; QR JSON setup-code contract checkpointed in `b79b87c3`; device pairing public-key persistence/projection checkpointed in `bef0652f` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code remote secret/rendered QR breadth or next startup/update edge |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Zalo user `channels.logout` runtime checkpointed in `4d67d5a6`; QQBot `channels.logout` runtime checkpointed in `aac53b3b`; WhatsApp `channels.logout` runtime checkpointed in `3e99a587`; Nextcloud Talk `channels.logout` runtime checkpointed in `13de6593`; LINE `channels.logout` runtime checkpointed in `9674493d`; Telegram `channels.logout` runtime checkpointed in `2d26bdc4`; `channels.stop` native Tlon runtime checkpointed in `1365c028`; `channels.start` native Tlon runtime checkpointed in `810a6af0`; Tlon production SSE monitor lifecycle checkpointed in `726f03cb`; Tlon approval block/admin handling checkpointed in `800d2ab6`; Tlon approval response replay checkpointed in `265b0a10`; Tlon inbound authorization/pending approvals checkpointed in `d7bd3f7d`; Tlon inbound media staging checkpointed in `d7556229`; Tlon group/thread inbound session routing checkpointed in `b3b06972`; Tlon DM inbound session routing checkpointed in `51e6b618`; Tlon custom S3 media upload checkpointed in `dc999418`; Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5`; direct outbound reply policy metadata checkpointed in `e115e5f1` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to packaging ownership detection or companion seams |
 
 Latest queue addendum: `OZ-PKG-001CA` stable/beta release-channel git updates
@@ -179,8 +179,42 @@ Provider runtime addendum: `OZ-PROV-001DV` Slack `message.action send` and
 `8db0f19b`. `OZ-PROV-001DW` direct outbound reply policy metadata is
 source/test checkpointed in `e115e5f1`. Continue companion device-pairing
 breadth or the next package startup/update edge.
+Companion addendum: `OZ-COMP-001C` device-pairing `publicKey` pending,
+approval, paired storage, and device projection parity is source/test
+checkpointed in `bef0652f`. Continue companion QR/setup-code remote
+secret/rendered QR breadth, provider/runtime breadth, or the next package
+startup/update edge.
 
 ## Active Slice Detail
+
+- [x] `OZ-COMP-001C` Device pairing public-key persistence and projection
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/gateway/server/ws-connection/message-handler.ts`,
+    `openclaw-main/src/gateway/protocol/schema/devices.ts`,
+    `openclaw-main/src/cli/devices-cli.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_node_service.py`,
+    `src/openzues/database.py`, `tests/test_gateway_node_pairing_refresh.py`,
+    `tests/test_gateway_node_methods.py`, `tests/test_gateway_nodes_api.py`
+  - Contract: pairing requests accept and normalize `publicKey`, preserve it
+    through refreshes and pending snapshots, copy it into approved paired
+    device storage, and expose it through `device.pair.list` /
+    `device.pair.approve` without changing legacy node-pair payloads that do
+    not provide a key.
+  - Evidence required: focused pairing public-key proof, focused method/API
+    lifecycle proofs, adjacent pairing/method/API proofs, ruff, mypy
+  - Status: checkpointed in `bef0652f`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py::test_pair_request_preserves_public_key_through_refresh_list_and_approval -q`
+    (`1 failed` before implementation, then `1 passed`), focused method/API
+    proofs (`1 passed` each), adjacent pairing proof (`6 passed`), adjacent
+    method proof (`11 passed, 1223 deselected`), adjacent API proof (`3
+    passed, 425 deselected`), adjacent scope-upgrade method/API proofs (`2
+    passed` each), `ruff check` on touched source/tests, `mypy` on touched
+    source modules, and focused `git diff --check`.
 
 - [x] `OZ-PKG-001CJ` Owning npm-root manager detection
   - Source: `openclaw-main/src/infra/update-global.ts`,

@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999999999999999998% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999999999999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -7695,6 +7695,34 @@ may lag behind this tracker.
     (`19 passed, 393 deselected`), `ruff check
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Device pairing public-key persistence and projection.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/gateway/server/ws-connection/message-handler.ts`,
+    `openclaw-main/src/gateway/protocol/schema/devices.ts`,
+    `openclaw-main/src/cli/devices-cli.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_node_service.py`,
+    `src/openzues/database.py`, `tests/test_gateway_node_pairing_refresh.py`,
+    `tests/test_gateway_node_methods.py`, `tests/test_gateway_nodes_api.py`
+  - Contract: OpenZues-native pairing requests carry OpenClaw device
+    `publicKey` through pending storage, refresh/list snapshots, approval,
+    paired-device storage, and `device.pair.*` projections while preserving
+    legacy node-pair payload shape when no key is provided.
+  - Evidence required: focused pairing public-key proof, focused method/API
+    lifecycle proofs, adjacent pairing/method/API proofs, ruff, mypy
+  - Status: checkpointed in `bef0652f`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py::test_pair_request_preserves_public_key_through_refresh_list_and_approval -q`
+    (`1 failed` before implementation, then `1 passed`), focused method/API
+    proofs (`1 passed` each), adjacent pairing proof (`6 passed`), adjacent
+    method proof (`11 passed, 1223 deselected`), adjacent API proof (`3
+    passed, 425 deselected`), adjacent scope-upgrade method/API proofs (`2
+    passed` each), `ruff check` on touched source/tests, `mypy` on touched
+    source modules, and focused `git diff --check`.
 
 ## Update Rule
 

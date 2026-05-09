@@ -21586,6 +21586,35 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_runtime_updates.py`, `mypy src\openzues\cli.py
   src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
   Source/test checkpointed in `76e2a21c`.
+- Device pairing now preserves OpenClaw-style `publicKey` through pending
+  pairing requests, refresh/list snapshots, approval, paired-device storage,
+  and `device.pair.*` projections. This closes `OZ-COMP-001C`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999999%.
+- Verified the device-pairing public-key seam with focused red/green
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py::test_pair_request_preserves_public_key_through_refresh_list_and_approval -q`
+  (`1 failed` before implementation, then `1 passed`), focused method/API
+  proofs
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_family_uses_persisted_node_pairing_runtime -q`
+  and
+  `python -m pytest tests\test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_device_pair_lifecycle -q`
+  (`1 passed` each), adjacent pairing proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q`
+  (`6 passed`), adjacent method/API proofs
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_family or node_pair_request or node_pair_list or node_pair_approve"`
+  (`11 passed, 1223 deselected`) and
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "device_pair_lifecycle or pair_request_endpoint"`
+  (`3 passed, 425 deselected`), adjacent scope-upgrade method/API proofs
+  (`2 passed` each), `ruff check
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_node_service.py src\openzues\database.py
+  tests\test_gateway_node_pairing_refresh.py tests\test_gateway_node_methods.py
+  tests\test_gateway_nodes_api.py`, `mypy
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_node_service.py src\openzues\database.py`, and
+  focused `git diff --check`. Source/test checkpointed in `bef0652f`.
 
 ## References
 
