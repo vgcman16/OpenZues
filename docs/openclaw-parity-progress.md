@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999999999999999999999997%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999999999999999999999998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -21649,6 +21649,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   deselected`), `ruff check src\openzues\cli.py src\openzues\schemas.py
   tests\test_cli.py`, `mypy src\openzues\cli.py src\openzues\schemas.py`,
   and focused `git diff --check`. Source/test checkpointed in `3d63d136`.
+- Provider-native direct `send` now preserves OpenClaw's `channelData`-only
+  payload path for sendPayload-style channels: non-empty `channelData` counts
+  as sendable content, whitespace-only text normalizes to an empty message, the
+  provider runtime request carries the structured `channel_data`, and the
+  delivery row persists the exact `channelData` object. This closes
+  `OZ-PROV-001DX`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999999999998%.
+- Verified the provider `channelData`-only send seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_channel_data_only_payload -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent provider
+  send proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message and (provider_native_options or reply_policy or channel_data_only or native_adapter_binding)"`
+  (`4 passed, 410 deselected`), broader provider-send proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message and provider"`
+  (`2 passed, 412 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `fd244774`.
 
 ## References
 

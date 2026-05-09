@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999999999999999999999999999999999999999999999997%.
+  band of ~80-99.9999999999999999999999999999999999999999999999998%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.96% after the latest
@@ -184,6 +184,17 @@ red/green QR remote config proof, focused no-config/JSON guard pair, adjacent
 QR CLI proof, `ruff check`, `mypy`, and focused `git diff --check`;
 checkpointed in `3d63d136`. Remaining QR remote breadth is remote secret
 diagnostics and Tailscale serve/funnel URL resolution.
+
+Current queue-head adjustment: provider-native direct `send` now accepts
+OpenClaw-style `channelData`-only payloads for shared outbound runtime
+delivery. Non-empty `channelData` is treated as sendable content, whitespace
+text is normalized to an empty message for the provider request, `channelData`
+is preserved in the persisted delivery payload, and structured provider
+metadata still flows through the existing transport/result path. Verified on
+2026-05-08 with focused red/green provider proof, adjacent provider-send
+proofs, `ruff check`, `mypy`, and focused `git diff --check`; checkpointed in
+`fd244774`. Remaining provider breadth includes provider-specific media/reply
+edge cases and inbound/runtime depth.
 
 Current queue-head adjustment: `sessions.spawn runtime="acp"` now uses a real
 native `GatewayAcpSpawnService` backed by `RuntimeManager`, including thread

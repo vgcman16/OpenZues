@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999999999999999999999997% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.9999999999999999999999999999999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.91% | Mostly landed; packaging, QR remote secret/Tailscale depth, and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -68,7 +68,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR approval guidance checkpointed in `d6052fda`; QR JSON setup-code contract checkpointed in `b79b87c3`; device pairing public-key persistence/projection checkpointed in `bef0652f`; QR public-cleartext URL rejection checkpointed in `24d89215`; QR remote saved URL/auth config checkpointed in `3d63d136` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue QR remote secret diagnostics/Tailscale serve breadth or next startup/update edge |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Zalo user `channels.logout` runtime checkpointed in `4d67d5a6`; QQBot `channels.logout` runtime checkpointed in `aac53b3b`; WhatsApp `channels.logout` runtime checkpointed in `3e99a587`; Nextcloud Talk `channels.logout` runtime checkpointed in `13de6593`; LINE `channels.logout` runtime checkpointed in `9674493d`; Telegram `channels.logout` runtime checkpointed in `2d26bdc4`; `channels.stop` native Tlon runtime checkpointed in `1365c028`; `channels.start` native Tlon runtime checkpointed in `810a6af0`; Tlon production SSE monitor lifecycle checkpointed in `726f03cb`; Tlon approval block/admin handling checkpointed in `800d2ab6`; Tlon approval response replay checkpointed in `265b0a10`; Tlon inbound authorization/pending approvals checkpointed in `d7bd3f7d`; Tlon inbound media staging checkpointed in `d7556229`; Tlon group/thread inbound session routing checkpointed in `b3b06972`; Tlon DM inbound session routing checkpointed in `51e6b618`; Tlon custom S3 media upload checkpointed in `dc999418`; Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5`; direct outbound reply policy metadata checkpointed in `e115e5f1` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to packaging ownership detection or companion seams |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Zalo user `channels.logout` runtime checkpointed in `4d67d5a6`; QQBot `channels.logout` runtime checkpointed in `aac53b3b`; WhatsApp `channels.logout` runtime checkpointed in `3e99a587`; Nextcloud Talk `channels.logout` runtime checkpointed in `13de6593`; LINE `channels.logout` runtime checkpointed in `9674493d`; Telegram `channels.logout` runtime checkpointed in `2d26bdc4`; `channels.stop` native Tlon runtime checkpointed in `1365c028`; `channels.start` native Tlon runtime checkpointed in `810a6af0`; Tlon production SSE monitor lifecycle checkpointed in `726f03cb`; Tlon approval block/admin handling checkpointed in `800d2ab6`; Tlon approval response replay checkpointed in `265b0a10`; Tlon inbound authorization/pending approvals checkpointed in `d7bd3f7d`; Tlon inbound media staging checkpointed in `d7556229`; Tlon group/thread inbound session routing checkpointed in `b3b06972`; Tlon DM inbound session routing checkpointed in `51e6b618`; Tlon custom S3 media upload checkpointed in `dc999418`; Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5`; direct outbound reply policy metadata checkpointed in `e115e5f1`; direct outbound `channelData`-only payloads checkpointed in `fd244774` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific media/reply edges or packaging ownership detection |
 
 Latest queue addendum: `OZ-PKG-001CA` stable/beta release-channel git updates
 are checkpointed in `1f45d307`, and `OZ-PKG-001CB` preflight edge-failure
@@ -177,8 +177,10 @@ companion device-pairing breadth or the next package startup/update edge.
 Provider runtime addendum: `OZ-PROV-001DV` Slack `message.action send` and
 `upload-file` auto-threading from `toolContext` is source/test checkpointed in
 `8db0f19b`. `OZ-PROV-001DW` direct outbound reply policy metadata is
-source/test checkpointed in `e115e5f1`. Continue companion device-pairing
-breadth or the next package startup/update edge.
+source/test checkpointed in `e115e5f1`. `OZ-PROV-001DX` direct outbound
+`channelData`-only payload delivery is source/test checkpointed in
+`fd244774`. Continue provider-specific media/reply edges, companion breadth, or
+the next package startup/update edge.
 Companion addendum: `OZ-COMP-001C` device-pairing `publicKey` pending,
 approval, paired storage, and device projection parity is source/test
 checkpointed in `bef0652f`. Continue companion QR/setup-code remote
@@ -219,6 +221,28 @@ edge.
     deselected`), `ruff check src\openzues\cli.py src\openzues\schemas.py
     tests\test_cli.py`, `mypy src\openzues\cli.py src\openzues\schemas.py`,
     and focused `git diff --check`.
+
+- [x] `OZ-PROV-001DX` Direct outbound `channelData`-only payloads
+  - Source: `openclaw-main/src/infra/outbound/deliver.ts`,
+    `openclaw-main/src/infra/outbound/deliver.test.ts`,
+    `openclaw-main/src/channels/plugins/outbound.types.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: provider-native direct `send` treats non-empty `channelData` as
+    sendable content even when text is whitespace, normalizes the provider
+    request message to `""`, preserves structured `channel_data`, and persists
+    the exact `channelData` object in delivery metadata.
+  - Evidence required: focused provider send proof, adjacent provider send
+    proof, ruff, mypy
+  - Status: checkpointed in `fd244774`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_channel_data_only_payload -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent provider
+    send proof (`4 passed, 410 deselected`), broader provider-send proof (`2
+    passed, 412 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 
 - [x] `OZ-COMP-001D` QR public cleartext mobile pairing URL rejection
   - Source: `openclaw-main/src/pairing/setup-code.ts`,
