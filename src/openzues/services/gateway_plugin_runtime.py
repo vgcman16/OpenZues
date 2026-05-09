@@ -587,6 +587,41 @@ def build_plugin_runtime_executor_specs_from_active_registry(
     return tuple(specs)
 
 
+def build_plugin_runtime_session_extension_specs_from_active_registry(
+    registry: Mapping[str, object],
+) -> tuple[GatewayPluginSessionExtensionSpec, ...]:
+    raw_extensions = registry.get("sessionExtensions", registry.get("session_extensions"))
+    if not isinstance(raw_extensions, list):
+        return ()
+    specs: list[GatewayPluginSessionExtensionSpec] = []
+    for entry in raw_extensions:
+        if not isinstance(entry, Mapping):
+            continue
+        spec = _normalize_session_extension_spec(entry)
+        if spec is not None:
+            specs.append(spec)
+    return tuple(specs)
+
+
+def build_plugin_runtime_control_ui_descriptor_specs_from_active_registry(
+    registry: Mapping[str, object],
+) -> tuple[GatewayPluginControlUiDescriptorSpec, ...]:
+    raw_descriptors = registry.get(
+        "controlUiDescriptors",
+        registry.get("control_ui_descriptors"),
+    )
+    if not isinstance(raw_descriptors, list):
+        return ()
+    specs: list[GatewayPluginControlUiDescriptorSpec] = []
+    for entry in raw_descriptors:
+        if not isinstance(entry, Mapping):
+            continue
+        spec = _normalize_control_ui_descriptor_spec(entry)
+        if spec is not None:
+            specs.append(spec)
+    return tuple(specs)
+
+
 def _optional_string(value: object) -> str | None:
     if value is None:
         return None
