@@ -25970,6 +25970,88 @@ def test_update_status_json_includes_openclaw_channel_projection(
     }
 
 
+def test_doctor_interactive_git_checkout_offers_update_before_doctor(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    seen: list[dict[str, int | None]] = []
+
+    class FakeRuntimeUpdates:
+        async def run_update(
+            self,
+            *,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.append({"timeout_ms": timeout_ms})
+            return {
+                "status": "ok",
+                "mode": "git",
+                "root": str(package_root),
+                "steps": [{"name": "doctor", "status": "ok"}],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(runtime_updates=FakeRuntimeUpdates()))
+
+    monkeypatch.delenv("OPENCLAW_UPDATE_IN_PROGRESS", raising=False)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_doctor_update_offer_is_interactive", lambda: True)
+    monkeypatch.setattr(cli_module, "_doctor_update_detect_git_checkout", lambda _root: "git")
+
+    result = runner.invoke(app, ["doctor"], input="y\n")
+
+    assert result.exit_code == 0, result.stdout
+    assert seen == [{"timeout_ms": None}]
+    assert "Update OpenZues from git before running doctor?" in result.stdout
+    assert "Update completed (doctor already ran as part of the update)." in result.stdout
+
+
+def test_doctor_preflight_update_offer_respects_noninteractive_guards(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    monkeypatch.setattr(cli_module, "_doctor_update_offer_is_interactive", lambda: True)
+    monkeypatch.delenv("OPENCLAW_UPDATE_IN_PROGRESS", raising=False)
+
+    assert cli_module._doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=False,
+        fix=False,
+        non_interactive=False,
+    )
+    assert not cli_module._doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=True,
+        fix=False,
+        non_interactive=False,
+    )
+    assert not cli_module._doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=False,
+        fix=True,
+        non_interactive=False,
+    )
+    assert not cli_module._doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=False,
+        fix=False,
+        non_interactive=True,
+    )
+
+    monkeypatch.setenv("OPENCLAW_UPDATE_IN_PROGRESS", "1")
+    assert not cli_module._doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=False,
+        fix=False,
+        non_interactive=False,
+    )
+
+
 def test_update_dry_run_json_maps_main_package_install_spec(
     tmp_path,
     monkeypatch,

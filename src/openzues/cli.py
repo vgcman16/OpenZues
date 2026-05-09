@@ -8252,6 +8252,68 @@ def _doctor_path_exists(path: Path) -> bool:
         return False
 
 
+def _doctor_env_value_is_truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _doctor_update_offer_is_interactive() -> bool:
+    isatty = getattr(sys.stdin, "isatty", None)
+    return bool(isatty()) if callable(isatty) else False
+
+
+def _doctor_update_detect_git_checkout(root: Path | None) -> Literal["git", "not-git", "unknown"]:
+    if root is None:
+        return "unknown"
+    try:
+        root_path = root.resolve(strict=False)
+    except OSError:
+        root_path = root
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        return "git" if _doctor_path_exists(root_path / ".git") else "unknown"
+    try:
+        completed = subprocess.run(
+            [git_executable, "-C", str(root_path), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "git" if _doctor_path_exists(root_path / ".git") else "unknown"
+    if completed.returncode != 0:
+        stderr = str(completed.stderr or "").strip().lower()
+        if "not a git repository" in stderr:
+            return "not-git"
+        return "unknown"
+    git_root = str(completed.stdout or "").strip()
+    if not git_root:
+        return "unknown"
+    try:
+        git_root_path = Path(git_root).resolve(strict=False)
+    except OSError:
+        git_root_path = Path(git_root)
+    normalized_root = os.path.normcase(os.path.normpath(str(root_path)))
+    normalized_git_root = os.path.normcase(os.path.normpath(str(git_root_path)))
+    return "git" if normalized_root == normalized_git_root else "not-git"
+
+
+def _doctor_should_offer_update_before_checks(
+    *,
+    root: Path | None,
+    json_output: bool,
+    fix: bool,
+    non_interactive: bool,
+) -> bool:
+    if root is None or json_output or fix or non_interactive:
+        return False
+    if _doctor_env_value_is_truthy(os.environ.get("OPENCLAW_UPDATE_IN_PROGRESS")):
+        return False
+    return _doctor_update_offer_is_interactive()
+
+
 def _doctor_package_distribution_check(
     *,
     key: str,
@@ -105692,7 +105754,37 @@ def doctor(
         help="Disable interactive doctor prompts; accepted for update-runner parity.",
     ),
 ) -> None:
-    _ = non_interactive
+    package_root = _openzues_package_root()
+
+    async def _preflight_update_action(services: CliServices) -> dict[str, object]:
+        payload = await services.runtime_updates.run_update(timeout_ms=None)
+        return dict(payload)
+
+    if _doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=json_output,
+        fix=fix,
+        non_interactive=non_interactive,
+    ):
+        git_checkout = _doctor_update_detect_git_checkout(package_root)
+        if git_checkout == "git" and typer.confirm(
+            "Update OpenZues from git before running doctor?",
+            default=True,
+        ):
+            typer.echo("Update")
+            typer.echo("Running update (fetch/rebase/build/ui:build/doctor)...")
+            update_payload = _run(_run_with_services(_preflight_update_action))
+            _emit_update_run_result(update_payload, json_output=False)
+            if update_payload.get("status") == "ok":
+                typer.echo("Update completed (doctor already ran as part of the update).")
+                return
+        elif git_checkout == "not-git":
+            typer.echo("Update")
+            typer.echo("This install is not a git checkout.")
+            typer.echo(
+                "Run `openzues update` to update via your package manager (npm/pnpm), "
+                "then rerun doctor."
+            )
 
     async def _action(services: CliServices) -> dict[str, object]:
         view = await _try_live_hermes_doctor_view(services.settings)
