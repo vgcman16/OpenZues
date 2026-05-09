@@ -4,6 +4,7 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -257,6 +258,7 @@ DIRECT_SESSION_HISTORY_SSE_KEEPALIVE_SECONDS = 15.0
 DIRECT_SESSION_HISTORY_FULL_INITIAL_LIMIT = 1_000_000_000
 MSTEAMS_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024
 SLACK_EVENTS_MAX_BODY_BYTES = 1024 * 1024
+SLACK_SIGNATURE_TOLERANCE_SECONDS = 60 * 5
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -294,6 +296,61 @@ def _msteams_configured_webhook_path(snapshot: Mapping[str, Any]) -> str | None:
     if not isinstance(webhook, Mapping):
         return None
     return _normalize_msteams_webhook_path(webhook.get("path"))
+
+
+def _slack_signing_secret_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> str | None:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, Mapping):
+        return None
+    slack_config = channels.get("slack")
+    if not isinstance(slack_config, Mapping):
+        return None
+    normalized_account_id = str(account_id or "default").strip() or "default"
+    accounts = slack_config.get("accounts")
+    account_config: Mapping[str, Any] = {}
+    if isinstance(accounts, Mapping):
+        direct = accounts.get(normalized_account_id)
+        if isinstance(direct, Mapping):
+            account_config = direct
+        else:
+            lowered = normalized_account_id.lower()
+            for key, value in accounts.items():
+                if str(key).strip().lower() == lowered and isinstance(value, Mapping):
+                    account_config = value
+                    break
+    for candidate in (account_config.get("signingSecret"), slack_config.get("signingSecret")):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+def _valid_slack_request_signature(
+    *,
+    body: bytes,
+    timestamp: str | None,
+    signature: str | None,
+    signing_secret: str,
+) -> bool:
+    if not timestamp or not signature:
+        return False
+    try:
+        timestamp_int = int(timestamp)
+    except ValueError:
+        return False
+    now = int(datetime.now(UTC).timestamp())
+    if abs(now - timestamp_int) > SLACK_SIGNATURE_TOLERANCE_SECONDS:
+        return False
+    base = b"v0:" + timestamp.encode("utf-8") + b":" + body
+    expected = "v0=" + hmac.new(
+        signing_secret.encode("utf-8"),
+        base,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -4454,6 +4511,33 @@ def create_app(
         else build_msteams_webhook_jwt_validator_from_config(msteams_webhook_config_snapshot)
     )
 
+    def verify_slack_signature_if_configured(
+        request: Request,
+        body: bytes,
+        *,
+        account_id: str | None,
+    ) -> JSONResponse | None:
+        config_service = getattr(active_ops_mesh_service, "gateway_config_service", None)
+        snapshot = (
+            config_service.build_snapshot()
+            if config_service is not None
+            else active_gateway_config_service.build_snapshot()
+        )
+        signing_secret = _slack_signing_secret_from_snapshot(
+            snapshot,
+            account_id=account_id,
+        )
+        if signing_secret is None:
+            return None
+        if _valid_slack_request_signature(
+            body=body,
+            timestamp=request.headers.get("x-slack-request-timestamp"),
+            signature=request.headers.get("x-slack-signature"),
+            signing_secret=signing_secret,
+        ):
+            return None
+        return JSONResponse({"error": "Invalid Slack signature"}, status_code=401)
+
     async def dispatch_msteams_messages(request: Request) -> JSONResponse:
         authorization = str(request.headers.get("authorization") or "")
         if not authorization.startswith("Bearer "):
@@ -4515,6 +4599,17 @@ def create_app(
         body = await request.body()
         if len(body) > SLACK_EVENTS_MAX_BODY_BYTES:
             return JSONResponse({"error": "Payload too large"}, status_code=413)
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        signature_error = verify_slack_signature_if_configured(
+            request,
+            body,
+            account_id=account_id,
+        )
+        if signature_error is not None:
+            return signature_error
         try:
             payload = json.loads(body.decode("utf-8")) if body else {}
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -4524,10 +4619,6 @@ def create_app(
         if payload.get("type") == "url_verification":
             challenge = payload.get("challenge")
             return JSONResponse({"challenge": challenge if isinstance(challenge, str) else ""})
-        account_id = (
-            request.query_params.get("accountId")
-            or request.query_params.get("account_id")
-        )
         result = await active_ops_mesh_service.handle_slack_system_event(
             cast(Mapping[str, Any], payload),
             account_id=account_id,
@@ -4539,6 +4630,17 @@ def create_app(
         body = await request.body()
         if len(body) > SLACK_EVENTS_MAX_BODY_BYTES:
             return JSONResponse({"error": "Payload too large"}, status_code=413)
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        signature_error = verify_slack_signature_if_configured(
+            request,
+            body,
+            account_id=account_id,
+        )
+        if signature_error is not None:
+            return signature_error
         content_type = request.headers.get("content-type", "")
         try:
             if "application/json" in content_type:
@@ -4553,10 +4655,6 @@ def create_app(
                 status_code=400,
                 detail="Slack interaction payload must be an object.",
             )
-        account_id = (
-            request.query_params.get("accountId")
-            or request.query_params.get("account_id")
-        )
         result = await active_ops_mesh_service.handle_slack_interaction(
             cast(Mapping[str, Any], payload),
             account_id=account_id,
@@ -4568,6 +4666,17 @@ def create_app(
         body = await request.body()
         if len(body) > SLACK_EVENTS_MAX_BODY_BYTES:
             return JSONResponse({"error": "Payload too large"}, status_code=413)
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        signature_error = verify_slack_signature_if_configured(
+            request,
+            body,
+            account_id=account_id,
+        )
+        if signature_error is not None:
+            return signature_error
         content_type = request.headers.get("content-type", "")
         try:
             if "application/json" in content_type:
@@ -4581,10 +4690,6 @@ def create_app(
                 status_code=400,
                 detail="Slack slash payload must be an object.",
             )
-        account_id = (
-            request.query_params.get("accountId")
-            or request.query_params.get("account_id")
-        )
         result = await active_ops_mesh_service.handle_slack_slash_command(
             cast(Mapping[str, Any], payload),
             account_id=account_id,
