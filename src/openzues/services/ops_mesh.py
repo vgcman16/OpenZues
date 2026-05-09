@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import copy
 import hashlib
 import hmac
 import html
@@ -1622,6 +1623,93 @@ def _slack_channel_event_allowed(
         if channel_entry.get("enabled") is False:
             return False
     return True
+
+
+def _slack_account_config_entry(
+    slack_config: Mapping[str, Any],
+    account_id: str | None,
+) -> Mapping[str, Any]:
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    accounts = _slack_inbound_mapping(slack_config.get("accounts"))
+    direct = accounts.get(normalized_account_id)
+    if isinstance(direct, Mapping):
+        return cast(Mapping[str, Any], direct)
+    lowered = normalized_account_id.strip().lower()
+    for key, entry in accounts.items():
+        if str(key).strip().lower() == lowered and isinstance(entry, Mapping):
+            return cast(Mapping[str, Any], entry)
+    return {}
+
+
+def _slack_config_writes_enabled(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> bool:
+    channels = _slack_inbound_mapping(snapshot.get("channels"))
+    slack_config = _slack_inbound_mapping(channels.get("slack"))
+    account_config = _slack_account_config_entry(slack_config, account_id)
+    configured = account_config.get("configWrites")
+    if configured is None:
+        configured = slack_config.get("configWrites")
+    return configured is True
+
+
+def _migrate_slack_channel_map(
+    channels: object,
+    *,
+    old_channel_id: str,
+    new_channel_id: str,
+) -> tuple[bool, bool]:
+    if not isinstance(channels, dict) or old_channel_id == new_channel_id:
+        return False, False
+    if old_channel_id not in channels:
+        return False, False
+    if new_channel_id in channels:
+        return False, True
+    channels[new_channel_id] = channels.pop(old_channel_id)
+    return True, False
+
+
+def _migrate_slack_channel_ids_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+    old_channel_id: str,
+    new_channel_id: str,
+) -> tuple[bool, bool, list[str]]:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, dict):
+        return False, False, []
+    slack_config = channels.get("slack")
+    if not isinstance(slack_config, dict):
+        return False, False, []
+    migrated = False
+    skipped_existing = False
+    scopes: list[str] = []
+    account_config = _slack_account_config_entry(slack_config, account_id)
+    account_channels = account_config.get("channels")
+    account_migrated, account_skipped = _migrate_slack_channel_map(
+        account_channels,
+        old_channel_id=old_channel_id,
+        new_channel_id=new_channel_id,
+    )
+    if account_migrated:
+        migrated = True
+        scopes.append("account")
+    if account_skipped:
+        skipped_existing = True
+    global_migrated, global_skipped = _migrate_slack_channel_map(
+        slack_config.get("channels"),
+        old_channel_id=old_channel_id,
+        new_channel_id=new_channel_id,
+    )
+    if global_migrated:
+        migrated = True
+        scopes.append("global")
+    if global_skipped:
+        skipped_existing = True
+    return migrated, skipped_existing, scopes
 
 
 def _slack_reaction_sender_allowed(
@@ -16024,6 +16112,65 @@ class OpsMeshService:
             result["channelName"] = context.channel_name
         return result
 
+    async def handle_slack_channel_id_changed_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        old_channel_id = _slack_inbound_optional_string(event.get("old_channel_id"))
+        new_channel_id = _slack_inbound_optional_string(event.get("new_channel_id"))
+        if event_type != "channel_id_changed" or old_channel_id is None or new_channel_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_channel_id_change_missing_ids",
+            }
+        if self.gateway_config_service is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "status": "unavailable",
+                "reason": "slack_channel_config_unavailable",
+            }
+        current = self.gateway_config_service.build_snapshot()
+        if not _slack_config_writes_enabled(current, account_id=account_id):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_channel_config_writes_disabled",
+            }
+        next_snapshot = copy.deepcopy(current)
+        migrated, skipped_existing, scopes = _migrate_slack_channel_ids_in_snapshot(
+            next_snapshot,
+            account_id=account_id,
+            old_channel_id=old_channel_id,
+            new_channel_id=new_channel_id,
+        )
+        if migrated:
+            base = self.gateway_config_service.patch_object({})
+            self.gateway_config_service.set_raw(
+                json.dumps(next_snapshot),
+                base_hash=str(base.get("hash") or ""),
+            )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "eventType": event_type,
+            "oldChannelId": old_channel_id,
+            "newChannelId": new_channel_id,
+            "migrated": migrated,
+            "skippedExisting": skipped_existing,
+            "scopes": scopes,
+        }
+
     async def handle_slack_pin_event(
         self,
         payload: Mapping[str, Any],
@@ -16277,6 +16424,11 @@ class OpsMeshService:
             )
         if _slack_channel_action(event_type) is not None:
             return await self.handle_slack_channel_event(
+                payload,
+                account_id=account_id,
+            )
+        if event_type == "channel_id_changed":
+            return await self.handle_slack_channel_id_changed_event(
                 payload,
                 account_id=account_id,
             )

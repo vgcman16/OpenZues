@@ -25927,6 +25927,154 @@ def test_slack_events_route_dispatches_channel_event_callbacks(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_migrates_slack_channel_id_changed_config(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "configWrites": True,
+                    "channels": {"COLD": {"enabled": True}},
+                    "accounts": {
+                        "workspace": {
+                            "channels": {"COLD": {"users": ["U1"]}},
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_channel_id_changed_event(
+        {
+            "type": "channel_id_changed",
+            "old_channel_id": "COLD",
+            "new_channel_id": "CNEW",
+        },
+        account_id="workspace",
+    )
+    snapshot = gateway_config.build_snapshot()
+    slack_config = snapshot["channels"]["slack"]
+
+    assert result == {
+        "ok": True,
+        "channel": "slack",
+        "eventType": "channel_id_changed",
+        "oldChannelId": "COLD",
+        "newChannelId": "CNEW",
+        "migrated": True,
+        "skippedExisting": False,
+        "scopes": ["account", "global"],
+    }
+    assert "COLD" not in slack_config["channels"]
+    assert slack_config["channels"]["CNEW"] == {"enabled": True}
+    assert "COLD" not in slack_config["accounts"]["workspace"]["channels"]
+    assert slack_config["accounts"]["workspace"]["channels"]["CNEW"] == {"users": ["U1"]}
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_skips_slack_channel_id_change_when_writes_disabled(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "configWrites": False,
+                    "channels": {"COLD": {"enabled": True}},
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_channel_id_changed_event(
+        {
+            "type": "channel_id_changed",
+            "old_channel_id": "COLD",
+            "new_channel_id": "CNEW",
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "channel_id_changed",
+        "skipped": True,
+        "reason": "slack_channel_config_writes_disabled",
+    }
+    assert "COLD" in gateway_config.build_snapshot()["channels"]["slack"]["channels"]
+
+
+def test_slack_events_route_dispatches_channel_id_changed_callbacks(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/events?accountId=workspace",
+            json={
+                "type": "event_callback",
+                "event": {
+                    "type": "channel_id_changed",
+                    "old_channel_id": "COLD",
+                },
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "channel_id_changed",
+        "skipped": True,
+        "reason": "slack_channel_id_change_missing_ids",
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_routes_slack_pin_event_through_wake_queue(
     tmp_path: Path,
 ) -> None:
