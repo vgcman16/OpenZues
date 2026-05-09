@@ -16,12 +16,12 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999999999999999995% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999999999999999997% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
-| Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.9% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.91% | High for bounded native bridge | Packaging, QR remote secret/Tailscale depth, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.91% | High for bounded native path | Remaining gaps are deeper plugin import/activation, QR remote secret/Tailscale breadth, and packaging surfaces |
 
 ## Implemented / Locked Bounded Areas
 
@@ -7743,6 +7743,30 @@ may lag behind this tracker.
     pair (`2 passed`), adjacent QR CLI proof (`7 passed, 558 deselected`),
     `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
     src\openzues\cli.py`, and focused `git diff --check`.
+
+- [x] QR remote saved URL/auth config.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `src/openzues/schemas.py`,
+    `tests/test_cli.py`
+  - Contract: `openzues qr --remote` uses persisted
+    `gateway.remote.url`, prefers remote token/password auth labels without
+    embedding secrets, reports `gateway.remote.url` as source, ignores
+    device-pair publicUrl for remote mode, and keeps the no-config preflight
+    guard.
+  - Evidence required: focused QR remote config proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `3d63d136`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_remote_uses_gateway_remote_url_and_token_from_config -q`
+    (`1 failed` before implementation, then `1 passed`), focused no-config /
+    JSON guard pair (`2 passed`), adjacent QR CLI proof (`8 passed, 558
+    deselected`), `ruff check src\openzues\cli.py src\openzues\schemas.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py src\openzues\schemas.py`,
+    and focused `git diff --check`.
 
 ## Update Rule
 

@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999999999999999999999999999999999999999999999995%.
+  band of ~80-99.9999999999999999999999999999999999999999999999997%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.96% after the latest
@@ -13,8 +13,8 @@ Current percentage rollup:
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
   monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.91% after the
+  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -125,10 +125,10 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
-- The CLI/operator control-plane family is estimated at ~99.9% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.91% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
-  secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  secrets reload CLI surface, QR remote config lookup/auth, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
@@ -171,7 +171,19 @@ Current percentage rollup:
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
   channel-registered thread binders, broader provider-native adapters,
-  CLI/runtime breadth, packaging/doctor surfaces, and companion app parity.
+  CLI/runtime breadth, packaging/doctor surfaces, QR remote secret
+  diagnostics/Tailscale serve breadth, and companion app parity.
+
+Current queue-head adjustment: QR `--remote` now loads persisted
+`gateway.remote.url` plus remote token/password auth material from the native
+control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
+remote mode from falling through to device-pair publicUrl, preserves existing
+no-remote-config preflight behavior, and avoids embedding local or remote auth
+material in setup-code or JSON output. Verified on 2026-05-08 with focused
+red/green QR remote config proof, focused no-config/JSON guard pair, adjacent
+QR CLI proof, `ruff check`, `mypy`, and focused `git diff --check`;
+checkpointed in `3d63d136`. Remaining QR remote breadth is remote secret
+diagnostics and Tailscale serve/funnel URL resolution.
 
 Current queue-head adjustment: `sessions.spawn runtime="acp"` now uses a real
 native `GatewayAcpSpawnService` backed by `RuntimeManager`, including thread
