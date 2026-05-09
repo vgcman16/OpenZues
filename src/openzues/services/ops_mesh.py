@@ -1477,6 +1477,14 @@ def _slack_reaction_action(event_type: str | None) -> str | None:
     return None
 
 
+def _slack_member_action(event_type: str | None) -> str | None:
+    if event_type == "member_joined_channel":
+        return "joined"
+    if event_type == "member_left_channel":
+        return "left"
+    return None
+
+
 def _slack_infer_channel_type(channel_id: str, raw_type: object = None) -> str:
     normalized_type = str(raw_type or "").strip().lower()
     if normalized_type in {"im", "mpim", "channel", "group"}:
@@ -1639,6 +1647,66 @@ def _slack_reaction_session_context(
         action=action,
         event_type=event_type,
         item_user=_slack_inbound_optional_string(event.get("item_user")),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SlackMemberSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    channel_id: str
+    channel_type: str
+    sender_id: str
+    action: str
+    event_type: str
+
+
+def _slack_member_session_context(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _SlackMemberSessionContext | None:
+    event_type = _slack_inbound_optional_string(event.get("type"))
+    action = _slack_member_action(event_type)
+    if action is None or event_type is None:
+        return None
+    sender_id = _slack_inbound_optional_string(event.get("user"))
+    channel_id = _slack_inbound_optional_string(event.get("channel"))
+    if sender_id is None or channel_id is None:
+        return None
+    channel_type = _slack_infer_channel_type(channel_id, event.get("channel_type"))
+    if channel_type == "im":
+        peer_kind: ConversationTargetPeerKind = "direct"
+        peer_id = sender_id
+    elif channel_type == "mpim":
+        peer_kind = "group"
+        peer_id = channel_id
+    else:
+        peer_kind = "channel"
+        peer_id = channel_id
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="slack",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    return _SlackMemberSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        channel_id=channel_id,
+        channel_type=channel_type,
+        sender_id=sender_id,
+        action=action,
+        event_type=event_type,
     )
 
 
@@ -15541,6 +15609,91 @@ class OpsMeshService:
             "contextKey": context_key,
             "conversationTarget": context.conversation_target.model_dump(mode="json"),
             "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+
+    async def handle_slack_member_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        context = _slack_member_session_context(event, account_id=account_id)
+        if context is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_member_event_without_channel",
+            }
+        channel_config = self._slack_channel_config(account_id=account_id)
+        if not _slack_reaction_sender_allowed(
+            channel_config=channel_config,
+            channel_id=context.channel_id,
+            channel_type=context.channel_type,
+            sender_id=context.sender_id,
+        ):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": context.event_type,
+                "skipped": True,
+                "reason": "slack_member_sender_unauthorized",
+            }
+        if self.wake_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack member system-event wake is unavailable."
+            )
+        text = f"Slack: {context.sender_id} {context.action} {context.channel_id}."
+        context_key = (
+            f"slack:member:{context.action}:{context.channel_id}:{context.sender_id}"
+        )
+        await self.wake_service.wake(
+            mode="next-heartbeat",
+            text=text,
+            reason=context_key,
+            session_key=context.session_key,
+        )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "eventType": context.event_type,
+            "action": context.action,
+            "sessionKey": context.session_key,
+            "senderId": context.sender_id,
+            "channelId": context.channel_id,
+            "text": text,
+            "contextKey": context_key,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+
+    async def handle_slack_system_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        if _slack_reaction_action(event_type) is not None:
+            return await self.handle_slack_reaction_event(
+                payload,
+                account_id=account_id,
+            )
+        if _slack_member_action(event_type) is not None:
+            return await self.handle_slack_member_event(
+                payload,
+                account_id=account_id,
+            )
+        return {
+            "ok": False,
+            "channel": "slack",
+            "eventType": event_type,
+            "skipped": True,
+            "reason": "slack_event_unsupported",
         }
 
     async def handle_msteams_inbound_activity(

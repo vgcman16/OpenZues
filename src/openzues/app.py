@@ -4527,7 +4527,7 @@ def create_app(
             request.query_params.get("accountId")
             or request.query_params.get("account_id")
         )
-        result = await active_ops_mesh_service.handle_slack_reaction_event(
+        result = await active_ops_mesh_service.handle_slack_system_event(
             cast(Mapping[str, Any], payload),
             account_id=account_id,
         )
