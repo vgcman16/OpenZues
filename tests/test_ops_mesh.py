@@ -26955,6 +26955,123 @@ def test_slack_slash_route_returns_arg_menu_for_missing_choice_arg(
     ]
 
 
+def test_slack_slash_route_uses_external_arg_menu_for_large_choice_set(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    delivered: list[tuple[str, str]] = []
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    class LargeChoiceCommands:
+        def build_catalog(
+            self,
+            *,
+            include_args: bool,
+            provider: str | None = None,
+            scope: str | None = None,
+        ) -> dict[str, object]:
+            assert include_args is True
+            assert provider == "slack"
+            assert scope == "native"
+            return {
+                "commands": [
+                    {
+                        "name": "deploy.region",
+                        "nativeName": "deploy.region",
+                        "args": [
+                            {
+                                "name": "region",
+                                "description": "deployment region",
+                                "choices": [
+                                    {
+                                        "label": f"Region {index:03d}",
+                                        "value": f"region-{index:03d}",
+                                    }
+                                    for index in range(101)
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+
+    async def fake_deliver(session_key: str, prompt: str) -> dict[str, object]:
+        delivered.append((session_key, prompt))
+        return {"messageId": "queued"}
+
+    service.gateway_commands_service = LargeChoiceCommands()  # type: ignore[assignment]
+    service.session_delivery_service = fake_deliver
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            json={
+                "command": "/deploy.region",
+                "text": "",
+                "user_id": "U123",
+                "user_name": "alice",
+                "channel_id": "COPS",
+                "channel_name": "ops",
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["reason"] == "slack_slash_command_arg_menu"
+        assert delivered == []
+        blocks = payload["response"]["blocks"]
+        action_block = blocks[3]
+        assert action_block["block_id"].startswith("openclaw_cmdarg_ext:")
+        action = action_block["elements"][0]
+        assert action["type"] == "external_select"
+        assert action["action_id"] == "openclaw_cmdarg"
+        assert action["min_query_length"] == 0
+
+        suggestion_response = client.post(
+            "/api/channels/slack/interactions?accountId=workspace",
+            json={
+                "type": "block_suggestion",
+                "user": {"id": "U123"},
+                "action_id": "openclaw_cmdarg",
+                "block_id": action_block["block_id"],
+                "value": "Region 100",
+            },
+        )
+
+    assert suggestion_response.status_code == 200, suggestion_response.text
+    suggestion_payload = suggestion_response.json()
+    assert suggestion_payload["ok"] is True
+    assert suggestion_payload["options"] == [
+        {
+            "text": {"type": "plain_text", "text": "Region 100"},
+            "value": "cmdarg|deploy.region|region|region-100|U123",
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_dispatches_slack_command_arg_interaction_to_session(
     tmp_path: Path,
