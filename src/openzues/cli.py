@@ -98318,15 +98318,97 @@ def _qr_secret_ref_label(value: object) -> str | None:
     return None
 
 
-def _qr_env_secret_ref_name(value: object) -> str | None:
+def _qr_secret_ref_parts(value: object) -> tuple[str, str, str] | None:
     label = _qr_secret_ref_label(value)
     if label is None:
         return None
-    source, _, secret_id = label.partition(":")
-    _, _, env_name = secret_id.partition(":")
-    if source != "env" or not env_name:
+    source, provider, secret_id = label.split(":", 2)
+    if not source or not provider or not secret_id:
+        return None
+    return source, provider, secret_id
+
+
+def _qr_env_secret_ref_name(value: object) -> str | None:
+    parts = _qr_secret_ref_parts(value)
+    if parts is None:
+        return None
+    source, _, env_name = parts
+    if source != "env":
         return None
     return env_name
+
+
+def _qr_json_pointer_read(payload: object, pointer: str) -> object | None:
+    if pointer == "":
+        return payload
+    if not pointer.startswith("/"):
+        return None
+    current = payload
+    for raw_part in pointer.split("/")[1:]:
+        part = raw_part.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, Mapping):
+            if part not in current:
+                return None
+            current = current[part]
+            continue
+        if isinstance(current, list):
+            try:
+                index = int(part)
+            except ValueError:
+                return None
+            if index < 0 or index >= len(current):
+                return None
+            current = current[index]
+            continue
+        return None
+    return current
+
+
+def _qr_strip_single_trailing_newline(value: str) -> str:
+    if value.endswith("\r\n"):
+        return value[:-2]
+    if value.endswith("\n") or value.endswith("\r"):
+        return value[:-1]
+    return value
+
+
+def _resolve_qr_file_secret_ref(
+    config_snapshot: Mapping[str, object],
+    *,
+    provider: str,
+    secret_id: str,
+) -> str | None:
+    secrets_config = _qr_config_mapping(config_snapshot.get("secrets"))
+    providers = _qr_config_mapping(secrets_config.get("providers"))
+    provider_config = _qr_config_mapping(providers.get(provider))
+    if str(provider_config.get("source") or "").strip().lower() != "file":
+        return None
+    path_text = _qr_config_text(provider_config.get("path"))
+    if path_text is None:
+        return None
+    provider_path = Path(path_text).expanduser()
+    if not provider_path.is_absolute() or not provider_path.is_file():
+        return None
+    try:
+        raw_bytes = provider_path.read_bytes()
+    except OSError:
+        return None
+    max_bytes = provider_config.get("maxBytes")
+    max_byte_count = int(max_bytes) if isinstance(max_bytes, int) and max_bytes > 0 else 1024 * 1024
+    if len(raw_bytes) > max_byte_count:
+        return None
+    raw_text = raw_bytes.decode("utf-8-sig")
+    mode = str(provider_config.get("mode") or "json").strip()
+    if mode == "singleValue":
+        if secret_id != "value":
+            return None
+        return _optional_cli_string(_qr_strip_single_trailing_newline(raw_text))
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return None
+    resolved = _qr_json_pointer_read(payload, secret_id)
+    return _optional_cli_string(resolved)
 
 
 def _resolve_qr_remote_secret_refs(
@@ -98345,12 +98427,22 @@ def _resolve_qr_remote_secret_refs(
     diagnostics: list[str] = []
     for field in ("token", "password"):
         value = remote_config.get(field)
-        ref_label = _qr_secret_ref_label(value)
-        if ref_label is None:
+        parts = _qr_secret_ref_parts(value)
+        if parts is None:
             continue
+        source, provider, secret_id = parts
+        ref_label = f"{source}:{provider}:{secret_id}"
         path = f"gateway.remote.{field}"
-        env_name = _qr_env_secret_ref_name(value)
-        resolved = _optional_cli_string(os.environ.get(env_name or ""))
+        if source == "env":
+            resolved = _optional_cli_string(os.environ.get(secret_id))
+        elif source == "file":
+            resolved = _resolve_qr_file_secret_ref(
+                resolved_snapshot,
+                provider=provider,
+                secret_id=secret_id,
+            )
+        else:
+            resolved = None
         if resolved is None:
             diagnostics.append(f"{path} SecretRef is unresolved ({ref_label}).")
             continue

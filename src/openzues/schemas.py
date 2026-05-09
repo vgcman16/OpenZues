@@ -1926,6 +1926,7 @@ class ControlUiBootstrapConfigView(BaseModel):
     plugins: dict[str, Any] | None = None
     hooks: dict[str, Any] | None = None
     channels: dict[str, Any] | None = None
+    secrets: dict[str, Any] | None = None
     update: dict[str, Any] | None = None
     messages: dict[str, Any] | None = None
     bindings: list[dict[str, Any]] | None = None
