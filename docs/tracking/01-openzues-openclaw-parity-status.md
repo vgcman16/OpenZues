@@ -16,12 +16,12 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999985% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999999999999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
-| Runtime/CLI/doctor native bridge | ~99.91% | High for bounded native bridge | Packaging, QR remote secret/Tailscale depth, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.91% | High for bounded native path | Remaining gaps are deeper plugin import/activation, QR remote secret/Tailscale breadth, and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.92% | High for bounded native bridge | Packaging, QR remote secret diagnostics, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.92% | High for bounded native path | Remaining gaps are deeper plugin import/activation, QR remote secret diagnostics, and packaging surfaces |
 
 ## Implemented / Locked Bounded Areas
 
@@ -1655,6 +1655,11 @@ may lag behind this tracker.
 - [x] Companion QR remote fail-closed preflight, preserving OpenClaw's
   `qr --remote requires gateway.remote.url` guard before bootstrap token issue.
   - Status: checkpointed in `12dee789`
+
+- [x] Companion QR remote Tailscale MagicDNS URL resolution, preserving
+  OpenClaw's `gateway.tailscale.mode=serve|funnel` setup-code URL source and
+  MagicDNS-unavailable diagnostic before bootstrap token issue.
+  - Status: checkpointed in `beb67302`
 
 - [x] Companion QR JSON setup-code contract, preserving OpenClaw's four-field
   `setupCode` / `gatewayUrl` / `auth` / `urlSource` response shape.
@@ -7772,6 +7777,28 @@ may lag behind this tracker.
     deselected`), `ruff check src\openzues\cli.py src\openzues\schemas.py
     tests\test_cli.py`, `mypy src\openzues\cli.py src\openzues\schemas.py`,
     and focused `git diff --check`.
+
+- [x] QR remote Tailscale MagicDNS URL resolution.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/shared/tailscale-status.ts`,
+    `openclaw-main/src/pairing/setup-code.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues qr --remote` resolves
+    `gateway.tailscale.mode=serve|funnel` through `tailscale status --json`
+    when no `gateway.remote.url` is configured, emits a secure MagicDNS setup
+    URL, reports `urlSource="gateway.tailscale.mode=<mode>"`, and preserves
+    the MagicDNS-unavailable preflight before bootstrap token issue.
+  - Evidence required: focused QR Tailscale proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `beb67302`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_remote_uses_tailscale_serve_dns_when_remote_url_absent -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
+    (`9 passed, 558 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
 
 - [x] Direct outbound `channelData`-only payloads.
   - Source: `openclaw-main/src/infra/outbound/deliver.ts`,
