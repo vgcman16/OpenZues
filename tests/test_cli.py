@@ -14053,6 +14053,86 @@ def test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activat
     assert runtime_activation["missingExecutorPlugins"] == []
 
 
+def test_plugins_doctor_json_imports_source_sdk_alias_runtime_entry_without_fake_adapter(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    bundled_root = tmp_path / "bundled-source"
+    plugin_dir = bundled_root / "discord"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="discord",
+        enabled_by_default=True,
+        contracts={"tools": ["discord.send"]},
+    )
+    runtime_source = plugin_dir / "src" / "channel.runtime.ts"
+    runtime_source.parent.mkdir(parents=True)
+    runtime_source.write_text(
+        "import { resolveOutboundSendDep } from "
+        '"@openclaw/plugin-sdk/outbound-send-deps";\n'
+        "export default {\n"
+        "  register(api) {\n"
+        "    api.registerTool({\n"
+        "      name: resolveOutboundSendDep(),\n"
+        '      description: "Send to Discord"\n'
+        "    });\n"
+        "  }\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    sdk_shim = plugin_dir / "plugin-sdk" / "outbound-send-deps.ts"
+    sdk_shim.parent.mkdir(parents=True)
+    sdk_shim.write_text(
+        "export function resolveOutboundSendDep() { return 'discord.send'; }\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "package.json").write_text(
+        json.dumps({"openclaw": {"extensions": ["./src/channel.runtime.ts"]}}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(bundled_root))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+    list_result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    runtime_activation = json.loads(result.stdout)["runtimeActivation"]
+    assert runtime_activation["status"] == "ok"
+    assert runtime_activation["runtimeExecutorPlugins"] == [
+        {"pluginId": "discord", "tools": ["discord.send"]}
+    ]
+    assert runtime_activation["missingExecutorPlugins"] == []
+    assert list_result.exit_code == 0, list_result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(list_result.stdout)["plugins"]
+    }
+    assert plugins["discord"]["imported"] is True
+
+
 def test_plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract(
     tmp_path,
     monkeypatch,

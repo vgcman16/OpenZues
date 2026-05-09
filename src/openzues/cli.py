@@ -90452,7 +90452,22 @@ const blueBubblesRootRuntime = Object.assign(Object.create(genericSdk), {
 });
 
 const originalLoad = Module._load;
+let activePluginSdkAliasMap = null;
+
+function activePluginSdkAliasTarget(request) {
+  const aliasMap = activePluginSdkAliasMap;
+  if (!aliasMap || typeof aliasMap !== "object") {
+    return null;
+  }
+  const target = aliasMap[request];
+  return typeof target === "string" && target.trim() ? target : null;
+}
+
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
+  const aliasTarget = activePluginSdkAliasTarget(request);
+  if (aliasTarget) {
+    return loadRuntimeModuleSync(aliasTarget);
+  }
   if (
     request === "openclaw/plugin-sdk/twitch" ||
     request === "@openclaw/plugin-sdk/twitch"
@@ -92969,6 +92984,15 @@ async function loadRuntimeModule(entryPath) {
   }
 }
 
+function loadRuntimeModuleSync(entryPath) {
+  const resolved = path.resolve(entryPath);
+  const source = fs.readFileSync(resolved, "utf8");
+  if (/^\s*import\s/m.test(source) || /^\s*export\s+/m.test(source)) {
+    return requireTranspiledRuntimeModule(resolved, source);
+  }
+  return require(resolved);
+}
+
 function requireTranspiledRuntimeModule(entryPath, source) {
   let transformed = source
     .replace(
@@ -92983,6 +93007,15 @@ function requireTranspiledRuntimeModule(entryPath, source) {
       /import\s+([A-Za-z_$][\w$]*)\s+from\s+["']([^"']+)["'];?/g,
       (_match, localName, specifier) =>
         `const ${localName} = require("${specifier}").default || require("${specifier}");`,
+    )
+    .replace(
+      /export\s+(async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g,
+      (_match, asyncPrefix, name) =>
+        `exports.${name} = ${asyncPrefix || ""}function ${name}(`,
+    )
+    .replace(
+      /export\s+(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g,
+      (_match, _kind, name) => `exports.${name} =`,
     )
     .replace(/export\s+default\s+/g, "module.exports = ");
   const tempPath = path.join(
@@ -93078,7 +93111,17 @@ async function activatePlugin(plugin) {
   if (typeof entryPath !== "string" || !entryPath.trim()) {
     return null;
   }
-  const loaded = await loadRuntimeModule(entryPath);
+  const previousPluginSdkAliasMap = activePluginSdkAliasMap;
+  activePluginSdkAliasMap =
+    plugin.pluginSdkAliasMap && typeof plugin.pluginSdkAliasMap === "object"
+      ? plugin.pluginSdkAliasMap
+      : null;
+  let loaded;
+  try {
+    loaded = await loadRuntimeModule(entryPath);
+  } finally {
+    activePluginSdkAliasMap = previousPluginSdkAliasMap;
+  }
   const runtime = unwrapRuntimeExport(loaded);
   const activate =
     runtime && typeof runtime === "object"
@@ -93106,6 +93149,10 @@ async function activatePlugin(plugin) {
       factory: isFactory ? definition : undefined,
       factoryTool: isFactory,
       runtimeEntrySource: entryPath,
+      pluginSdkAliasMap:
+        plugin.pluginSdkAliasMap && typeof plugin.pluginSdkAliasMap === "object"
+          ? plugin.pluginSdkAliasMap
+          : undefined,
       config:
         context.config && typeof context.config === "object"
           ? context.config
@@ -93373,6 +93420,9 @@ def _native_plugin_runtime_specs_from_loader_payload(
         )
         config_payload = entry.get("config")
         raw_config_payload = entry.get("rawConfig", entry.get("raw_config"))
+        plugin_sdk_alias_map_payload = entry.get(
+            "pluginSdkAliasMap", entry.get("plugin_sdk_alias_map")
+        )
         activation_source_config_payload = entry.get(
             "activationSourceConfig", entry.get("activation_source_config")
         )
@@ -93398,6 +93448,8 @@ def _native_plugin_runtime_specs_from_loader_payload(
             }
             if runtime_entry_source is not None:
                 plugin_context["runtimeEntrySource"] = runtime_entry_source
+            if isinstance(plugin_sdk_alias_map_payload, Mapping):
+                plugin_context["pluginSdkAliasMap"] = dict(plugin_sdk_alias_map_payload)
             if isinstance(config_payload, Mapping):
                 plugin_context["config"] = dict(config_payload)
             if isinstance(raw_config_payload, Mapping):
