@@ -22167,6 +22167,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
   `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `151bb0e5`.
+- Slack external arg-menu options now have a native TTL-backed choice store:
+  callers can register per-user choices, Slack `block_suggestion` payloads
+  resolve `openclaw_cmdarg_ext:<token>` blocks, wrong users receive empty
+  options, and matching users receive case-insensitive filtered Slack options
+  capped to the upstream option/text bounds. This closes `OZ-PROV-001EO`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth remains ~99.9%.
+- Verified the Slack external arg-menu hydrated-options seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_interactions_route_returns_filtered_external_arg_options -q`
+  (`AttributeError` before implementation, then `1 passed`), focused pair
+  `python -m pytest tests\test_ops_mesh.py::test_slack_interactions_route_acknowledges_external_arg_options_without_token tests\test_ops_mesh.py::test_slack_interactions_route_returns_filtered_external_arg_options -q`
+  (`2 passed`), adjacent provider/interaction proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_command_arg or block_suggestion or slack_slash or slack_interactions_route or slack_block_action or slack_view_submission or slack_modal or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`43 passed, 413 deselected`; existing aiosqlite event-loop-close warning),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+  `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `54d18930`.
 
 ## References
 

@@ -11647,3 +11647,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and provider-native inbound/outbound breadth remains ~99.9%. Continue exec
   SecretRef signing-secret resolution, provider-specific media/reply edges,
   companion breadth, or the next package startup/update edge.
+- Current queue-head adjustment: Slack external arg-menu hydrated options now
+  match the OpenClaw choice-store path in
+  `extensions/slack/src/monitor/slash.ts` and
+  `extensions/slack/src/monitor/external-arg-menu-store.ts`: native Slack
+  `block_suggestion` payloads resolve TTL-backed `openclaw_cmdarg_ext:<token>`
+  menu entries, enforce the requester user, filter choices case-insensitively,
+  and return Slack-shaped option payloads instead of empty placeholders.
+  Source/test checkpointed in `54d18930`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth remains ~99.9%.
+  Continue provider-specific media/reply edges, companion breadth, deeper Slack
+  command menu generation, or the next package startup/update edge.
