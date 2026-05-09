@@ -25,6 +25,7 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.99% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.99% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.1% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -238,6 +239,11 @@ Plugin runtime addendum: `OZ-PLUGIN-00378` active-registry
 checkpointed in `2cc24e73`. Runtime/CLI/doctor native-bridge parity moves to
 ~99.99%; continue provider-specific media/reply edges, companion breadth, or
 the next plugin runtime activation edge.
+TUI/CLI addendum: `OZ-TUI-001` `/gateway-status` and `/gwstatus`
+command-status parity is source/test checkpointed in `38890fe3`.
+CLI/operator control-plane parity moves to ~99.99%; continue
+provider-specific media/reply edges, companion breadth, or the next
+runtime/CLI ergonomics edge.
 
 ## Active Slice Detail
 
@@ -14718,6 +14724,28 @@ the next plugin runtime activation edge.
     tests\test_gateway_plugin_runtime.py`, `mypy
     src\openzues\services\gateway_plugin_runtime.py`, and focused
     `git diff --check`.
+
+- [x] `OZ-TUI-001` Gateway-status slash command diagnostics
+  - Source: `openclaw-main/src/tui/commands.ts`,
+    `openclaw-main/src/tui/tui-command-handlers.ts`,
+    `openclaw-main/src/tui/commands.test.ts`,
+    `openclaw-main/src/tui/tui-command-handlers.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: embedded/TUI command-status help and command inventory expose
+    `/gateway-status` and `/gwstatus` as gateway diagnostics commands while
+    preserving `/status` as the session/shared status command.
+  - Evidence required: focused command-status proof, adjacent command-status
+    selector, ruff, mypy
+  - Status: checkpointed in `38890fe3`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_command_status_helpers -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "command_status"`
+    (`2 passed, 1233 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
 
 ## Canonical Checklist Format
 

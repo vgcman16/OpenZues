@@ -125,7 +125,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
-- The CLI/operator control-plane family is estimated at ~99.98% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.99% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
@@ -11332,3 +11332,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and runtime/CLI/doctor native-bridge parity moves to ~99.99%. Continue
   provider-specific media/reply edges, companion breadth, or the next plugin
   runtime activation edge.
+- Current queue-head adjustment: embedded/TUI command-status parity now exposes
+  `/gateway-status` and `/gwstatus` separately from session `/status`, keeping
+  OpenClaw's local gateway diagnostics command visible in help and command
+  inventory. Source/test checkpointed in `38890fe3`; repo-wide parity remains
+  estimated at ~99.9%, and CLI/operator control-plane parity moves to ~99.99%.
+  Continue provider-specific media/reply edges, companion breadth, or the next
+  runtime/CLI ergonomics edge.
