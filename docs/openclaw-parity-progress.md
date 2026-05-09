@@ -22056,6 +22056,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
   src\openzues\app.py`, and focused `git diff --check`. Source/test
   checkpointed in `ecdfe207`.
+- Slack slash command ingress now has a native route and session dispatch path
+  matching the OpenClaw `monitor/slash.ts` baseline: `/api/channels/slack/slash`
+  accepts Slack form or JSON payloads, derives Slack conversation session keys,
+  enforces disabled-channel and sender policy, redacts trigger ids, and delivers
+  accepted command text through the session-backed runtime with Slack-shaped
+  ephemeral responses. This closes `OZ-PROV-001EH`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth remains
+  ~99.9%.
+- Verified the Slack slash command ingress seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_dispatches_slack_slash_command_to_session tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_slash_command_when_channel_disabled tests\test_ops_mesh.py::test_slack_slash_route_dispatches_form_payload_to_session -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_slash or slack_view_submission or slack_modal or slack_interactions_route or slack_block_action or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`31 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `7c538421`.
 
 ## References
 

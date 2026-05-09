@@ -282,6 +282,19 @@ provider-native inbound/outbound breadth remains ~99.9%. Continue
 provider-specific media/reply edges, companion breadth, or the next package
 startup/update edge.
 
+Current queue-head adjustment: Slack slash command ingress now matches the
+OpenClaw `extensions/slack/src/monitor/slash.ts` baseline for native
+form-driven command dispatch: `/api/channels/slack/slash` accepts Slack form or
+JSON payloads, applies disabled-channel and sender policy, derives Slack
+conversation session keys, redacts trigger ids, and sends accepted command text
+through the session-backed runtime with Slack-shaped ephemeral responses.
+Verified on 2026-05-09 with focused red/green Slack slash service/route
+proofs, adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and
+focused `git diff --check`; source/test checkpointed in `7c538421`. This
+closes `OZ-PROV-001EH`; provider-native inbound/outbound breadth remains
+~99.9%. Continue provider-specific media/reply edges, companion breadth, or
+the next package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11532,5 +11545,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   private-metadata/view-hash redaction. Source/test checkpointed in
   `ecdfe207`; repo-wide parity remains estimated at ~99.9%, and
   provider-native inbound/outbound breadth remains ~99.9%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.
+- Current queue-head adjustment: Slack slash command ingress now routes through
+  `/api/channels/slack/slash` into Slack conversation session keys with
+  disabled-channel/sender policy, trigger-id redaction, session-backed command
+  text delivery, and Slack-shaped ephemeral responses. Source/test
+  checkpointed in `7c538421`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth remains ~99.9%. Continue
   provider-specific media/reply edges, companion breadth, or the next package
   startup/update edge.
