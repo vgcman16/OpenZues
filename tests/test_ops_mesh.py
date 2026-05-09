@@ -18332,11 +18332,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_animat
                 "reply_to_message_id": "41",
                 "disable_notification": True,
                 "animation": "https://example.com/fun.gif",
-                "caption": (
-                    "Ship the GIF.\n\n"
-                    "Media:\n"
-                    "1. https://example.com/fun.gif"
-                ),
+                "caption": "Ship the GIF.",
             },
         )
     ]
@@ -18424,12 +18420,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_audio_
                 "reply_to_message_id": "41",
                 "disable_notification": True,
                 "voice": "https://example.com/note.ogg",
-                "caption": (
-                    "Ship the voice note.\n\n"
-                    "Media:\n"
-                    "1. https://example.com/note.ogg\n\n"
-                    "Settings: audioAsVoice=true"
-                ),
+                "caption": "Ship the voice note.",
             },
         )
     ]
@@ -18787,12 +18778,7 @@ async def test_ops_mesh_service_send_direct_channel_message_attaches_telegram_bu
             {
                 "chat_id": "-100123",
                 "photo": "https://example.com/one.png",
-                "caption": (
-                    "Approval image set\n\n"
-                    "Media:\n"
-                    "1. https://example.com/one.png\n"
-                    "2. https://example.com/two.png"
-                ),
+                "caption": "Approval image set",
                 "reply_markup": {
                     "inline_keyboard": [
                         [{"text": "Approve", "callback_data": "/approve abc"}],
