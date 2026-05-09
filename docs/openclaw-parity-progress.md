@@ -2479,7 +2479,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
 | Channels + direct announce delivery | Strong partial | ~97% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, direct-announce provider metadata/replay, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, active/archived `thread-list`, core `thread-reply`, `search`, `sticker`, `sticker-upload`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `kick`, `ban`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, route-backed Feishu/Lark `send`, presentation-card `send`/`thread-reply`, image/file/audio/video media `send`, `read`, `edit`, `pin`, `unpin`, `list-pins`, `channel-info`, `member-info`, `channel-list`, `react`, and `reactions` action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
 | Browser/canvas/nodes/voice | Locked bounded family | ~99.1% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, password-safe auth save, and voicewake routing methods are now landed. |
-| Packaging + companion apps | Minimal | ~5% | Still largely outside the current shipped OpenZues surface. |
+| Packaging + companion apps | Minimal | ~5.1% | QR setup-code security, remote URL/auth, Tailscale, SecretRef, device-pairing, and inferred-loopback guards are landed, but companion apps remain largely outside the current shipped OpenZues surface. |
 
 ## Remaining Not-Fully-Complete Areas
 
@@ -21831,6 +21831,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_service.py
   src\openzues\services\gateway_method_policy.py`, and focused
   `git diff --check`. Source/test checkpointed in `a74cec21`.
+- QR setup-code generation now matches OpenClaw's loopback-only inference
+  guard: when no explicit `--url` / `--public-url`, no `--remote` URL, and no
+  Tailscale Serve/Funnel URL are available, default `127.0.0.1` binding fails
+  before bootstrap token issue instead of minting an unreachable mobile setup
+  code. Explicit loopback URLs remain valid for simulator/local-dev use. This
+  closes `OZ-COMP-001O`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion app parity moves to ~5.1%.
+- Verified the QR loopback inference seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_default_loopback_requires_explicit_reachable_url_before_token_issue -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`15 passed, 560
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `89ee261d`.
 
 ## References
 

@@ -22,6 +22,7 @@ may lag behind this tracker.
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.98% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.98% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
 
@@ -46,6 +47,11 @@ may lag behind this tracker.
   target validation, `voicewake.routing.changed` broadcasts, HTTP method-call
   support, and fresh managed-node snapshot sync.
   - Status: checkpointed in `a74cec21`
+
+- [x] QR inferred-loopback setup-code preflight, rejecting default loopback URL
+  inference before bootstrap token issue unless the loopback URL was explicitly
+  supplied for simulator/local-dev use.
+  - Status: checkpointed in `89ee261d`
 
 - [x] Chat transcript and `chat.*` local contracts for history projection, usage
   metadata, abort metadata, text caps, oversized placeholders, untrusted suffix

@@ -11317,3 +11317,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, and browser/canvas/nodes/voice bounded-command parity moves to
   ~99.1%. Continue provider-specific media/reply edges, companion breadth, or
   the next packaging startup/update edge.
+- Current queue-head adjustment: `openzues qr` now rejects the inferred
+  default loopback setup-code URL before issuing a bootstrap token, matching
+  OpenClaw's loopback-only bind preflight while preserving explicit loopback
+  URLs for simulator/local-dev use. Source/test checkpointed in `89ee261d`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion app
+  parity moves to ~5.1%. Continue provider-specific media/reply edges,
+  companion breadth, or the next packaging startup/update edge.
