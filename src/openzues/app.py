@@ -9,9 +9,10 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import threading
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
@@ -298,6 +299,128 @@ def _msteams_configured_webhook_path(snapshot: Mapping[str, Any]) -> str | None:
     return _normalize_msteams_webhook_path(webhook.get("path"))
 
 
+def _optional_slack_config_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _slack_exec_provider_env(provider_config: Mapping[str, Any]) -> dict[str, str]:
+    child_env: dict[str, str] = {}
+    pass_env = provider_config.get("passEnv")
+    if isinstance(pass_env, Sequence) and not isinstance(pass_env, str):
+        for key in pass_env:
+            env_key = _optional_slack_config_string(key)
+            if env_key and env_key in os.environ:
+                child_env[env_key] = os.environ[env_key]
+    raw_env = provider_config.get("env")
+    if isinstance(raw_env, Mapping):
+        for key, value in raw_env.items():
+            env_key = _optional_slack_config_string(key)
+            env_value = _optional_slack_config_string(value)
+            if env_key and env_value is not None:
+                child_env[env_key] = env_value
+    return child_env
+
+
+def _slack_parse_exec_secret_value(
+    *,
+    secret_id: str,
+    stdout: str,
+    json_only: bool,
+) -> str | None:
+    trimmed = stdout.strip()
+    if not trimmed:
+        return None
+    try:
+        parsed = json.loads(trimmed)
+    except json.JSONDecodeError:
+        return _optional_slack_config_string(trimmed) if not json_only else None
+    if not isinstance(parsed, Mapping):
+        if isinstance(parsed, str) and not json_only:
+            return _optional_slack_config_string(parsed)
+        return None
+    if parsed.get("protocolVersion") != 1:
+        return None
+    values = parsed.get("values")
+    if not isinstance(values, Mapping) or secret_id not in values:
+        return None
+    return _optional_slack_config_string(values.get(secret_id))
+
+
+def _slack_exec_signing_secret_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    provider: str,
+    secret_id: str,
+) -> str:
+    secrets_config = snapshot.get("secrets")
+    if not isinstance(secrets_config, Mapping):
+        return ""
+    providers = secrets_config.get("providers")
+    if not isinstance(providers, Mapping):
+        return ""
+    provider_config = providers.get(provider)
+    if not isinstance(provider_config, Mapping):
+        return ""
+    if str(provider_config.get("source") or "").strip().lower() != "exec":
+        return ""
+    command_text = _optional_slack_config_string(provider_config.get("command"))
+    if command_text is None:
+        return ""
+    command_path = Path(command_text).expanduser()
+    if not command_path.is_absolute() or not command_path.exists():
+        return ""
+    raw_args = provider_config.get("args")
+    args = (
+        [str(arg) for arg in raw_args if isinstance(arg, str | int | float)]
+        if isinstance(raw_args, Sequence) and not isinstance(raw_args, str)
+        else []
+    )
+    request_payload = json.dumps(
+        {"protocolVersion": 1, "provider": provider, "ids": [secret_id]},
+        separators=(",", ":"),
+    )
+    timeout_ms = provider_config.get("timeoutMs")
+    timeout_seconds = (
+        float(timeout_ms) / 1000
+        if isinstance(timeout_ms, int) and timeout_ms > 0
+        else 5.0
+    )
+    try:
+        result = subprocess.run(
+            [str(command_path), *args],
+            input=request_payload,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+            env=_slack_exec_provider_env(provider_config) or None,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    max_output_bytes = provider_config.get("maxOutputBytes")
+    max_byte_count = (
+        int(max_output_bytes)
+        if isinstance(max_output_bytes, int) and max_output_bytes > 0
+        else 1024 * 1024
+    )
+    if len((result.stdout or "").encode("utf-8")) > max_byte_count:
+        return ""
+    json_only = provider_config.get("jsonOnly")
+    return (
+        _slack_parse_exec_secret_value(
+            secret_id=secret_id,
+            stdout=result.stdout or "",
+            json_only=json_only if isinstance(json_only, bool) else True,
+        )
+        or ""
+    )
+
+
 def _slack_signing_secret_from_snapshot(
     snapshot: Mapping[str, Any],
     *,
@@ -337,6 +460,13 @@ def _slack_signing_secret_from_snapshot(
                     ).strip()
                 except OSError:
                     return ""
+            provider = str(candidate.get("provider") or "default").strip() or "default"
+            if source == "exec" and secret_id:
+                return _slack_exec_signing_secret_from_snapshot(
+                    snapshot,
+                    provider=provider,
+                    secret_id=secret_id,
+                )
     return None
 
 
