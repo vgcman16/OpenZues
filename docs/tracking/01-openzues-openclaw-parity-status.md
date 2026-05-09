@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999999999999999995% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999999999999999997% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2071,6 +2071,11 @@ may lag behind this tracker.
   delivery, including `accountId` and Slack `threadId` propagation into the
   fakeable chat runtime path.
   - Status: checkpointed in `e3671d6f`
+
+- [x] Direct provider-backed outbound reply policy metadata, including
+  `replyToIdSource` defaulting for explicit replies, `replyToMode`
+  propagation, runtime request projection, and delivery payload persistence.
+  - Status: checkpointed in `e115e5f1`
 
 - [x] Feishu/Lark provider-native direct text sends with OpenClaw-shaped
   message-create payloads, target normalization, bearer auth, and provider
@@ -5591,7 +5596,8 @@ may lag behind this tracker.
     direct provider-route media sends checkpointed in `77149f94`; Feishu/Lark
     read-media resource hydration checkpointed in `65da0455`; Feishu/Lark
     post-media resource hydration checkpointed in `ed3aedb5`; Signal native
-    reaction action checkpointed in `c9b45ffb`
+    reaction action checkpointed in `c9b45ffb`; direct outbound reply policy
+    metadata checkpointed in `e115e5f1`
   - Weight: 3
 
 - [x] Feishu/Lark native outbound route.

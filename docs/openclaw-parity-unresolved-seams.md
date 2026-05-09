@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999999999999999999999999999999999999998%.
+  band of ~80-99.999999999999999999999999999999999999999999999997%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.96% after the latest
@@ -11176,3 +11176,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~80-99.999999999999999999999999999999999999999999999996%. Continue provider
   reply policy plumbing (`replyToMode` / `replyToIdSource`) or packaging
   ownership detection.
+- Current queue-head adjustment: direct provider-backed outbound sends now
+  preserve OpenClaw-style `replyToIdSource` and `replyToMode` through runtime
+  request dispatch and saved delivery payloads, defaulting explicit replies to
+  `replyToIdSource="explicit"`. Source/test checkpointed in `e115e5f1`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to
+  ~80-99.999999999999999999999999999999999999999999999997%. Continue
+  packaging ownership detection or companion device-pairing breadth next.
