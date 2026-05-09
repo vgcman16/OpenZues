@@ -25389,6 +25389,184 @@ async def test_ops_mesh_service_message_action_records_msteams_poll_vote(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_slack_reaction_system_event_through_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_reaction_event(
+        {
+            "type": "reaction_added",
+            "user": "U1",
+            "reaction": "thumbsup",
+            "item": {"type": "message", "channel": "D123", "ts": "123.456"},
+            "item_user": "UBOT",
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="direct",
+        peer_id="U1",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert result == {
+        "ok": True,
+        "channel": "slack",
+        "eventType": "reaction_added",
+        "action": "added",
+        "sessionKey": expected_session_key,
+        "senderId": "U1",
+        "channelId": "D123",
+        "messageTs": "123.456",
+        "reaction": "thumbsup",
+        "text": "Slack reaction added: :thumbsup: by U1 in D123 msg 123.456 from UBOT",
+        "contextKey": "slack:reaction:added:D123:123.456:U1:thumbsup",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == expected_session_key
+    assert wake_requests[0]["reason"] == "slack:reaction:added:D123:123.456:U1:thumbsup"
+    assert wake_requests[0]["text"] == result["text"]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["sessionKey"] == expected_session_key
+    assert events[0]["payload"]["text"] == result["text"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_reaction_when_dm_policy_disabled(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "accounts": {"workspace": {"dmPolicy": "disabled"}},
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_reaction_event(
+        {
+            "type": "reaction_added",
+            "user": "U1",
+            "reaction": "thumbsup",
+            "item": {"type": "message", "channel": "D123", "ts": "123.456"},
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "reaction_added",
+        "skipped": True,
+        "reason": "slack_reaction_sender_unauthorized",
+    }
+    assert await database.list_gateway_wake_requests() == []
+    assert await database.list_events() == []
+
+
+def test_slack_events_route_handles_reaction_event_callbacks(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/events?accountId=workspace",
+            json={
+                "type": "event_callback",
+                "event": {
+                    "type": "reaction_added",
+                    "user": "U1",
+                    "reaction": "thumbsup",
+                    "item": {"type": "message", "channel": "C123", "ts": "123.456"},
+                },
+            },
+        )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["eventType"] == "reaction_added"
+    assert payload["sessionKey"] == expected_session_key
+    assert payload["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_session() -> None:
     conversation_id = "19:ops-thread@thread.tacv2"
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-adaptive-card-inbound"

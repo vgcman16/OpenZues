@@ -255,6 +255,7 @@ DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS = 8_000
 DIRECT_SESSION_HISTORY_SSE_KEEPALIVE_SECONDS = 15.0
 DIRECT_SESSION_HISTORY_FULL_INITIAL_LIMIT = 1_000_000_000
 MSTEAMS_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024
+SLACK_EVENTS_MAX_BODY_BYTES = 1024 * 1024
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -4507,6 +4508,30 @@ def create_app(
             methods=["POST"],
             include_in_schema=False,
         )
+
+    @fastapi_app.post("/api/channels/slack/events")
+    async def handle_slack_events(request: Request) -> JSONResponse:
+        body = await request.body()
+        if len(body) > SLACK_EVENTS_MAX_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Slack event payload must be an object.")
+        if payload.get("type") == "url_verification":
+            challenge = payload.get("challenge")
+            return JSONResponse({"challenge": challenge if isinstance(challenge, str) else ""})
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        result = await active_ops_mesh_service.handle_slack_reaction_event(
+            cast(Mapping[str, Any], payload),
+            account_id=account_id,
+        )
+        return JSONResponse(result)
 
     @fastapi_app.post("/api/gateway/memory/prove", response_model=MissionView)
     async def run_gateway_memory_proof(
