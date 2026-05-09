@@ -20,8 +20,8 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
-| Runtime/CLI/doctor native bridge | ~99.97% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.97% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.98% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.98% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 
 ## Implemented / Locked Bounded Areas
 
@@ -1805,6 +1805,11 @@ may lag behind this tracker.
   npm package updates from the installed global root when package metadata does
   not declare a package manager.
   - Status: checkpointed in `76e2a21c`
+
+- [x] Owning pnpm/bun global-root manager detection, preserving OpenClaw's
+  ability to infer pnpm from `pnpm root -g` and bun from the `BUN_INSTALL`
+  global root when package metadata does not declare a package manager.
+  - Status: checkpointed in `5d80e370`; bun proof checkpointed in `04472a9c`
 
 - [x] Ambient npm fallback when owner is absent, preserving OpenClaw's
   no-path-shape-only command ownership guard.
@@ -4965,6 +4970,21 @@ may lag behind this tracker.
     update-status proof (`2 passed, 561 deselected`), adjacent startup runtime
     proof (`1 passed, 60 deselected`), adjacent package-update command proof
     (`2 passed`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Owning pnpm/bun global-root manager detection.
+  - Source: `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/update-global.test.ts`,
+    `openclaw-main/src/cli/update-cli.test.ts`
+  - Target: `src/openzues/cli.py`,
+    `src/openzues/services/runtime_updates.py`
+  - Test: `tests/test_cli.py`, `tests/test_runtime_updates.py`
+  - Status: checkpointed in `5d80e370`; bun proof checkpointed in `04472a9c`.
+  - Weight: 1
+  - Last verified: 2026-05-08, focused pnpm CLI/runtime red/green proofs (`1
+    failed` before implementation, then `1 passed` each), focused bun
+    CLI/runtime proofs (`1 passed` each), adjacent CLI package proof (`4
+    passed, 570 deselected`), adjacent startup runtime proof (`3 passed, 62
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Npm update omit-optional fallback.
   - Source: `openclaw-main/src/infra/package-update-steps.ts`,

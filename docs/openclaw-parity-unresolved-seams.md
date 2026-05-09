@@ -13,7 +13,7 @@ Current percentage rollup:
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
   monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.97% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.98% after the
   runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
@@ -125,7 +125,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
-- The CLI/operator control-plane family is estimated at ~99.97% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.98% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
@@ -11283,6 +11283,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, with the evidence band tightened to
   ~80-99.999999999999999999999999999999999999999999999998%. Continue
   companion device-pairing breadth or the next packaging startup/update edge.
+- Current queue-head adjustment: native package update detection now also
+  infers `pnpm` from `pnpm root -g` ownership and `bun` from the OpenClaw-style
+  `BUN_INSTALL/install/global/node_modules` root when package metadata lacks
+  `packageManager` or lockfiles. Source/test checkpointed in `5d80e370`, bun
+  follow-up proof checkpointed in `04472a9c`; runtime/CLI/doctor and
+  CLI/operator parity move to ~99.98%, repo-wide parity remains estimated at
+  ~99.9%, and the evidence band is tightened to
+  ~80-99.99999999999999999999999999999999999999999999999986%. Continue
+  provider-specific media/reply edges, companion breadth, or the next
+  packaging startup/update edge.
 - Current queue-head adjustment: device pairing now preserves OpenClaw-style
   `publicKey` through pending request storage, refresh/list snapshots,
   approval, paired-device storage, and `device.pair.*` projections. Source/test
