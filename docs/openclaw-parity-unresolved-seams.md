@@ -11685,3 +11685,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.996%. Continue Slack provider-native `/agentstatus` command aliasing,
   WhatsApp reply fanout, provider-specific media/reply edges, or companion
   breadth.
+- Current queue-head adjustment: Slack native command catalog generation now
+  applies OpenClaw's provider-native alias for `status`, exposing
+  `/agentstatus` through `commands.list provider="slack"` while keeping the
+  canonical command key as `status`. Source/test checkpointed in `bc4f90fe`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth remains ~99.9%. Continue provider plugin-command
+  injection breadth, WhatsApp reply fanout, provider-specific media/reply
+  edges, or companion breadth.

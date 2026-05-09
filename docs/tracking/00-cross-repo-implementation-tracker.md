@@ -270,9 +270,11 @@ Provider runtime addendum: `OZ-PROV-001EP` Slack slash arg-menu rendering is
 source/test checkpointed in `27836d4c`, keeping provider-native inbound/
 outbound breadth at ~99.9%. `OZ-PROV-001EQ` Slack large-choice arg-menu
 external-select hydration is proof-checkpointed in `b1639b4b`, keeping
-provider-native breadth at ~99.9%. Continue Slack provider-native
-`/agentstatus` command aliasing, provider-specific media/reply edges,
-companion breadth, or the next package startup/update edge.
+provider-native breadth at ~99.9%. `OZ-PROV-001ER` Slack provider-native
+`/agentstatus` command aliasing is source/test checkpointed in `bc4f90fe`.
+Continue provider plugin-command injection breadth, WhatsApp reply fanout,
+provider-specific media/reply edges, companion breadth, or the next package
+startup/update edge.
 Companion addendum: `OZ-COMP-001C` device-pairing `publicKey` pending,
 approval, paired storage, and device projection parity is source/test
 checkpointed in `bef0652f`. Continue companion QR/setup-code remote
@@ -372,6 +374,31 @@ provider-specific media/reply edges, or companion breadth.
     `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_uses_external_arg_menu_for_large_choice_set -q`
     (`1 passed` on existing implementation), adjacent Slack arg-menu proof
     (`3 passed`), `ruff check tests\test_ops_mesh.py`, and focused
+    `git diff --check`.
+
+- [x] `OZ-PROV-001ER` Slack provider-native `/agentstatus` command alias
+  - Source: `openclaw-main/extensions/slack/src/shared.ts`,
+    `openclaw-main/extensions/slack/src/channel.setup.ts`,
+    `openclaw-main/src/auto-reply/commands-registry.ts`,
+    `openclaw-main/src/auto-reply/commands-registry.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_commands.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `commands.list` with `provider="slack"` resolves the canonical
+    `status` command to Slack native name `agentstatus`, so Slack command menu
+    surfaces expose `/agentstatus` instead of `/status` while preserving the
+    canonical command key.
+  - Evidence required: focused provider alias proof, adjacent command catalog
+    proof, adjacent Slack menu proof, ruff, mypy
+  - Status: checkpointed in `bc4f90fe`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_applies_slack_native_command_aliases -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent command
+    inventory proof (`3 passed`), adjacent Slack menu proof (`2 passed`),
+    `ruff check src\openzues\services\gateway_commands.py
+    tests\test_gateway_node_methods.py`, `mypy
+    src\openzues\services\gateway_commands.py`, and focused
     `git diff --check`.
 
 - [x] `OZ-COMP-001N` QR remote gateway-backed SecretRef resolution

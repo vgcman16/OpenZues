@@ -8401,6 +8401,30 @@ may lag behind this tracker.
     (`3 passed`), `ruff check tests\test_ops_mesh.py`, and focused
     `git diff --check`.
 
+- [x] Slack provider-native `/agentstatus` command alias.
+  - Source: `openclaw-main/extensions/slack/src/shared.ts`,
+    `openclaw-main/extensions/slack/src/channel.setup.ts`,
+    `openclaw-main/src/auto-reply/commands-registry.ts`,
+    `openclaw-main/src/auto-reply/commands-registry.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_commands.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: Slack-scoped native command catalogs expose the canonical
+    `status` command as native name `agentstatus`, matching OpenClaw's Slack
+    slash-command alias.
+  - Evidence required: focused provider alias proof, adjacent command catalog
+    proof, adjacent Slack menu proof, ruff, mypy
+  - Status: checkpointed in `bc4f90fe`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_applies_slack_native_command_aliases -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent command
+    inventory proof (`3 passed`), adjacent Slack menu proof (`2 passed`),
+    `ruff check src\openzues\services\gateway_commands.py
+    tests\test_gateway_node_methods.py`, `mypy
+    src\openzues\services\gateway_commands.py`, and focused
+    `git diff --check`.
+
 - [x] Doctor preflight git update offer.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,
     `openclaw-main/src/commands/doctor-update.ts`

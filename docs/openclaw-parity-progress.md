@@ -22234,6 +22234,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`7 passed, 571 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py tests\test_ops_mesh.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `ca7d7e81`.
+- Slack native command catalog generation now applies OpenClaw's Slack
+  provider-native command alias for `status`, exposing `/agentstatus` to the
+  Slack command surface while preserving the canonical command key as `status`.
+  This closes `OZ-PROV-001ER`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth remains ~99.9%.
+- Verified the Slack provider-native command alias seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_applies_slack_native_command_aliases -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent command
+  inventory proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests\test_gateway_node_methods.py::test_commands_list_supports_scope_filters_and_omits_args_when_requested tests\test_gateway_node_methods.py::test_commands_list_applies_slack_native_command_aliases -q`
+  (`3 passed`), adjacent Slack menu proof
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_returns_arg_menu_for_missing_choice_arg tests\test_ops_mesh.py::test_slack_slash_route_uses_external_arg_menu_for_large_choice_set -q`
+  (`2 passed`), `ruff check src\openzues\services\gateway_commands.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_commands.py`, and focused `git diff --check`.
+  Source/test checkpointed in `bc4f90fe`.
 
 ## References
 
