@@ -20,8 +20,8 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
-| Runtime/CLI/doctor native bridge | ~99.96% | High for bounded native bridge | Packaging, QR gateway-backed remote secret resolution, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.96% | High for bounded native path | Remaining gaps are deeper plugin import/activation, QR gateway-backed remote secret resolution, and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.97% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.97% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 
 ## Implemented / Locked Bounded Areas
 
@@ -1677,6 +1677,11 @@ may lag behind this tracker.
 - [x] Companion QR remote exec SecretRef resolution, preserving protocol v1
   exec-provider remote auth resolution for QR setup codes.
   - Status: checkpointed in `6e1b84c4`
+
+- [x] Companion QR remote gateway-backed SecretRef resolution, preserving
+  OpenClaw's active-gateway `secrets.resolve` command-secret flow before local
+  fallback.
+  - Status: checkpointed in `93a57d8b`
 
 - [x] Companion QR JSON setup-code contract, preserving OpenClaw's four-field
   `setupCode` / `gatewayUrl` / `auth` / `urlSource` response shape.
@@ -7901,6 +7906,27 @@ may lag behind this tracker.
     `python -m pytest tests\test_cli.py::test_qr_remote_json_resolves_exec_secretref_protocol_v1 -q`
     (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
     (`13 passed, 558 deselected`), `ruff check src\openzues\cli.py
+    src\openzues\schemas.py tests\test_cli.py`, `mypy src\openzues\cli.py
+    src\openzues\schemas.py`, and focused `git diff --check`.
+
+- [x] QR remote gateway-backed SecretRef resolution.
+  - Source: `openclaw-main/src/cli/command-secret-gateway.ts`,
+    `openclaw-main/src/cli/command-secret-targets.ts`,
+    `openclaw-main/src/cli/qr-cli.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues qr --remote` calls the active OpenZues gateway
+    `secrets.resolve` method for `gateway.remote.token/password`, applies
+    returned assignments before local fallback, emits gateway diagnostics to
+    stderr for JSON output, and keeps resolved secret values out of output.
+  - Evidence required: focused QR live-gateway SecretRef proof, adjacent QR CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `93a57d8b`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_remote_json_resolves_secretref_from_live_gateway -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
+    (`14 passed, 558 deselected`), `ruff check src\openzues\cli.py
     src\openzues\schemas.py tests\test_cli.py`, `mypy src\openzues\cli.py
     src\openzues\schemas.py`, and focused `git diff --check`.
 
