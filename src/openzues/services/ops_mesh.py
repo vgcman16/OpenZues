@@ -1464,6 +1464,20 @@ def _resolve_slack_thread_ts(*, reply_to_id: object, thread_id: object) -> str |
     ) or _normalize_slack_thread_ts_candidate(thread_id)
 
 
+def _normalize_reply_to_mode(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized if normalized in {"off", "first", "all", "batched"} else None
+
+
+def _normalize_reply_to_id_source(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized if normalized in {"explicit", "implicit"} else None
+
+
 def _slack_target_is_channel_like(target: str | None) -> bool:
     normalized = str(target or "").strip()
     if not normalized:
@@ -15885,6 +15899,14 @@ class OpsMeshService:
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
+                    reply_to_id_source=cast(
+                        Literal["explicit", "implicit"] | None,
+                        _normalize_reply_to_id_source(payload.get("replyToIdSource")),
+                    ),
+                    reply_to_mode=cast(
+                        Literal["off", "first", "all", "batched"] | None,
+                        _normalize_reply_to_mode(payload.get("replyToMode")),
+                    ),
                     reply_token=str(payload.get("replyToken") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
@@ -25973,6 +25995,14 @@ class OpsMeshService:
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
+                    reply_to_id_source=cast(
+                        Literal["explicit", "implicit"] | None,
+                        _normalize_reply_to_id_source(payload.get("replyToIdSource")),
+                    ),
+                    reply_to_mode=cast(
+                        Literal["off", "first", "all", "batched"] | None,
+                        _normalize_reply_to_mode(payload.get("replyToMode")),
+                    ),
                     reply_token=str(payload.get("replyToken") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
@@ -26066,6 +26096,8 @@ class OpsMeshService:
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
+        reply_to_id_source: Literal["explicit", "implicit"] | None = None,
+        reply_to_mode: Literal["off", "first", "all", "batched"] | None = None,
         reply_token: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
@@ -26149,6 +26181,13 @@ class OpsMeshService:
         normalized_reply_to_id = str(reply_to_id or "").strip() or None
         if normalized_reply_to_id is not None:
             payload["replyToId"] = normalized_reply_to_id
+            normalized_reply_to_id_source = (
+                _normalize_reply_to_id_source(reply_to_id_source) or "explicit"
+            )
+            payload["replyToIdSource"] = normalized_reply_to_id_source
+        normalized_reply_to_mode = _normalize_reply_to_mode(reply_to_mode)
+        if normalized_reply_to_mode is not None:
+            payload["replyToMode"] = normalized_reply_to_mode
         normalized_reply_token = str(reply_token or "").strip() or None
         if normalized_reply_token is not None:
             payload["replyToken"] = normalized_reply_token

@@ -2303,12 +2303,7 @@ async def test_ops_mesh_service_send_direct_channel_message_prefers_provider_run
         GatewayOutboundRuntimeMessageRequest(
             channel="slack",
             target="channel:C123",
-            message=(
-                "Ship parity.\n\n"
-                "Media:\n"
-                "1. https://example.com/parity.png\n\n"
-                "Settings: gifPlayback=false"
-            ),
+            message="Ship parity.",
             media_urls=("https://example.com/parity.png",),
             gif_playback=False,
             account_id="default",
@@ -11029,12 +11024,13 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_n
         GatewayOutboundRuntimeMessageRequest(
             channel="telegram",
             target="chat:ops",
-            message="Send provider-native options.\n\nMedia:\n1. https://example.com/report.pdf",
+            message="Send provider-native options.",
             media_urls=("https://example.com/report.pdf",),
             account_id="alerts",
             thread_id="topic-42",
             session_key=expected_session_key,
             reply_to_id="message-99",
+            reply_to_id_source="explicit",
             silent=True,
             force_document=True,
         )
@@ -11058,12 +11054,94 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_n
     }
     assert delivery is not None
     assert delivery["event_payload"]["replyToId"] == "message-99"
+    assert delivery["event_payload"]["replyToIdSource"] == "explicit"
     assert delivery["event_payload"]["silent"] is True
     assert delivery["event_payload"]["forceDocument"] is True
     assert delivery["route_scope"]["provider_result"] == {
         "messageId": "provider-send-options-1",
         "conversationId": "thread:topic-42"
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_preserves_reply_policy(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-reply-policy"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {
+            "messageId": "provider-send-reply-policy-1",
+            "conversationId": "thread:topic-42",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="Reply policy parity.",
+        account_id="alerts",
+        thread_id="topic-42",
+        reply_to_id="message-99",
+        reply_to_mode="first",
+        idempotency_key="idem-provider-runtime-reply-policy",
+    )
+
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="telegram",
+                account_id="alerts",
+                peer_kind="channel",
+                peer_id="chat:ops",
+            ),
+        ),
+        thread_id="topic-42",
+    ).session_key
+    delivery = await database.get_outbound_delivery(1)
+
+    assert provider_requests == [
+        GatewayOutboundRuntimeMessageRequest(
+            channel="telegram",
+            target="chat:ops",
+            message="Reply policy parity.",
+            account_id="alerts",
+            thread_id="topic-42",
+            session_key=expected_session_key,
+            reply_to_id="message-99",
+            reply_to_id_source="explicit",
+            reply_to_mode="first",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["replyToId"] == "message-99"
+    assert delivery["event_payload"]["replyToIdSource"] == "explicit"
+    assert delivery["event_payload"]["replyToMode"] == "first"
 
 
 @pytest.mark.asyncio

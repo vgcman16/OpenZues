@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 type _NativeAdapterKey = tuple[str, str | None]
+type _ReplyToIdSource = Literal["explicit", "implicit"]
+type _ReplyToMode = Literal["off", "first", "all", "batched"]
 
 
 def _normalize_optional_string(value: str | None) -> str | None:
@@ -144,6 +146,8 @@ class GatewayOutboundRuntimeMessageRequest:
     gif_playback: bool | None = None
     audio_as_voice: bool | None = None
     reply_to_id: str | None = None
+    reply_to_id_source: _ReplyToIdSource | None = None
+    reply_to_mode: _ReplyToMode | None = None
     reply_token: str | None = None
     silent: bool | None = None
     force_document: bool | None = None
@@ -340,6 +344,8 @@ class GatewayOutboundRuntimeService:
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
+        reply_to_id_source: _ReplyToIdSource | None = None,
+        reply_to_mode: _ReplyToMode | None = None,
         reply_token: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
@@ -382,6 +388,8 @@ class GatewayOutboundRuntimeService:
                         gif_playback=gif_playback,
                         audio_as_voice=audio_as_voice,
                         reply_to_id=_normalize_optional_string(reply_to_id),
+                        reply_to_id_source=reply_to_id_source,
+                        reply_to_mode=reply_to_mode,
                         reply_token=_normalize_optional_string(reply_token),
                         silent=silent,
                         force_document=force_document,
@@ -458,6 +466,8 @@ class GatewayOutboundRuntimeService:
                         gif_playback=gif_playback,
                         audio_as_voice=audio_as_voice,
                         reply_to_id=_normalize_optional_string(reply_to_id),
+                        reply_to_id_source=reply_to_id_source,
+                        reply_to_mode=reply_to_mode,
                         reply_token=_normalize_optional_string(reply_token),
                         silent=silent,
                         force_document=force_document,
