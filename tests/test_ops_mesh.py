@@ -19074,6 +19074,83 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_reply_fanout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-telegram-reply-fanout"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Media Reply Fanout",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[dict[str, object]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, target, secret_header_name, secret_token
+        telegram_posts.append(payload)
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 40 + len(telegram_posts),
+                "chat": {"id": -100123},
+                "photo": [{"file_id": f"photo-{len(telegram_posts)}"}],
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="channel:-100123",
+        message="Ship the media bundle.",
+        media_urls=[
+            "https://example.com/one.png",
+            "https://example.com/two.png",
+        ],
+        account_id="telegram-bot",
+        reply_to_id="900",
+        reply_to_id_source="implicit",
+        reply_to_mode="first",
+        idempotency_key="idem-native-telegram-reply-fanout",
+    )
+
+    assert result["messageId"] == "42"
+    assert telegram_posts[0]["reply_to_message_id"] == "900"
+    assert "reply_to_message_id" not in telegram_posts[1]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_discord_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

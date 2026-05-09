@@ -31813,6 +31813,8 @@ class OpsMeshService:
         token = _telegram_bot_token(secret_token)
         thread_id = str(event.get("threadId") or parsed_target.get("threadId") or "").strip()
         reply_to_id = str(event.get("replyToId") or "").strip()
+        reply_to_id_source = event.get("replyToIdSource")
+        reply_to_mode = event.get("replyToMode")
         silent = _optional_bool_payload_value(event, "silent")
         force_document = _optional_bool_payload_value(event, "forceDocument") is True
         gif_playback = _optional_bool_payload_value(event, "gifPlayback")
@@ -31894,6 +31896,16 @@ class OpsMeshService:
                         audio_as_voice=audio_as_voice,
                     )
                     media_payload = dict(payload)
+                    fanout_reply_to_id = _reply_to_fanout_id(
+                        reply_to_id=reply_to_id,
+                        reply_to_id_source=reply_to_id_source,
+                        reply_to_mode=reply_to_mode,
+                        index=index,
+                    )
+                    if fanout_reply_to_id:
+                        media_payload["reply_to_message_id"] = fanout_reply_to_id
+                    else:
+                        media_payload.pop("reply_to_message_id", None)
                     media_payload[media_payload_key] = media_url
                     if media_payload_key == "document" and force_document:
                         media_payload["disable_content_type_detection"] = True
