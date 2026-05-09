@@ -757,6 +757,19 @@ def _normalize_local_control_plane_host(host: str) -> str | None:
     return None
 
 
+def _build_cli_gateway_config_service(app_settings: Settings) -> GatewayConfigService:
+    return GatewayConfigService(
+        assistant_name=app_settings.app_name,
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version=__version__,
+        local_media_preview_roots=[],
+        embed_sandbox="scripts",
+        allow_external_embed_urls=False,
+        data_dir=app_settings.data_dir,
+    )
+
+
 def _try_live_api_model(
     base_url: str,
     path: str,
@@ -1085,16 +1098,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
     launch_routing = LaunchRoutingService(database, manager)
     mission_service = MissionService(database, manager, hub)
     project_service = ProjectService(GitHubService())
-    gateway_config = GatewayConfigService(
-        assistant_name=app_settings.app_name,
-        assistant_avatar="/static/favicon.svg",
-        assistant_agent_id="openzues",
-        server_version=__version__,
-        local_media_preview_roots=[],
-        embed_sandbox="scripts",
-        allow_external_embed_urls=False,
-        data_dir=app_settings.data_dir,
-    )
+    gateway_config = _build_cli_gateway_config_service(app_settings)
     ops_mesh = OpsMeshService(
         database,
         manager,
@@ -98207,12 +98211,82 @@ def _is_mobile_pairing_cleartext_allowed_host(host: str) -> bool:
     return address.is_private
 
 
+def _qr_config_mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _qr_config_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _qr_gateway_config(
+    config_snapshot: Mapping[str, object] | None,
+) -> Mapping[str, object]:
+    if config_snapshot is None:
+        return {}
+    return _qr_config_mapping(config_snapshot.get("gateway"))
+
+
+def _qr_gateway_remote_config(
+    config_snapshot: Mapping[str, object] | None,
+) -> Mapping[str, object]:
+    return _qr_config_mapping(_qr_gateway_config(config_snapshot).get("remote"))
+
+
+def _normalize_pairing_config_url(raw: str, *, invalid_error: str) -> str:
+    try:
+        return _normalize_pairing_setup_url(raw)
+    except ValueError as exc:
+        if str(exc) == "Configured publicUrl is invalid.":
+            raise ValueError(invalid_error) from exc
+        raise
+
+
+def _resolve_qr_auth_label(
+    *,
+    token: str | None,
+    password: str | None,
+    remote: bool,
+    config_snapshot: Mapping[str, object] | None,
+) -> str:
+    if str(password or "").strip():
+        return "password"
+    if str(token or "").strip():
+        return "token"
+
+    gateway_config = _qr_gateway_config(config_snapshot)
+    if remote:
+        remote_config = _qr_gateway_remote_config(config_snapshot)
+        if _qr_config_text(remote_config.get("token")):
+            return "token"
+        if _qr_config_text(remote_config.get("password")):
+            return "password"
+
+    auth_config = _qr_config_mapping(gateway_config.get("auth"))
+    auth_mode = str(auth_config.get("mode") or "").strip().lower()
+    has_token = _qr_config_text(auth_config.get("token")) is not None
+    has_password = _qr_config_text(auth_config.get("password")) is not None
+    if auth_mode == "password" and has_password:
+        return "password"
+    if auth_mode == "token" and has_token:
+        return "token"
+    if has_token:
+        return "token"
+    if has_password:
+        return "password"
+    return "bootstrap-token"
+
+
 def _resolve_qr_gateway_url(
     *,
     app_settings: Settings,
     url: str | None,
     public_url: str | None,
     remote: bool,
+    config_snapshot: Mapping[str, object] | None = None,
 ) -> tuple[str, str]:
     explicit_url = str(url or "").strip() or str(public_url or "").strip()
     if explicit_url:
@@ -98220,6 +98294,15 @@ def _resolve_qr_gateway_url(
             "cli.url" if str(url or "").strip() else "cli.publicUrl"
         )
     if remote:
+        remote_url = _qr_config_text(_qr_gateway_remote_config(config_snapshot).get("url"))
+        if remote_url:
+            return (
+                _normalize_pairing_config_url(
+                    remote_url,
+                    invalid_error="Configured gateway.remote.url is invalid.",
+                ),
+                "gateway.remote.url",
+            )
         raise ValueError(
             "qr --remote requires gateway.remote.url (or gateway.tailscale.mode=serve/funnel)."
         )
@@ -98404,11 +98487,19 @@ def qr_command(
         if str(token or "").strip() and str(password or "").strip():
             raise ValueError("Use either --token or --password, not both.")
         app_settings = _runtime_settings()
+        config_snapshot = _build_cli_gateway_config_service(app_settings).build_snapshot()
         gateway_url, url_source = _resolve_qr_gateway_url(
             app_settings=app_settings,
             url=url,
             public_url=public_url,
             remote=remote,
+            config_snapshot=config_snapshot,
+        )
+        auth_label = _resolve_qr_auth_label(
+            token=token,
+            password=password,
+            remote=remote,
+            config_snapshot=config_snapshot,
         )
         issued = issue_device_bootstrap_token(base_dir=app_settings.data_dir)
         setup_code = _encode_pairing_setup_code(
@@ -98425,13 +98516,6 @@ def qr_command(
         typer.echo(setup_code)
         return
 
-    auth_label = (
-        "password"
-        if str(password or "").strip()
-        else "token"
-        if str(token or "").strip()
-        else "bootstrap-token"
-    )
     payload = {
         "setupCode": setup_code,
         "gatewayUrl": gateway_url,

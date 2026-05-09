@@ -234,6 +234,64 @@ def test_qr_remote_requires_explicit_remote_url_before_token_issue(
     assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
+def test_qr_remote_uses_gateway_remote_url_and_token_from_config(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {"mode": "token", "token": "local-token"},
+                    "remote": {
+                        "url": "remote.example.com:444",
+                        "token": "remote-token",
+                    },
+                },
+                "plugins": {
+                    "entries": {
+                        "device-pair": {
+                            "config": {
+                                "publicUrl": "wss://device-pair.example.test:443",
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json", "--remote"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "remote-token" not in result.stdout
+    assert "local-token" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://remote.example.com:444"
+    assert payload["auth"] == "token"
+    assert payload["urlSource"] == "gateway.remote.url"
+    setup_payload = _decode_base64url_json(payload["setupCode"])
+    assert setup_payload["url"] == "wss://remote.example.com:444"
+    assert isinstance(setup_payload["bootstrapToken"], str)
+    assert setup_payload["bootstrapToken"]
+
+
 def test_qr_json_output_matches_openclaw_setup_code_contract(
     tmp_path, monkeypatch
 ) -> None:

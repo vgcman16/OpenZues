@@ -1810,6 +1810,10 @@ class ControlUiGatewayConfigView(BaseModel):
     bind: str | None = None
     port: int | None = Field(default=None, ge=1, le=65_535)
     custom_bind_host: str | None = Field(default=None, alias="customBindHost")
+    auth: dict[str, Any] | None = None
+    remote: dict[str, Any] | None = None
+    tailscale: dict[str, Any] | None = None
+    tls: dict[str, Any] | None = None
     control_ui: dict[str, Any] | None = Field(default=None, alias="controlUi")
     webchat: ControlUiGatewayWebchatConfigView | None = None
     agents: ControlUiGatewayAgentsConfigView | None = None
