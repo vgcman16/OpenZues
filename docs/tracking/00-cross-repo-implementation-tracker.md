@@ -24,7 +24,7 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.9% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.91% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.996% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.996% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.1% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
@@ -272,7 +272,9 @@ outbound breadth at ~99.9%. `OZ-PROV-001EQ` Slack large-choice arg-menu
 external-select hydration is proof-checkpointed in `b1639b4b`, keeping
 provider-native breadth at ~99.9%. `OZ-PROV-001ER` Slack provider-native
 `/agentstatus` command aliasing is source/test checkpointed in `bc4f90fe`.
-Continue provider plugin-command injection breadth, WhatsApp reply fanout,
+`OZ-PROV-001ES` WhatsApp split-media reusable reply fanout is source/test
+checkpointed in `a1d930ab`, moving provider-native inbound/outbound breadth to
+~99.91%. Continue provider plugin-command injection breadth, remaining
 provider-specific media/reply edges, companion breadth, or the next package
 startup/update edge.
 Companion addendum: `OZ-COMP-001C` device-pairing `publicKey` pending,
@@ -400,6 +402,29 @@ provider-specific media/reply edges, or companion breadth.
     tests\test_gateway_node_methods.py`, `mypy
     src\openzues\services\gateway_commands.py`, and focused
     `git diff --check`.
+
+- [x] `OZ-PROV-001ES` WhatsApp split-media reusable reply fanout
+  - Source: `openclaw-main/src/infra/outbound/reply-policy.ts`,
+    `openclaw-main/src/infra/outbound/message-plan.ts`,
+    `openclaw-main/src/infra/outbound/message-plan.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: route-backed provider requests preserve `replyToIdSource` and
+    `replyToMode`; WhatsApp split-media sends apply `context.message_id` to
+    each media payload for reusable explicit/all-mode replies while preserving
+    single-use semantics for implicit `first`/`batched` replies.
+  - Evidence required: focused WhatsApp media fanout proof, adjacent WhatsApp
+    media/reply proof, adjacent direct outbound reply metadata proof, ruff,
+    mypy
+  - Status: checkpointed in `a1d930ab`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_replies_to_all_whatsapp_media -q`
+    (`KeyError: 'context'` before implementation, then `1 passed`), adjacent
+    WhatsApp proof (`4 passed`), adjacent direct outbound reply/requester proof
+    (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
+    tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
+    focused `git diff --check`.
 
 - [x] `OZ-COMP-001N` QR remote gateway-backed SecretRef resolution
   - Source: `openclaw-main/src/cli/command-secret-gateway.ts`,

@@ -22250,6 +22250,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy
   src\openzues\services\gateway_commands.py`, and focused `git diff --check`.
   Source/test checkpointed in `bc4f90fe`.
+- WhatsApp native split-media sends now preserve OpenClaw reply fanout
+  semantics for explicit/all-mode replies: route-backed provider requests carry
+  `replyToIdSource` and `replyToMode`, and each media payload receives
+  WhatsApp `context.message_id` when the reply policy is reusable. This closes
+  `OZ-PROV-001ES`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.91%.
+- Verified the WhatsApp reply fanout seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_replies_to_all_whatsapp_media -q`
+  (`KeyError: 'context'` before implementation, then `1 passed`), adjacent
+  WhatsApp provider proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_replies_to_all_whatsapp_media tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_whatsapp_reply_document tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_gif_video_payload -q`
+  (`4 passed`), adjacent direct outbound reply/requester proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_reply_policy tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_forwards_requester_context -q`
+  (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `a1d930ab`.
 
 ## References
 

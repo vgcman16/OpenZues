@@ -11693,3 +11693,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound/outbound breadth remains ~99.9%. Continue provider plugin-command
   injection breadth, WhatsApp reply fanout, provider-specific media/reply
   edges, or companion breadth.
+- Current queue-head adjustment: WhatsApp split-media sends now preserve
+  OpenClaw reply fanout metadata and apply reusable explicit/all-mode replies
+  to each low-level media payload instead of only the first payload.
+  Source/test checkpointed in `a1d930ab`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.91%.
+  Continue provider plugin-command injection breadth, remaining
+  provider-specific media/reply edges, companion breadth, or packaging edges.
