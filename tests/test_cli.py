@@ -26546,6 +26546,87 @@ def test_update_json_detects_owning_pnpm_root_without_package_manager_metadata(
     assert payload["mode"] == "pnpm"
 
 
+def test_update_json_detects_bun_global_root_without_package_manager_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    bun_install = tmp_path / "bun-home"
+    global_root = bun_install / "install" / "global" / "node_modules"
+    package_root = global_root / "openzues"
+    package_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "openzues", "version": "9.9.9"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    def fake_subprocess_run(argv, **kwargs):
+        if argv in (["npm", "root", "-g"], ["pnpm", "root", "-g"]):
+            return SimpleNamespace(returncode=1, stdout="", stderr="unavailable")
+        raise AssertionError(f"unexpected command: {argv!r}, {kwargs!r}")
+
+    class FakeRuntimeUpdates:
+        async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+            raise AssertionError("bun package update should not use git updater")
+
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.update(
+                {
+                    "package_root": package_root,
+                    "package_manager": package_manager,
+                    "package_spec": package_spec,
+                    "timeout_ms": timeout_ms,
+                }
+            )
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setenv("BUN_INSTALL", str(bun_install))
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_subprocess_run)
+
+    result = runner.invoke(app, ["update", "--json", "--tag", "latest", "--timeout", "9"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen == {
+        "package_root": package_root,
+        "package_manager": "bun",
+        "package_spec": "openzues@latest",
+        "timeout_ms": 9000,
+    }
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "bun"
+
+
 def test_update_json_persists_requested_package_channel_after_success(
     tmp_path,
     monkeypatch,

@@ -416,6 +416,79 @@ async def test_runtime_update_startup_auto_update_detects_owning_pnpm_root(
 
 
 @pytest.mark.asyncio
+async def test_runtime_update_startup_auto_update_detects_bun_global_root(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    bun_install = tmp_path / "bun-home"
+    global_root = bun_install / "install" / "global" / "node_modules"
+    package_root = global_root / "openzues"
+    _write_package_root(package_root, "1.0.0")
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+    version_calls: list[tuple[str, str, int | None]] = []
+
+    def fake_subprocess_run(argv, **kwargs):
+        if argv in (["npm", "root", "-g"], ["pnpm", "root", "-g"]):
+            return SimpleNamespace(returncode=1, stdout="", stderr="unavailable")
+        raise AssertionError(f"unexpected command: {argv!r}, {kwargs!r}")
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        command_calls.append((argv, cwd, timeout_ms))
+        if argv[:3] == [sys.executable, "-m", "openzues.cli"]:
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def fake_version_resolver(
+        package_name: str,
+        tag: str,
+        timeout_ms: int | None,
+    ) -> str | None:
+        version_calls.append((package_name, tag, timeout_ms))
+        if tag == "beta":
+            return "2.0.0-beta.1"
+        if tag == "latest":
+            return "1.9.0"
+        return None
+
+    async def restart_callback() -> None:
+        raise AssertionError("startup auto-update should not restart inline")
+
+    monkeypatch.setenv("BUN_INSTALL", str(bun_install))
+    monkeypatch.setattr(runtime_updates_module.subprocess, "run", fake_subprocess_run)
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+        config_snapshot_loader=lambda: {"update": {"channel": "beta", "auto": {"enabled": True}}},
+        package_root=package_root,
+        package_version_resolver=fake_version_resolver,
+    )
+
+    result = await service.run_startup_auto_update_check(timeout_ms=1000)
+
+    assert result["status"] == "ok"
+    assert version_calls == [
+        ("openzues", "beta", 1000),
+        ("openzues", "latest", 1000),
+    ]
+    assert command_calls == [
+        (["bun", "add", "-g", "openzues@beta"], package_root, 1000),
+        (_post_update_doctor_args(), package_root, 1000),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_update_startup_auto_update_honors_openclaw_no_auto_update(
     tmp_path,
     monkeypatch,
