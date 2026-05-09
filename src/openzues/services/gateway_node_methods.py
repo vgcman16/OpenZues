@@ -2996,6 +2996,16 @@ class GatewayNodeMethodService:
             config = self._voicewake_service.load()
             return {"triggers": list(config.triggers)}
 
+        if resolved_method == "voicewake.routing.get":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            if self._voicewake_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="voice wake routing config unavailable",
+                    status_code=503,
+                )
+            return {"config": self._voicewake_service.load_routing().to_payload()}
+
         if resolved_method == "talk.config":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("includeSecrets",))
             include_secrets = bool(
@@ -10495,6 +10505,35 @@ class GatewayNodeMethodService:
                     )
             await self._publish_gateway_event("voicewake.changed", trigger_payload)
             return trigger_payload
+
+        if resolved_method == "voicewake.routing.set":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("config",))
+            if self._voicewake_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="voice wake routing config unavailable",
+                    status_code=503,
+                )
+            config_value = payload.get("config")
+            if not isinstance(config_value, dict):
+                raise ValueError("voicewake.routing.set requires config: object")
+            routing_config = self._voicewake_service.set_routing(
+                config_value,
+                now_ms=_timestamp_ms(now_ms),
+            )
+            routing_payload = {"config": routing_config.to_payload()}
+            for known_node in self.registry.list_known_nodes():
+                if known_node.connected:
+                    self.registry.send_event(
+                        known_node.node_id,
+                        "voicewake.routing.changed",
+                        routing_payload,
+                    )
+            await self._publish_gateway_event(
+                "voicewake.routing.changed",
+                routing_payload,
+            )
+            return routing_payload
 
         if resolved_method == "skills.bins":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())

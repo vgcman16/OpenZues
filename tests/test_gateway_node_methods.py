@@ -465,6 +465,99 @@ async def test_voicewake_methods_surface_defaults_persist_updates_and_broadcast(
 
 
 @pytest.mark.asyncio
+async def test_voicewake_routing_methods_persist_normalize_and_broadcast(
+    tmp_path,
+) -> None:
+    registry = GatewayNodeRegistry()
+    connection = FakeNodeConnection("conn-voicewake-routing-node-1")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-voicewake-routing-node-1",
+            device_id="voicewake-routing-node-1",
+            platform="ios",
+        ),
+    )
+
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(
+        registry,
+        hub=hub,
+        voicewake_service=GatewayVoiceWakeService(tmp_path),
+    )
+
+    initial = await service.call("voicewake.routing.get", {})
+
+    async with hub.subscribe() as queue:
+        updated = await service.call(
+            "voicewake.routing.set",
+            {
+                "config": {
+                    "defaultTarget": {"mode": "current"},
+                    "routes": [
+                        {"trigger": "  Robot   Wake! ", "target": {"agentId": "MAIN"}},
+                        {
+                            "trigger": "ship status",
+                            "target": {"sessionKey": "agent:builder:main"},
+                        },
+                    ],
+                }
+            },
+            now_ms=4567,
+        )
+        published = await asyncio.wait_for(queue.get(), timeout=1)
+
+    reloaded = await service.call("voicewake.routing.get", {})
+
+    assert initial == {
+        "config": {
+            "version": 1,
+            "defaultTarget": {"mode": "current"},
+            "routes": [],
+            "updatedAtMs": 0,
+        }
+    }
+    assert updated["config"]["version"] == 1
+    assert updated["config"]["defaultTarget"] == {"mode": "current"}
+    assert updated["config"]["routes"] == [
+        {"trigger": "robot wake", "target": {"agentId": "main"}},
+        {"trigger": "ship status", "target": {"sessionKey": "agent:builder:main"}},
+    ]
+    assert updated["config"]["updatedAtMs"] == 4567
+    assert reloaded == updated
+    assert connection.sent_events[-1] == {
+        "event": "voicewake.routing.changed",
+        "payload": updated,
+    }
+    assert published["type"] == "gateway_event"
+    assert published["event"] == "voicewake.routing.changed"
+    assert published["payload"] == updated
+    assert isinstance(published["createdAt"], str)
+
+    with pytest.raises(ValueError, match="voicewake\\.routing\\.set requires config: object"):
+        await service.call("voicewake.routing.set", {"config": None})
+    with pytest.raises(ValueError, match="config\\.routes must be an array"):
+        await service.call("voicewake.routing.set", {"config": {"routes": "oops"}})
+    with pytest.raises(ValueError, match="cannot include both agentId and sessionKey"):
+        await service.call(
+            "voicewake.routing.set",
+            {
+                "config": {
+                    "routes": [
+                        {
+                            "trigger": "robot wake",
+                            "target": {
+                                "agentId": "main",
+                                "sessionKey": "agent:main:main",
+                            },
+                        }
+                    ]
+                }
+            },
+        )
+
+
+@pytest.mark.asyncio
 async def test_talk_mode_persists_updates_and_broadcast(tmp_path) -> None:
     registry = GatewayNodeRegistry()
     connection = FakeNodeConnection("conn-talk-mode-node-1")
