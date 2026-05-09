@@ -12,6 +12,7 @@ class GatewayCommandArgSpec:
     description: str
     type: Literal["array", "boolean", "integer", "number", "string"]
     required: bool = False
+    choices: tuple[tuple[str, str], ...] = ()
 
     def as_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -21,6 +22,10 @@ class GatewayCommandArgSpec:
         }
         if self.required:
             payload["required"] = True
+        if self.choices:
+            payload["choices"] = [
+                {"value": value, "label": label} for value, label in self.choices
+            ]
         return payload
 
 
@@ -100,12 +105,14 @@ def _str_arg(
     description: str,
     *,
     required: bool = False,
+    choices: tuple[tuple[str, str], ...] = (),
 ) -> GatewayCommandArgSpec:
     return GatewayCommandArgSpec(
         name=name,
         description=description,
         type="string",
         required=required,
+        choices=choices,
     )
 
 
@@ -330,7 +337,17 @@ _COMMAND_SPECS: tuple[GatewayCommandSpec, ...] = (
         category="browser",
         accepts_args=True,
         args=(
-            _str_arg("direction", "Swipe direction: up, down, left, or right.", required=True),
+            _str_arg(
+                "direction",
+                "Swipe direction: up, down, left, or right.",
+                required=True,
+                choices=(
+                    ("up", "up"),
+                    ("down", "down"),
+                    ("left", "left"),
+                    ("right", "right"),
+                ),
+            ),
             _int_arg("distance", "Optional swipe distance in pixels."),
             _str_arg("session", "agent-browser session name to update."),
             _bool_arg("json", "Emit the iOS swipe result as JSON."),

@@ -26877,6 +26877,84 @@ def test_slack_interactions_route_returns_filtered_external_arg_options(
     assert payload["menuToken"] == token
 
 
+def test_slack_slash_route_returns_arg_menu_for_missing_choice_arg(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    delivered: list[tuple[str, str]] = []
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    async def fake_deliver(session_key: str, prompt: str) -> dict[str, object]:
+        delivered.append((session_key, prompt))
+        return {"messageId": "queued"}
+
+    service.session_delivery_service = fake_deliver
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            json={
+                "command": "/browser.ios.swipe",
+                "text": "",
+                "user_id": "U123",
+                "user_name": "alice",
+                "channel_id": "COPS",
+                "channel_name": "ops",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reason"] == "slack_slash_command_arg_menu"
+    assert delivered == []
+    response_payload = payload["response"]
+    assert response_payload["response_type"] == "ephemeral"
+    assert (
+        response_payload["text"]
+        == "Choose Swipe direction: up, down, left, or right. for /browser.ios.swipe."
+    )
+    blocks = response_payload["blocks"]
+    assert blocks[0] == {
+        "type": "header",
+        "text": {
+            "type": "plain_text",
+            "text": "/browser.ios.swipe: choose direction",
+        },
+    }
+    action = blocks[3]["elements"][0]
+    assert action["type"] == "overflow"
+    assert action["action_id"] == "openclaw_cmdarg"
+    assert [option["value"] for option in action["options"]] == [
+        "cmdarg|browser.ios.swipe|direction|up|U123",
+        "cmdarg|browser.ios.swipe|direction|down|U123",
+        "cmdarg|browser.ios.swipe|direction|left|U123",
+        "cmdarg|browser.ios.swipe|direction|right|U123",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_dispatches_slack_command_arg_interaction_to_session(
     tmp_path: Path,

@@ -94,6 +94,7 @@ from openzues.services.gateway_channels import (
     imessage_account_configured,
     resolve_imessage_account_config,
 )
+from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_cron import cron_expression_next_run_at
 from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
@@ -169,8 +170,19 @@ SLACK_EXTERNAL_ARG_MENU_PREFIX = "openclaw_cmdarg_ext:"
 SLACK_COMMAND_ARG_VALUE_PREFIX = "cmdarg"
 SLACK_EXTERNAL_ARG_MENU_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{24}$")
 SLACK_EXTERNAL_ARG_MENU_TTL_MS = 10 * 60 * 1000
+SLACK_COMMAND_ARG_BUTTON_ROW_SIZE = 5
+SLACK_COMMAND_ARG_OVERFLOW_MIN = 3
+SLACK_COMMAND_ARG_OVERFLOW_MAX = 5
 SLACK_COMMAND_ARG_SELECT_OPTIONS_MAX = 100
 SLACK_COMMAND_ARG_SELECT_OPTION_TEXT_MAX = 75
+SLACK_COMMAND_ARG_SELECT_OPTION_VALUE_MAX = 150
+SLACK_COMMAND_ARG_BUTTON_TEXT_MAX = 75
+SLACK_COMMAND_ARG_BUTTON_VALUE_MAX = 2000
+SLACK_COMMAND_ARG_CONFIRM_TEXT_MAX = 300
+SLACK_HEADER_TEXT_MAX = 150
+SLACK_MAX_BLOCKS = 50
+SLACK_COMMAND_ARG_CHROME_BLOCKS = 3
+SLACK_COMMAND_ARG_ACTION_BLOCKS_MAX = SLACK_MAX_BLOCKS - SLACK_COMMAND_ARG_CHROME_BLOCKS
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
@@ -1466,6 +1478,82 @@ def _slack_inbound_optional_string(value: object) -> str | None:
     return None
 
 
+def _slack_truncate_text(value: object, limit: int) -> str:
+    return str(value or "")[:limit]
+
+
+def _slack_escape_mrkdwn(value: str) -> str:
+    return html.escape(value, quote=False)
+
+
+def _slack_chunk_items(
+    values: Sequence[dict[str, str]],
+    size: int,
+) -> list[list[dict[str, str]]]:
+    return [list(values[index : index + size]) for index in range(0, len(values), size)]
+
+
+def _slack_command_label(value: object) -> str | None:
+    normalized = _slack_inbound_optional_string(value)
+    if normalized is None:
+        return None
+    return normalized.removeprefix("/").strip() or None
+
+
+def _slack_encode_command_arg_value(
+    *,
+    command: str,
+    arg: str,
+    value: str,
+    user_id: str,
+) -> str:
+    return "|".join(
+        (
+            SLACK_COMMAND_ARG_VALUE_PREFIX,
+            quote(command, safe=""),
+            quote(arg, safe=""),
+            quote(value, safe=""),
+            quote(user_id, safe=""),
+        )
+    )
+
+
+def _slack_command_arg_confirm(command: str, arg: str) -> dict[str, object]:
+    escaped_command = _slack_escape_mrkdwn(command)
+    escaped_arg = _slack_escape_mrkdwn(arg)
+    return {
+        "title": {"type": "plain_text", "text": "Confirm selection"},
+        "text": {
+            "type": "mrkdwn",
+            "text": _slack_truncate_text(
+                f"Run */{escaped_command}* with *{escaped_arg}* set to this value?",
+                SLACK_COMMAND_ARG_CONFIRM_TEXT_MAX,
+            ),
+        },
+        "confirm": {"type": "plain_text", "text": "Run command"},
+        "deny": {"type": "plain_text", "text": "Cancel"},
+    }
+
+
+def _slack_command_arg_option(choice: Mapping[str, str]) -> dict[str, object]:
+    return {
+        "text": {
+            "type": "plain_text",
+            "text": _slack_truncate_text(
+                choice["label"],
+                SLACK_COMMAND_ARG_SELECT_OPTION_TEXT_MAX,
+            ),
+        },
+        "value": choice["value"],
+    }
+
+
+def _slack_command_arg_options(
+    choices: Sequence[dict[str, str]],
+) -> list[dict[str, object]]:
+    return [_slack_command_arg_option(choice) for choice in choices]
+
+
 def _slack_command_arg_action_value(action: Mapping[str, Any]) -> str | None:
     value = _slack_inbound_optional_string(action.get("value"))
     if value is not None:
@@ -1517,6 +1605,182 @@ def _slack_external_arg_menu_choice(value: object) -> tuple[str, str] | None:
     if label is None or choice_value is None:
         return None
     return label, choice_value
+
+
+def _slack_command_arg_menu_choices(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    choices: list[dict[str, str]] = []
+    for raw_choice in value:
+        normalized = _slack_external_arg_menu_choice(raw_choice)
+        if normalized is None:
+            continue
+        label, choice_value = normalized
+        choices.append({"label": label, "value": choice_value})
+    return choices
+
+
+def _slack_build_command_arg_menu_blocks(
+    *,
+    title: str,
+    command: str,
+    arg: str,
+    choices: Sequence[Mapping[str, str]],
+    user_id: str,
+    supports_external_select: bool,
+    create_external_menu_token: Callable[[Sequence[Mapping[str, object]]], str],
+) -> list[dict[str, object]]:
+    encoded_choices = [
+        {
+            "label": str(choice["label"]),
+            "value": _slack_encode_command_arg_value(
+                command=command,
+                arg=arg,
+                value=str(choice["value"]),
+                user_id=user_id,
+            ),
+        }
+        for choice in choices
+    ]
+    can_use_static_select = all(
+        len(choice["value"]) <= SLACK_COMMAND_ARG_SELECT_OPTION_VALUE_MAX
+        for choice in encoded_choices
+    )
+    can_use_overflow = (
+        can_use_static_select
+        and SLACK_COMMAND_ARG_OVERFLOW_MIN
+        <= len(encoded_choices)
+        <= SLACK_COMMAND_ARG_OVERFLOW_MAX
+    )
+    can_use_external_select = (
+        supports_external_select
+        and can_use_static_select
+        and len(encoded_choices) > SLACK_COMMAND_ARG_SELECT_OPTIONS_MAX
+    )
+    confirm = _slack_command_arg_confirm(command, arg)
+    rows: list[dict[str, object]]
+    if can_use_overflow:
+        rows = [
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "overflow",
+                        "action_id": SLACK_COMMAND_ARG_ACTION_ID,
+                        "confirm": confirm,
+                        "options": _slack_command_arg_options(encoded_choices),
+                    }
+                ],
+            }
+        ]
+    elif can_use_external_select:
+        token = create_external_menu_token(
+            [
+                {"label": choice["label"], "value": choice["value"]}
+                for choice in encoded_choices
+            ]
+        )
+        rows = [
+            {
+                "type": "actions",
+                "block_id": f"{SLACK_EXTERNAL_ARG_MENU_PREFIX}{token}",
+                "elements": [
+                    {
+                        "type": "external_select",
+                        "action_id": SLACK_COMMAND_ARG_ACTION_ID,
+                        "confirm": confirm,
+                        "min_query_length": 0,
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": f"Search {arg}",
+                        },
+                    }
+                ],
+            }
+        ]
+    elif len(encoded_choices) <= SLACK_COMMAND_ARG_BUTTON_ROW_SIZE or not can_use_static_select:
+        button_choices = [
+            choice
+            for choice in encoded_choices
+            if len(choice["value"]) <= SLACK_COMMAND_ARG_BUTTON_VALUE_MAX
+        ]
+        rows = [
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "action_id": f"{SLACK_COMMAND_ARG_ACTION_ID}_{row_index}_{col_index}",
+                        "text": {
+                            "type": "plain_text",
+                            "text": _slack_truncate_text(
+                                choice["label"],
+                                SLACK_COMMAND_ARG_BUTTON_TEXT_MAX,
+                            ),
+                        },
+                        "value": choice["value"],
+                        "confirm": confirm,
+                    }
+                    for col_index, choice in enumerate(row_choices)
+                ],
+            }
+            for row_index, row_choices in enumerate(
+                _slack_chunk_items(button_choices, SLACK_COMMAND_ARG_BUTTON_ROW_SIZE)
+            )
+        ]
+    else:
+        rows = [
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "static_select",
+                        "action_id": SLACK_COMMAND_ARG_ACTION_ID,
+                        "confirm": confirm,
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": f"Choose {arg}"
+                            if index == 0
+                            else f"Choose {arg} ({index + 1})",
+                        },
+                        "options": _slack_command_arg_options(row_choices),
+                    }
+                ],
+            }
+            for index, row_choices in enumerate(
+                _slack_chunk_items(encoded_choices, SLACK_COMMAND_ARG_SELECT_OPTIONS_MAX)
+            )
+        ]
+    visible_rows = rows[:SLACK_COMMAND_ARG_ACTION_BLOCKS_MAX]
+    return [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": _slack_truncate_text(
+                    f"/{command}: choose {arg}",
+                    SLACK_HEADER_TEXT_MAX,
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": _slack_truncate_text(title, 3000)},
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": _slack_truncate_text(
+                        f"Select one option to continue /{command} ({arg})",
+                        3000,
+                    ),
+                }
+            ],
+        },
+        *visible_rows,
+    ]
 
 
 def _slack_inbound_string_list(value: object) -> list[str]:
@@ -13696,6 +13960,7 @@ class OpsMeshService:
     msteams_feedback_reflection_service: GatewayMSTeamsFeedbackReflectionService | None = None
     discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
     gateway_config_service: GatewayConfigService | None = None
+    gateway_commands_service: GatewayCommandsService | None = None
     canvas_state_dir: Path | None = None
     _task: asyncio.Task[None] | None = field(init=False, default=None)
     _stop_event: asyncio.Event = field(init=False, default_factory=asyncio.Event)
@@ -16746,6 +17011,87 @@ class OpsMeshService:
         self._prune_slack_external_arg_menus(now_ms)
         return self._slack_external_arg_menus.get(token)
 
+    def _build_slack_slash_arg_menu_response(
+        self,
+        *,
+        command_name: str,
+        raw_text: str,
+        sender_id: str,
+    ) -> dict[str, object] | None:
+        if raw_text.strip():
+            return None
+        commands_service = self.gateway_commands_service
+        if commands_service is None:
+            return None
+        command_label = _slack_command_label(command_name)
+        if command_label is None:
+            return None
+        try:
+            catalog = commands_service.build_catalog(
+                include_args=True,
+                provider="slack",
+                scope="native",
+            )
+        except ValueError:
+            return None
+        commands = catalog.get("commands")
+        if not isinstance(commands, list):
+            return None
+        normalized_label = command_label.casefold()
+        command_spec: Mapping[str, Any] | None = None
+        for raw_candidate in commands:
+            candidate = _slack_inbound_mapping(raw_candidate)
+            candidate_label = (
+                _slack_command_label(candidate.get("nativeName"))
+                or _slack_command_label(candidate.get("name"))
+                or ""
+            )
+            if candidate_label.casefold() == normalized_label:
+                command_spec = candidate
+                break
+        if command_spec is None:
+            return None
+        args = command_spec.get("args")
+        if not isinstance(args, list):
+            return None
+        selected_arg: Mapping[str, Any] | None = None
+        choices: list[dict[str, str]] = []
+        for raw_arg in args:
+            arg = _slack_inbound_mapping(raw_arg)
+            arg_choices = _slack_command_arg_menu_choices(arg.get("choices"))
+            if arg_choices:
+                selected_arg = arg
+                choices = arg_choices
+                break
+        if selected_arg is None or not choices:
+            return None
+        arg_name = _slack_inbound_optional_string(selected_arg.get("name"))
+        if arg_name is None:
+            return None
+        title_subject = (
+            _slack_inbound_optional_string(selected_arg.get("description")) or arg_name
+        )
+        title = f"Choose {title_subject} for /{command_label}."
+        blocks = _slack_build_command_arg_menu_blocks(
+            title=title,
+            command=command_label,
+            arg=arg_name,
+            choices=choices,
+            user_id=sender_id,
+            supports_external_select=True,
+            create_external_menu_token=lambda encoded_choices: (
+                self.create_slack_external_arg_menu(
+                    choices=encoded_choices,
+                    user_id=sender_id,
+                )
+            ),
+        )
+        return {
+            "response_type": "ephemeral",
+            "text": title,
+            "blocks": blocks,
+        }
+
     async def _handle_slack_command_arg_options(
         self,
         payload: Mapping[str, Any],
@@ -17325,6 +17671,28 @@ class OpsMeshService:
                     "text": response_text,
                 },
             }
+        raw_text = _slack_inbound_optional_string(command.get("text")) or ""
+        arg_menu_response = self._build_slack_slash_arg_menu_response(
+            command_name=command_name,
+            raw_text=raw_text,
+            sender_id=sender_id,
+        )
+        if arg_menu_response is not None:
+            return {
+                "ok": True,
+                "channel": "slack",
+                "command": command_name or None,
+                "senderId": sender_id,
+                "channelId": channel_id,
+                "channelType": channel_type,
+                "skipped": True,
+                "reason": "slack_slash_command_arg_menu",
+                "delivery": {
+                    "runtime": "slack-interactive",
+                    "commandSource": "native-arg-menu",
+                },
+                "response": arg_menu_response,
+            }
         if self.session_delivery_service is None:
             raise GatewayOutboundRuntimeUnavailableError(
                 "Slack slash command session delivery is unavailable."
@@ -17353,7 +17721,6 @@ class OpsMeshService:
             operator_id=None,
             conversation_target=conversation_target,
         )
-        raw_text = _slack_inbound_optional_string(command.get("text")) or ""
         prompt = raw_text or command_name
         delivery_result = await self.session_delivery_service(session_key, prompt)
         message_id = _session_delivery_message_id(delivery_result)

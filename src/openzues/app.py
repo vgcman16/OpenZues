@@ -2257,6 +2257,8 @@ def create_app(
         gateway_config_service=active_gateway_config_service,
         canvas_state_dir=active_settings.data_dir,
     )
+    if getattr(active_ops_mesh_service, "gateway_commands_service", None) is None:
+        active_ops_mesh_service.gateway_commands_service = active_gateway_commands_service
     active_gateway_channels_service = GatewayChannelsService(
         list_notification_route_views=list_gateway_notification_route_views,
         probe_account=active_ops_mesh_service.probe_channel_account,
