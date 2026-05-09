@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block interactions are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block/modal interactions are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.995% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.995% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
@@ -8177,6 +8177,32 @@ may lag behind this tracker.
     (`3 failed` before implementation, then `3 passed`), adjacent
     provider/inbound proof (`25 passed, 413 deselected`; existing aiosqlite
     event-loop-close warning), `ruff check src\openzues\services\ops_mesh.py
+    src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+    `git diff --check`.
+
+- [x] Slack modal lifecycle interactions.
+  - Source:
+    `openclaw-main/extensions/slack/src/monitor/events/interactions.ts`,
+    `openclaw-main/extensions/slack/src/monitor/events/interactions.modal.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: native Slack interaction payloads for `view_submission` and
+    `view_closed` accept JSON or Slack form `payload`, parse
+    `private_metadata` routing, enforce the expected user, summarize modal
+    input state, redact private metadata and view hashes, and enqueue
+    next-heartbeat `system-event` wakes with OpenClaw-style
+    `slack:interaction:view...` / `slack:interaction:view-closed...`
+    context keys.
+  - Evidence required: focused Slack modal service/route proofs, adjacent
+    provider/inbound proof, ruff, mypy
+  - Status: checkpointed in `ecdfe207`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_view_submission_interaction_to_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_modal_when_expected_user_mismatches tests\test_ops_mesh.py::test_slack_interactions_route_dispatches_view_closed_form_payload -q`
+    (`3 failed` before implementation, then `3 passed`), adjacent
+    provider/inbound proof (`28 passed, 413 deselected`; existing aiosqlite
+    event-loop-close warnings), `ruff check src\openzues\services\ops_mesh.py
     src\openzues\app.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
     `git diff --check`.

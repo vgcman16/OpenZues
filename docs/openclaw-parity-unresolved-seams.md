@@ -267,6 +267,21 @@ adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and focused
 Continue provider-specific media/reply edges, companion breadth, or the next
 package startup/update edge.
 
+Current queue-head adjustment: Slack `view_submission` and `view_closed`
+modal interactions now match the OpenClaw monitor system-event path in
+`extensions/slack/src/monitor/events/interactions.modal.ts`: the native
+interactions route accepts JSON or Slack form `payload`, parses
+`private_metadata` routing, enforces the expected user, summarizes modal input
+state, redacts private metadata and view hashes, and enqueues
+`Slack interaction: ...` wakes with `slack:interaction:view...` /
+`slack:interaction:view-closed...` context keys. Verified on 2026-05-09 with
+focused red/green Slack modal service/route proofs, adjacent Slack
+provider/inbound proof, `ruff check`, `mypy`, and focused `git diff --check`;
+source/test checkpointed in `ecdfe207`. This closes `OZ-PROV-001EG`;
+provider-native inbound/outbound breadth remains ~99.9%. Continue
+provider-specific media/reply edges, companion breadth, or the next package
+startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11507,5 +11522,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   response URL redaction, and config-backed sender authorization. Source/test
   checkpointed in `37a9d2dc`; repo-wide parity remains estimated at ~99.9%,
   and provider-native inbound/outbound breadth moves to ~99.9%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.
+- Current queue-head adjustment: Slack `view_submission` and `view_closed`
+  modal interactions now route through `/api/channels/slack/interactions` into
+  session-keyed next-heartbeat `system-event` wakes with OpenClaw-style
+  `slack:interaction:view...` / `slack:interaction:view-closed...` context
+  keys, expected-user authorization, modal state input summaries, and
+  private-metadata/view-hash redaction. Source/test checkpointed in
+  `ecdfe207`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%. Continue
   provider-specific media/reply edges, companion breadth, or the next package
   startup/update edge.

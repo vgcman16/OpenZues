@@ -22037,6 +22037,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
   src\openzues\app.py`, and focused `git diff --check`. Source/test
   checkpointed in `37a9d2dc`.
+- Slack modal lifecycle interactions now match the OpenClaw monitor
+  system-event path for `view_submission` and `view_closed`: the native
+  interactions route accepts JSON or Slack form `payload`, parses
+  `private_metadata` routing, enforces the expected submitting user, summarizes
+  modal input state, redacts private metadata and view hashes, and enqueues
+  next-heartbeat `Slack interaction: ...` system events with
+  `slack:interaction:view...` / `slack:interaction:view-closed...` context
+  keys. This closes `OZ-PROV-001EG`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth remains ~99.9%.
+- Verified the Slack modal interaction seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_view_submission_interaction_to_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_modal_when_expected_user_mismatches tests\test_ops_mesh.py::test_slack_interactions_route_dispatches_view_closed_form_payload -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_view_submission or slack_modal or slack_interactions_route or slack_block_action or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`28 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `ecdfe207`.
 
 ## References
 
