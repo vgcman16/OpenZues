@@ -11700,3 +11700,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.91%.
   Continue provider plugin-command injection breadth, remaining
   provider-specific media/reply edges, companion breadth, or packaging edges.
+- Current queue-head adjustment: Slack provider-native command catalogs now
+  append plugin-owned native command specs through the shared plugin runtime,
+  resolve provider-specific native aliases such as `nativeNames.slack`, expose
+  plugin text aliases, and skip plugin command names that collide with existing
+  native command names such as `/agentstatus`, matching the OpenClaw Slack
+  startup/plugin command-spec path. Source/test checkpointed in `c798e879`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.92%. Continue remaining
+  provider-specific media/reply edges, companion breadth, or packaging edges.

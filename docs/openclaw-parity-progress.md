@@ -22266,6 +22266,34 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
   focused `git diff --check`. Source/test checkpointed in `a1d930ab`.
+- Slack provider-native command catalogs now append plugin-owned provider
+  command specs through the shared plugin runtime, resolve provider-specific
+  native names such as `nativeNames.slack`, expose plugin text aliases for
+  command dispatch, and skip plugin native names that collide with existing
+  native commands such as `/agentstatus`. This closes `OZ-PROV-001ET`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.92%.
+- Verified the Slack provider plugin-command injection seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_appends_slack_provider_plugin_commands -q`
+  (`TypeError: GatewayPluginRuntimeService.__init__() got an unexpected keyword argument 'command_specs'`
+  before implementation, then `1 passed`), adjacent command catalog proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests\test_gateway_node_methods.py::test_commands_list_supports_scope_filters_and_omits_args_when_requested tests\test_gateway_node_methods.py::test_commands_list_applies_slack_native_command_aliases tests\test_gateway_node_methods.py::test_commands_list_appends_slack_provider_plugin_commands -q`
+  (`4 passed`), adjacent plugin-runtime proof
+  `python -m pytest tests\test_gateway_plugin_runtime.py -q` (`4 passed`),
+  adjacent Slack menu proof
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_returns_arg_menu_for_missing_choice_arg tests\test_ops_mesh.py::test_slack_slash_route_uses_external_arg_menu_for_large_choice_set -q`
+  (`2 passed`), regression proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_appends_slack_provider_plugin_commands tests\test_gateway_node_methods.py::test_plugins_ui_descriptors_returns_registered_control_ui_descriptors -q`
+  (`2 passed`), `ruff check
+  src\openzues\services\gateway_commands.py
+  src\openzues\services\gateway_plugin_runtime.py
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_commands.py
+  src\openzues\services\gateway_plugin_runtime.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `c798e879`.
 
 ## References
 

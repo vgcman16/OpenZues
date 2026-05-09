@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.91% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, WhatsApp reusable reply fanout, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.92% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.996% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.996% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
@@ -8423,6 +8423,32 @@ may lag behind this tracker.
     `ruff check src\openzues\services\gateway_commands.py
     tests\test_gateway_node_methods.py`, `mypy
     src\openzues\services\gateway_commands.py`, and focused
+    `git diff --check`.
+
+- [x] Slack provider plugin-command injection.
+  - Source: `openclaw-main/extensions/slack/src/monitor/slash.ts`,
+    `openclaw-main/src/plugins/command-specs.ts`,
+    `openclaw-main/src/gateway/server-methods/commands.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_plugin_runtime.py`,
+    `src/openzues/services/gateway_commands.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: Slack-scoped native command catalogs append plugin-owned native
+    command specs, resolve provider-specific `nativeNames.slack`, expose plugin
+    text aliases, and skip plugin commands that collide with existing native
+    command names such as `/agentstatus`.
+  - Evidence required: focused provider plugin-command proof, adjacent command
+    catalog proof, adjacent plugin-runtime proof, adjacent Slack menu proof,
+    ruff, mypy
+  - Status: checkpointed in `c798e879`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_appends_slack_provider_plugin_commands -q`
+    (`TypeError` before implementation, then `1 passed`), adjacent command
+    catalog proof (`4 passed`), adjacent plugin-runtime proof (`4 passed`),
+    adjacent Slack menu proof (`2 passed`), regression proof with
+    `plugins.uiDescriptors` (`2 passed`), ruff, mypy, and focused
     `git diff --check`.
 
 - [x] WhatsApp split-media reusable reply fanout.
