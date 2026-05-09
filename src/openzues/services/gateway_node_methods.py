@@ -339,6 +339,13 @@ _OPENCLAW_RUNTIME_CONTEXT_PROMPT_HEADERS = {
     _OPENCLAW_NEXT_TURN_RUNTIME_CONTEXT_HEADER,
     _OPENCLAW_RUNTIME_EVENT_HEADER,
 }
+_OPENCLAW_LEGACY_INTERNAL_CONTEXT_HEADER = (
+    f"OpenClaw runtime context (internal):\n{_OPENCLAW_RUNTIME_CONTEXT_NOTICE}\n\n"
+)
+_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER = "[Internal task completion event]"
+_OPENCLAW_LEGACY_INTERNAL_EVENT_SEPARATOR = "\n\n---\n\n"
+_OPENCLAW_LEGACY_UNTRUSTED_RESULT_BEGIN = "<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>"
+_OPENCLAW_LEGACY_UNTRUSTED_RESULT_END = "<<<END_UNTRUSTED_CHILD_RESULT>>>"
 _CHAT_HISTORY_INLINE_DIRECTIVE_RE = re.compile(
     r"\[\[\s*(?:reply_to(?:_current|\s*:\s*[^\]]+)?|audio_as_voice)\s*\]\]",
     re.IGNORECASE,
@@ -17551,7 +17558,9 @@ def _strip_chat_history_internal_runtime_context(text: str) -> str:
             0,
         )
         if start == -1:
-            return _strip_chat_history_runtime_context_prompt_preface(next_text)
+            return _strip_chat_history_runtime_context_prompt_preface(
+                _strip_chat_history_legacy_internal_runtime_context(next_text)
+            )
         cursor = start + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_BEGIN)
         depth = 1
         finish = -1
@@ -17577,9 +17586,96 @@ def _strip_chat_history_internal_runtime_context(text: str) -> str:
             cursor = next_end + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_END)
         before = next_text[:start].rstrip()
         if finish == -1 or depth != 0:
-            return _strip_chat_history_runtime_context_prompt_preface(before)
+            return _strip_chat_history_runtime_context_prompt_preface(
+                _strip_chat_history_legacy_internal_runtime_context(before)
+            )
         after = next_text[finish + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_END) :].lstrip()
         next_text = f"{before}\n\n{after}" if before and after else f"{before}{after}"
+
+
+def _find_chat_history_legacy_internal_event_end(
+    text: str,
+    start: int,
+) -> int | None:
+    if not text.startswith(_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER, start):
+        return None
+    result_begin = text.find(
+        _OPENCLAW_LEGACY_UNTRUSTED_RESULT_BEGIN,
+        start + len(_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER),
+    )
+    if result_begin == -1:
+        return None
+    result_end = text.find(
+        _OPENCLAW_LEGACY_UNTRUSTED_RESULT_END,
+        result_begin + len(_OPENCLAW_LEGACY_UNTRUSTED_RESULT_BEGIN),
+    )
+    if result_end == -1:
+        return None
+    action_index = text.find(
+        "\n\nAction:\n",
+        result_end + len(_OPENCLAW_LEGACY_UNTRUSTED_RESULT_END),
+    )
+    if action_index == -1:
+        return None
+    after_action = action_index + len("\n\nAction:\n")
+    next_event = text.find(
+        f"{_OPENCLAW_LEGACY_INTERNAL_EVENT_SEPARATOR}"
+        f"{_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER}",
+        after_action,
+    )
+    if next_event != -1:
+        return next_event
+    next_paragraph = text.find("\n\n", after_action)
+    return len(text) if next_paragraph == -1 else next_paragraph
+
+
+def _strip_chat_history_legacy_internal_runtime_context(text: str) -> str:
+    next_text = text
+    search_from = 0
+    while True:
+        header_start = next_text.find(
+            _OPENCLAW_LEGACY_INTERNAL_CONTEXT_HEADER,
+            search_from,
+        )
+        if header_start == -1:
+            return next_text
+        event_start = header_start + len(_OPENCLAW_LEGACY_INTERNAL_CONTEXT_HEADER)
+        if not next_text.startswith(
+            _OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER,
+            event_start,
+        ):
+            search_from = event_start
+            continue
+        block_end = _find_chat_history_legacy_internal_event_end(
+            next_text,
+            event_start,
+        )
+        if block_end is None:
+            next_paragraph = next_text.find(
+                "\n\n",
+                event_start + len(_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER),
+            )
+            block_end = len(next_text) if next_paragraph == -1 else next_paragraph
+        else:
+            while next_text.startswith(
+                f"{_OPENCLAW_LEGACY_INTERNAL_EVENT_SEPARATOR}"
+                f"{_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER}",
+                block_end,
+            ):
+                next_event_start = block_end + len(
+                    _OPENCLAW_LEGACY_INTERNAL_EVENT_SEPARATOR
+                )
+                next_event_end = _find_chat_history_legacy_internal_event_end(
+                    next_text,
+                    next_event_start,
+                )
+                if next_event_end is None:
+                    break
+                block_end = next_event_end
+        before = next_text[:header_start].rstrip()
+        after = next_text[block_end:].lstrip()
+        next_text = f"{before}\n\n{after}" if before and after else f"{before}{after}"
+        search_from = max(0, len(before) - 1)
 
 
 def _strip_chat_history_runtime_context_prompt_preface(text: str) -> str:

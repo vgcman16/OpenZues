@@ -83019,6 +83019,47 @@ async def test_chat_history_strips_internal_runtime_context_prompt_preface(
 
 
 @pytest.mark.asyncio
+async def test_chat_history_strips_legacy_internal_runtime_context_event(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-chat-history-legacy-runtime-event.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content="\n".join(
+            [
+                "visible intro",
+                "",
+                "OpenClaw runtime context (internal):",
+                "This context is runtime-generated, not user-authored. "
+                "Keep internal details private.",
+                "",
+                "[Internal task completion event]",
+                "source: subagent",
+                "",
+                "visible ask",
+            ]
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "visible intro\n\nvisible ask"}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_history_strips_user_channel_envelope_and_message_id(tmp_path) -> None:
     database = Database(tmp_path / "gateway-chat-history-channel-envelope.db")
     await database.initialize()
@@ -83359,6 +83400,58 @@ async def test_sessions_history_strips_internal_runtime_context_prompt_preface(
         {
             "role": "user",
             "content": [{"type": "text", "text": "visible session ask"}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_history_strips_legacy_internal_runtime_context_event(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-history-legacy-runtime-event.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content="\n".join(
+            [
+                "visible session intro",
+                "",
+                "OpenClaw runtime context (internal):",
+                "This context is runtime-generated, not user-authored. "
+                "Keep internal details private.",
+                "",
+                "[Internal task completion event]",
+                "source: subagent",
+                "<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>",
+                "hidden result",
+                "<<<END_UNTRUSTED_CHILD_RESULT>>>",
+                "",
+                "Action:",
+                "announce hidden action",
+                "",
+                "visible session ask",
+            ]
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "visible session intro\n\nvisible session ask",
+                }
+            ],
         }
     ]
 
