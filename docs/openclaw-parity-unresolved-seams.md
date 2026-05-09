@@ -13,8 +13,17 @@ Current percentage rollup:
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
   monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.995% after the
-  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.997% after the
+  runtime bridge doctor posture, native ACP client interactive replay, package
+  post-update completion-cache refresh, secrets reload CLI surface, QR remote
+  config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef
+  diagnostics/unresolved-auth preflight, plugin imported-state projection,
+  errored runtime-imported plugin projection, facade-loaded plugin imported-state
+  preservation, diagnostics-loaded plugin imported-state counts, bundled plugin
+  reported-version normalization, bundled plugin env discovery/default-disable,
+  plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  provider route send/poll alias-precedence, Tlon route-backed account probe,
+  Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -11725,3 +11734,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and provider-native inbound/outbound breadth
   moves to ~99.94%. Continue remaining provider-specific media/reply edges,
   companion breadth, or packaging edges.
+- Current queue-head adjustment: package-shaped updates now run a bounded
+  post-doctor `openzues completion --write-state` refresh with
+  `OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS=1`, keep completion failures
+  non-fatal with the manual refresh hint, and expose the native completion
+  cache command for real post-update use. Source/test checkpointed in
+  `6df2f067`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.997%. Continue
+  remaining provider-specific media/reply edges, companion breadth, real
+  installed plugin activation, or the next packaging edge.

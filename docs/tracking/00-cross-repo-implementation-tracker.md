@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.94% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.996% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.996% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.997% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.997% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.1% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -46,6 +46,7 @@ Any follow-up changes should target the next queue head only:
 - `src/openzues/services/msteams_webhook_auth.py`
 - `src/openzues/services/gateway_outbound_runtime.py`
 - `src/openzues/services/ops_mesh.py`
+- `src/openzues/services/runtime_updates.py`
 - `src/openzues/services/gateway_channels.py`
 - `src/openzues/cli.py`
 - `src/openzues/web/templates/index.html`
@@ -53,6 +54,7 @@ Any follow-up changes should target the next queue head only:
 - `tests/test_ops_mesh.py`
 - `tests/test_gateway_node_methods.py`
 - `tests/test_cli.py`
+- `tests/test_runtime_updates.py`
 - `tests/test_app.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
@@ -339,8 +341,42 @@ gateway service process, source/test checkpointed in `ca7d7e81`; runtime/CLI/
 doctor and CLI/operator parity move to ~99.996%. Continue Slack
 provider-native `/agentstatus` command aliasing, WhatsApp reply fanout,
 provider-specific media/reply edges, or companion breadth.
+Packaging addendum: `OZ-PKG-001CO` package updates now refresh native shell
+completion cache state after successful post-update doctor, source/test
+checkpointed in `6df2f067`; runtime/CLI/doctor and CLI/operator parity move
+to ~99.997%. Continue provider-specific media/reply edges, companion breadth,
+real installed plugin activation, or the next packaging edge.
 
 ## Active Slice Detail
+
+- [x] `OZ-PKG-001CO` Package post-update completion cache refresh
+  - Source: `openclaw-main/src/cli/update-cli/shared.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/cli/completion-cli.ts`,
+    `openclaw-main/src/cli/update-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/runtime_updates.py`,
+    `src/openzues/cli.py`, `tests/test_runtime_updates.py`,
+    `tests/test_cli.py`
+  - Contract: after a successful package update and post-update doctor,
+    dispatch a bounded native `openzues completion --write-state` refresh with
+    `OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS=1`; completion refresh failure
+    stays non-fatal and returns the manual refresh hint.
+  - Evidence required: focused package completion-refresh tests, adjacent
+    package-update tests, focused/adjacent shell-completion CLI tests, ruff,
+    mypy
+  - Status: checkpointed in `6df2f067`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_refreshes_completion_cache_after_doctor -q`
+    (`1 failed` before implementation, then `1 passed`), focused
+    success/failure runtime proof (`2 passed`), adjacent package-update proof
+    (`35 passed, 32 deselected`), focused native completion command proof
+    (`1 passed`), adjacent shell-completion CLI proof (`4 passed`),
+    `ruff check src\openzues\services\runtime_updates.py src\openzues\cli.py
+    tests\test_runtime_updates.py tests\test_cli.py`, `mypy
+    src\openzues\services\runtime_updates.py src\openzues\cli.py`, and
+    focused `git diff --check`.
 
 - [x] `OZ-PKG-001CN` Package update service-process guard
   - Source: `openclaw-main/src/daemon/constants.ts`,
