@@ -18,6 +18,12 @@ class _FakePairingDatabase:
         )
         return [dict(row) for row in rows]
 
+    async def get_gateway_node_pairing_request(
+        self, request_id: str
+    ) -> dict[str, object] | None:
+        row = self._rows_by_request_id.get(request_id)
+        return dict(row) if row is not None else None
+
     async def upsert_gateway_node_pairing_request(
         self,
         *,
@@ -35,6 +41,7 @@ class _FakePairingDatabase:
         silent: bool | None,
         requested_at_ms: int,
         request_id: str,
+        public_key: str | None = None,
     ) -> tuple[dict[str, object], bool]:
         persisted_request_id = self._request_ids_by_node_id.get(node_id, request_id)
         created = (
@@ -45,6 +52,7 @@ class _FakePairingDatabase:
         row = {
             "request_id": persisted_request_id,
             "node_id": node_id,
+            "public_key": public_key,
             "display_name": display_name,
             "platform": platform,
             "version": version,
@@ -64,9 +72,25 @@ class _FakePairingDatabase:
         self._rows_by_request_id[persisted_request_id] = row
         return dict(row), created
 
+    async def delete_gateway_node_pairing_request(
+        self, request_id: str
+    ) -> dict[str, object] | None:
+        row = self._rows_by_request_id.pop(request_id, None)
+        if row is None:
+            return None
+        self._request_ids_by_node_id.pop(str(row["node_id"]), None)
+        return dict(row)
+
     async def get_gateway_node_paired_node(self, node_id: str) -> dict[str, object] | None:
         row = self._paired_rows_by_node_id.get(node_id)
         return dict(row) if row is not None else None
+
+    async def list_gateway_node_paired_nodes(self) -> list[dict[str, object]]:
+        rows = sorted(
+            self._paired_rows_by_node_id.values(),
+            key=lambda row: (-int(row["approved_at_ms"]), str(row["node_id"])),
+        )
+        return [dict(row) for row in rows]
 
     async def upsert_gateway_node_paired_node(
         self,
@@ -88,10 +112,12 @@ class _FakePairingDatabase:
         created_at_ms: int,
         approved_at_ms: int,
         last_connected_at_ms: int | None,
+        public_key: str | None = None,
     ) -> dict[str, object]:
         row = {
             "node_id": node_id,
             "token": token,
+            "public_key": public_key,
             "display_name": display_name,
             "platform": platform,
             "version": version,
@@ -116,6 +142,7 @@ class _FakePairingDatabase:
         *,
         node_id: str,
         token: str = "token-1",
+        public_key: str | None = None,
         display_name: str | None = "Paired Node",
         platform: str | None = "ios",
         version: str | None = None,
@@ -135,6 +162,7 @@ class _FakePairingDatabase:
         self._paired_rows_by_node_id[node_id] = {
             "node_id": node_id,
             "token": token,
+            "public_key": public_key,
             "display_name": display_name,
             "platform": platform,
             "version": version,
@@ -151,6 +179,80 @@ class _FakePairingDatabase:
             "approved_at_ms": approved_at_ms,
             "last_connected_at_ms": last_connected_at_ms,
         }
+
+
+@pytest.mark.asyncio
+async def test_pair_request_preserves_public_key_through_refresh_list_and_approval() -> None:
+    database = _FakePairingDatabase()
+    service = GatewayNodePairingService(database)
+
+    created = await service.request(
+        node_id="pair-node-public-key",
+        public_key=" pending-public-key-1 ",
+        display_name="Public Key Node",
+        platform="ios",
+        version=None,
+        core_version=None,
+        ui_version=None,
+        device_family=None,
+        model_identifier=None,
+        caps=None,
+        commands=None,
+        remote_ip=None,
+        silent=True,
+        now_ms=1_000,
+    )
+    refreshed = await service.request(
+        node_id="pair-node-public-key",
+        public_key=None,
+        display_name="Public Key Node v2",
+        platform=None,
+        version=None,
+        core_version=None,
+        ui_version=None,
+        device_family=None,
+        model_identifier=None,
+        caps=None,
+        commands=None,
+        remote_ip=None,
+        silent=None,
+        now_ms=2_000,
+    )
+    listed = await service.list_pending()
+    approved = await service.approve(
+        str(created["request"]["requestId"]),
+        caller_scopes=("operator.pairing",),
+        now_ms=3_000,
+    )
+    paired = await service.list_paired_nodes()
+
+    request_id = created["request"]["requestId"]
+    assert created["request"]["publicKey"] == "pending-public-key-1"
+    assert refreshed["request"]["publicKey"] == "pending-public-key-1"
+    assert listed[0]["publicKey"] == "pending-public-key-1"
+    assert approved == {
+        "requestId": request_id,
+        "node": {
+            "nodeId": "pair-node-public-key",
+            "publicKey": "pending-public-key-1",
+            "token": approved["node"]["token"],
+            "displayName": "Public Key Node v2",
+            "platform": "ios",
+            "version": None,
+            "coreVersion": None,
+            "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": [],
+            "remoteIp": None,
+            "permissions": None,
+            "createdAtMs": 3_000,
+            "approvedAtMs": 3_000,
+            "lastConnectedAtMs": None,
+        },
+    }
+    assert paired[0].public_key == "pending-public-key-1"
 
 
 @pytest.mark.asyncio

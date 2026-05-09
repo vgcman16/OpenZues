@@ -21,6 +21,7 @@ ADMIN_GATEWAY_METHOD_SCOPE = "operator.admin"
 class GatewayNodePairingRequest:
     request_id: str
     node_id: str
+    public_key: str | None = None
     display_name: str | None = None
     platform: str | None = None
     version: str | None = None
@@ -39,6 +40,7 @@ class GatewayNodePairingRequest:
 class GatewayPairedNode:
     node_id: str
     token: str
+    public_key: str | None = None
     display_name: str | None = None
     platform: str | None = None
     version: str | None = None
@@ -90,15 +92,19 @@ class GatewayNodePairingService:
         remote_ip: str | None,
         silent: bool | None,
         now_ms: int,
+        public_key: str | None = None,
     ) -> dict[str, object]:
         existing = await self.database.list_gateway_node_pairing_requests()
         existing_row = next((row for row in existing if row["node_id"] == node_id), None)
         existing_request = (
             _request_from_row(existing_row) if existing_row is not None else None
         )
+        public_key_was_provided = public_key is not None
+        normalized_public_key = _public_key(public_key)
         persisted_silent: bool | None
         if existing_request is None:
             persisted_silent = True if silent is True else None
+            resolved_public_key = normalized_public_key
             resolved_display_name = display_name
             resolved_platform = platform
             resolved_version = version
@@ -111,6 +117,11 @@ class GatewayNodePairingService:
             resolved_remote_ip = remote_ip
         else:
             persisted_silent = bool(existing_request.silent) and bool(silent)
+            resolved_public_key = (
+                normalized_public_key
+                if public_key_was_provided
+                else existing_request.public_key
+            )
             resolved_display_name = (
                 display_name if display_name is not None else existing_request.display_name
             )
@@ -165,6 +176,7 @@ class GatewayNodePairingService:
             remote_ip=resolved_remote_ip,
             silent=persisted_silent,
             requested_at_ms=now_ms,
+            public_key=resolved_public_key,
         )
         request = _request_from_row(row)
         return {
@@ -267,6 +279,7 @@ class GatewayNodePairingService:
         updated_row = await self.database.upsert_gateway_node_paired_node(
             node_id=existing.node_id,
             token=existing.token,
+            public_key=existing.public_key,
             display_name=resolved_display_name,
             platform=resolved_platform,
             version=resolved_version,
@@ -327,6 +340,7 @@ class GatewayNodePairingService:
         paired_row = await self.database.upsert_gateway_node_paired_node(
             node_id=request.node_id,
             token=secrets.token_urlsafe(32),
+            public_key=request.public_key,
             display_name=request.display_name,
             platform=request.platform,
             version=request.version,
@@ -462,6 +476,7 @@ def _request_from_row(row: dict[str, object]) -> GatewayNodePairingRequest:
     return GatewayNodePairingRequest(
         request_id=str(row["request_id"]),
         node_id=str(row["node_id"]),
+        public_key=_public_key(row.get("public_key")),
         display_name=_optional_string(row.get("display_name")),
         platform=_optional_string(row.get("platform")),
         version=_optional_string(row.get("version")),
@@ -482,6 +497,7 @@ def _paired_node_from_row(row: dict[str, object]) -> GatewayPairedNode:
     return GatewayPairedNode(
         node_id=str(row["node_id"]),
         token=str(row["token"]),
+        public_key=_public_key(row.get("public_key")),
         display_name=_optional_string(row.get("display_name")),
         platform=_optional_string(row.get("platform")),
         version=_optional_string(row.get("version")),
@@ -533,6 +549,8 @@ def _request_payload(request: GatewayNodePairingRequest) -> dict[str, object]:
     }
     if request.silent is not None:
         payload["silent"] = request.silent
+    if request.public_key is not None:
+        payload["publicKey"] = request.public_key
     return payload
 
 
@@ -555,6 +573,8 @@ def _pending_payload(request: GatewayNodePairingRequest) -> dict[str, object]:
     }
     if request.silent is not None:
         payload["silent"] = request.silent
+    if request.public_key is not None:
+        payload["publicKey"] = request.public_key
     return payload
 
 
@@ -583,6 +603,8 @@ def _paired_list_payload(node: GatewayPairedNode) -> dict[str, object]:
         payload["lastSeenReason"] = node.last_seen_reason
     if node.bins:
         payload["bins"] = list(node.bins)
+    if node.public_key is not None:
+        payload["publicKey"] = node.public_key
     return payload
 
 
@@ -611,6 +633,8 @@ def _paired_detail_payload(node: GatewayPairedNode) -> dict[str, object]:
         payload["lastSeenReason"] = node.last_seen_reason
     if node.bins:
         payload["bins"] = list(node.bins)
+    if node.public_key is not None:
+        payload["publicKey"] = node.public_key
     return payload
 
 
@@ -652,6 +676,13 @@ def _missing_scope(
 
 def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _public_key(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed or None
 
 
 def _normalize_device_id(device_id: str) -> str | None:

@@ -3352,6 +3352,7 @@ def test_gateway_node_method_call_endpoint_supports_device_pair_lifecycle(tmp_pa
                 "method": "node.pair.request",
                 "params": {
                     "nodeId": "device-api-node",
+                    "publicKey": "device-api-public-key",
                     "displayName": "API Device",
                     "platform": "windows",
                     "deviceFamily": "desktop",
@@ -3375,9 +3376,11 @@ def test_gateway_node_method_call_endpoint_supports_device_pair_lifecycle(tmp_pa
 
     assert list_response.status_code == 200
     assert list_response.json()["pending"][0]["deviceId"] == "device-api-node"
+    assert list_response.json()["pending"][0]["publicKey"] == "device-api-public-key"
     assert approve_response.status_code == 200
     approved_device = approve_response.json()["device"]
     assert approved_device["deviceId"] == "device-api-node"
+    assert approved_device["publicKey"] == "device-api-public-key"
     assert "token" not in approved_device
     assert approved_device["tokens"] == {}
     assert remove_response.status_code == 200

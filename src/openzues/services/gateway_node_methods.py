@@ -2009,6 +2009,7 @@ class GatewayNodeMethodService:
         remote_ip: str | None,
         silent: bool | None,
         now_ms: int | None,
+        public_key: str | None = None,
     ) -> dict[str, object]:
         if self._pairing_service is None:
             raise GatewayNodeMethodError(
@@ -2030,6 +2031,7 @@ class GatewayNodeMethodService:
             remote_ip=remote_ip,
             silent=silent,
             now_ms=_timestamp_ms(now_ms),
+            public_key=public_key,
         )
         if (
             request_result.get("status") == "pending"
@@ -2108,6 +2110,7 @@ class GatewayNodeMethodService:
             remote_ip=node.remote_ip or paired_node.remote_ip,
             silent=True,
             now_ms=now_ms,
+            public_key=paired_node.public_key,
         )
 
     def _configured_chat_history_max_chars(self) -> int | None:
@@ -10740,6 +10743,7 @@ class GatewayNodeMethodService:
                     "uiVersion",
                     "deviceFamily",
                     "modelIdentifier",
+                    "publicKey",
                     "caps",
                     "commands",
                     "remoteIp",
@@ -10798,6 +10802,7 @@ class GatewayNodeMethodService:
                 remote_ip=_optional_non_empty_string(payload.get("remoteIp"), label="remoteIp"),
                 silent=_optional_bool(payload.get("silent"), label="silent"),
                 now_ms=now_ms,
+                public_key=_optional_non_empty_string(payload.get("publicKey"), label="publicKey"),
             )
             return request_result
 
@@ -21503,6 +21508,8 @@ def _known_paired_node_payload(
         payload["lastSeenReason"] = node.last_seen_reason
     if node.bins:
         payload["bins"] = list(node.bins)
+    if node.public_key is not None:
+        payload["publicKey"] = node.public_key
     return payload
 
 
@@ -21638,6 +21645,8 @@ def _stored_paired_node_payload(
         payload["lastSeenReason"] = node.last_seen_reason
     if node.bins:
         payload["bins"] = list(node.bins)
+    if node.public_key is not None:
+        payload["publicKey"] = node.public_key
     return payload
 
 
@@ -21651,6 +21660,7 @@ def _device_pair_pending_payload(payload: dict[str, object]) -> dict[str, object
         ("displayName", "displayName"),
         ("platform", "platform"),
         ("deviceFamily", "deviceFamily"),
+        ("publicKey", "publicKey"),
         ("remoteIp", "remoteIp"),
         ("silent", "silent"),
         ("requiredApproveScopes", "requiredApproveScopes"),
@@ -21673,6 +21683,7 @@ def _device_pair_paired_payload(
         "tokens": tokens or {},
     }
     for value, key in (
+        (node.public_key, "publicKey"),
         (node.display_name, "displayName"),
         (node.platform, "platform"),
         (node.device_family, "deviceFamily"),
@@ -21697,6 +21708,7 @@ def _device_pair_paired_payload_from_node_payload(
         ("displayName", "displayName"),
         ("platform", "platform"),
         ("deviceFamily", "deviceFamily"),
+        ("publicKey", "publicKey"),
         ("remoteIp", "remoteIp"),
     ):
         if source_key in payload and payload[source_key] is not None:

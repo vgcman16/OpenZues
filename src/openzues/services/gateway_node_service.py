@@ -374,6 +374,7 @@ class GatewayNodeService:
             remote_ip=node.remote_ip or paired_node.remote_ip,
             silent=True,
             now_ms=_now_ms(),
+            public_key=paired_node.public_key,
         )
 
     async def wake_node(self, node_id: str) -> dict[str, object]:

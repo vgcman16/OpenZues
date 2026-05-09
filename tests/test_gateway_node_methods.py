@@ -1223,6 +1223,7 @@ async def test_device_pair_family_uses_persisted_node_pairing_runtime(tmp_path) 
         "node.pair.request",
         {
             "nodeId": "device-node-1",
+            "publicKey": "device-public-key-1",
             "displayName": "Device Node",
             "platform": "ios",
             "deviceFamily": "phone",
@@ -1238,6 +1239,7 @@ async def test_device_pair_family_uses_persisted_node_pairing_runtime(tmp_path) 
             {
                 "requestId": request_id,
                 "deviceId": "device-node-1",
+                "publicKey": "device-public-key-1",
                 "displayName": "Device Node",
                 "platform": "ios",
                 "deviceFamily": "phone",
@@ -1260,6 +1262,7 @@ async def test_device_pair_family_uses_persisted_node_pairing_runtime(tmp_path) 
     assert approved["requestId"] == request_id
     assert approved["device"] == {
         "deviceId": "device-node-1",
+        "publicKey": "device-public-key-1",
         "displayName": "Device Node",
         "platform": "ios",
         "deviceFamily": "phone",
