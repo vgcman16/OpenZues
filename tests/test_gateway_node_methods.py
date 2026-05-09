@@ -109936,6 +109936,56 @@ async def test_commands_list_applies_slack_native_command_aliases() -> None:
     assert not any(command["nativeName"] == "status" for command in commands)
 
 
+@pytest.mark.asyncio
+async def test_commands_list_appends_slack_provider_plugin_commands() -> None:
+    plugin_runtime = GatewayPluginRuntimeService(
+        command_specs=(
+            {
+                "pluginId": "voice-plugin",
+                "pluginName": "Voice Plugin",
+                "name": "voice",
+                "description": "Run voice routing.",
+                "nativeNames": {"default": "talkvoice", "slack": "slackvoice"},
+                "acceptsArgs": True,
+            },
+            {
+                "pluginId": "shadow-status",
+                "name": "shadow-status",
+                "description": "Conflicts with Slack status.",
+                "nativeNames": {"slack": "agentstatus"},
+                "acceptsArgs": False,
+            },
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    payload = await service.call(
+        "commands.list",
+        {"provider": "slack", "scope": "native", "includeArgs": False},
+    )
+
+    commands = payload["commands"]
+    plugin_command = next(command for command in commands if command["source"] == "plugin")
+    assert plugin_command == {
+        "name": "slackvoice",
+        "nativeName": "slackvoice",
+        "textAliases": ["/voice"],
+        "description": "Run voice routing.",
+        "source": "plugin",
+        "scope": "both",
+        "acceptsArgs": True,
+        "pluginId": "voice-plugin",
+        "pluginName": "Voice Plugin",
+    }
+    assert not any(
+        command["source"] == "plugin" and command["nativeName"] == "agentstatus"
+        for command in commands
+    )
+
+
 class _FakeBrowserRuntime:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str | None]] = []

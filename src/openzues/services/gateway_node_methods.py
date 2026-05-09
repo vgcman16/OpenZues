@@ -1647,7 +1647,6 @@ class GatewayNodeMethodService:
         self._channel_logout_service = channel_logout_service
         self._list_integration_views = list_integration_views
         self._list_notification_route_views = list_notification_route_views
-        self._commands_service = commands_service or GatewayCommandsService()
         self._config_service = config_service
         self._config_schema_service = config_schema_service or GatewayConfigSchemaService()
         self._create_task_blueprint = create_task_blueprint
@@ -1681,6 +1680,17 @@ class GatewayNodeMethodService:
             executors=self._tools_invoke_executors,
             owner_only=self._tools_invoke_owner_only,
         )
+        self._commands_service = commands_service or GatewayCommandsService(
+            plugin_runtime_service=self._plugin_runtime_service,
+        )
+        if commands_service is not None:
+            set_plugin_runtime_service = getattr(
+                self._commands_service,
+                "set_plugin_runtime_service",
+                None,
+            )
+            if callable(set_plugin_runtime_service):
+                set_plugin_runtime_service(self._plugin_runtime_service)
         self._sessions_service = sessions_service
         if self._sessions_service is None and self._database is not None:
             self._sessions_service = GatewaySessionsService(

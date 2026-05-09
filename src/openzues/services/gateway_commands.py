@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginCommandSpec,
+    GatewayPluginRuntimeService,
+)
+
 _SUPPORTED_AGENT_ID = "openzues"
 
 
@@ -78,6 +83,20 @@ def _provider_native_command_name(spec: GatewayCommandSpec, provider: str | None
         spec.name,
         spec.name,
     )
+
+
+def _plugin_provider_native_command_name(
+    spec: GatewayPluginCommandSpec,
+    provider: str | None,
+) -> str:
+    native_names = spec.native_names or {}
+    normalized_provider = str(provider or "").strip().casefold()
+    if normalized_provider:
+        provider_name = native_names.get(normalized_provider)
+        if provider_name:
+            return provider_name
+    default_name = native_names.get("default")
+    return default_name or spec.name
 
 
 def _array_arg(
@@ -1144,6 +1163,19 @@ _COMMAND_SPECS: tuple[GatewayCommandSpec, ...] = (
 
 
 class GatewayCommandsService:
+    def __init__(
+        self,
+        *,
+        plugin_runtime_service: GatewayPluginRuntimeService | None = None,
+    ) -> None:
+        self._plugin_runtime_service = plugin_runtime_service
+
+    def set_plugin_runtime_service(
+        self,
+        plugin_runtime_service: GatewayPluginRuntimeService,
+    ) -> None:
+        self._plugin_runtime_service = plugin_runtime_service
+
     def build_catalog(
         self,
         *,
@@ -1154,15 +1186,60 @@ class GatewayCommandsService:
     ) -> dict[str, Any]:
         if agent_id is not None and agent_id != _SUPPORTED_AGENT_ID:
             raise ValueError(f'unknown agent id "{agent_id}"')
-        if scope == "text":
-            return {"commands": []}
-        return {
-            "commands": [
-                spec.as_payload(
-                    include_args=include_args,
-                    native_name=_provider_native_command_name(spec, provider),
+        commands: list[dict[str, Any]] = []
+        seen_native_names: set[str] = set()
+        if scope != "text":
+            for spec in _COMMAND_SPECS:
+                if spec.scope not in {"native", "both"}:
+                    continue
+                native_name = _provider_native_command_name(spec, provider)
+                commands.append(
+                    spec.as_payload(
+                        include_args=include_args,
+                        native_name=native_name,
+                    )
                 )
-                for spec in _COMMAND_SPECS
-                if spec.scope in {"native", "both"}
-            ]
-        }
+                seen_native_names.add(native_name.casefold())
+        commands.extend(
+            self._plugin_command_payloads(
+                provider=provider,
+                scope=scope,
+                seen_native_names=seen_native_names,
+            )
+        )
+        return {"commands": commands}
+
+    def _plugin_command_payloads(
+        self,
+        *,
+        provider: str | None,
+        scope: Literal["both", "native", "text"],
+        seen_native_names: set[str],
+    ) -> list[dict[str, Any]]:
+        if self._plugin_runtime_service is None:
+            return []
+        payloads: list[dict[str, Any]] = []
+        for spec in self._plugin_runtime_service.command_specs():
+            native_name = _plugin_provider_native_command_name(spec, provider)
+            if scope != "text":
+                native_key = native_name.casefold()
+                if native_key in seen_native_names:
+                    continue
+                seen_native_names.add(native_key)
+            payload: dict[str, Any] = {
+                "name": spec.name if scope == "text" else native_name,
+                "nativeName": native_name,
+                "textAliases": [f"/{spec.name}"],
+                "description": spec.description,
+                "source": "plugin",
+                "scope": "both",
+                "acceptsArgs": spec.accepts_args,
+            }
+            if spec.description_localizations:
+                payload["descriptionLocalizations"] = dict(spec.description_localizations)
+            if spec.plugin_id is not None:
+                payload["pluginId"] = spec.plugin_id
+            if spec.plugin_name is not None:
+                payload["pluginName"] = spec.plugin_name
+            payloads.append(payload)
+        return payloads
