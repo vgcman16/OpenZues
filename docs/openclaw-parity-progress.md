@@ -22185,6 +22185,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
   `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `54d18930`.
+- Slack slash command arg menus now render from the native command catalog:
+  missing choice arguments return OpenClaw-style ephemeral `header`/`section`/
+  `context` plus button/overflow/static/external-select action blocks instead
+  of dispatching incomplete slash command text, and app construction wires the
+  production `GatewayCommandsService` into the Slack ops runtime. This closes
+  `OZ-PROV-001EP`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%.
+- Verified the Slack slash arg-menu rendering seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_returns_arg_menu_for_missing_choice_arg -q`
+  (`KeyError: 'reason'` before implementation, then `1 passed`), focused
+  command-arg/slash proof
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_returns_arg_menu_for_missing_choice_arg tests\test_ops_mesh.py::test_ops_mesh_service_dispatches_slack_command_arg_interaction_to_session tests\test_ops_mesh.py::test_slack_interactions_route_returns_filtered_external_arg_options tests\test_ops_mesh.py::test_slack_slash_route_dispatches_form_payload_to_session -q`
+  (`4 passed`), adjacent provider/interaction proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_command_arg or block_suggestion or slack_slash or slack_interactions_route or slack_block_action or slack_view_submission or slack_modal or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`44 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  adjacent command catalog proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests\test_gateway_node_methods.py::test_commands_list_supports_scope_filters_and_omits_args_when_requested -q`
+  (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_commands.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_commands.py src\openzues\app.py`, and focused
+  `git diff --check`. Source/test checkpointed in `27836d4c`.
 
 ## References
 

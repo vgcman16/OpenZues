@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.995% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.995% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
@@ -8362,6 +8362,25 @@ may lag behind this tracker.
     focused pair (`2 passed`), adjacent provider/interaction proof (`43
     passed, 413 deselected`; existing aiosqlite event-loop-close warning),
     ruff, mypy, and focused `git diff --check`.
+
+- [x] Slack slash arg-menu rendering.
+  - Source: `openclaw-main/extensions/slack/src/monitor/slash.ts`,
+    `openclaw-main/src/auto-reply/commands-registry.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_commands.py`, `src/openzues/app.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: Slack slash commands with missing choice arguments return
+    ephemeral menu blocks with encoded `openclaw_cmdarg` values and do not
+    dispatch incomplete text to the session runtime.
+  - Evidence required: focused Slack slash menu route proof, adjacent Slack
+    interaction/slash proof, command catalog proof, ruff, mypy
+  - Status: checkpointed in `27836d4c`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green menu route proof, focused
+    command-arg/slash proof (`4 passed`), adjacent provider/interaction proof
+    (`44 passed, 413 deselected`; existing aiosqlite warnings), command catalog
+    proof (`2 passed`), ruff, mypy, and focused `git diff --check`.
 
 - [x] Doctor preflight git update offer.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,

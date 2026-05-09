@@ -11658,3 +11658,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, and provider-native inbound/outbound breadth remains ~99.9%.
   Continue provider-specific media/reply edges, companion breadth, deeper Slack
   command menu generation, or the next package startup/update edge.
+- Current queue-head adjustment: Slack slash command arg-menu rendering now
+  matches the OpenClaw menu-block path in
+  `extensions/slack/src/monitor/slash.ts`: native command specs can expose
+  choice arguments, missing choice values return Slack ephemeral menu blocks
+  with encoded `openclaw_cmdarg` action values, and incomplete slash commands
+  no longer enter the session dispatch path. Source/test checkpointed in
+  `27836d4c`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%. Continue
+  provider-specific media/reply edges, companion breadth, plugin/provider
+  command menu breadth, or the next package startup/update edge.
