@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block/modal/slash ingress and env/file HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block/modal/slash ingress and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.995% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.995% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
@@ -8288,6 +8288,28 @@ may lag behind this tracker.
     `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_rejects_invalid_file_secretref_signature tests\test_ops_mesh.py::test_slack_slash_route_accepts_valid_file_secretref_signature -q`
     (`1 failed, 1 passed` before implementation, then `2 passed`), adjacent
     provider/inbound proof (`37 passed, 413 deselected`; existing aiosqlite
+    event-loop-close warnings), `ruff check src\openzues\app.py
+    tests\test_ops_mesh.py`, `mypy src\openzues\app.py`, and focused
+    `git diff --check`.
+
+- [x] Slack signing exec SecretRefs.
+  - Source: `openclaw-main/extensions/slack/src/config-schema.test.ts`,
+    `openclaw-main/src/config/types.secrets.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`, `tests/test_ops_mesh.py`
+  - Contract: Slack HTTP signature verification resolves configured
+    exec-backed SecretRefs for top-level and account signing secrets through
+    the native secret provider protocol v1 JSON contract, with bounded no-shell
+    subprocess execution and fail-closed handling for unavailable, failing, or
+    malformed providers.
+  - Evidence required: focused exec SecretRef signature route proofs, adjacent
+    provider/inbound proof, ruff, mypy
+  - Status: checkpointed in `a4b67444`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_rejects_invalid_exec_secretref_signature tests\test_ops_mesh.py::test_slack_slash_route_accepts_valid_exec_secretref_signature -q`
+    (`1 failed, 1 passed` before implementation, then `2 passed`), adjacent
+    provider/inbound proof (`39 passed, 413 deselected`; existing aiosqlite
     event-loop-close warnings), `ruff check src\openzues\app.py
     tests\test_ops_mesh.py`, `mypy src\openzues\app.py`, and focused
     `git diff --check`.

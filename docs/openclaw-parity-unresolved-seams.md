@@ -330,6 +330,18 @@ breadth remains ~99.9%. Continue exec SecretRef signing-secret resolution,
 provider-specific media/reply edges, companion breadth, or the next package
 startup/update edge.
 
+Current queue-head adjustment: Slack native HTTP signing-secret resolution now
+accepts exec-backed SecretRefs for `channels.slack.signingSecret` and account
+`signingSecret` through the configured native secret provider protocol v1 JSON
+contract, using bounded no-shell subprocess execution and failing closed when
+the provider is unavailable, fails, emits invalid output, or omits the requested
+id. Verified on 2026-05-09 with focused red/green Slack signing exec SecretRef
+route proofs, adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and
+focused `git diff --check`; source/test checkpointed in `a4b67444`. This closes
+`OZ-PROV-001EL`; provider-native inbound/outbound breadth remains ~99.9%.
+Continue provider-specific media/reply edges, companion breadth, or the next
+package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
