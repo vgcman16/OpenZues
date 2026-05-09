@@ -577,6 +577,107 @@ def test_qr_remote_json_resolves_exec_secretref_protocol_v1(
     assert payload["urlSource"] == "gateway.remote.url"
 
 
+def test_qr_remote_json_resolves_secretref_from_live_gateway(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("QR_REMOTE_TOKEN", raising=False)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {},
+                    "remote": {
+                        "url": "wss://remote.example.com:444",
+                        "token": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "QR_REMOTE_TOKEN",
+                        },
+                    },
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_control_plane_metadata_endpoint_is_reachable",
+        lambda *args, **kwargs: True,
+    )
+    gateway_calls: list[dict[str, object]] = []
+
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        timeout_seconds: float = 60.0,
+        allow_timeout: bool = False,
+    ) -> dict[str, object]:
+        del timeout_seconds, allow_timeout
+        gateway_calls.append(
+            {
+                "baseUrl": base_url,
+                "path": path,
+                "method": method,
+                "payload": payload,
+            }
+        )
+        return {
+            "ok": True,
+            "assignments": [
+                {
+                    "path": "gateway.remote.token",
+                    "pathSegments": ["gateway", "remote", "token"],
+                    "value": "gateway-remote-token",
+                }
+            ],
+            "diagnostics": ["active gateway resolved remote token"],
+            "inactiveRefPaths": [],
+        }
+
+    monkeypatch.setattr(cli_module, "_watch_api_json", fake_watch_api_json)
+
+    result = runner.invoke(app, ["qr", "--json", "--remote"])
+
+    assert result.exit_code == 0, result.stdout
+    assert len(gateway_calls) == 1
+    assert gateway_calls[0]["path"] == "/api/gateway/node-methods/call"
+    assert gateway_calls[0]["method"] == "POST"
+    assert gateway_calls[0]["payload"] == {
+        "method": "secrets.resolve",
+        "params": {
+            "commandName": "qr --remote",
+            "targetIds": ["gateway.remote.token", "gateway.remote.password"],
+        },
+    }
+    assert "[secrets] active gateway resolved remote token" in result.stderr
+    assert "[secrets] resolved gateway.remote.token" in result.stderr
+    assert "gateway-remote-token" not in result.stdout
+    assert "gateway-remote-token" not in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://remote.example.com:444"
+    assert payload["auth"] == "token"
+    assert payload["urlSource"] == "gateway.remote.url"
+
+
 def test_qr_json_output_matches_openclaw_setup_code_contract(
     tmp_path, monkeypatch
 ) -> None:

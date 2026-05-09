@@ -98246,6 +98246,7 @@ _TAILSCALE_STATUS_COMMAND_CANDIDATES = (
     "tailscale",
     "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
 )
+_QR_REMOTE_SECRET_TARGET_IDS = ("gateway.remote.token", "gateway.remote.password")
 
 
 def _qr_parse_noisy_json_object(raw: str) -> Mapping[str, object] | None:
@@ -98517,8 +98518,107 @@ def _resolve_qr_exec_secret_ref(
     )
 
 
+def _qr_gateway_secrets_resolve_base_url(app_settings: Settings) -> str | None:
+    base_url = _control_plane_base_url(app_settings)
+    parsed = urlparse(base_url)
+    host = parsed.hostname or app_settings.host
+    if parsed.port is not None:
+        port = parsed.port
+    elif parsed.scheme == "https":
+        port = 443
+    else:
+        port = 80
+    if not _control_plane_metadata_endpoint_is_reachable(host, port, timeout_seconds=0.05):
+        return None
+    return base_url
+
+
+def _qr_gateway_resolve_string_array(value: object) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    normalized: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or not entry.strip():
+            return None
+        normalized.append(entry.strip())
+    return normalized
+
+
+def _apply_qr_gateway_secret_resolve_payload(
+    config_snapshot: Mapping[str, object],
+    payload: object,
+) -> tuple[Mapping[str, object], list[str], set[str]]:
+    if not isinstance(payload, Mapping):
+        return config_snapshot, [], set()
+    raw_assignments = payload.get("assignments")
+    if not isinstance(raw_assignments, list):
+        return config_snapshot, [], set()
+    resolved_snapshot = copy.deepcopy(dict(config_snapshot))
+    diagnostics: list[str] = []
+    raw_diagnostics = payload.get("diagnostics")
+    if isinstance(raw_diagnostics, list):
+        for entry in raw_diagnostics:
+            text = _optional_cli_string(entry)
+            if text is not None:
+                diagnostics.append(text)
+    resolved_paths: set[str] = set()
+    for entry in raw_assignments:
+        if not isinstance(entry, Mapping):
+            continue
+        path_segments = _qr_gateway_resolve_string_array(entry.get("pathSegments"))
+        if path_segments not in (
+            ["gateway", "remote", "token"],
+            ["gateway", "remote", "password"],
+        ):
+            continue
+        value = _optional_cli_string(entry.get("value"))
+        if value is None:
+            continue
+        gateway = resolved_snapshot.setdefault("gateway", {})
+        if not isinstance(gateway, dict):
+            continue
+        remote_config = gateway.setdefault("remote", {})
+        if not isinstance(remote_config, dict):
+            continue
+        field = path_segments[-1]
+        remote_config[field] = value
+        path = ".".join(path_segments)
+        resolved_paths.add(path)
+        diagnostics.append(f"resolved {path}")
+    return resolved_snapshot, _dedupe_cli_strings(diagnostics), resolved_paths
+
+
+def _resolve_qr_remote_secret_refs_via_gateway(
+    config_snapshot: Mapping[str, object],
+    *,
+    app_settings: Settings,
+) -> tuple[Mapping[str, object], list[str], set[str]]:
+    base_url = _qr_gateway_secrets_resolve_base_url(app_settings)
+    if base_url is None:
+        return config_snapshot, [], set()
+    try:
+        payload = _watch_api_json(
+            base_url,
+            "/api/gateway/node-methods/call",
+            method="POST",
+            payload={
+                "method": "secrets.resolve",
+                "params": {
+                    "commandName": "qr --remote",
+                    "targetIds": list(_QR_REMOTE_SECRET_TARGET_IDS),
+                },
+            },
+            timeout_seconds=2.0,
+        )
+    except RuntimeError:
+        return config_snapshot, [], set()
+    return _apply_qr_gateway_secret_resolve_payload(config_snapshot, payload)
+
+
 def _resolve_qr_remote_secret_refs(
     config_snapshot: Mapping[str, object] | None,
+    *,
+    app_settings: Settings | None = None,
 ) -> tuple[Mapping[str, object] | None, list[str]]:
     if config_snapshot is None:
         return None, []
@@ -98531,6 +98631,20 @@ def _resolve_qr_remote_secret_refs(
         return resolved_snapshot, []
 
     diagnostics: list[str] = []
+    if app_settings is not None:
+        gateway_snapshot, gateway_diagnostics, _gateway_resolved_paths = (
+            _resolve_qr_remote_secret_refs_via_gateway(
+                resolved_snapshot,
+                app_settings=app_settings,
+            )
+        )
+        resolved_snapshot = copy.deepcopy(dict(gateway_snapshot))
+        diagnostics.extend(gateway_diagnostics)
+        gateway = resolved_snapshot.get("gateway")
+        remote_config = gateway.get("remote") if isinstance(gateway, dict) else None
+        if not isinstance(remote_config, dict):
+            return resolved_snapshot, _dedupe_cli_strings(diagnostics)
+
     for field in ("token", "password"):
         value = remote_config.get(field)
         parts = _qr_secret_ref_parts(value)
@@ -98560,7 +98674,7 @@ def _resolve_qr_remote_secret_refs(
             continue
         remote_config[field] = resolved
         diagnostics.append(f"resolved {path}")
-    return resolved_snapshot, diagnostics
+    return resolved_snapshot, _dedupe_cli_strings(diagnostics)
 
 
 def _emit_qr_secret_resolve_diagnostics(
@@ -98857,7 +98971,8 @@ def qr_command(
         secret_diagnostics: list[str] = []
         if remote and not str(token or "").strip() and not str(password or "").strip():
             config_snapshot, secret_diagnostics = _resolve_qr_remote_secret_refs(
-                config_snapshot
+                config_snapshot,
+                app_settings=app_settings,
             )
             _emit_qr_secret_resolve_diagnostics(
                 secret_diagnostics,
