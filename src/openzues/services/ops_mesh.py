@@ -1509,6 +1509,41 @@ def _slack_message_subtype_action(subtype: str | None) -> tuple[str, str] | None
     return None
 
 
+def _slack_home_view() -> dict[str, Any]:
+    return {
+        "type": "home",
+        "callback_id": "openzues:home",
+        "blocks": [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": "OpenZues"},
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        "Send a DM, mention OpenZues in a channel, or use "
+                        "`/openzues` to start a session."
+                    ),
+                },
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": (
+                            "This Home tab is safe to show to any workspace "
+                            "member who opens the app."
+                        ),
+                    }
+                ],
+            },
+        ],
+    }
+
+
 def _slack_infer_channel_type(channel_id: str, raw_type: object = None) -> str:
     normalized_type = str(raw_type or "").strip().lower()
     if normalized_type in {"im", "mpim", "channel", "group"}:
@@ -16122,6 +16157,106 @@ class OpsMeshService:
             "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
         }
 
+    def _publish_slack_home_view(
+        self,
+        *,
+        route: dict[str, Any],
+        user_id: str,
+        view: dict[str, Any],
+        secret_token: str,
+    ) -> dict[str, object]:
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "views.publish"),
+            {
+                "user_id": user_id,
+                "view": view,
+            },
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        return {
+            key: value
+            for key, value in result.items()
+            if key in {"ok", "view", "warning", "response_metadata"}
+        }
+
+    async def handle_slack_home_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        user_id = _slack_inbound_optional_string(event.get("user"))
+        if event_type != "app_home_opened" or user_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_home_event_without_user",
+            }
+        if _slack_inbound_optional_string(event.get("tab")) == "messages":
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_home_messages_tab",
+            }
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        route = await self._provider_route_for_channel_account(
+            channel="slack",
+            account_id=normalized_account_id,
+        )
+        view = _slack_home_view()
+        if route is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "status": "unavailable",
+                "reason": "slack_home_route_unavailable",
+                "userId": user_id,
+                "view": view,
+            }
+        secret_token = await self._notification_route_secret_token(route)
+        if not secret_token:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "status": "unavailable",
+                "reason": "slack_home_secret_unavailable",
+                "userId": user_id,
+                "view": view,
+            }
+        provider_result = await asyncio.to_thread(
+            self._publish_slack_home_view,
+            route=route,
+            user_id=user_id,
+            view=view,
+            secret_token=str(secret_token),
+        )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "eventType": event_type,
+            "userId": user_id,
+            "view": view,
+            "providerResult": provider_result,
+            "delivery": {
+                "runtime": "native-provider-backed",
+                "method": "views.publish",
+            },
+        }
+
     async def handle_slack_system_event(
         self,
         payload: Mapping[str, Any],
@@ -16154,6 +16289,11 @@ class OpsMeshService:
             _slack_inbound_optional_string(event.get("subtype"))
         ) is not None:
             return await self.handle_slack_message_subtype_event(
+                payload,
+                account_id=account_id,
+            )
+        if event_type == "app_home_opened":
+            return await self.handle_slack_home_event(
                 payload,
                 account_id=account_id,
             )

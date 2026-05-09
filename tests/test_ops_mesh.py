@@ -26299,6 +26299,150 @@ def test_slack_events_route_dispatches_message_subtype_callbacks(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_publishes_slack_app_home_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native App Home",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["slack/app-home"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-home-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace",
+            "peer_kind": "channel",
+            "peer_id": "C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {"ok": True, "view": {"id": "VHOME"}}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_home_event(
+        {
+            "type": "app_home_opened",
+            "user": "U123",
+            "channel": "D123",
+            "tab": "home",
+        },
+        account_id="workspace",
+    )
+
+    assert result["ok"] is True
+    assert result["channel"] == "slack"
+    assert result["eventType"] == "app_home_opened"
+    assert result["userId"] == "U123"
+    assert result["delivery"] == {
+        "runtime": "native-provider-backed",
+        "method": "views.publish",
+    }
+    assert slack_posts == [
+        (
+            "https://slack.test/api/views.publish",
+            {
+                "user_id": "U123",
+                "view": result["view"],
+            },
+            "Authorization",
+            "Bearer xoxb-home-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_skips_slack_app_home_messages_tab(tmp_path: Path) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_home_event(
+        {
+            "type": "app_home_opened",
+            "user": "U123",
+            "channel": "D123",
+            "tab": "messages",
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "app_home_opened",
+        "skipped": True,
+        "reason": "slack_home_messages_tab",
+    }
+
+
+def test_slack_events_route_dispatches_app_home_callbacks(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/events?accountId=workspace",
+            json={
+                "type": "event_callback",
+                "event": {
+                    "type": "app_home_opened",
+                    "user": "U123",
+                    "channel": "D123",
+                    "tab": "messages",
+                },
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "app_home_opened",
+        "skipped": True,
+        "reason": "slack_home_messages_tab",
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_session() -> None:
     conversation_id = "19:ops-thread@thread.tacv2"
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-adaptive-card-inbound"
