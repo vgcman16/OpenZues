@@ -26779,6 +26779,39 @@ def test_slack_interactions_route_dispatches_block_actions(tmp_path: Path) -> No
     assert payload["contextKey"] == "slack:interaction:C1:100.200:codex"
 
 
+def test_slack_interactions_route_acknowledges_external_arg_options_without_token(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/interactions?accountId=workspace",
+            json={
+                "type": "block_suggestion",
+                "user": {"id": "U123"},
+                "action_id": "openclaw_cmdarg",
+                "block_id": "stale-menu",
+                "value": "prod",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload == {
+        "ok": True,
+        "channel": "slack",
+        "interactionType": "block_suggestion",
+        "actionId": "openclaw_cmdarg",
+        "options": [],
+        "reason": "slack_command_arg_options_missing_token",
+    }
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_dispatches_slack_command_arg_interaction_to_session(
     tmp_path: Path,

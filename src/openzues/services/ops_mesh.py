@@ -165,7 +165,9 @@ OUTBOUND_DELIVERY_MAX_RETRIES = 5
 OUTBOUND_DELIVERY_BACKOFF_SECONDS = (5, 25, 120, 600)
 SLACK_API_BASE_URL = "https://slack.com/api"
 SLACK_COMMAND_ARG_ACTION_ID = "openclaw_cmdarg"
+SLACK_EXTERNAL_ARG_MENU_PREFIX = "openclaw_cmdarg_ext:"
 SLACK_COMMAND_ARG_VALUE_PREFIX = "cmdarg"
+SLACK_EXTERNAL_ARG_MENU_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{24}$")
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
@@ -1485,6 +1487,16 @@ def _slack_parse_command_arg_value(raw: object) -> dict[str, str] | None:
         "value": decoded[2],
         "userId": decoded[3],
     }
+
+
+def _slack_external_arg_menu_token(raw: object) -> str | None:
+    value = _slack_inbound_optional_string(raw)
+    if value is None or not value.startswith(SLACK_EXTERNAL_ARG_MENU_PREFIX):
+        return None
+    token = value.removeprefix(SLACK_EXTERNAL_ARG_MENU_PREFIX).strip()
+    if SLACK_EXTERNAL_ARG_MENU_TOKEN_PATTERN.fullmatch(token) is None:
+        return None
+    return token
 
 
 def _slack_inbound_string_list(value: object) -> list[str]:
@@ -16659,6 +16671,43 @@ class OpsMeshService:
             },
         }
 
+    async def _handle_slack_command_arg_options(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        interaction_type: str | None,
+    ) -> dict[str, object]:
+        actions_value = payload.get("actions")
+        first_action = (
+            _slack_inbound_mapping(actions_value[0])
+            if isinstance(actions_value, list) and actions_value
+            else {}
+        )
+        action_id = _slack_inbound_optional_string(
+            payload.get("action_id")
+        ) or _slack_inbound_optional_string(first_action.get("action_id"))
+        block_id = _slack_inbound_optional_string(
+            payload.get("block_id")
+        ) or _slack_inbound_optional_string(first_action.get("block_id"))
+        token = _slack_external_arg_menu_token(block_id)
+        reason = (
+            "slack_command_arg_options_unavailable"
+            if token is not None
+            else "slack_command_arg_options_missing_token"
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "slack",
+            "interactionType": interaction_type,
+            "options": [],
+            "reason": reason,
+        }
+        if action_id is not None:
+            result["actionId"] = action_id
+        if token is not None:
+            result["menuToken"] = token
+        return result
+
     async def _handle_slack_command_arg_interaction(
         self,
         payload: Mapping[str, Any],
@@ -16766,6 +16815,11 @@ class OpsMeshService:
                 payload,
                 interaction_type=interaction_type,
                 account_id=account_id,
+            )
+        if interaction_type == "block_suggestion":
+            return await self._handle_slack_command_arg_options(
+                payload,
+                interaction_type=interaction_type,
             )
         if interaction_type != "block_actions":
             return {
