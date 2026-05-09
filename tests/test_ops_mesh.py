@@ -26780,6 +26780,156 @@ def test_slack_interactions_route_dispatches_block_actions(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_dispatches_slack_command_arg_interaction_to_session(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        deliveries.append((session_key, message))
+        return {"messageId": "cmdarg-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        session_delivery_service=fake_session_delivery,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    result = await service.handle_slack_interaction(
+        {
+            "type": "block_actions",
+            "user": {"id": "U123", "name": "Ada"},
+            "team": {"id": "T9"},
+            "channel": {"id": "C1", "name": "ops"},
+            "container": {"channel_id": "C1", "message_ts": "100.200"},
+            "trigger_id": "123.trigger",
+            "actions": [
+                {
+                    "type": "button",
+                    "action_id": "openclaw_cmdarg_0_0",
+                    "value": "cmdarg|deploy|environment|prod|U123",
+                }
+            ],
+        },
+        account_id="workspace",
+    )
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C1",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert result["ok"] is True
+    assert result["channel"] == "slack"
+    assert result["interactionType"] == "block_actions"
+    assert result["actionId"] == "openclaw_cmdarg_0_0"
+    assert result["command"] == "deploy"
+    assert result["arg"] == "environment"
+    assert result["value"] == "prod"
+    assert result["text"] == "/deploy prod"
+    assert result["sessionKey"] == expected_session_key
+    assert result["messageId"] == "cmdarg-message-1"
+    assert result["triggerId"] == "[redacted]"
+    assert result["delivery"] == {
+        "runtime": "session-backed",
+        "commandSource": "native-slack-arg-menu",
+    }
+    assert result["response"] == {
+        "response_type": "ephemeral",
+        "text": "Queued for OpenZues.",
+    }
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+    assert deliveries == [(expected_session_key, "/deploy prod")]
+    assert await database.list_gateway_wake_requests() == []
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_command_arg_interaction_for_wrong_user(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        deliveries.append((session_key, message))
+        return {"messageId": "cmdarg-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        session_delivery_service=fake_session_delivery,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    result = await service.handle_slack_interaction(
+        {
+            "type": "block_actions",
+            "user": {"id": "U123"},
+            "channel": {"id": "C1"},
+            "container": {"channel_id": "C1", "message_ts": "100.200"},
+            "actions": [
+                {
+                    "type": "static_select",
+                    "action_id": "openclaw_cmdarg",
+                    "selected_option": {
+                        "value": "cmdarg|deploy|environment|prod|U999"
+                    },
+                }
+            ],
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "interactionType": "block_actions",
+        "actionId": "openclaw_cmdarg",
+        "skipped": True,
+        "reason": "slack_command_arg_sender_unauthorized",
+        "response": {
+            "response_type": "ephemeral",
+            "text": "That menu is for another user.",
+        },
+    }
+    assert deliveries == []
+    assert await database.list_gateway_wake_requests() == []
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_routes_slack_view_submission_interaction_to_wake_queue(
     tmp_path: Path,
 ) -> None:

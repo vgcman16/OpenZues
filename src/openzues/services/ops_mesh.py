@@ -164,6 +164,8 @@ OPENCLAW_PARITY_BASELINE_TOOLSETS = (
 OUTBOUND_DELIVERY_MAX_RETRIES = 5
 OUTBOUND_DELIVERY_BACKOFF_SECONDS = (5, 25, 120, 600)
 SLACK_API_BASE_URL = "https://slack.com/api"
+SLACK_COMMAND_ARG_ACTION_ID = "openclaw_cmdarg"
+SLACK_COMMAND_ARG_VALUE_PREFIX = "cmdarg"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
@@ -1450,6 +1452,39 @@ def _slack_inbound_optional_string(value: object) -> str | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return str(value)
     return None
+
+
+def _slack_command_arg_action_value(action: Mapping[str, Any]) -> str | None:
+    value = _slack_inbound_optional_string(action.get("value"))
+    if value is not None:
+        return value
+    selected_option = _slack_inbound_mapping(action.get("selected_option"))
+    return _slack_inbound_optional_string(selected_option.get("value"))
+
+
+def _slack_parse_command_arg_value(raw: object) -> dict[str, str] | None:
+    value = _slack_inbound_optional_string(raw)
+    if value is None:
+        return None
+    parts = value.split("|")
+    if len(parts) != 5 or parts[0] != SLACK_COMMAND_ARG_VALUE_PREFIX:
+        return None
+    _, command, arg, selected_value, user_id = parts
+    decoded: list[str] = []
+    for part in (command, arg, selected_value, user_id):
+        try:
+            decoded_part = unquote(part)
+        except ValueError:
+            return None
+        if not decoded_part:
+            return None
+        decoded.append(decoded_part)
+    return {
+        "command": decoded[0],
+        "arg": decoded[1],
+        "value": decoded[2],
+        "userId": decoded[3],
+    }
 
 
 def _slack_inbound_string_list(value: object) -> list[str]:
@@ -16624,6 +16659,101 @@ class OpsMeshService:
             },
         }
 
+    async def _handle_slack_command_arg_interaction(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        interaction_type: str | None,
+        action_id: str,
+        action: Mapping[str, Any],
+        sender_id: str,
+        channel_id: str,
+        channel_type: str,
+        conversation_target: ConversationTargetView,
+        session_key: str,
+    ) -> dict[str, object] | None:
+        if not action_id.startswith(SLACK_COMMAND_ARG_ACTION_ID):
+            return None
+        parsed = _slack_parse_command_arg_value(
+            _slack_command_arg_action_value(action)
+        )
+        if parsed is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "actionId": action_id,
+                "skipped": True,
+                "reason": "slack_command_arg_invalid",
+                "response": {
+                    "response_type": "ephemeral",
+                    "text": "Sorry, that button is no longer valid.",
+                },
+            }
+        if parsed["userId"] != sender_id:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "actionId": action_id,
+                "skipped": True,
+                "reason": "slack_command_arg_sender_unauthorized",
+                "response": {
+                    "response_type": "ephemeral",
+                    "text": "That menu is for another user.",
+                },
+            }
+        if self.session_delivery_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack slash command session delivery is unavailable."
+            )
+        prompt = f"/{parsed['command']} {parsed['value']}"
+        delivery_result = await self.session_delivery_service(session_key, prompt)
+        message_id = _session_delivery_message_id(delivery_result)
+        user = _slack_inbound_mapping(payload.get("user"))
+        team = _slack_inbound_mapping(payload.get("team"))
+        channel = _slack_inbound_mapping(payload.get("channel"))
+        trigger_id = _slack_inbound_optional_string(payload.get("trigger_id"))
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "slack",
+            "interactionType": interaction_type,
+            "actionId": action_id,
+            "command": parsed["command"],
+            "arg": parsed["arg"],
+            "value": parsed["value"],
+            "text": prompt,
+            "sessionKey": session_key,
+            "senderId": sender_id,
+            "channelId": channel_id,
+            "channelType": channel_type,
+            "conversationTarget": conversation_target.model_dump(mode="json"),
+            "delivery": {
+                "runtime": "session-backed",
+                "commandSource": "native-slack-arg-menu",
+            },
+            "response": {
+                "response_type": "ephemeral",
+                "text": "Queued for OpenZues.",
+            },
+        }
+        if message_id is not None:
+            result["messageId"] = message_id
+        sender_name = _slack_inbound_optional_string(user.get("name")) or (
+            _slack_inbound_optional_string(user.get("username"))
+        )
+        if sender_name is not None:
+            result["senderName"] = sender_name
+        channel_name = _slack_inbound_optional_string(channel.get("name"))
+        if channel_name is not None:
+            result["channelName"] = channel_name
+        team_id = _slack_inbound_optional_string(team.get("id"))
+        if team_id is not None:
+            result["teamId"] = team_id
+        if trigger_id is not None:
+            result["triggerId"] = "[redacted]"
+        return result
+
     async def handle_slack_interaction(
         self,
         payload: Mapping[str, Any],
@@ -16707,6 +16837,19 @@ class OpsMeshService:
             operator_id=None,
             conversation_target=conversation_target,
         )
+        command_arg_result = await self._handle_slack_command_arg_interaction(
+            payload,
+            interaction_type=interaction_type,
+            action_id=action_id,
+            action=first_action,
+            sender_id=sender_id,
+            channel_id=channel_id,
+            channel_type=channel_type,
+            conversation_target=conversation_target,
+            session_key=session_key,
+        )
+        if command_arg_result is not None:
+            return command_arg_result
         message_ts = _slack_inbound_optional_string(container.get("message_ts"))
         thread_ts = _slack_inbound_optional_string(container.get("thread_ts"))
         event_payload: dict[str, object] = {
