@@ -214,6 +214,20 @@ Slack provider/inbound proof, `ruff check`, `mypy`, and focused
 Continue provider-specific media/reply edges, companion breadth, or the next
 package startup/update edge.
 
+Current queue-head adjustment: Slack metadata-only message subtypes now match
+the OpenClaw monitor path in
+`extensions/slack/src/monitor/events/message-subtype-handlers.ts`:
+`message_changed` and `message_deleted` preserve the upstream sender/message id
+fallback order, enforce native Slack sender authorization from config, derive a
+channel/account session key, and enqueue next-heartbeat `system-event` wakes
+with `slack:message:<changed|deleted>:<channel>:<message>` context keys.
+Verified on 2026-05-09 with focused red/green Slack message subtype
+service/route proofs, adjacent Slack provider/inbound proof, `ruff check`,
+`mypy`, and focused `git diff --check`; source/test checkpointed in
+`8c4e74ef`. This closes `OZ-PROV-001EC`; provider-native inbound/outbound
+breadth moves to ~99.6%. Continue provider-specific media/reply edges,
+companion breadth, or the next package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11423,3 +11437,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound/outbound breadth moves to ~99.5%. Continue provider-specific
   media/reply edges, companion breadth, or the next package startup/update
   edge.
+- Current queue-head adjustment: Slack `message_changed` and
+  `message_deleted` callbacks now route through the native Slack Events
+  endpoint into session-keyed next-heartbeat `system-event` wakes with
+  OpenClaw-style `slack:message:<changed|deleted>:<channel>:<message>`
+  context keys and config-backed sender authorization. Source/test
+  checkpointed in `8c4e74ef`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.6%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.

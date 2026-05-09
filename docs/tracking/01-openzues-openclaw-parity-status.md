@@ -8086,6 +8086,30 @@ may lag behind this tracker.
     src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
     `git diff --check`.
 
+- [x] Slack message subtype system wakes.
+  - Source: `openclaw-main/extensions/slack/src/monitor/events/messages.ts`,
+    `openclaw-main/extensions/slack/src/monitor/events/message-subtype-handlers.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: native Slack Events API payloads for `message_changed` and
+    `message_deleted` unwrap Slack `event_callback`, preserve upstream
+    sender/message id fallback order, enforce Slack sender authorization from
+    config, derive the channel/account session key, and enqueue a
+    next-heartbeat `system-event` wake with an OpenClaw-style
+    `slack:message:<changed|deleted>:<channel>:<message>` context key.
+  - Evidence required: focused Slack message subtype service/route proofs,
+    adjacent provider/inbound proof, ruff, mypy
+  - Status: checkpointed in `8c4e74ef`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_message_changed_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_message_deleted_when_sender_denied tests\test_ops_mesh.py::test_slack_events_route_dispatches_message_subtype_callbacks -q`
+    (`3 failed` before implementation, then `3 passed`; existing aiosqlite
+    event-loop-close warning), adjacent provider/inbound proof (`16 passed,
+    413 deselected`), `ruff check src\openzues\services\ops_mesh.py
+    src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+    `git diff --check`.
+
 - [x] Doctor preflight git update offer.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,
     `openclaw-main/src/commands/doctor-update.ts`

@@ -21968,6 +21968,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
   src\openzues\app.py`, and focused `git diff --check`. Source/test
   checkpointed in `0688d049`.
+- Slack metadata-only message subtypes now match the OpenClaw monitor
+  system-event path for `message_changed` and `message_deleted`: route-backed
+  payloads unwrap `event_callback`, preserve the upstream sender/message id
+  fallback order, enforce native Slack sender authorization from config, derive
+  the channel/account session key, and enqueue next-heartbeat `system-event`
+  wakes with OpenClaw-style `slack:message:<changed|deleted>:...` context keys.
+  This closes `OZ-PROV-001EC`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.6%.
+- Verified the Slack message subtype system-event seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_message_changed_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_message_deleted_when_sender_denied tests\test_ops_mesh.py::test_slack_events_route_dispatches_message_subtype_callbacks -q`
+  (`3 failed` before implementation, then `3 passed`; existing aiosqlite
+  event-loop-close warning), adjacent provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`16 passed, 413 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `8c4e74ef`.
 
 ## References
 
