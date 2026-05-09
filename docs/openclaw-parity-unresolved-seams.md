@@ -11715,5 +11715,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   reusable explicit/all-mode behavior through the shared fanout helper.
   Source/test checkpointed in `2b177851`; repo-wide parity remains estimated
   at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.93%.
-  Continue Telegram media caption-summary parity, remaining provider-specific
-  media/reply edges, companion breadth, or packaging edges.
+  Continue Telegram provider-visible caption passthrough parity, remaining
+  provider-specific media/reply edges, companion breadth, or packaging edges.
+- Current queue-head adjustment: Telegram provider-visible media captions now
+  preserve OpenClaw's route-backed outbound behavior: the first sequential media
+  send receives the original outbound text as `caption`, later media sends are
+  captionless, and internal `Media:` URL summaries are not projected to the
+  Telegram Bot API payload. Test checkpointed in `c9cd47a1`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.94%. Continue remaining provider-specific media/reply edges,
+  companion breadth, or packaging edges.

@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.93% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.94% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.996% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.996% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
@@ -8491,6 +8491,28 @@ may lag behind this tracker.
     (`AssertionError` before implementation, then `1 passed`), adjacent
     Telegram media proof (`2 passed`), adjacent direct reply/requester proof
     (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
+    tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
+    focused `git diff --check`.
+
+- [x] Telegram media caption passthrough.
+  - Source: `openclaw-main/extensions/telegram/src/send.ts`,
+    `openclaw-main/extensions/telegram/src/outbound-adapter.ts`,
+    `openclaw-main/src/plugin-sdk/reply-payload.ts`,
+    `openclaw-main/extensions/telegram/src/outbound-adapter.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_ops_mesh.py`
+  - Contract: route-backed Telegram media sends project the original outbound
+    text as the first media caption, leave later media captionless, and do not
+    expose OpenZues internal `Media:` URL summaries in Telegram API captions.
+  - Evidence required: focused Telegram caption proof, adjacent Telegram
+    direct-send proof, ruff, mypy
+  - Status: checkpointed in `c9cd47a1`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media -q`
+    (`AssertionError` before test correction, then included in focused
+    `3 passed`), focused Telegram media caption proof (`3 passed`), adjacent
+    Telegram direct-send proof (`12 passed, 448 deselected`), `ruff check
     tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
     focused `git diff --check`.
 

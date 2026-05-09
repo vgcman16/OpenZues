@@ -22310,6 +22310,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
   focused `git diff --check`. Source/test checkpointed in `2b177851`.
+- Telegram provider-visible media captions now match OpenClaw's route-backed
+  Telegram outbound contract: sequential media sends pass the original text as
+  the first media caption, later media are captionless, and OpenZues' internal
+  `Media:` URL summary is not projected into Telegram API `caption` payloads.
+  This closes `OZ-PROV-001EV`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.94%.
+- Verified the Telegram media caption passthrough seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media -q`
+  (`AssertionError` before the test correction, then included in focused
+  `3 passed`), focused Telegram media caption proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_audio_voice_payload tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_attaches_telegram_buttons_to_media -q`
+  (`3 passed`), adjacent Telegram direct-send proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "telegram and direct_channel_message"`
+  (`12 passed, 448 deselected`), `ruff check tests\test_ops_mesh.py`,
+  `mypy src\openzues\services\ops_mesh.py`, and focused
+  `git diff --check`. Test checkpointed in `c9cd47a1`.
 
 ## References
 
