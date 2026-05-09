@@ -10280,6 +10280,7 @@ def _openclaw_update_available_hint(payload: Mapping[str, object]) -> str | None
 _OPENCLAW_UPDATE_CHANNELS = {"stable", "beta", "dev"}
 _OPENCLAW_UPDATE_PACKAGE_MANAGERS = {"pnpm", "bun", "npm"}
 _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME = "openzues"
+_OPENCLAW_UPDATE_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS = 2.0
 _OPENZUES_MAIN_PACKAGE_SPEC = "github:openzues/openzues#main"
 
 
@@ -10622,8 +10623,9 @@ def _openclaw_update_package_manager(root: Path) -> str:
     for filename, manager in lockfile_managers:
         if _doctor_path_exists(root / filename):
             return manager
-    if _openclaw_update_has_owning_npm_command(root):
-        return "npm"
+    detected_manager = _openclaw_update_detect_global_package_manager_for_root(root)
+    if detected_manager is not None:
+        return detected_manager
     return "unknown"
 
 
@@ -10645,11 +10647,79 @@ def _openclaw_update_package_name_parts(package_name: str) -> tuple[str, ...]:
     return tuple(part for part in package_name.strip().split("/") if part)
 
 
+def _openclaw_update_resolve_path(target: Path) -> Path:
+    try:
+        return target.resolve(strict=False)
+    except OSError:
+        return target.absolute()
+
+
 def _openclaw_update_global_root_from_package_root(root: Path, package_name: str) -> Path:
     global_root = root
     for _part in _openclaw_update_package_name_parts(package_name) or (root.name,):
         global_root = global_root.parent
     return global_root
+
+
+def _openclaw_update_global_root_owns_package(
+    *,
+    package_root: Path,
+    global_root: Path,
+    package_name: str,
+) -> bool:
+    parts = _openclaw_update_package_name_parts(package_name) or (
+        _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
+    )
+    expected_root = global_root.joinpath(*parts)
+    return _openclaw_update_resolve_path(expected_root) == _openclaw_update_resolve_path(
+        package_root
+    )
+
+
+def _openclaw_update_global_root_from_command(command: str) -> Path | None:
+    try:
+        result = subprocess.run(
+            [command, "root", "-g"],
+            capture_output=True,
+            text=True,
+            timeout=_OPENCLAW_UPDATE_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    stdout = str(result.stdout or "").strip()
+    return Path(stdout) if stdout else None
+
+
+def _openclaw_update_bun_global_root() -> Path:
+    bun_install = str(os.environ.get("BUN_INSTALL") or "").strip()
+    root = Path(bun_install) if bun_install else Path.home() / ".bun"
+    return root / "install" / "global" / "node_modules"
+
+
+def _openclaw_update_detect_global_package_manager_for_root(root: Path) -> str | None:
+    package_name = _openclaw_update_package_name(root)
+    for manager in ("npm", "pnpm"):
+        global_root = _openclaw_update_global_root_from_command(manager)
+        if global_root is None:
+            continue
+        if _openclaw_update_global_root_owns_package(
+            package_root=root,
+            global_root=global_root,
+            package_name=package_name,
+        ):
+            return manager
+    if _openclaw_update_global_root_owns_package(
+        package_root=root,
+        global_root=_openclaw_update_bun_global_root(),
+        package_name=package_name,
+    ):
+        return "bun"
+    if _openclaw_update_has_owning_npm_command(root):
+        return "npm"
+    return None
 
 
 def _openclaw_update_owning_npm_command_candidates(root: Path) -> tuple[Path, ...]:

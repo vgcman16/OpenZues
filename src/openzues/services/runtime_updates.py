@@ -36,6 +36,7 @@ _PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.js
 _FIRST_PACKAGED_DIST_INVENTORY_VERSION = (2026, 4, 15)
 _UPDATE_PREFLIGHT_MAX_COMMITS = 10
 _STARTUP_AUTO_UPDATE_COMMAND_TIMEOUT_MS = 45 * 60 * 1000
+_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS = 2.0
 _ONE_HOUR_SECONDS = 60 * 60
 _UPDATE_CHANNELS = {"stable", "beta", "dev"}
 _UPDATE_DEV_BRANCH = "main"
@@ -534,8 +535,9 @@ def _detect_package_manager(package_root: Path) -> str:
     ):
         if _path_exists(package_root / filename):
             return manager
-    if _has_owning_npm_command(package_root, _read_package_name(package_root)):
-        return "npm"
+    detected_manager = _detect_global_package_manager_for_root(package_root)
+    if detected_manager is not None:
+        return detected_manager
     return "unknown"
 
 
@@ -613,6 +615,13 @@ def _package_name_parts(package_name: str) -> tuple[str, ...]:
     return tuple(part for part in package_name.strip().split("/") if part)
 
 
+def _resolve_path(target: Path) -> Path:
+    try:
+        return target.resolve(strict=False)
+    except OSError:
+        return target.absolute()
+
+
 def _package_root_for_name(global_root: Path, package_name: str) -> Path:
     parts = _package_name_parts(package_name)
     if not parts:
@@ -625,6 +634,63 @@ def _global_root_from_package_root(package_root: Path, package_name: str) -> Pat
     for _part in _package_name_parts(package_name) or (package_root.name,):
         root = root.parent
     return root
+
+
+def _global_root_owns_package(
+    *,
+    package_root: Path,
+    global_root: Path,
+    package_name: str,
+) -> bool:
+    return _resolve_path(_package_root_for_name(global_root, package_name)) == _resolve_path(
+        package_root
+    )
+
+
+def _global_root_from_command(command: str) -> Path | None:
+    try:
+        result = subprocess.run(
+            [command, "root", "-g"],
+            capture_output=True,
+            text=True,
+            timeout=_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    stdout = str(result.stdout or "").strip()
+    return Path(stdout) if stdout else None
+
+
+def _bun_global_root() -> Path:
+    bun_install = str(os.environ.get("BUN_INSTALL") or "").strip()
+    root = Path(bun_install) if bun_install else Path.home() / ".bun"
+    return root / "install" / "global" / "node_modules"
+
+
+def _detect_global_package_manager_for_root(package_root: Path) -> str | None:
+    package_name = _read_package_name(package_root)
+    for manager in ("npm", "pnpm"):
+        global_root = _global_root_from_command(manager)
+        if global_root is None:
+            continue
+        if _global_root_owns_package(
+            package_root=package_root,
+            global_root=global_root,
+            package_name=package_name,
+        ):
+            return manager
+    if _global_root_owns_package(
+        package_root=package_root,
+        global_root=_bun_global_root(),
+        package_name=package_name,
+    ):
+        return "bun"
+    if _has_owning_npm_command(package_root, package_name):
+        return "npm"
+    return None
 
 
 def _npm_prefix_layout_from_global_root(global_root: Path) -> _NpmGlobalPrefixLayout | None:
