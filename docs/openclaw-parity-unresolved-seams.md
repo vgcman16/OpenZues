@@ -13,7 +13,7 @@ Current percentage rollup:
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
   monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.98% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99% after the
   runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
@@ -11324,3 +11324,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   repo-wide parity remains estimated at ~99.9%, and packaging/companion app
   parity moves to ~5.1%. Continue provider-specific media/reply edges,
   companion breadth, or the next packaging startup/update edge.
+- Current queue-head adjustment: active plugin registry projection now
+  preserves non-tool `sessionExtensions` and `controlUiDescriptors` as native
+  runtime specs, including disabled-state filtering through the existing
+  session-extension and plugin UI descriptor service paths. Source/test
+  checkpointed in `2cc24e73`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.99%. Continue
+  provider-specific media/reply edges, companion breadth, or the next plugin
+  runtime activation edge.

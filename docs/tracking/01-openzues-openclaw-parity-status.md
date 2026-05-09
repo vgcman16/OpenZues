@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Runtime/CLI/doctor native bridge | ~99.98% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| Runtime/CLI/doctor native bridge | ~99.99% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.98% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
 
@@ -52,6 +52,11 @@ may lag behind this tracker.
   inference before bootstrap token issue unless the loopback URL was explicitly
   supplied for simulator/local-dev use.
   - Status: checkpointed in `89ee261d`
+
+- [x] Active-registry non-tool plugin contribution projection for
+  `sessionExtensions` and `controlUiDescriptors`, preserving native spec
+  metadata and runtime enabled filtering.
+  - Status: checkpointed in `2cc24e73`
 
 - [x] Chat transcript and `chat.*` local contracts for history projection, usage
   metadata, abort metadata, text caps, oversized placeholders, untrusted suffix
