@@ -22294,6 +22294,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_plugin_runtime.py
   src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `c798e879`.
+- Telegram native multi-media sends now apply OpenClaw's reply fanout policy:
+  implicit `replyToMode="first"` replies attach `reply_to_message_id` only to
+  the first media payload, while reusable explicit/all-mode behavior remains
+  unchanged through the shared fanout helper. This closes `OZ-PROV-001EU`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.93%.
+- Verified the Telegram media reply fanout seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_reply_fanout -q`
+  (`AssertionError` before implementation, then `1 passed`), adjacent media
+  group proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_group tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_reply_fanout -q`
+  (`2 passed`), adjacent direct reply/requester proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_reply_policy tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_forwards_requester_context -q`
+  (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `2b177851`.
 
 ## References
 

@@ -11709,3 +11709,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   repo-wide parity remains estimated at ~99.9%, and provider-native
   inbound/outbound breadth moves to ~99.92%. Continue remaining
   provider-specific media/reply edges, companion breadth, or packaging edges.
+- Current queue-head adjustment: Telegram native multi-media sends now honor
+  OpenClaw reply fanout for implicit `replyToMode="first"` replies, applying
+  `reply_to_message_id` only to the first media payload while preserving
+  reusable explicit/all-mode behavior through the shared fanout helper.
+  Source/test checkpointed in `2b177851`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.93%.
+  Continue Telegram media caption-summary parity, remaining provider-specific
+  media/reply edges, companion breadth, or packaging edges.

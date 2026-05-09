@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.92% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.93% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.996% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.996% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
@@ -8469,6 +8469,27 @@ may lag behind this tracker.
     `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_replies_to_all_whatsapp_media -q`
     (`KeyError: 'context'` before implementation, then `1 passed`), adjacent
     WhatsApp proof (`4 passed`), adjacent direct outbound reply/requester proof
+    (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
+    tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
+    focused `git diff --check`.
+
+- [x] Telegram multi-media reply fanout.
+  - Source: `openclaw-main/src/infra/outbound/reply-policy.ts`,
+    `openclaw-main/src/infra/outbound/message-plan.test.ts`,
+    `openclaw-main/extensions/telegram/src/bot/delivery.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: route-backed Telegram multi-media sends consume implicit
+    single-use reply targets only on the first media payload while preserving
+    reusable explicit/all-mode reply fanout.
+  - Evidence required: focused Telegram reply fanout proof, adjacent Telegram
+    media proof, adjacent direct reply/requester proof, ruff, mypy
+  - Status: checkpointed in `2b177851`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_reply_fanout -q`
+    (`AssertionError` before implementation, then `1 passed`), adjacent
+    Telegram media proof (`2 passed`), adjacent direct reply/requester proof
     (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
     tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
     focused `git diff --check`.
