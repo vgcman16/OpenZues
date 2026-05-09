@@ -171,6 +171,10 @@ prompt-preface projections through `chat.history` and `sessions.history`;
 `OZ-RT-001AZ` is source/test checkpointed in `dff892b6`. Rotate back to
 broader provider/runtime, packaging, or companion breadth unless a new
 transcript sanitizer edge is exposed.
+Provider runtime addendum: `OZ-PROV-001DV` Slack `message.action send` and
+`upload-file` auto-threading from `toolContext` is source/test checkpointed in
+`8db0f19b`. Continue provider reply policy plumbing (`replyToMode` /
+`replyToIdSource`) or rotate to packaging ownership detection.
 
 ## Active Slice Detail
 

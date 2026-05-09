@@ -21523,6 +21523,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `dff892b6`.
+- Slack `message.action send` and `upload-file` now resolve OpenClaw-style
+  auto-thread IDs from `toolContext.currentChannelId/currentThreadTs` when
+  `replyToMode` permits it, while preserving explicit thread/reply precedence
+  and single-use reply ref behavior. This closes the native Slack action side
+  of upstream `resolveSlackAutoThreadId`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999996%.
+- Verified the Slack action auto-thread seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_slack_send_auto_threads_from_context -q`
+  (`1 failed` before implementation, then `1 passed`), regression proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_slack_send_auto_threads_from_context tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_slack_send_route -q`
+  (`2 passed`), adjacent Slack action proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack and message_action"`
+  (`19 passed, 393 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `8db0f19b`.
 
 ## References
 

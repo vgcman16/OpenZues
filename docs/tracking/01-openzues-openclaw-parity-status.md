@@ -7645,6 +7645,30 @@ may lag behind this tracker.
     `mypy src\openzues\services\gateway_node_methods.py`, and focused
     `git diff --check`.
 
+- [x] `Slack message.action` auto-threading from tool context.
+  - Source: `openclaw-main/extensions/slack/src/action-threading.ts`,
+    `openclaw-main/extensions/slack/src/action-runtime.ts`,
+    `openclaw-main/extensions/slack/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Slack `message.action send` and `upload-file` resolve the active
+    thread from matching `toolContext.currentChannelId/currentThreadTs` when
+    `replyToMode` is `all`, `first`, or `batched`, while preserving explicit
+    `threadId` / `replyTo` precedence and marking single-use reply refs.
+  - Evidence required: focused Slack send auto-thread test, adjacent Slack
+    message-action proof, ruff, mypy
+  - Status: checkpointed in `8db0f19b`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_slack_send_auto_threads_from_context -q`
+    (`1 failed` before implementation, then `1 passed`), regression proof
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_slack_send_auto_threads_from_context tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_slack_send_route -q`
+    (`2 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "slack and message_action"`
+    (`19 passed, 393 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
 ## Update Rule
 
 Only move a row to `[x]` when implementation, focused proof, adjacent proof,
