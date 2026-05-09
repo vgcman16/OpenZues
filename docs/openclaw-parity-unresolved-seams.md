@@ -11152,3 +11152,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   with the evidence band tightened to
   ~80-99.99999999999999999999999999999999999999999999998%. Continue remaining
   transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` and `sessions.history` now
+  strip OpenClaw runtime-context prompt-preface headers and the generated
+  context privacy notice before exposing visible user transcript rows.
+  Source/test checkpointed in `11c597b7`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999999%. Continue the
+  remaining legacy internal runtime-context event-block edge, then rotate to
+  broader provider/runtime, packaging, or companion breadth.

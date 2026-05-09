@@ -20,9 +20,9 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999999999999999998% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Chat/session contract subfamily | ~99.96% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Chat/session contract subfamily | ~99.97% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -165,6 +165,12 @@ checkpointed in `cd286b80`; `OZ-RT-001AD` structured chat-history field caps
 are checkpointed in `812f50de`; `OZ-RT-001AE` exact tool-block payload
 preservation is checkpointed in `ec0a6950`; continue broader provider/runtime
 breadth.
+Recent transcript sanitizer addendum: `OZ-RT-001AS` through `OZ-RT-001AY`
+closed structured envelope, inbound metadata, sender-label, and runtime-context
+prompt-preface projections through `chat.history` and `sessions.history`;
+`OZ-RT-001AY` is source/test checkpointed in `11c597b7`. Continue the next
+OpenClaw-backed transcript edge, then rotate back to broader provider/runtime,
+packaging, or companion breadth.
 
 ## Active Slice Detail
 

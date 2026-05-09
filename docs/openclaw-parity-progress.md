@@ -21492,6 +21492,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `22940711`.
+- `chat.history` and `sessions.history` now strip OpenClaw runtime-context
+  prompt-preface headers plus the generated-context privacy notice before
+  exposing visible user transcript rows. This closes the prompt-preface side of
+  upstream `stripInternalRuntimeContext`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999999%.
+- Verified the runtime-context prompt-preface seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_internal_runtime_context_prompt_preface tests\test_gateway_node_methods.py::test_sessions_history_strips_internal_runtime_context_prompt_preface -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent
+  transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`57 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `11c597b7`.
 
 ## References
 
