@@ -21950,6 +21950,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
   src\openzues\app.py`, and focused `git diff --check`. Source/test
   checkpointed in `7474eb85`.
+- Slack Events API pin callbacks now match the OpenClaw monitor system-event
+  path for `pin_added` and `pin_removed`: route-backed payloads unwrap
+  `event_callback`, enforce native Slack sender authorization from config,
+  derive the channel/account session key, and enqueue a next-heartbeat
+  `system-event` wake with the OpenClaw-style
+  `slack:pin:<added|removed>:<channel>:<message>` context key. This closes
+  `OZ-PROV-001EB`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.5%.
+- Verified the Slack pin system-event seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_pin_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_pin_when_sender_denied tests\test_ops_mesh.py::test_slack_events_route_dispatches_pin_event_callbacks -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`15 passed, 411 deselected`; existing aiosqlite event-loop-close warning),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `0688d049`.
 
 ## References
 

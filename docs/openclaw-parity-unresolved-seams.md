@@ -201,6 +201,19 @@ provider/inbound proof, `ruff check`, `mypy`, and focused
 Continue provider-specific media/reply edges, companion breadth, or the next
 package startup/update edge.
 
+Current queue-head adjustment: Slack Events API pin callbacks now match the
+OpenClaw monitor path in `extensions/slack/src/monitor/events/pins.ts`:
+`pin_added` and `pin_removed` unwrap Slack `event_callback`, enforce native
+Slack sender authorization from config, derive a channel/account session key,
+and enqueue next-heartbeat `system-event` wakes with
+`slack:pin:<added|removed>:<channel>:<message>` context keys. Verified on
+2026-05-09 with focused red/green Slack pin service/route proofs, adjacent
+Slack provider/inbound proof, `ruff check`, `mypy`, and focused
+`git diff --check`; source/test checkpointed in `0688d049`. This closes
+`OZ-PROV-001EB`; provider-native inbound/outbound breadth moves to ~99.5%.
+Continue provider-specific media/reply edges, companion breadth, or the next
+package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11401,3 +11414,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity remains estimated at ~99.9%, and provider-native inbound/outbound
   breadth moves to ~99.4%. Continue provider-specific media/reply edges,
   companion breadth, or the next package startup/update edge.
+- Current queue-head adjustment: Slack `pin_added` and `pin_removed` event
+  callbacks now route through the native Slack Events endpoint into
+  session-keyed next-heartbeat `system-event` wakes with OpenClaw-style
+  `slack:pin:<added|removed>:<channel>:<message>` context keys and
+  config-backed sender authorization. Source/test checkpointed in `0688d049`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.5%. Continue provider-specific
+  media/reply edges, companion breadth, or the next package startup/update
+  edge.

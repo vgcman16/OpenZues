@@ -71,7 +71,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; active-registry session/UI contributions checkpointed in `2cc24e73`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77`; voicewake routing methods checkpointed in `a74cec21` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR approval guidance checkpointed in `d6052fda`; QR JSON setup-code contract checkpointed in `b79b87c3`; device pairing public-key persistence/projection checkpointed in `bef0652f`; QR public-cleartext URL rejection checkpointed in `24d89215`; QR remote saved URL/auth config checkpointed in `3d63d136`; QR Tailscale MagicDNS checkpointed in `beb67302`; QR remote env SecretRef diagnostics checkpointed in `e3b3031a`; QR unresolved remote SecretRef preflight checkpointed in `4057991c`; QR remote file SecretRefs checkpointed in `ddd1d811`; QR remote exec SecretRefs checkpointed in `6e1b84c4`; QR gateway-backed SecretRefs checkpointed in `93a57d8b`; QR inferred-loopback preflight checkpointed in `89ee261d` | Repo-wide +0.1%, companion/setup breadth +0.1% | QR setup-code safety queue expanded; continue provider-specific media/reply edges or next startup/update edge |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Zalo user `channels.logout` runtime checkpointed in `4d67d5a6`; QQBot `channels.logout` runtime checkpointed in `aac53b3b`; WhatsApp `channels.logout` runtime checkpointed in `3e99a587`; Nextcloud Talk `channels.logout` runtime checkpointed in `13de6593`; LINE `channels.logout` runtime checkpointed in `9674493d`; Telegram `channels.logout` runtime checkpointed in `2d26bdc4`; `channels.stop` native Tlon runtime checkpointed in `1365c028`; `channels.start` native Tlon runtime checkpointed in `810a6af0`; Tlon production SSE monitor lifecycle checkpointed in `726f03cb`; Tlon approval block/admin handling checkpointed in `800d2ab6`; Tlon approval response replay checkpointed in `265b0a10`; Tlon inbound authorization/pending approvals checkpointed in `d7bd3f7d`; Tlon inbound media staging checkpointed in `d7556229`; Tlon group/thread inbound session routing checkpointed in `b3b06972`; Tlon DM inbound session routing checkpointed in `51e6b618`; Tlon custom S3 media upload checkpointed in `dc999418`; Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5`; direct outbound reply policy metadata checkpointed in `e115e5f1`; direct outbound `channelData`-only payloads checkpointed in `fd244774`; Slack reaction event wakes checkpointed in `10dfaa17`; Slack member event wakes checkpointed in `9d07244d`; Slack channel event wakes checkpointed in `7474eb85` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific media/reply edges or packaging ownership detection |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Zalo user `channels.logout` runtime checkpointed in `4d67d5a6`; QQBot `channels.logout` runtime checkpointed in `aac53b3b`; WhatsApp `channels.logout` runtime checkpointed in `3e99a587`; Nextcloud Talk `channels.logout` runtime checkpointed in `13de6593`; LINE `channels.logout` runtime checkpointed in `9674493d`; Telegram `channels.logout` runtime checkpointed in `2d26bdc4`; `channels.stop` native Tlon runtime checkpointed in `1365c028`; `channels.start` native Tlon runtime checkpointed in `810a6af0`; Tlon production SSE monitor lifecycle checkpointed in `726f03cb`; Tlon approval block/admin handling checkpointed in `800d2ab6`; Tlon approval response replay checkpointed in `265b0a10`; Tlon inbound authorization/pending approvals checkpointed in `d7bd3f7d`; Tlon inbound media staging checkpointed in `d7556229`; Tlon group/thread inbound session routing checkpointed in `b3b06972`; Tlon DM inbound session routing checkpointed in `51e6b618`; Tlon custom S3 media upload checkpointed in `dc999418`; Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5`; direct outbound reply policy metadata checkpointed in `e115e5f1`; direct outbound `channelData`-only payloads checkpointed in `fd244774`; Slack reaction event wakes checkpointed in `10dfaa17`; Slack member event wakes checkpointed in `9d07244d`; Slack channel event wakes checkpointed in `7474eb85`; Slack pin event wakes checkpointed in `0688d049` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific media/reply edges or packaging ownership detection |
 
 Latest queue addendum: `OZ-PKG-001CA` stable/beta release-channel git updates
 are checkpointed in `1f45d307`, and `OZ-PKG-001CB` preflight edge-failure
@@ -202,6 +202,10 @@ next package startup/update edge.
 Provider runtime addendum: `OZ-PROV-001EA` Slack channel created/renamed event
 system wakes are source/test checkpointed in `7474eb85`, moving
 provider-native inbound/outbound breadth to ~99.4%. Continue provider-specific
+media/reply edges, companion breadth, or the next package startup/update edge.
+Provider runtime addendum: `OZ-PROV-001EB` Slack pin added/removed event
+system wakes are source/test checkpointed in `0688d049`, moving
+provider-native inbound/outbound breadth to ~99.5%. Continue provider-specific
 media/reply edges, companion breadth, or the next package startup/update edge.
 Companion addendum: `OZ-COMP-001C` device-pairing `publicKey` pending,
 approval, paired storage, and device projection parity is source/test
@@ -512,6 +516,29 @@ runtime/CLI ergonomics edge.
     src\openzues\services\ops_mesh.py src\openzues\app.py
     tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
     src\openzues\app.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001EB` Slack pin event system wakes
+  - Source: `openclaw-main/extensions/slack/src/monitor/events.ts`,
+    `openclaw-main/extensions/slack/src/monitor/events/pins.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: native Slack Events API payloads for `pin_added` and
+    `pin_removed` unwrap Slack `event_callback`, enforce Slack sender
+    authorization from config, derive the channel/account session key, and
+    enqueue a next-heartbeat `system-event` wake with an OpenClaw-style
+    `slack:pin:<added|removed>:<channel>:<message>` context key.
+  - Evidence required: focused Slack pin service/route proofs, adjacent
+    provider/inbound proof, ruff, mypy
+  - Status: checkpointed in `0688d049`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_pin_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_pin_when_sender_denied tests\test_ops_mesh.py::test_slack_events_route_dispatches_pin_event_callbacks -q`
+    (`3 failed` before implementation, then `3 passed`), adjacent
+    provider/inbound proof (`15 passed, 411 deselected`; existing aiosqlite
+    event-loop-close warning), `ruff check src\openzues\services\ops_mesh.py
+    src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+    `git diff --check`.
 
 - [x] `OZ-COMP-001D` QR public cleartext mobile pairing URL rejection
   - Source: `openclaw-main/src/pairing/setup-code.ts`,
