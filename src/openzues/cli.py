@@ -98295,6 +98295,83 @@ def _resolve_qr_tailscale_host() -> str | None:
     return None
 
 
+_QR_ENV_TEMPLATE_SECRET_REF_RE = re.compile(r"^\$\{([A-Z][A-Z0-9_]{0,127})\}$")
+_QR_LEGACY_ENV_SECRET_REF_PREFIX = "secretref-env:"
+
+
+def _qr_secret_ref_label(value: object) -> str | None:
+    if _is_secret_ref(value):
+        source = _optional_cli_string(cast(Mapping[str, object], value).get("source"))
+        provider = _optional_cli_string(cast(Mapping[str, object], value).get("provider"))
+        secret_id = _optional_cli_string(cast(Mapping[str, object], value).get("id"))
+        if source and secret_id:
+            return f"{source}:{provider or 'default'}:{secret_id}"
+    if isinstance(value, str):
+        trimmed = value.strip()
+        match = _QR_ENV_TEMPLATE_SECRET_REF_RE.match(trimmed)
+        if match:
+            return f"env:default:{match.group(1)}"
+        if trimmed.startswith(_QR_LEGACY_ENV_SECRET_REF_PREFIX):
+            env_name = trimmed[len(_QR_LEGACY_ENV_SECRET_REF_PREFIX) :].strip()
+            if env_name:
+                return f"env:default:{env_name}"
+    return None
+
+
+def _qr_env_secret_ref_name(value: object) -> str | None:
+    label = _qr_secret_ref_label(value)
+    if label is None:
+        return None
+    source, _, secret_id = label.partition(":")
+    _, _, env_name = secret_id.partition(":")
+    if source != "env" or not env_name:
+        return None
+    return env_name
+
+
+def _resolve_qr_remote_secret_refs(
+    config_snapshot: Mapping[str, object] | None,
+) -> tuple[Mapping[str, object] | None, list[str]]:
+    if config_snapshot is None:
+        return None, []
+    resolved_snapshot = copy.deepcopy(dict(config_snapshot))
+    gateway = resolved_snapshot.get("gateway")
+    if not isinstance(gateway, dict):
+        return resolved_snapshot, []
+    remote_config = gateway.get("remote")
+    if not isinstance(remote_config, dict):
+        return resolved_snapshot, []
+
+    diagnostics: list[str] = []
+    for field in ("token", "password"):
+        value = remote_config.get(field)
+        ref_label = _qr_secret_ref_label(value)
+        if ref_label is None:
+            continue
+        path = f"gateway.remote.{field}"
+        env_name = _qr_env_secret_ref_name(value)
+        resolved = _optional_cli_string(os.environ.get(env_name or ""))
+        if resolved is None:
+            diagnostics.append(f"{path} SecretRef is unresolved ({ref_label}).")
+            continue
+        remote_config[field] = resolved
+        diagnostics.append(f"resolved {path}")
+    return resolved_snapshot, diagnostics
+
+
+def _emit_qr_secret_resolve_diagnostics(
+    diagnostics: Sequence[str],
+    *,
+    json_output: bool,
+    setup_code_only: bool,
+) -> None:
+    if not diagnostics:
+        return
+    to_stderr = json_output or setup_code_only
+    for diagnostic in diagnostics:
+        typer.echo(f"[secrets] {diagnostic}", err=to_stderr)
+
+
 def _normalize_pairing_config_url(raw: str, *, invalid_error: str) -> str:
     try:
         return _normalize_pairing_setup_url(raw)
@@ -98560,7 +98637,19 @@ def qr_command(
         if str(token or "").strip() and str(password or "").strip():
             raise ValueError("Use either --token or --password, not both.")
         app_settings = _runtime_settings()
-        config_snapshot = _build_cli_gateway_config_service(app_settings).build_snapshot()
+        config_snapshot: Mapping[str, object] | None = (
+            _build_cli_gateway_config_service(app_settings).build_snapshot()
+        )
+        secret_diagnostics: list[str] = []
+        if remote and not str(token or "").strip() and not str(password or "").strip():
+            config_snapshot, secret_diagnostics = _resolve_qr_remote_secret_refs(
+                config_snapshot
+            )
+            _emit_qr_secret_resolve_diagnostics(
+                secret_diagnostics,
+                json_output=json_output,
+                setup_code_only=setup_code_only,
+            )
         gateway_url, url_source = _resolve_qr_gateway_url(
             app_settings=app_settings,
             url=url,

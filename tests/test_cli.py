@@ -349,6 +349,57 @@ def test_qr_remote_uses_tailscale_serve_dns_when_remote_url_absent(
     assert setup_payload["bootstrapToken"]
 
 
+def test_qr_remote_json_resolves_remote_token_secretref_to_stderr(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("QR_REMOTE_TOKEN", "resolved-remote-token")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {},
+                    "remote": {
+                        "url": "wss://remote.example.com:444",
+                        "token": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "QR_REMOTE_TOKEN",
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json", "--remote"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "[secrets] resolved gateway.remote.token" in result.stderr
+    assert "resolved-remote-token" not in result.stdout
+    assert "resolved-remote-token" not in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://remote.example.com:444"
+    assert payload["auth"] == "token"
+    assert payload["urlSource"] == "gateway.remote.url"
+
+
 def test_qr_json_output_matches_openclaw_setup_code_contract(
     tmp_path, monkeypatch
 ) -> None:
