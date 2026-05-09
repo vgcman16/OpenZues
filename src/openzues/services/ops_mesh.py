@@ -2683,6 +2683,23 @@ def _normalize_reply_to_id_source(value: object) -> str | None:
     return normalized if normalized in {"explicit", "implicit"} else None
 
 
+def _reply_to_fanout_id(
+    *,
+    reply_to_id: str,
+    reply_to_id_source: object,
+    reply_to_mode: object,
+    index: int,
+) -> str:
+    normalized_reply_to_id = reply_to_id.strip()
+    if not normalized_reply_to_id:
+        return ""
+    normalized_source = _normalize_reply_to_id_source(reply_to_id_source)
+    normalized_mode = _normalize_reply_to_mode(reply_to_mode)
+    if normalized_source != "explicit" and normalized_mode in {"first", "batched"}:
+        return normalized_reply_to_id if index == 0 else ""
+    return normalized_reply_to_id
+
+
 def _slack_target_is_channel_like(target: str | None) -> bool:
     normalized = str(target or "").strip()
     if not normalized:
@@ -28175,6 +28192,10 @@ class OpsMeshService:
             payload["audioAsVoice"] = request.audio_as_voice
         if request.reply_to_id is not None:
             payload["replyToId"] = request.reply_to_id
+        if request.reply_to_id_source is not None:
+            payload["replyToIdSource"] = request.reply_to_id_source
+        if request.reply_to_mode is not None:
+            payload["replyToMode"] = request.reply_to_mode
         if request.reply_token is not None:
             payload["replyToken"] = request.reply_token
         if request.silent is not None:
@@ -32201,6 +32222,8 @@ class OpsMeshService:
             }
         else:
             reply_to_id = str(event.get("replyToId") or "").strip()
+            reply_to_id_source = event.get("replyToIdSource")
+            reply_to_mode = event.get("replyToMode")
             force_document = _optional_bool_payload_value(event, "forceDocument") is True
             gif_playback = _optional_bool_payload_value(event, "gifPlayback") is True
             audio_as_voice = _optional_bool_payload_value(event, "audioAsVoice")
@@ -32244,8 +32267,15 @@ class OpsMeshService:
                             "type": media_payload_key,
                             media_payload_key: media_payload,
                         }
-                        if index == 0:
-                            _whatsapp_apply_reply_context(message_payload, reply_to_id)
+                        _whatsapp_apply_reply_context(
+                            message_payload,
+                            _reply_to_fanout_id(
+                                reply_to_id=reply_to_id,
+                                reply_to_id_source=reply_to_id_source,
+                                reply_to_mode=reply_to_mode,
+                                index=index,
+                            ),
+                        )
                         result = self._post_json_webhook(
                             endpoint,
                             message_payload,

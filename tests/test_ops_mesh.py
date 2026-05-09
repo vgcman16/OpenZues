@@ -36697,6 +36697,90 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_medi
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_replies_to_all_whatsapp_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-direct-send-whatsapp-media-reply-all"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Media Reply Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789/messages",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="Bearer wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": "+15551234567", "wa_id": "15551234567"}],
+            "messages": [{"id": f"wamid.media.reply.{len(whatsapp_posts)}"}],
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="whatsapp",
+        to="direct:+15551234567",
+        message="Ship both WhatsApp images.",
+        media_urls=[
+            "https://example.com/one.png",
+            "https://example.com/two.png",
+        ],
+        account_id="wa-business",
+        reply_to_id="wamid.reply.99",
+        reply_to_mode="all",
+        idempotency_key="idem-native-whatsapp-media-reply-all",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "wamid.media.reply.2"
+    assert [post[1]["context"] for post in whatsapp_posts] == [
+        {"message_id": "wamid.reply.99"},
+        {"message_id": "wamid.reply.99"},
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["replyToId"] == "wamid.reply.99"
+    assert delivery["event_payload"]["replyToIdSource"] == "explicit"
+    assert delivery["event_payload"]["replyToMode"] == "all"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_whatsapp_reply_document(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
