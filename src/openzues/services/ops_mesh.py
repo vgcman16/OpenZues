@@ -24,7 +24,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -168,6 +168,9 @@ SLACK_COMMAND_ARG_ACTION_ID = "openclaw_cmdarg"
 SLACK_EXTERNAL_ARG_MENU_PREFIX = "openclaw_cmdarg_ext:"
 SLACK_COMMAND_ARG_VALUE_PREFIX = "cmdarg"
 SLACK_EXTERNAL_ARG_MENU_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{24}$")
+SLACK_EXTERNAL_ARG_MENU_TTL_MS = 10 * 60 * 1000
+SLACK_COMMAND_ARG_SELECT_OPTIONS_MAX = 100
+SLACK_COMMAND_ARG_SELECT_OPTION_TEXT_MAX = 75
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
@@ -434,6 +437,13 @@ OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
     re.compile(r"outbound not configured for channel", re.IGNORECASE),
     re.compile(r"user .* not in room", re.IGNORECASE),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _SlackExternalArgMenuEntry:
+    choices: tuple[tuple[str, str], ...]
+    user_id: str
+    expires_at_ms: float
 
 
 @dataclass(frozen=True)
@@ -1497,6 +1507,16 @@ def _slack_external_arg_menu_token(raw: object) -> str | None:
     if SLACK_EXTERNAL_ARG_MENU_TOKEN_PATTERN.fullmatch(token) is None:
         return None
     return token
+
+
+def _slack_external_arg_menu_choice(value: object) -> tuple[str, str] | None:
+    if not isinstance(value, Mapping):
+        return None
+    label = _slack_inbound_optional_string(value.get("label"))
+    choice_value = _slack_inbound_optional_string(value.get("value"))
+    if label is None or choice_value is None:
+        return None
+    return label, choice_value
 
 
 def _slack_inbound_string_list(value: object) -> list[str]:
@@ -13696,6 +13716,10 @@ class OpsMeshService:
         init=False,
         default_factory=dict,
     )
+    _slack_external_arg_menus: dict[str, _SlackExternalArgMenuEntry] = field(
+        init=False,
+        default_factory=dict,
+    )
 
     async def start(self) -> None:
         if self._task is not None:
@@ -16671,6 +16695,57 @@ class OpsMeshService:
             },
         }
 
+    def _prune_slack_external_arg_menus(self, now_ms: float | None = None) -> None:
+        now = now_ms if now_ms is not None else time.time() * 1000
+        expired = [
+            token
+            for token, entry in self._slack_external_arg_menus.items()
+            if entry.expires_at_ms <= now
+        ]
+        for token in expired:
+            self._slack_external_arg_menus.pop(token, None)
+
+    def create_slack_external_arg_menu(
+        self,
+        *,
+        choices: Sequence[Mapping[str, object]],
+        user_id: str,
+        now_ms: float | None = None,
+    ) -> str:
+        requester = _slack_inbound_optional_string(user_id)
+        if requester is None:
+            raise ValueError("Slack external arg menu user id is required.")
+        normalized_choices = tuple(
+            choice
+            for raw_choice in choices
+            if (choice := _slack_external_arg_menu_choice(raw_choice)) is not None
+        )
+        if not normalized_choices:
+            raise ValueError("Slack external arg menu choices are required.")
+        now = now_ms if now_ms is not None else time.time() * 1000
+        self._prune_slack_external_arg_menus(now)
+        token = secrets.token_urlsafe(18)
+        while (
+            SLACK_EXTERNAL_ARG_MENU_TOKEN_PATTERN.fullmatch(token) is None
+            or token in self._slack_external_arg_menus
+        ):
+            token = secrets.token_urlsafe(18)
+        self._slack_external_arg_menus[token] = _SlackExternalArgMenuEntry(
+            choices=normalized_choices,
+            user_id=requester,
+            expires_at_ms=now + SLACK_EXTERNAL_ARG_MENU_TTL_MS,
+        )
+        return token
+
+    def _slack_external_arg_menu_entry(
+        self,
+        token: str,
+        *,
+        now_ms: float | None = None,
+    ) -> _SlackExternalArgMenuEntry | None:
+        self._prune_slack_external_arg_menus(now_ms)
+        return self._slack_external_arg_menus.get(token)
+
     async def _handle_slack_command_arg_options(
         self,
         payload: Mapping[str, Any],
@@ -16690,12 +16765,44 @@ class OpsMeshService:
             payload.get("block_id")
         ) or _slack_inbound_optional_string(first_action.get("block_id"))
         token = _slack_external_arg_menu_token(block_id)
-        reason = (
-            "slack_command_arg_options_unavailable"
-            if token is not None
-            else "slack_command_arg_options_missing_token"
+        entry = (
+            self._slack_external_arg_menu_entry(token) if token is not None else None
         )
-        result: dict[str, object] = {
+        requester_user_id = _slack_inbound_optional_string(
+            _slack_inbound_mapping(payload.get("user")).get("id")
+        )
+        query = (
+            _slack_inbound_optional_string(payload.get("value")) or ""
+        ).casefold()
+        if entry is not None and requester_user_id == entry.user_id:
+            options = [
+                {
+                    "text": {
+                        "type": "plain_text",
+                        "text": label[:SLACK_COMMAND_ARG_SELECT_OPTION_TEXT_MAX],
+                    },
+                    "value": value,
+                }
+                for label, value in entry.choices
+                if not query or query in label.casefold()
+            ][:SLACK_COMMAND_ARG_SELECT_OPTIONS_MAX]
+            result: dict[str, object] = {
+                "ok": True,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "options": options,
+                "menuToken": token,
+            }
+            if action_id is not None:
+                result["actionId"] = action_id
+            return result
+        if entry is not None:
+            reason = "slack_command_arg_options_sender_unauthorized"
+        elif token is not None:
+            reason = "slack_command_arg_options_unavailable"
+        else:
+            reason = "slack_command_arg_options_missing_token"
+        result = {
             "ok": True,
             "channel": "slack",
             "interactionType": interaction_type,
