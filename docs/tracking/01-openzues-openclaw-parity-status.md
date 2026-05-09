@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-08
+Last updated: 2026-05-09
 
 Primary ledgers:
 
@@ -19,7 +19,7 @@ may lag behind this tracker.
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
-| Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
+| Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.98% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.98% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 
@@ -40,6 +40,12 @@ may lag behind this tracker.
   commands, APNS wake paths, canvas/A2UI/live reload, scoped capability URLs,
   managed attachments, and iOS provider command bridges.
   - Status: verified in ledger
+
+- [x] Voicewake routing gateway methods for `voicewake.routing.get` /
+  `voicewake.routing.set`, including persisted routing config normalization,
+  target validation, `voicewake.routing.changed` broadcasts, HTTP method-call
+  support, and fresh managed-node snapshot sync.
+  - Status: checkpointed in `a74cec21`
 
 - [x] Chat transcript and `chat.*` local contracts for history projection, usage
   metadata, abort metadata, text caps, oversized placeholders, untrusted suffix

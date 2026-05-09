@@ -1,6 +1,6 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-08
+Updated: 2026-05-09
 
 Current percentage rollup:
 
@@ -11309,3 +11309,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~80-99.9999999999999999999999999999999999999999999999995%. Continue QR
   `--remote` saved `gateway.remote.url`/auth handling, packaging post-doctor
   UI asset repair, or provider `channelData`-only delivery next.
+- Current queue-head adjustment: `voicewake.routing.get` and
+  `voicewake.routing.set` now preserve OpenClaw's persisted routing config
+  contract, route normalization, target validation, `voicewake.routing.changed`
+  broadcasts, HTTP method-call support, and fresh managed-node snapshot sync.
+  Source/test checkpointed in `a74cec21`; repo-wide parity remains estimated
+  at ~99.9%, and browser/canvas/nodes/voice bounded-command parity moves to
+  ~99.1%. Continue provider-specific media/reply edges, companion breadth, or
+  the next packaging startup/update edge.
