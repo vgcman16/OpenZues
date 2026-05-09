@@ -155,6 +155,25 @@ def test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload(
     assert record["profile"]["scopes"] == list(BOOTSTRAP_HANDOFF_OPERATOR_SCOPES)
 
 
+def test_qr_default_loopback_requires_explicit_reachable_url_before_token_issue(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("OPENZUES_HOST", raising=False)
+    monkeypatch.delenv("OPENZUES_PORT", raising=False)
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Gateway is only bound to loopback" in result.stderr
+    assert "--url" in result.stderr
+    assert "--remote" in result.stderr
+    assert "gateway.tailscale.mode=serve" in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue(
     tmp_path, monkeypatch
 ) -> None:

@@ -98281,6 +98281,24 @@ def _is_mobile_pairing_cleartext_allowed_host(host: str) -> bool:
     return address.is_private
 
 
+def _is_pairing_loopback_host(host: str) -> bool:
+    normalized = str(host or "").strip().strip("[]").lower()
+    if normalized in {"localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _qr_loopback_bind_error() -> str:
+    return (
+        "Gateway is only bound to loopback, so OpenZues cannot infer a mobile "
+        "setup-code URL. Provide an explicit reachable URL with --url, use "
+        "--remote with gateway.remote.url, or configure gateway.tailscale.mode=serve/funnel."
+    )
+
+
 def _qr_config_mapping(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
 
@@ -98854,6 +98872,8 @@ def _resolve_qr_gateway_url(
         raise ValueError(
             "qr --remote requires gateway.remote.url (or gateway.tailscale.mode=serve/funnel)."
         )
+    if _is_pairing_loopback_host(app_settings.host):
+        raise ValueError(_qr_loopback_bind_error())
     scheme = "wss" if remote else "ws"
     return (
         _normalize_pairing_setup_url(
