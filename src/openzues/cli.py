@@ -19461,6 +19461,7 @@ const CHAT_COMMANDS = [
   { key: "tools", aliases: ["/tools"], acceptsArgs: true },
   { key: "skill", aliases: ["/skill"], acceptsArgs: true },
   { key: "status", aliases: ["/status"], acceptsArgs: false },
+  { key: "gateway-status", aliases: ["/gateway-status", "/gwstatus"], acceptsArgs: false },
   { key: "diagnostics", aliases: ["/diagnostics"], acceptsArgs: true },
   { key: "crestodian", aliases: ["/crestodian"], acceptsArgs: true },
   { key: "tasks", aliases: ["/tasks"], acceptsArgs: false },
@@ -38144,6 +38145,20 @@ function listBuiltinCommandStatusEntries() {
       category: "status",
     }),
     defineCommandStatusEntry({
+      key: "gateway-status",
+      nativeName: "gateway-status",
+      description: "Show gateway status summary.",
+      textAlias: "/gateway-status",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "gwstatus",
+      description: "Alias for /gateway-status.",
+      textAlias: "/gwstatus",
+      scope: "both",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
       key: "tasks",
       nativeName: "tasks",
       description: "List background tasks for this session.",
@@ -38390,7 +38405,7 @@ function buildHelpMessage(cfg) {
   lines.push(`  ${optionParts.join("  |  ")}`);
   lines.push("");
   lines.push("Status");
-  lines.push("  /status  |  /tasks  |  /whoami  |  /context");
+  lines.push("  /status  |  /gateway-status (/gwstatus)  |  /tasks  |  /whoami  |  /context");
   lines.push("");
   lines.push("Skills");
   lines.push("  /skill <name> [input]");

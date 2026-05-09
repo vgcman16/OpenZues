@@ -35323,6 +35323,8 @@ module.exports = {
           helpChecks: [
             help.includes("/commands for full list"),
             help.includes("/tasks"),
+            help.includes("/gateway-status"),
+            help.includes("/gwstatus"),
             help.includes("/fast status|on|off"),
             help.includes("/trace on|off|raw"),
             help.includes("/skill <name> [input]"),
@@ -35333,6 +35335,9 @@ module.exports = {
             commands.includes("Slash commands"),
             commands.includes("Status"),
             commands.includes("/commands - List all slash commands."),
+            commands.includes("/status - Show current status."),
+            commands.includes("/gateway-status - Show gateway status summary."),
+            commands.includes("/gwstatus - Alias for /gateway-status."),
             commands.includes("/skill - Run a skill by name."),
             commands.includes("/think (/thinking, /t) - Set thinking level."),
             commands.includes("/compact - Compact the session context."),
@@ -35414,8 +35419,11 @@ module.exports = {
 
     assert payload["ok"] is True
     assert payload["result"] == {
-        "helpChecks": [True, True, True, True, True, True, True],
+        "helpChecks": [True, True, True, True, True, True, True, True, True],
         "commandsChecks": [
+            True,
+            True,
+            True,
             True,
             True,
             True,
