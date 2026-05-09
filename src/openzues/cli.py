@@ -105946,6 +105946,65 @@ def doctor(
     _emit_hermes_doctor(payload, json_output=json_output)
 
 
+@app.command("completion")
+def completion(
+    write_state: bool = typer.Option(
+        False,
+        "--write-state",
+        help="Write the current shell completion cache without stdout.",
+    ),
+    install: bool = typer.Option(
+        False,
+        "--install",
+        "-i",
+        help="Install cached completion into the current shell profile.",
+    ),
+) -> None:
+    shell = _doctor_completion_shell_from_env()
+    cache_path = _doctor_completion_cache_path(
+        data_dir=settings.data_dir,
+        shell=shell,
+        bin_name="openzues",
+    )
+    if write_state:
+        if not _doctor_completion_generate_cache(cache_path):
+            raise typer.Exit(code=1)
+        return
+
+    if install:
+        if not _doctor_completion_generate_cache(cache_path):
+            typer.echo(f"Failed to generate completion cache at {cache_path}.", err=True)
+            raise typer.Exit(code=1)
+        profile_path = _doctor_completion_profile_path(shell=shell)
+        try:
+            changed = _doctor_completion_update_profile(
+                shell=shell,
+                bin_name="openzues",
+                cache_path=cache_path,
+                profile_path=profile_path,
+            )
+        except OSError as exc:
+            typer.echo(f"Failed to update {shell} profile: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        action = "Updated" if changed else "Kept"
+        typer.echo(f"{action} {shell} completion in {profile_path}.")
+        return
+
+    result = subprocess.run(
+        [sys.executable, "-m", "openzues.cli", "--show-completion"],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        timeout=20,
+    )
+    if result.returncode != 0 or not result.stdout:
+        if result.stderr:
+            typer.echo(result.stderr.strip(), err=True)
+        raise typer.Exit(code=1)
+    typer.echo(result.stdout, nl=False)
+
+
 @hermes_profile_app.callback()
 def hermes_profile_show(
     ctx: typer.Context,

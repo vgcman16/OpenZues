@@ -24,6 +24,12 @@ from openzues.database import Database
 logger = logging.getLogger(__name__)
 _UPDATE_LOG_TAIL_CHARS = 8000
 _LOW_DISK_SPACE_WARNING_THRESHOLD_BYTES = 1024 * 1024 * 1024
+_COMPLETION_CACHE_WRITE_TIMEOUT_MS = 30_000
+_COMPLETION_SKIP_PLUGIN_COMMANDS_ENV = "OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS"
+_COMPLETION_CACHE_MANUAL_REFRESH_HINT = (
+    "Shell tab-completion may be stale; refresh manually with: "
+    "openzues completion --write-state"
+)
 _UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE_ENV = (
     "OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE"
 )
@@ -1046,6 +1052,29 @@ def _post_package_update_doctor_env() -> dict[str, str]:
         "OPENCLAW_UPDATE_IN_PROGRESS": "1",
         _UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE_ENV: "1",
     }
+
+
+def _post_package_update_completion_cache_args() -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "openzues.cli",
+        "completion",
+        "--write-state",
+    ]
+
+
+def _post_package_update_completion_cache_env() -> dict[str, str]:
+    return {_COMPLETION_SKIP_PLUGIN_COMMANDS_ENV: "1"}
+
+
+def _completion_cache_refresh_warning(step: dict[str, object]) -> str:
+    stderr_tail = _update_step_log(step).get("stderrTail")
+    detail = str(stderr_tail).strip() if isinstance(stderr_tail, str) else ""
+    if not detail and _update_step_exit_code(step) is None:
+        detail = f"timed out after {_COMPLETION_CACHE_WRITE_TIMEOUT_MS // 1000}s"
+    suffix = f": {detail}" if detail else ""
+    return f"Completion cache update failed{suffix}. {_COMPLETION_CACHE_MANUAL_REFRESH_HINT}"
 
 
 def _git_update_ui_build_args() -> list[str]:
@@ -2670,6 +2699,16 @@ class RuntimeUpdateService:
                     warnings=warnings,
                     started_at=started_at,
                 )
+            completion_step = await self._run_update_command_step_at(
+                "completion cache",
+                _post_package_update_completion_cache_args(),
+                cwd=package_root,
+                timeout_ms=_COMPLETION_CACHE_WRITE_TIMEOUT_MS,
+                env=_post_package_update_completion_cache_env(),
+            )
+            steps.append(completion_step)
+            if _update_step_exit_code(completion_step) != 0:
+                warnings.append(_completion_cache_refresh_warning(completion_step))
             return self._build_package_update_result(
                 status="ok",
                 reason=None,

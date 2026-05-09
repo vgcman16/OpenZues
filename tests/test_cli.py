@@ -33761,6 +33761,23 @@ def test_doctor_json_warns_when_shell_completion_uses_slow_dynamic_profile(
     assert warning in payload["warnings"]
 
 
+def test_completion_write_state_generates_native_cache(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(cli_module, "settings", SimpleNamespace(data_dir=tmp_path))
+    shell = cli_module._doctor_completion_shell_from_env()
+    extension = cli_module._DOCTOR_COMPLETION_SHELL_EXTENSIONS[shell]
+    cache_path = tmp_path / "completions" / f"openzues.{extension}"
+
+    result = runner.invoke(app, ["completion", "--write-state"])
+
+    assert result.exit_code == 0, result.stdout
+    assert result.stdout == ""
+    assert cache_path.exists()
+    assert cache_path.read_text(encoding="utf-8").strip()
+
+
 def test_doctor_fix_regenerates_shell_completion_cache_and_upgrades_slow_profile(
     tmp_path,
     monkeypatch,

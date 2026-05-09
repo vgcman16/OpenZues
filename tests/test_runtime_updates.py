@@ -96,6 +96,20 @@ def _post_update_doctor_args() -> list[str]:
     ]
 
 
+def _post_update_completion_cache_args() -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "openzues.cli",
+        "completion",
+        "--write-state",
+    ]
+
+
+def _post_update_completion_cache_call(package_root: Path) -> tuple[list[str], Path, int]:
+    return (_post_update_completion_cache_args(), package_root, 30_000)
+
+
 def _git_update_ui_build_args() -> list[str]:
     return [sys.executable, "-m", "compileall", "-q", "src/openzues/web"]
 
@@ -262,6 +276,7 @@ async def test_runtime_update_startup_auto_update_dispatches_beta_package_update
     assert command_calls == [
         (["pnpm", "add", "-g", "openzues@beta"], package_root, 1000),
         (_post_update_doctor_args(), package_root, 1000),
+        _post_update_completion_cache_call(package_root),
     ]
 
 
@@ -340,6 +355,7 @@ async def test_runtime_update_startup_auto_update_detects_owning_npm_root(
     assert "openzues@beta" in command_calls[0][0]
     assert command_calls[0][1] == package_root
     assert command_calls[1] == (_post_update_doctor_args(), package_root, 1000)
+    assert command_calls[2] == _post_update_completion_cache_call(package_root)
 
 
 @pytest.mark.asyncio
@@ -412,6 +428,7 @@ async def test_runtime_update_startup_auto_update_detects_owning_pnpm_root(
     assert command_calls == [
         (["pnpm", "add", "-g", "openzues@beta"], package_root, 1000),
         (_post_update_doctor_args(), package_root, 1000),
+        _post_update_completion_cache_call(package_root),
     ]
 
 
@@ -485,6 +502,7 @@ async def test_runtime_update_startup_auto_update_detects_bun_global_root(
     assert command_calls == [
         (["bun", "add", "-g", "openzues@beta"], package_root, 1000),
         (_post_update_doctor_args(), package_root, 1000),
+        _post_update_completion_cache_call(package_root),
     ]
 
 
@@ -2069,10 +2087,15 @@ async def test_runtime_update_run_package_update_executes_global_install_step(
     assert result["root"] == str(package_root)
     assert result["before"] == {"sha": None, "version": "2026.5.1"}
     assert result["after"] == {"sha": None, "version": "2026.5.1"}
-    assert [step["name"] for step in result["steps"]] == ["global update", "openzues doctor"]
+    assert [step["name"] for step in result["steps"]] == [
+        "global update",
+        "openzues doctor",
+        "completion cache",
+    ]
     assert command_calls == [
         (["pnpm", "add", "-g", "openzues@latest"], package_root, 1000),
         (_post_update_doctor_args(), package_root, 1000),
+        _post_update_completion_cache_call(package_root),
     ]
 
 
@@ -2140,6 +2163,7 @@ async def test_runtime_update_run_package_update_cleans_stale_global_rename_dirs
     assert command_calls == [
         (["pnpm", "add", "-g", "openzues@latest"], package_root, 1000),
         (_post_update_doctor_args(), package_root, 1000),
+        _post_update_completion_cache_call(package_root),
     ]
 
 
@@ -2205,6 +2229,7 @@ async def test_runtime_update_run_package_update_reports_low_disk_warning(
     assert command_calls == [
         (["pnpm", "add", "-g", "openzues@latest"], package_root, 1000),
         (_post_update_doctor_args(), package_root, 1000),
+        _post_update_completion_cache_call(package_root),
     ]
 
 
@@ -2261,11 +2286,13 @@ async def test_runtime_update_run_package_update_retries_npm_without_optional_de
         "global update (omit optional)",
         "global install swap",
         "openzues doctor",
+        "completion cache",
     ]
-    assert len(command_calls) == 3
+    assert len(command_calls) == 4
     first_argv, first_cwd, first_timeout = command_calls[0]
     second_argv, second_cwd, second_timeout = command_calls[1]
     doctor_argv, doctor_cwd, doctor_timeout = command_calls[2]
+    completion_argv, completion_cwd, completion_timeout = command_calls[3]
     assert first_argv[:3] == ["npm", "i", "-g"]
     assert second_argv[:3] == ["npm", "i", "-g"]
     assert "--prefix" in first_argv
@@ -2280,6 +2307,9 @@ async def test_runtime_update_run_package_update_retries_npm_without_optional_de
     assert doctor_argv == _post_update_doctor_args()
     assert doctor_cwd == package_root
     assert doctor_timeout == 1000
+    assert completion_argv == _post_update_completion_cache_args()
+    assert completion_cwd == package_root
+    assert completion_timeout == 30_000
 
 
 @pytest.mark.asyncio
@@ -2348,8 +2378,9 @@ async def test_runtime_update_run_package_update_stages_npm_install_before_swap(
         "global update",
         "global install swap",
         "openzues doctor",
+        "completion cache",
     ]
-    assert len(command_calls) == 2
+    assert len(command_calls) == 3
     argv, cwd, timeout_ms = command_calls[0]
     assert argv[:3] == ["npm", "i", "-g"]
     assert "--prefix" in argv
@@ -2357,9 +2388,13 @@ async def test_runtime_update_run_package_update_stages_npm_install_before_swap(
     assert cwd == package_root
     assert timeout_ms == 1000
     doctor_argv, doctor_cwd, doctor_timeout = command_calls[1]
+    completion_argv, completion_cwd, completion_timeout = command_calls[2]
     assert doctor_argv == _post_update_doctor_args()
     assert doctor_cwd == package_root
     assert doctor_timeout == 1000
+    assert completion_argv == _post_update_completion_cache_args()
+    assert completion_cwd == package_root
+    assert completion_timeout == 30_000
     assert (package_root / "package.json").read_text(encoding="utf-8") == (
         '{"name":"openzues","version":"2026.5.2"}'
     )
@@ -2680,6 +2715,119 @@ async def test_runtime_update_run_package_update_sets_post_update_doctor_env(
     assert os.environ.get("NODE_DISABLE_COMPILE_CACHE") is None
     assert os.environ.get("OPENCLAW_UPDATE_IN_PROGRESS") is None
     assert os.environ.get("OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE") is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_package_update_refreshes_completion_cache_after_doctor(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "package-root"
+    package_root.mkdir()
+    (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
+    monkeypatch.delenv("OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS", raising=False)
+    completion_env: dict[str, str | None] = {}
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        command_calls.append((argv, cwd, timeout_ms))
+        if argv == _post_update_completion_cache_args():
+            completion_env["OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS"] = os.environ.get(
+                "OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS"
+            )
+            return {"stdout": "completion refreshed\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@latest",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "ok"
+    assert [step["name"] for step in result["steps"]] == [
+        "global update",
+        "openzues doctor",
+        "completion cache",
+    ]
+    assert command_calls == [
+        (["pnpm", "add", "-g", "openzues@latest"], package_root, 1000),
+        (_post_update_doctor_args(), package_root, 1000),
+        (_post_update_completion_cache_args(), package_root, 30_000),
+    ]
+    assert completion_env == {"OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS": "1"}
+    assert os.environ.get("OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS") is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_package_update_warns_when_completion_cache_refresh_fails(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    package_root = tmp_path / "package-root"
+    package_root.mkdir()
+    (package_root / "package.json").write_text('{"version":"2026.5.1"}', encoding="utf-8")
+    _write_package_dist_inventory(package_root)
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        if argv == _post_update_completion_cache_args():
+            return {"stdout": "", "stderr": "write-state failed", "exitCode": 1}
+        return {"stdout": "updated\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("package update should report restart posture, not restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_package_update(
+        package_root=package_root,
+        package_manager="pnpm",
+        package_spec="openzues@latest",
+        timeout_ms=1000,
+    )
+
+    assert result["status"] == "ok"
+    assert result["warnings"] == [
+        "Completion cache update failed: write-state failed. "
+        "Shell tab-completion may be stale; refresh manually with: "
+        "openzues completion --write-state"
+    ]
+    assert result["steps"][-1]["name"] == "completion cache"
 
 
 @pytest.mark.asyncio
@@ -3476,10 +3624,15 @@ async def test_runtime_update_run_package_update_omits_legacy_private_qa_sidecar
     )
 
     assert result["status"] == "ok"
-    assert [step["name"] for step in result["steps"]] == ["global update", "openzues doctor"]
+    assert [step["name"] for step in result["steps"]] == [
+        "global update",
+        "openzues doctor",
+        "completion cache",
+    ]
     assert command_calls == [
         ["pnpm", "add", "-g", "openzues@latest"],
         _post_update_doctor_args(),
+        _post_update_completion_cache_args(),
     ]
 
 
@@ -3529,10 +3682,15 @@ async def test_runtime_update_run_package_update_ignores_stale_private_qa_metada
     )
 
     assert result["status"] == "ok"
-    assert [step["name"] for step in result["steps"]] == ["global update", "openzues doctor"]
+    assert [step["name"] for step in result["steps"]] == [
+        "global update",
+        "openzues doctor",
+        "completion cache",
+    ]
     assert command_calls == [
         ["pnpm", "add", "-g", "openzues@latest"],
         _post_update_doctor_args(),
+        _post_update_completion_cache_args(),
     ]
 
 
@@ -3586,10 +3744,15 @@ async def test_runtime_update_run_package_update_ignores_dist_inventory_omission
     )
 
     assert result["status"] == "ok"
-    assert [step["name"] for step in result["steps"]] == ["global update", "openzues doctor"]
+    assert [step["name"] for step in result["steps"]] == [
+        "global update",
+        "openzues doctor",
+        "completion cache",
+    ]
     assert command_calls == [
         ["pnpm", "add", "-g", "openzues@latest"],
         _post_update_doctor_args(),
+        _post_update_completion_cache_args(),
     ]
 
 
@@ -3790,10 +3953,15 @@ async def test_runtime_update_run_package_update_omits_externalized_extension_di
     )
 
     assert result["status"] == "ok"
-    assert [step["name"] for step in result["steps"]] == ["global update", "openzues doctor"]
+    assert [step["name"] for step in result["steps"]] == [
+        "global update",
+        "openzues doctor",
+        "completion cache",
+    ]
     assert command_calls == [
         ["pnpm", "add", "-g", "openzues@latest"],
         _post_update_doctor_args(),
+        _post_update_completion_cache_args(),
     ]
 
 
@@ -3982,10 +4150,15 @@ async def test_runtime_update_run_package_update_omits_externalized_symlink_befo
     )
 
     assert result["status"] == "ok"
-    assert [step["name"] for step in result["steps"]] == ["global update", "openzues doctor"]
+    assert [step["name"] for step in result["steps"]] == [
+        "global update",
+        "openzues doctor",
+        "completion cache",
+    ]
     assert command_calls == [
         ["pnpm", "add", "-g", "openzues@latest"],
         _post_update_doctor_args(),
+        _post_update_completion_cache_args(),
     ]
 
 
