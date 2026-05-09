@@ -11349,3 +11349,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and runtime/CLI/doctor plus CLI/operator parity move to ~99.995%. Continue
   provider-specific media/reply edges, companion breadth, or the next package
   startup/update edge.
+- Current queue-head adjustment: Slack `reaction_added` and `reaction_removed`
+  event callbacks now route through the native Slack Events endpoint into
+  session-keyed next-heartbeat `system-event` wakes with OpenClaw-style
+  reaction context keys and config-backed sender authorization. Source/test
+  checkpointed in `10dfaa17`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.2%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.

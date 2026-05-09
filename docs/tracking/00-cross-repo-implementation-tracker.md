@@ -192,8 +192,10 @@ Provider runtime addendum: `OZ-PROV-001DV` Slack `message.action send` and
 `8db0f19b`. `OZ-PROV-001DW` direct outbound reply policy metadata is
 source/test checkpointed in `e115e5f1`. `OZ-PROV-001DX` direct outbound
 `channelData`-only payload delivery is source/test checkpointed in
-`fd244774`. Continue provider-specific media/reply edges, companion breadth, or
-the next package startup/update edge.
+`fd244774`. `OZ-PROV-001DY` Slack reaction event system wakes are source/test
+checkpointed in `10dfaa17`, moving provider-native inbound/outbound breadth to
+~99.2%. Continue provider-specific media/reply edges, companion breadth, or the
+next package startup/update edge.
 Companion addendum: `OZ-COMP-001C` device-pairing `publicKey` pending,
 approval, paired storage, and device projection parity is source/test
 checkpointed in `bef0652f`. Continue companion QR/setup-code remote
@@ -434,6 +436,30 @@ runtime/CLI ergonomics edge.
     passed, 412 deselected`), `ruff check
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001DY` Slack reaction event system wakes
+  - Source: `openclaw-main/extensions/slack/src/monitor/events.ts`,
+    `openclaw-main/extensions/slack/src/monitor/events/reactions.ts`,
+    `openclaw-main/extensions/slack/src/monitor/events/reactions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`, `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native Slack Events API payloads for `reaction_added` and
+    `reaction_removed` unwrap Slack `event_callback`, ignore non-message
+    reaction items, enforce Slack DM/channel authorization from config, derive
+    the channel/account session key, and enqueue a next-heartbeat
+    `system-event` wake with an OpenClaw-style reaction context key.
+  - Evidence required: focused Slack reaction service/route proofs, adjacent
+    provider/inbound proof, ruff, mypy
+  - Status: checkpointed in `10dfaa17`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_reaction_system_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_reaction_when_dm_policy_disabled tests\test_ops_mesh.py::test_slack_events_route_handles_reaction_event_callbacks -q`
+    (`2 failed` / `1 failed` before implementation, then `3 passed`),
+    adjacent provider/inbound proof (`6 passed, 411 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py src\openzues\app.py
+    tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+    src\openzues\app.py`, and focused `git diff --check`.
 
 - [x] `OZ-COMP-001D` QR public cleartext mobile pairing URL rejection
   - Source: `openclaw-main/src/pairing/setup-code.ts`,

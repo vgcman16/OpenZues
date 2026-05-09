@@ -21895,6 +21895,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`6 passed, 571 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `cfef9ae1`.
+- Slack Events API reaction callbacks now match the OpenClaw monitor
+  system-event path for `reaction_added` and `reaction_removed`: route-backed
+  payloads unwrap `event_callback`, ignore non-message reaction items, enforce
+  native Slack DM/channel sender policy from the OpenZues config snapshot,
+  derive the same conversation-target session key shape as other native
+  inbound channels, and enqueue a next-heartbeat `system-event` wake with the
+  OpenClaw-style reaction context key. This closes `OZ-PROV-001DY`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.2%.
+- Verified the Slack reaction system-event seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_reaction_system_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_reaction_when_dm_policy_disabled tests\test_ops_mesh.py::test_slack_events_route_handles_reaction_event_callbacks -q`
+  (`2 failed` / `1 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_reaction or slack_events_route or msteams_inbound_activity or routes_due_main_system_event"`
+  (`6 passed, 411 deselected`), `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+  `git diff --check`. Source/test checkpointed in `10dfaa17`.
 
 ## References
 
