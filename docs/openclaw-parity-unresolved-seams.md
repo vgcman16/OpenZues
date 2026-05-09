@@ -174,6 +174,19 @@ Current percentage rollup:
   CLI/runtime breadth, packaging/doctor surfaces, provider-specific
   send/poll/replay edges, and companion app parity.
 
+Current queue-head adjustment: Slack Events API member callbacks now match the
+OpenClaw monitor path in `extensions/slack/src/monitor/events/members.ts`:
+`member_joined_channel` and `member_left_channel` unwrap Slack
+`event_callback`, enforce native Slack DM/channel authorization from config,
+derive the channel/account session key, and enqueue next-heartbeat
+`system-event` wakes with `slack:member:<verb>:<channel>:<user>` context keys.
+Verified on 2026-05-09 with focused red/green Slack member service/route
+proofs, adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and
+focused `git diff --check`; source/test checkpointed in `9d07244d`. This
+closes `OZ-PROV-001DZ`; provider-native inbound/outbound breadth moves to
+~99.3%. Continue provider-specific media/reply edges, companion breadth, or
+the next package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11357,3 +11370,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and provider-native inbound/outbound breadth moves to ~99.2%. Continue
   provider-specific media/reply edges, companion breadth, or the next package
   startup/update edge.
+- Current queue-head adjustment: Slack `member_joined_channel` and
+  `member_left_channel` event callbacks now route through the same native
+  Slack Events endpoint into session-keyed next-heartbeat `system-event` wakes
+  with OpenClaw-style `slack:member:<verb>:<channel>:<user>` context keys and
+  config-backed sender authorization. Source/test checkpointed in `9d07244d`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.3%. Continue provider-specific
+  media/reply edges, companion breadth, or the next package startup/update
+  edge.

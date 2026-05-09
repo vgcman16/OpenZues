@@ -8018,6 +8018,29 @@ may lag behind this tracker.
     tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
     src\openzues\app.py`, and focused `git diff --check`.
 
+- [x] Slack member event system wakes.
+  - Source: `openclaw-main/extensions/slack/src/monitor/events.ts`,
+    `openclaw-main/extensions/slack/src/monitor/events/members.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`, `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native Slack Events API payloads for `member_joined_channel`
+    and `member_left_channel` unwrap Slack `event_callback`, enforce Slack
+    DM/channel authorization from config, derive the channel/account session
+    key, and enqueue a next-heartbeat `system-event` wake with an
+    OpenClaw-style `slack:member:<verb>:<channel>:<user>` context key.
+  - Evidence required: focused Slack member service/route proofs, adjacent
+    provider/inbound proof, ruff, mypy
+  - Status: checkpointed in `9d07244d`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_member_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_member_when_channel_user_denied tests\test_ops_mesh.py::test_slack_events_route_dispatches_member_event_callbacks -q`
+    (`3 failed` before implementation, then `3 passed`), adjacent
+    provider/inbound proof (`8 passed, 412 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py src\openzues\app.py
+    tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+    src\openzues\app.py`, and focused `git diff --check`.
+
 - [x] Doctor preflight git update offer.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,
     `openclaw-main/src/commands/doctor-update.ts`
