@@ -98236,6 +98236,65 @@ def _qr_gateway_remote_config(
     return _qr_config_mapping(_qr_gateway_config(config_snapshot).get("remote"))
 
 
+def _qr_gateway_tailscale_config(
+    config_snapshot: Mapping[str, object] | None,
+) -> Mapping[str, object]:
+    return _qr_config_mapping(_qr_gateway_config(config_snapshot).get("tailscale"))
+
+
+_TAILSCALE_STATUS_COMMAND_CANDIDATES = (
+    "tailscale",
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+)
+
+
+def _qr_parse_noisy_json_object(raw: str) -> Mapping[str, object] | None:
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        parsed = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, Mapping) else None
+
+
+def _qr_extract_tailscale_host(raw: str) -> str | None:
+    status = _qr_parse_noisy_json_object(raw)
+    self_status = _qr_config_mapping(status.get("Self")) if status else {}
+    dns_name = _qr_config_text(self_status.get("DNSName"))
+    if dns_name:
+        return dns_name.rstrip(".")
+    tailscale_ips = self_status.get("TailscaleIPs")
+    if isinstance(tailscale_ips, Sequence) and not isinstance(tailscale_ips, str):
+        for value in tailscale_ips:
+            ip = _qr_config_text(value)
+            if ip:
+                return ip
+    return None
+
+
+def _resolve_qr_tailscale_host() -> str | None:
+    for candidate in _TAILSCALE_STATUS_COMMAND_CANDIDATES:
+        try:
+            result = subprocess.run(
+                [candidate, "status", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if getattr(result, "returncode", 1) != 0:
+            continue
+        host = _qr_extract_tailscale_host(str(getattr(result, "stdout", "") or ""))
+        if host:
+            return host
+    return None
+
+
 def _normalize_pairing_config_url(raw: str, *, invalid_error: str) -> str:
     try:
         return _normalize_pairing_setup_url(raw)
@@ -98293,8 +98352,8 @@ def _resolve_qr_gateway_url(
         return _normalize_pairing_setup_url(explicit_url), (
             "cli.url" if str(url or "").strip() else "cli.publicUrl"
         )
+    remote_url = _qr_config_text(_qr_gateway_remote_config(config_snapshot).get("url"))
     if remote:
-        remote_url = _qr_config_text(_qr_gateway_remote_config(config_snapshot).get("url"))
         if remote_url:
             return (
                 _normalize_pairing_config_url(
@@ -98303,6 +98362,20 @@ def _resolve_qr_gateway_url(
                 ),
                 "gateway.remote.url",
             )
+    tailscale_mode = str(
+        _qr_gateway_tailscale_config(config_snapshot).get("mode") or "off"
+    ).strip().lower()
+    if tailscale_mode in {"serve", "funnel"}:
+        tailscale_host = _resolve_qr_tailscale_host()
+        if not tailscale_host:
+            raise ValueError(
+                "Tailscale Serve is enabled, but MagicDNS could not be resolved."
+            )
+        return (
+            f"wss://{_format_pairing_host(tailscale_host)}",
+            f"gateway.tailscale.mode={tailscale_mode}",
+        )
+    if remote:
         raise ValueError(
             "qr --remote requires gateway.remote.url (or gateway.tailscale.mode=serve/funnel)."
         )

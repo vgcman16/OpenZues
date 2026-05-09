@@ -292,6 +292,63 @@ def test_qr_remote_uses_gateway_remote_url_and_token_from_config(
     assert setup_payload["bootstrapToken"]
 
 
+def test_qr_remote_uses_tailscale_serve_dns_when_remote_url_absent(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {"mode": "password", "password": "local-password"},
+                    "tailscale": {"mode": "serve"},
+                },
+            }
+        )
+    )
+    calls: list[list[str]] = []
+
+    def fake_subprocess_run(command, **kwargs):  # noqa: ANN001
+        calls.append([str(part) for part in command])
+        assert kwargs["timeout"] == 5
+        return SimpleNamespace(
+            returncode=0,
+            stdout='noise {"Self":{"DNSName":"mb-server.tailnet.ts.net."}} trailing',
+        )
+
+    monkeypatch.setattr("openzues.cli.subprocess.run", fake_subprocess_run)
+
+    result = runner.invoke(app, ["qr", "--json", "--remote"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [["tailscale", "status", "--json"]]
+    assert "local-password" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://mb-server.tailnet.ts.net"
+    assert payload["auth"] == "password"
+    assert payload["urlSource"] == "gateway.tailscale.mode=serve"
+    setup_payload = _decode_base64url_json(payload["setupCode"])
+    assert setup_payload["url"] == "wss://mb-server.tailnet.ts.net"
+    assert isinstance(setup_payload["bootstrapToken"], str)
+    assert setup_payload["bootstrapToken"]
+
+
 def test_qr_json_output_matches_openclaw_setup_code_contract(
     tmp_path, monkeypatch
 ) -> None:
