@@ -253,6 +253,20 @@ checkpointed in `22b9bd10`. This closes `OZ-PROV-001EE`; provider-native
 inbound/outbound breadth moves to ~99.8%. Continue provider-specific
 media/reply edges, companion breadth, or the next package startup/update edge.
 
+Current queue-head adjustment: Slack `block_actions` interactions now match
+the OpenClaw monitor system-event path in
+`extensions/slack/src/monitor/events/interactions.block-actions.ts`: the native
+interactions route accepts JSON or Slack form `payload`, redacts
+trigger/response URLs, enforces config-backed sender authorization, derives the
+channel/account session key, and enqueues `Slack interaction: ...` wakes with
+`slack:interaction:<channel>:<message>:<action>` context keys. Verified on
+2026-05-09 with focused red/green Slack block-action service/route proofs,
+adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and focused
+`git diff --check`; source/test checkpointed in `37a9d2dc`. This closes
+`OZ-PROV-001EF`; provider-native inbound/outbound breadth moves to ~99.9%.
+Continue provider-specific media/reply edges, companion breadth, or the next
+package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11486,3 +11500,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.8%.
   Continue provider-specific media/reply edges, companion breadth, or the next
   package startup/update edge.
+- Current queue-head adjustment: Slack `block_actions` interactions now route
+  through `/api/channels/slack/interactions` into session-keyed
+  next-heartbeat `system-event` wakes with OpenClaw-style
+  `slack:interaction:<channel>:<message>:<action>` context keys, trigger/
+  response URL redaction, and config-backed sender authorization. Source/test
+  checkpointed in `37a9d2dc`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.9%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.

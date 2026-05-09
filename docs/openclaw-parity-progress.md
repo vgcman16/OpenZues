@@ -22019,6 +22019,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
   src\openzues\app.py`, and focused `git diff --check`. Source/test
   checkpointed in `22b9bd10`.
+- Slack `block_actions` interactions now match the OpenClaw monitor
+  system-event path for the native route: `/api/channels/slack/interactions`
+  accepts JSON or Slack form `payload`, redacts trigger/response URLs, enforces
+  Slack sender authorization from config, derives the channel/account session
+  key, and enqueues a next-heartbeat `Slack interaction: ...` system event with
+  the OpenClaw-style `slack:interaction:<channel>:<message>:<action>` context
+  key. This closes `OZ-PROV-001EF`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth moves to ~99.9%.
+- Verified the Slack block-action interaction seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_block_action_interaction_to_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_block_action_when_sender_denied tests\test_ops_mesh.py::test_slack_interactions_route_dispatches_block_actions -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_block_action or slack_interactions_route or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`25 passed, 413 deselected`; existing aiosqlite event-loop-close warning),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `37a9d2dc`.
 
 ## References
 
