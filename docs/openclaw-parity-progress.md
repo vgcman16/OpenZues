@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9999999999999999999999999999999999999999999999998%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999985%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -21668,6 +21668,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `fd244774`.
+- Git-backed native updates now mirror OpenClaw's post-doctor control-UI asset
+  repair posture for the OpenZues FastAPI/Jinja static surface: source
+  checkouts with `src/openzues/web` run a `ui:build` step, verify the doctor
+  entry, run `openzues doctor --non-interactive --fix --json`, run a
+  post-doctor `ui:build` repair if required web assets disappear, and fail
+  with `ui-assets-missing` if repair does not restore them. This closes
+  `OZ-PKG-001CK`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999999985%.
+- Verified the post-doctor control-UI repair seam with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_repairs_control_ui_assets_after_post_update_doctor tests\test_runtime_updates.py::test_runtime_update_run_update_fails_when_control_ui_repair_still_missing -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent Git update
+  proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "run_update and (git_install_build_steps or ignores_control_ui_dist_dirty_files or control_ui_repair or post_update_doctor or ui_assets)"`
+  (`4 passed, 59 deselected`), `ruff check
+  src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+  `mypy src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `92aadaf9`.
 
 ## References
 

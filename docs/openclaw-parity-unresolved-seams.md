@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.9999999999999999999999999999999999999999999999998%.
+  band of ~80-99.99999999999999999999999999999999999999999999999985%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.96% after the latest
@@ -195,6 +195,17 @@ metadata still flows through the existing transport/result path. Verified on
 proofs, `ruff check`, `mypy`, and focused `git diff --check`; checkpointed in
 `fd244774`. Remaining provider breadth includes provider-specific media/reply
 edge cases and inbound/runtime depth.
+
+Current queue-head adjustment: Git-backed native updates now run an OpenZues
+`ui:build` step for source checkouts with `src/openzues/web`, verify the
+native doctor entry, run `openzues doctor --non-interactive --fix --json`, and
+repair missing control-UI assets with a second `ui:build` after doctor if
+needed. If required web assets are still missing after repair, the update
+returns `reason="ui-assets-missing"` with a failed `ui assets verify` step.
+Verified on 2026-05-08 with focused red/green repair/failure proofs, adjacent
+Git update proof, `ruff check`, `mypy`, and focused `git diff --check`;
+checkpointed in `92aadaf9`. Remaining packaging breadth includes broader
+distribution and startup/update edge cases.
 
 Current queue-head adjustment: `sessions.spawn runtime="acp"` now uses a real
 native `GatewayAcpSpawnService` backed by `RuntimeManager`, including thread
