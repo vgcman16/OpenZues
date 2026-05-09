@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
 import uvicorn
+from typer.completion import get_completion_script
 
 from openzues import __version__
 from openzues.app import build_brief, build_launchpad, build_radar
@@ -6060,6 +6061,7 @@ _DOCTOR_COMPLETION_SHELL_EXTENSIONS = {
     "powershell": "ps1",
     "zsh": "zsh",
 }
+_DOCTOR_COMPLETION_WRITE_STATE_SHELLS = ("bash", "fish", "powershell", "zsh")
 
 
 def _doctor_completion_shell_from_env(env: Mapping[str, str] | None = None) -> str:
@@ -6151,23 +6153,25 @@ def _doctor_completion_source_line(*, shell: str, cache_path: Path) -> str:
     return f'source "{cache_path}"'
 
 
-def _doctor_completion_generate_cache(cache_path: Path) -> bool:
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
+def _doctor_completion_script_for_shell(shell: str) -> str | None:
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "openzues.cli", "--show-completion"],
-            capture_output=True,
-            check=False,
-            encoding="utf-8",
-            errors="replace",
-            timeout=20,
+        return get_completion_script(
+            prog_name="openzues",
+            complete_var="_OPENZUES_COMPLETE",
+            shell=shell,
         )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if result.returncode != 0 or not result.stdout.strip():
+    except Exception:
+        return None
+
+
+def _doctor_completion_generate_cache(cache_path: Path, *, shell: str | None = None) -> bool:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    shell_name = shell or _doctor_completion_shell_from_env()
+    script = _doctor_completion_script_for_shell(shell_name)
+    if not script:
         return False
     try:
-        cache_path.write_text(result.stdout, encoding="utf-8")
+        cache_path.write_text(script, encoding="utf-8")
     except OSError:
         return False
     return True
@@ -105967,7 +105971,18 @@ def completion(
         bin_name="openzues",
     )
     if write_state:
-        if not _doctor_completion_generate_cache(cache_path):
+        generated = [
+            _doctor_completion_generate_cache(
+                _doctor_completion_cache_path(
+                    data_dir=settings.data_dir,
+                    shell=cache_shell,
+                    bin_name="openzues",
+                ),
+                shell=cache_shell,
+            )
+            for cache_shell in _DOCTOR_COMPLETION_WRITE_STATE_SHELLS
+        ]
+        if not all(generated):
             raise typer.Exit(code=1)
         return
 
@@ -105990,19 +106005,10 @@ def completion(
         typer.echo(f"{action} {shell} completion in {profile_path}.")
         return
 
-    result = subprocess.run(
-        [sys.executable, "-m", "openzues.cli", "--show-completion"],
-        capture_output=True,
-        check=False,
-        encoding="utf-8",
-        errors="replace",
-        timeout=20,
-    )
-    if result.returncode != 0 or not result.stdout:
-        if result.stderr:
-            typer.echo(result.stderr.strip(), err=True)
+    script = _doctor_completion_script_for_shell(shell)
+    if not script:
         raise typer.Exit(code=1)
-    typer.echo(result.stdout, nl=False)
+    typer.echo(script, nl=False)
 
 
 @hermes_profile_app.callback()

@@ -33766,16 +33766,19 @@ def test_completion_write_state_generates_native_cache(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(cli_module, "settings", SimpleNamespace(data_dir=tmp_path))
-    shell = cli_module._doctor_completion_shell_from_env()
-    extension = cli_module._DOCTOR_COMPLETION_SHELL_EXTENSIONS[shell]
-    cache_path = tmp_path / "completions" / f"openzues.{extension}"
+    cache_dir = tmp_path / "completions"
 
     result = runner.invoke(app, ["completion", "--write-state"])
 
     assert result.exit_code == 0, result.stdout
     assert result.stdout == ""
-    assert cache_path.exists()
-    assert cache_path.read_text(encoding="utf-8").strip()
+    assert sorted(path.name for path in cache_dir.iterdir()) == [
+        "openzues.bash",
+        "openzues.fish",
+        "openzues.ps1",
+        "openzues.zsh",
+    ]
+    assert all(path.read_text(encoding="utf-8").strip() for path in cache_dir.iterdir())
 
 
 def test_doctor_fix_regenerates_shell_completion_cache_and_upgrades_slow_profile(
