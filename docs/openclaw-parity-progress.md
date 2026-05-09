@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999999999999999999999999999999999999997%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999999999999999999999999999999999999999999999998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -21561,6 +21561,31 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `e115e5f1`.
+- Native package update detection now matches OpenClaw's owning npm-root
+  posture when package metadata does not declare a supported manager: CLI
+  update dispatch and startup auto-update detect `npm` from a package root
+  under an npm global root only when the owning npm command exists. This closes
+  `OZ-PKG-001CJ`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999998%.
+- Verified the owning npm-root detection seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_json_detects_owning_npm_root_without_package_manager_metadata -q`
+  (`1 failed` before implementation, then `1 passed`), focused CLI/runtime
+  proof
+  `python -m pytest tests\test_cli.py::test_update_json_detects_owning_npm_root_without_package_manager_metadata tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_detects_owning_npm_root -q`
+  (`2 passed`), adjacent CLI package proof
+  `python -m pytest tests\test_cli.py -q -k "update_json and package"`
+  (`5 passed, 558 deselected`), adjacent update-status proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_json_detects_package_manager_deps or update_json_detects_owning_npm_root_without_package_manager_metadata"`
+  (`2 passed, 561 deselected`), adjacent startup runtime proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "startup_auto_update and package_update"`
+  (`1 passed, 60 deselected`), adjacent package-update command proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_prefers_owning_npm_cmd tests\test_runtime_updates.py::test_runtime_update_run_package_update_uses_ambient_npm_when_owner_absent -q`
+  (`2 passed`), `ruff check src\openzues\cli.py
+  src\openzues\services\runtime_updates.py tests\test_cli.py
+  tests\test_runtime_updates.py`, `mypy src\openzues\cli.py
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed in `76e2a21c`.
 
 ## References
 
