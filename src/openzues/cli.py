@@ -10617,7 +10617,56 @@ def _openclaw_update_package_manager(root: Path) -> str:
     for filename, manager in lockfile_managers:
         if _doctor_path_exists(root / filename):
             return manager
+    if _openclaw_update_has_owning_npm_command(root):
+        return "npm"
     return "unknown"
+
+
+def _openclaw_update_package_name(root: Path) -> str:
+    package_json = root / "package.json"
+    if not _doctor_path_exists(package_json):
+        return _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+    try:
+        parsed = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+    if not isinstance(parsed, Mapping):
+        return _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+    name = str(parsed.get("name") or "").strip()
+    return name or _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+
+
+def _openclaw_update_package_name_parts(package_name: str) -> tuple[str, ...]:
+    return tuple(part for part in package_name.strip().split("/") if part)
+
+
+def _openclaw_update_global_root_from_package_root(root: Path, package_name: str) -> Path:
+    global_root = root
+    for _part in _openclaw_update_package_name_parts(package_name) or (root.name,):
+        global_root = global_root.parent
+    return global_root
+
+
+def _openclaw_update_owning_npm_command_candidates(root: Path) -> tuple[Path, ...]:
+    package_name = _openclaw_update_package_name(root)
+    global_root = _openclaw_update_global_root_from_package_root(root, package_name)
+    resolved_global_root = global_root.resolve(strict=False)
+    if resolved_global_root.name != "node_modules":
+        return ()
+    parent = resolved_global_root.parent
+    if parent.name == "lib":
+        prefix = parent.parent
+        return (prefix / "bin" / "npm", prefix / "bin" / "npm.cmd")
+    if os.name == "nt":
+        return (parent / "npm.cmd", parent / "npm")
+    return ()
+
+
+def _openclaw_update_has_owning_npm_command(root: Path) -> bool:
+    return any(
+        _doctor_path_exists(candidate)
+        for candidate in _openclaw_update_owning_npm_command_candidates(root)
+    )
 
 
 def _openclaw_update_deps_marker(root: Path, manager: str) -> tuple[Path | None, Path | None]:

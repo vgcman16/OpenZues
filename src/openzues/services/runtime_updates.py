@@ -529,6 +529,8 @@ def _detect_package_manager(package_root: Path) -> str:
     ):
         if _path_exists(package_root / filename):
             return manager
+    if _has_owning_npm_command(package_root, _read_package_name(package_root)):
+        return "npm"
     return "unknown"
 
 
@@ -654,6 +656,20 @@ def _npm_prefix_layout_from_prefix(prefix: Path) -> _NpmGlobalPrefixLayout:
         global_root=resolved / "lib" / "node_modules",
         bin_dir=resolved / "bin",
     )
+
+
+def _has_owning_npm_command(package_root: Path, package_name: str) -> bool:
+    global_root = _global_root_from_package_root(package_root, package_name)
+    layout = _npm_prefix_layout_from_global_root(global_root)
+    if layout is None:
+        return False
+    candidates = {
+        layout.bin_dir / "npm",
+        layout.bin_dir / "npm.cmd",
+        layout.prefix / "npm",
+        layout.prefix / "npm.cmd",
+    }
+    return any(_path_exists(candidate) for candidate in candidates)
 
 
 def _create_staged_npm_install(
