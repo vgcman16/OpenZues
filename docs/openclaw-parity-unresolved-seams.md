@@ -11668,3 +11668,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   provider-native inbound/outbound breadth remains ~99.9%. Continue
   provider-specific media/reply edges, companion breadth, plugin/provider
   command menu breadth, or the next package startup/update edge.
+- Current queue-head adjustment: Slack large-choice command arg menus now have
+  focused proof for OpenClaw's external-select branch: more than 100 encoded
+  choices produce `external_select`, `openclaw_cmdarg_ext:<token>` block ids,
+  and per-user option hydration through `block_suggestion`. Test checkpointed
+  in `b1639b4b`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%. Continue Slack
+  provider-native `/agentstatus` aliasing, provider-specific media/reply
+  edges, companion breadth, or the next package startup/update edge.
+- Current queue-head adjustment: package-shaped `openzues update` now refuses
+  package-manager dispatch from inside the managed gateway service process
+  (`OPENCLAW_SERVICE_MARKER=openclaw` and empty/`gateway`
+  `OPENCLAW_SERVICE_KIND`), matching OpenClaw's self-update service-process
+  guard. Source/test checkpointed in `ca7d7e81`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to
+  ~99.996%. Continue Slack provider-native `/agentstatus` command aliasing,
+  WhatsApp reply fanout, provider-specific media/reply edges, or companion
+  breadth.

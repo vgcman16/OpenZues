@@ -20,9 +20,9 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.995% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.995% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Runtime/CLI/doctor native bridge | ~99.996% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.996% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
@@ -8382,6 +8382,25 @@ may lag behind this tracker.
     (`44 passed, 413 deselected`; existing aiosqlite warnings), command catalog
     proof (`2 passed`), ruff, mypy, and focused `git diff --check`.
 
+- [x] Slack large-choice external arg-menu proof.
+  - Source: `openclaw-main/extensions/slack/src/monitor/slash.ts`,
+    `openclaw-main/extensions/slack/src/monitor/external-arg-menu-store.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_ops_mesh.py`
+  - Contract: Slack slash command menus with more than 100 encoded choices use
+    `external_select`, store encoded choices under
+    `openclaw_cmdarg_ext:<token>`, and hydrate Slack option suggestions from
+    the per-user choice store.
+  - Evidence required: focused large-choice route proof, adjacent Slack
+    arg-menu proof, ruff, mypy where source is touched
+  - Status: checkpointed in `b1639b4b`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused proof
+    `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_uses_external_arg_menu_for_large_choice_set -q`
+    (`1 passed` on existing implementation), adjacent Slack arg-menu proof
+    (`3 passed`), `ruff check tests\test_ops_mesh.py`, and focused
+    `git diff --check`.
+
 - [x] Doctor preflight git update offer.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,
     `openclaw-main/src/commands/doctor-update.ts`
@@ -8403,6 +8422,25 @@ may lag behind this tracker.
     doctor/update proof (`6 passed, 571 deselected`), `ruff check
     src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
     focused `git diff --check`.
+
+- [x] Package update service-process guard.
+  - Source: `openclaw-main/src/daemon/constants.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/cli/update-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: package-shaped `openzues update` exits before package-manager
+    dispatch when it is running inside the managed gateway service process.
+  - Evidence required: focused package service-process proof, adjacent update
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `ca7d7e81`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_json_refuses_package_update_inside_gateway_service -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent package
+    update selector (`7 passed, 571 deselected`), `ruff check
+    src\openzues\cli.py tests\test_cli.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\cli.py`, and focused `git diff --check`.
 
 ## Update Rule
 

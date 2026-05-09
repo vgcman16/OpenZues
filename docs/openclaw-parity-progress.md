@@ -22207,6 +22207,33 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_commands.py src\openzues\app.py`, and focused
   `git diff --check`. Source/test checkpointed in `27836d4c`.
+- Slack large-choice arg-menu rendering is now covered by a focused
+  OpenClaw external-select proof: command menus with more than 100 choices use
+  `external_select`, create `openclaw_cmdarg_ext:<token>` blocks, and hydrate
+  `block_suggestion` options from the native per-user choice store. This closes
+  `OZ-PROV-001EQ` as a proof/checkpoint slice; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth remains
+  ~99.9%.
+- Verified the Slack large-choice external arg-menu proof with
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_uses_external_arg_menu_for_large_choice_set -q`
+  (`1 passed` on the existing implementation), adjacent Slack arg-menu proof
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_uses_external_arg_menu_for_large_choice_set tests\test_ops_mesh.py::test_slack_slash_route_returns_arg_menu_for_missing_choice_arg tests\test_ops_mesh.py::test_slack_interactions_route_returns_filtered_external_arg_options -q`
+  (`3 passed`), `ruff check tests\test_ops_mesh.py`, and focused
+  `git diff --check`. Test proof checkpointed in `b1639b4b`.
+- Package-shaped `openzues update` now refuses to run package-manager updates
+  from inside the managed gateway service process when
+  `OPENCLAW_SERVICE_MARKER=openclaw` and `OPENCLAW_SERVICE_KIND` is empty or
+  `gateway`, matching OpenClaw's package-update self-mutation guard. This
+  closes `OZ-PKG-001CN`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.996%.
+- Verified the package service-process guard with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_json_refuses_package_update_inside_gateway_service -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package-update
+  selector
+  `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_package_update_service or update_json_refuses_package_update_inside_gateway_service or update_json_detects_owning_npm_root_without_package_manager_metadata or update_json_detects_owning_pnpm_root_without_package_manager_metadata or update_json_detects_bun_global_root_without_package_manager_metadata or update_json_persists_requested_package_channel_after_success or update_json_runs_post_update_plugin_sync_for_package_update"`
+  (`7 passed, 571 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py tests\test_ops_mesh.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `ca7d7e81`.
 
 ## References
 

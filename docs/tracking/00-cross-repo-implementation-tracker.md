@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.9% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.995% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.995% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.996% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.996% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.1% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -268,9 +268,11 @@ generation, provider-specific media/reply edges, companion breadth, or the next
 package startup/update edge.
 Provider runtime addendum: `OZ-PROV-001EP` Slack slash arg-menu rendering is
 source/test checkpointed in `27836d4c`, keeping provider-native inbound/
-outbound breadth at ~99.9%. Continue plugin/provider command menu breadth,
-provider-specific media/reply edges, companion breadth, or the next package
-startup/update edge.
+outbound breadth at ~99.9%. `OZ-PROV-001EQ` Slack large-choice arg-menu
+external-select hydration is proof-checkpointed in `b1639b4b`, keeping
+provider-native breadth at ~99.9%. Continue Slack provider-native
+`/agentstatus` command aliasing, provider-specific media/reply edges,
+companion breadth, or the next package startup/update edge.
 Companion addendum: `OZ-COMP-001C` device-pairing `publicKey` pending,
 approval, paired storage, and device projection parity is source/test
 checkpointed in `bef0652f`. Continue companion QR/setup-code remote
@@ -322,11 +324,55 @@ checkpointed in `2cc24e73`. Runtime/CLI/doctor native-bridge parity moves to
 the next plugin runtime activation edge.
 TUI/CLI addendum: `OZ-TUI-001` `/gateway-status` and `/gwstatus`
 command-status parity is source/test checkpointed in `38890fe3`.
-CLI/operator control-plane parity moves to ~99.99%; continue
-provider-specific media/reply edges, companion breadth, or the next
-runtime/CLI ergonomics edge.
+CLI/operator control-plane parity moves to ~99.99%. Packaging addendum:
+`OZ-PKG-001CN` package updates now refuse to run from inside the managed
+gateway service process, source/test checkpointed in `ca7d7e81`; runtime/CLI/
+doctor and CLI/operator parity move to ~99.996%. Continue Slack
+provider-native `/agentstatus` command aliasing, WhatsApp reply fanout,
+provider-specific media/reply edges, or companion breadth.
 
 ## Active Slice Detail
+
+- [x] `OZ-PKG-001CN` Package update service-process guard
+  - Source: `openclaw-main/src/daemon/constants.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/cli/update-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: package-shaped `openzues update` exits before package-manager
+    dispatch when `OPENCLAW_SERVICE_MARKER=openclaw` and
+    `OPENCLAW_SERVICE_KIND` is empty or `gateway`, preserving the upstream
+    guard that package updates cannot mutate the running managed gateway
+    service process.
+  - Evidence required: focused package service-process proof, adjacent update
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `ca7d7e81`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_json_refuses_package_update_inside_gateway_service -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent package
+    update selector (`7 passed, 571 deselected`), `ruff check
+    src\openzues\cli.py tests\test_cli.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\cli.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001EQ` Slack large-choice external arg-menu proof
+  - Source: `openclaw-main/extensions/slack/src/monitor/slash.ts`,
+    `openclaw-main/extensions/slack/src/monitor/external-arg-menu-store.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_ops_mesh.py`
+  - Contract: Slack slash command menus with more than 100 encoded choices use
+    `external_select`, create an `openclaw_cmdarg_ext:<token>` choice-store
+    block id, and hydrate `block_suggestion` options from that store for the
+    requesting user.
+  - Evidence required: focused large-choice route proof, adjacent Slack
+    arg-menu proof, ruff, mypy where source is touched
+  - Status: checkpointed in `b1639b4b`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused proof
+    `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_uses_external_arg_menu_for_large_choice_set -q`
+    (`1 passed` on existing implementation), adjacent Slack arg-menu proof
+    (`3 passed`), `ruff check tests\test_ops_mesh.py`, and focused
+    `git diff --check`.
 
 - [x] `OZ-COMP-001N` QR remote gateway-backed SecretRef resolution
   - Source: `openclaw-main/src/cli/command-secret-gateway.ts`,
