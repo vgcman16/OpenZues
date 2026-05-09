@@ -1464,6 +1464,76 @@ def _resolve_slack_thread_ts(*, reply_to_id: object, thread_id: object) -> str |
     ) or _normalize_slack_thread_ts_candidate(thread_id)
 
 
+def _slack_target_is_channel_like(target: str | None) -> bool:
+    normalized = str(target or "").strip()
+    if not normalized:
+        return False
+    prefix = normalized.split(":", 1)[0].strip().lower() if ":" in normalized else ""
+    return prefix not in {"dm", "direct", "user"}
+
+
+def _slack_same_channel_target(left: str | None, right: str | None) -> bool:
+    left_id = _slack_channel_id(left)
+    right_id = _slack_channel_id(right)
+    if left_id is None or right_id is None:
+        return False
+    return left_id.strip().lower() == right_id.strip().lower()
+
+
+def _slack_action_has_replied_ref(tool_context: object) -> dict[str, Any] | None:
+    if not isinstance(tool_context, Mapping):
+        return None
+    has_replied_ref = tool_context.get("hasRepliedRef")
+    if not isinstance(has_replied_ref, dict):
+        return None
+    return has_replied_ref
+
+
+def _mark_slack_action_has_replied_if_current_channel(
+    *,
+    target: str | None,
+    tool_context: object,
+) -> None:
+    if not isinstance(tool_context, Mapping):
+        return
+    has_replied_ref = _slack_action_has_replied_ref(tool_context)
+    if has_replied_ref is None:
+        return
+    current_channel_id = str(tool_context.get("currentChannelId") or "").strip()
+    if not _slack_same_channel_target(target, current_channel_id):
+        return
+    has_replied_ref["value"] = True
+
+
+def _resolve_slack_action_auto_thread_id(
+    *,
+    target: str | None,
+    tool_context: object,
+) -> str | None:
+    if not isinstance(tool_context, Mapping):
+        return None
+    if not _slack_target_is_channel_like(target):
+        return None
+    current_thread_ts = _normalize_slack_thread_ts_candidate(
+        tool_context.get("currentThreadTs")
+    )
+    current_channel_id = str(tool_context.get("currentChannelId") or "").strip()
+    if current_thread_ts is None or not current_channel_id:
+        return None
+    if not _slack_same_channel_target(target, current_channel_id):
+        return None
+    reply_to_mode = str(tool_context.get("replyToMode") or "off").strip().lower()
+    if reply_to_mode == "all":
+        return current_thread_ts
+    if reply_to_mode not in {"first", "batched"}:
+        return None
+    has_replied_ref = _slack_action_has_replied_ref(tool_context)
+    if has_replied_ref is None or has_replied_ref.get("value") is True:
+        return None
+    has_replied_ref["value"] = True
+    return current_thread_ts
+
+
 def _slack_reaction_name(raw: str | None) -> str:
     normalized = str(raw or "").strip()
     if not normalized:
@@ -22793,7 +22863,13 @@ class OpsMeshService:
         thread_id = _message_action_param_string(
             request.params,
             "threadId",
-        ) or _message_action_param_string(request.params, "replyTo")
+        ) or _message_action_param_string(
+            request.params,
+            "replyTo",
+        ) or _resolve_slack_action_auto_thread_id(
+            target=target,
+            tool_context=request.tool_context,
+        )
         if media_url is not None:
             media_ids = self._upload_slack_media_files(
                 route=route,
@@ -22803,6 +22879,11 @@ class OpsMeshService:
                 thread_id=thread_id,
                 secret_token=secret_token or "",
             )
+            if thread_id:
+                _mark_slack_action_has_replied_if_current_channel(
+                    target=target,
+                    tool_context=request.tool_context,
+                )
             return {
                 "ok": True,
                 "result": {
@@ -22832,6 +22913,11 @@ class OpsMeshService:
         message_id = _slack_message_id(result)
         if message_id is None:
             raise RuntimeError("Slack API response did not include a message timestamp.")
+        if thread_id:
+            _mark_slack_action_has_replied_if_current_channel(
+                target=target,
+                tool_context=request.tool_context,
+            )
         return {
             "ok": True,
             "result": {
@@ -22968,7 +23054,13 @@ class OpsMeshService:
         thread_id = _message_action_param_string(
             request.params,
             "threadId",
-        ) or _message_action_param_string(request.params, "replyTo")
+        ) or _message_action_param_string(
+            request.params,
+            "replyTo",
+        ) or _resolve_slack_action_auto_thread_id(
+            target=target,
+            tool_context=request.tool_context,
+        )
         file_bytes = self._download_slack_media_url(file_path)
         ticket = self._post_slack_form(
             _slack_api_endpoint(str(route.get("target") or ""), "files.getUploadURLExternal"),
@@ -22999,6 +23091,11 @@ class OpsMeshService:
             complete_payload,
             secret_token=secret_token or "",
         )
+        if thread_id:
+            _mark_slack_action_has_replied_if_current_channel(
+                target=target,
+                tool_context=request.tool_context,
+            )
         return {
             "ok": True,
             "result": {

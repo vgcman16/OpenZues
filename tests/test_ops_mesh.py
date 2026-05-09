@@ -3959,6 +3959,105 @@ async def test_ops_mesh_service_message_action_dispatches_slack_send_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_slack_send_auto_threads_from_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-slack-send-auto-thread"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {"ok": True, "channel": "C123", "ts": "1710000000.0022"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    tool_context: dict[str, object] = {
+        "currentChannelId": "channel:C123",
+        "currentThreadTs": "1710000000.9999",
+        "replyToMode": "first",
+        "hasRepliedRef": {"value": False},
+    }
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="send",
+            params={
+                "to": "channel:C123",
+                "message": "Auto-thread Slack action parity.",
+            },
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-send-action-auto-thread",
+            tool_context=tool_context,
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "1710000000.0022",
+            "channelId": "C123",
+        },
+    }
+    assert tool_context["hasRepliedRef"] == {"value": True}
+    assert slack_posts == [
+        (
+            "https://slack.test/api/chat.postMessage",
+            {
+                "channel": "C123",
+                "text": "Auto-thread Slack action parity.",
+                "thread_ts": "1710000000.9999",
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_rejects_slack_poll_like_openclaw(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
