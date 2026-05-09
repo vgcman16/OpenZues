@@ -1493,6 +1493,14 @@ def _slack_channel_action(event_type: str | None) -> str | None:
     return None
 
 
+def _slack_pin_action(event_type: str | None) -> tuple[str, str] | None:
+    if event_type == "pin_added":
+        return ("pinned", "added")
+    if event_type == "pin_removed":
+        return ("unpinned", "removed")
+    return None
+
+
 def _slack_infer_channel_type(channel_id: str, raw_type: object = None) -> str:
     normalized_type = str(raw_type or "").strip().lower()
     if normalized_type in {"im", "mpim", "channel", "group"}:
@@ -1784,6 +1792,80 @@ def _slack_channel_session_context(
         channel_label=channel_name or channel_id or "unknown",
         action=action,
         event_type=event_type,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SlackPinSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    channel_id: str
+    channel_type: str
+    sender_id: str
+    action: str
+    context_suffix: str
+    event_type: str
+    item_type: str
+    message_id: str
+
+
+def _slack_pin_session_context(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _SlackPinSessionContext | None:
+    event_type = _slack_inbound_optional_string(event.get("type"))
+    action = _slack_pin_action(event_type)
+    if action is None or event_type is None:
+        return None
+    sender_id = _slack_inbound_optional_string(event.get("user"))
+    channel_id = _slack_inbound_optional_string(event.get("channel_id"))
+    if sender_id is None or channel_id is None:
+        return None
+    channel_type = _slack_infer_channel_type(channel_id, event.get("channel_type"))
+    if channel_type == "im":
+        peer_kind: ConversationTargetPeerKind = "direct"
+        peer_id = sender_id
+    elif channel_type == "mpim":
+        peer_kind = "group"
+        peer_id = channel_id
+    else:
+        peer_kind = "channel"
+        peer_id = channel_id
+    item = _slack_inbound_mapping(event.get("item"))
+    item_type = _slack_inbound_optional_string(item.get("type")) or "item"
+    item_message = _slack_inbound_mapping(item.get("message"))
+    message_id = (
+        _slack_inbound_optional_string(item_message.get("ts"))
+        or _slack_inbound_optional_string(event.get("event_ts"))
+        or "unknown"
+    )
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="slack",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    return _SlackPinSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        channel_id=channel_id,
+        channel_type=channel_type,
+        sender_id=sender_id,
+        action=action[0],
+        context_suffix=action[1],
+        event_type=event_type,
+        item_type=item_type,
+        message_id=message_id,
     )
 
 
@@ -15807,6 +15889,71 @@ class OpsMeshService:
             result["channelName"] = context.channel_name
         return result
 
+    async def handle_slack_pin_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        context = _slack_pin_session_context(event, account_id=account_id)
+        if context is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_pin_event_without_channel",
+            }
+        channel_config = self._slack_channel_config(account_id=account_id)
+        if not _slack_reaction_sender_allowed(
+            channel_config=channel_config,
+            channel_id=context.channel_id,
+            channel_type=context.channel_type,
+            sender_id=context.sender_id,
+        ):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": context.event_type,
+                "skipped": True,
+                "reason": "slack_pin_sender_unauthorized",
+            }
+        if self.wake_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack pin system-event wake is unavailable."
+            )
+        text = (
+            f"Slack: {context.sender_id} {context.action} a "
+            f"{context.item_type} in {context.channel_id}."
+        )
+        context_key = (
+            f"slack:pin:{context.context_suffix}:"
+            f"{context.channel_id}:{context.message_id}"
+        )
+        await self.wake_service.wake(
+            mode="next-heartbeat",
+            text=text,
+            reason=context_key,
+            session_key=context.session_key,
+        )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "eventType": context.event_type,
+            "action": context.action,
+            "sessionKey": context.session_key,
+            "senderId": context.sender_id,
+            "channelId": context.channel_id,
+            "messageId": context.message_id,
+            "itemType": context.item_type,
+            "text": text,
+            "contextKey": context_key,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+
     async def handle_slack_system_event(
         self,
         payload: Mapping[str, Any],
@@ -15827,6 +15974,11 @@ class OpsMeshService:
             )
         if _slack_channel_action(event_type) is not None:
             return await self.handle_slack_channel_event(
+                payload,
+                account_id=account_id,
+            )
+        if _slack_pin_action(event_type) is not None:
+            return await self.handle_slack_pin_event(
                 payload,
                 account_id=account_id,
             )

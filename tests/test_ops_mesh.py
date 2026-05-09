@@ -25927,6 +25927,189 @@ def test_slack_events_route_dispatches_channel_event_callbacks(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_slack_pin_event_through_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_pin_event(
+        {
+            "type": "pin_added",
+            "user": "U1",
+            "channel_id": "C123",
+            "item": {"type": "message", "message": {"ts": "123.456"}},
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert result == {
+        "ok": True,
+        "channel": "slack",
+        "eventType": "pin_added",
+        "action": "pinned",
+        "sessionKey": expected_session_key,
+        "senderId": "U1",
+        "channelId": "C123",
+        "messageId": "123.456",
+        "itemType": "message",
+        "text": "Slack: U1 pinned a message in C123.",
+        "contextKey": "slack:pin:added:C123:123.456",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == expected_session_key
+    assert wake_requests[0]["reason"] == "slack:pin:added:C123:123.456"
+    assert wake_requests[0]["text"] == result["text"]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["sessionKey"] == expected_session_key
+    assert events[0]["payload"]["text"] == result["text"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_pin_when_sender_denied(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "accounts": {
+                        "workspace": {
+                            "channels": {"C123": {"users": ["U_ALLOWED"]}},
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_pin_event(
+        {
+            "type": "pin_added",
+            "user": "U_DENIED",
+            "channel_id": "C123",
+            "item": {"type": "message", "message": {"ts": "123.456"}},
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "pin_added",
+        "skipped": True,
+        "reason": "slack_pin_sender_unauthorized",
+    }
+    assert await database.list_gateway_wake_requests() == []
+    assert await database.list_events() == []
+
+
+def test_slack_events_route_dispatches_pin_event_callbacks(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/events?accountId=workspace",
+            json={
+                "type": "event_callback",
+                "event": {
+                    "type": "pin_removed",
+                    "user": "U1",
+                    "channel_id": "C123",
+                    "item": {"type": "message", "message": {"ts": "123.456"}},
+                },
+            },
+        )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["eventType"] == "pin_removed"
+    assert payload["action"] == "unpinned"
+    assert payload["sessionKey"] == expected_session_key
+    assert payload["contextKey"] == "slack:pin:removed:C123:123.456"
+    assert payload["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_session() -> None:
     conversation_id = "19:ops-thread@thread.tacv2"
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-adaptive-card-inbound"
