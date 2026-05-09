@@ -22074,6 +22074,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
   src\openzues\app.py`, and focused `git diff --check`. Source/test
   checkpointed in `7c538421`.
+- Slack native HTTP ingress now enforces Slack request signatures when a
+  plain `channels.slack.signingSecret` or account `signingSecret` is configured:
+  `/api/channels/slack/events`, `/api/channels/slack/interactions`, and
+  `/api/channels/slack/slash` verify the `v0` HMAC over the exact request body
+  with timestamp freshness before dispatching. This closes `OZ-PROV-001EI`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth remains ~99.9%.
+- Verified the Slack HTTP signature seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_rejects_invalid_configured_signature tests\test_ops_mesh.py::test_slack_slash_route_accepts_valid_configured_signature -q`
+  (`1 failed, 1 passed` before implementation, then `2 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_signature or configured_signature or slack_slash or slack_view_submission or slack_modal or slack_interactions_route or slack_block_action or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`33 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `7ce8a169`.
 
 ## References
 

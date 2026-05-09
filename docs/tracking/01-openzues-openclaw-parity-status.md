@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block/modal/slash ingress is checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.9% | High for bounded provider path | Slack block/modal/slash ingress and HTTP signatures are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.995% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.995% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
@@ -8225,6 +8225,28 @@ may lag behind this tracker.
     `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_dispatches_slack_slash_command_to_session tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_slash_command_when_channel_disabled tests\test_ops_mesh.py::test_slack_slash_route_dispatches_form_payload_to_session -q`
     (`3 failed` before implementation, then `3 passed`), adjacent
     provider/inbound proof (`31 passed, 413 deselected`; existing aiosqlite
+    event-loop-close warnings), `ruff check src\openzues\services\ops_mesh.py
+    src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+    `git diff --check`.
+
+- [x] Slack HTTP signature verification.
+  - Source: `openclaw-main/extensions/slack/src/monitor/provider.ts`,
+    `openclaw-main/extensions/slack/src/account-inspect.ts`,
+    `openclaw-main/extensions/slack/src/channel.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`, `tests/test_ops_mesh.py`
+  - Contract: native Slack HTTP Events, interactions, and slash routes enforce
+    configured plain signing secrets by validating Slack `v0` HMAC signatures
+    over the exact request body with timestamp freshness before dispatch.
+  - Evidence required: focused Slack signature route proofs, adjacent
+    provider/inbound proof, ruff, mypy
+  - Status: checkpointed in `7ce8a169`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_rejects_invalid_configured_signature tests\test_ops_mesh.py::test_slack_slash_route_accepts_valid_configured_signature -q`
+    (`1 failed, 1 passed` before implementation, then `2 passed`), adjacent
+    provider/inbound proof (`33 passed, 413 deselected`; existing aiosqlite
     event-loop-close warnings), `ruff check src\openzues\services\ops_mesh.py
     src\openzues\app.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused

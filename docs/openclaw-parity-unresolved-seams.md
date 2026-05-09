@@ -295,6 +295,18 @@ closes `OZ-PROV-001EH`; provider-native inbound/outbound breadth remains
 ~99.9%. Continue provider-specific media/reply edges, companion breadth, or
 the next package startup/update edge.
 
+Current queue-head adjustment: Slack native HTTP ingress now enforces
+OpenClaw HTTP-mode signing-secret posture from
+`extensions/slack/src/monitor/provider.ts` / `account-inspect.ts` for configured
+plain signing secrets: Events, interactions, and slash routes verify Slack
+`v0` request signatures over the exact body and reject stale/invalid signatures
+before dispatch. Verified on 2026-05-09 with focused red/green Slack signature
+route proofs, adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and
+focused `git diff --check`; source/test checkpointed in `7ce8a169`. This
+closes `OZ-PROV-001EI`; provider-native inbound/outbound breadth remains
+~99.9%. Continue SecretRef-backed signing-secret resolution, provider-specific
+media/reply edges, companion breadth, or the next package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11555,3 +11567,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and provider-native inbound/outbound breadth remains ~99.9%. Continue
   provider-specific media/reply edges, companion breadth, or the next package
   startup/update edge.
+- Current queue-head adjustment: Slack native HTTP ingress now verifies
+  configured plain signing secrets on Events, interactions, and slash routes
+  using Slack `v0` HMAC signatures and timestamp freshness before dispatch.
+  Source/test checkpointed in `7ce8a169`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth remains ~99.9%.
+  Continue SecretRef-backed signing-secret resolution, provider-specific
+  media/reply edges, companion breadth, or the next package startup/update
+  edge.
