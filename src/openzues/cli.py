@@ -10344,6 +10344,8 @@ _OPENCLAW_UPDATE_PACKAGE_MANAGERS = {"pnpm", "bun", "npm"}
 _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME = "openzues"
 _OPENCLAW_UPDATE_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS = 2.0
 _OPENZUES_MAIN_PACKAGE_SPEC = "github:openzues/openzues#main"
+_OPENCLAW_GATEWAY_SERVICE_MARKER = "openclaw"
+_OPENCLAW_GATEWAY_SERVICE_KIND = "gateway"
 
 
 def _openclaw_update_config_channel(config_snapshot: object) -> str | None:
@@ -10368,6 +10370,17 @@ def _openclaw_update_dev_target_ref_for_channel(channel: str | None) -> str | No
         return None
     target_ref = os.environ.get("OPENCLAW_UPDATE_DEV_TARGET_REF", "").strip()
     return target_ref or None
+
+
+def _openclaw_update_running_inside_gateway_service(
+    env: Mapping[str, str | None] | None = None,
+) -> bool:
+    environ = env or os.environ
+    marker = str(environ.get("OPENCLAW_SERVICE_MARKER") or "").strip()
+    if marker != _OPENCLAW_GATEWAY_SERVICE_MARKER:
+        return False
+    service_kind = str(environ.get("OPENCLAW_SERVICE_KIND") or "").strip()
+    return not service_kind or service_kind == _OPENCLAW_GATEWAY_SERVICE_KIND
 
 
 def _openclaw_update_install_kind(root: Path) -> str:
@@ -106073,6 +106086,12 @@ def update_root(
     root = _openzues_package_root()
     install_kind = _openclaw_update_install_kind(root)
     if install_kind == "package":
+        if _openclaw_update_running_inside_gateway_service():
+            typer.echo(
+                "Package updates cannot run from inside the gateway service process.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
         effective_channel = requested_channel or "stable"
         explicit_tag = _openclaw_update_normalize_package_target(tag)
         target_tag = explicit_tag or _openclaw_update_channel_to_package_tag(effective_channel)
