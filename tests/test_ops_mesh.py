@@ -26778,6 +26778,218 @@ def test_slack_interactions_route_dispatches_block_actions(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_slack_view_submission_interaction_to_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    private_metadata = json.dumps(
+        {
+            "sessionKey": "slack-modal-session",
+            "channelId": "C1",
+            "channelType": "channel",
+            "userId": "U123",
+        }
+    )
+    result = await service.handle_slack_interaction(
+        {
+            "type": "view_submission",
+            "user": {"id": "U123"},
+            "team": {"id": "T9"},
+            "view": {
+                "id": "V123",
+                "callback_id": "openclaw:deploy",
+                "private_metadata": private_metadata,
+                "root_view_id": "VROOT",
+                "previous_view_id": "VPREV",
+                "external_id": "deploy-form",
+                "hash": "sensitive-view-hash",
+                "state": {
+                    "values": {
+                        "environment_block": {
+                            "environment": {
+                                "type": "static_select",
+                                "selected_option": {
+                                    "value": "prod",
+                                    "text": {"text": "Production"},
+                                },
+                            }
+                        },
+                        "notes_block": {
+                            "notes": {
+                                "type": "plain_text_input",
+                                "value": "ship it",
+                            }
+                        },
+                    }
+                },
+            },
+        },
+        account_id="workspace",
+    )
+
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert result["ok"] is True
+    assert result["channel"] == "slack"
+    assert result["interactionType"] == "view_submission"
+    assert result["actionId"] == "view:openclaw:deploy"
+    assert result["sessionKey"] == "slack-modal-session"
+    assert (
+        result["contextKey"]
+        == "slack:interaction:view:openclaw:deploy:V123:U123"
+    )
+    event_text = str(result["text"])
+    assert event_text.startswith("Slack interaction: ")
+    event_payload = json.loads(event_text.removeprefix("Slack interaction: "))
+    assert event_payload == {
+        "interactionType": "view_submission",
+        "actionId": "view:openclaw:deploy",
+        "callbackId": "openclaw:deploy",
+        "viewId": "V123",
+        "userId": "U123",
+        "teamId": "T9",
+        "rootViewId": "VROOT",
+        "previousViewId": "VPREV",
+        "externalId": "deploy-form",
+        "viewHash": "[redacted]",
+        "isStackedView": True,
+        "privateMetadata": "[redacted]",
+        "routedChannelId": "C1",
+        "routedChannelType": "channel",
+        "inputs": [
+            {
+                "blockId": "environment_block",
+                "actionId": "environment",
+                "actionType": "static_select",
+                "selectedValues": ["prod"],
+                "selectedLabels": ["Production"],
+            },
+            {
+                "blockId": "notes_block",
+                "actionId": "notes",
+                "actionType": "plain_text_input",
+                "inputKind": "text",
+                "value": "ship it",
+                "inputValue": "ship it",
+            },
+        ],
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == "slack-modal-session"
+    assert wake_requests[0]["reason"] == result["contextKey"]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["text"] == result["text"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_modal_when_expected_user_mismatches(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_interaction(
+        {
+            "type": "view_submission",
+            "user": {"id": "U_DENIED"},
+            "view": {
+                "id": "V123",
+                "callback_id": "openclaw:deploy",
+                "private_metadata": json.dumps({"userId": "U_ALLOWED"}),
+            },
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "interactionType": "view_submission",
+        "skipped": True,
+        "reason": "slack_interaction_sender_unauthorized",
+    }
+    assert await database.list_gateway_wake_requests() == []
+    assert await database.list_events() == []
+
+
+def test_slack_interactions_route_dispatches_view_closed_form_payload(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    payload = {
+        "type": "view_closed",
+        "user": {"id": "U123"},
+        "view": {
+            "id": "V999",
+            "callback_id": "openclaw:compose",
+            "private_metadata": json.dumps(
+                {"sessionKey": "slack-modal-session", "userId": "U123"}
+            ),
+        },
+        "is_cleared": True,
+    }
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/interactions?accountId=workspace",
+            data={"payload": json.dumps(payload)},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["interactionType"] == "view_closed"
+    assert body["actionId"] == "view:openclaw:compose"
+    assert (
+        body["contextKey"]
+        == "slack:interaction:view-closed:openclaw:compose:V999:U123"
+    )
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_session() -> None:
     conversation_id = "19:ops-thread@thread.tacv2"
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-adaptive-card-inbound"

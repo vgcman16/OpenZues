@@ -1463,6 +1463,226 @@ def _slack_inbound_string_list(value: object) -> list[str]:
     return entries
 
 
+def _slack_interaction_unique_strings(values: list[object]) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _slack_inbound_optional_string(value)
+        if normalized is None:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        unique.append(normalized)
+    return unique
+
+
+def _slack_interaction_option_values(value: object) -> list[object]:
+    if not isinstance(value, list):
+        return []
+    values: list[object] = []
+    for item in value:
+        option = _slack_inbound_mapping(item)
+        option_value = _slack_inbound_optional_string(option.get("value"))
+        if option_value is not None:
+            values.append(option_value)
+    return values
+
+
+def _slack_interaction_option_labels(value: object) -> list[object]:
+    if not isinstance(value, list):
+        return []
+    labels: list[object] = []
+    for item in value:
+        option = _slack_inbound_mapping(item)
+        text = _slack_inbound_mapping(option.get("text"))
+        label = _slack_inbound_optional_string(text.get("text"))
+        if label is not None:
+            labels.append(label)
+    return labels
+
+
+def _slack_summarize_interaction_action(action: Mapping[str, Any]) -> dict[str, object]:
+    action_type = _slack_inbound_optional_string(action.get("type"))
+    selected_option = _slack_inbound_mapping(action.get("selected_option"))
+    selected_option_text = _slack_inbound_mapping(selected_option.get("text"))
+    selected_users = _slack_interaction_unique_strings(
+        [
+            action.get("selected_user"),
+            *_slack_inbound_string_list(action.get("selected_users")),
+        ]
+    )
+    selected_channels = _slack_interaction_unique_strings(
+        [
+            action.get("selected_channel"),
+            *_slack_inbound_string_list(action.get("selected_channels")),
+        ]
+    )
+    selected_conversations = _slack_interaction_unique_strings(
+        [
+            action.get("selected_conversation"),
+            *_slack_inbound_string_list(action.get("selected_conversations")),
+        ]
+    )
+    selected_values = _slack_interaction_unique_strings(
+        [
+            selected_option.get("value"),
+            *_slack_interaction_option_values(action.get("selected_options")),
+            *selected_users,
+            *selected_channels,
+            *selected_conversations,
+        ]
+    )
+    selected_labels = _slack_interaction_unique_strings(
+        [
+            selected_option_text.get("text"),
+            *_slack_interaction_option_labels(action.get("selected_options")),
+        ]
+    )
+    value = _slack_inbound_optional_string(action.get("value"))
+    summary: dict[str, object] = {}
+    if action_type is not None:
+        summary["actionType"] = action_type
+    if value is not None:
+        if action_type == "number_input":
+            try:
+                parsed_number = float(value)
+            except ValueError:
+                parsed_number = math.nan
+            if math.isfinite(parsed_number):
+                summary["inputKind"] = "number"
+                summary["inputNumber"] = parsed_number
+        elif action_type == "email_text_input" and "@" in value:
+            summary["inputKind"] = "email"
+            summary["inputEmail"] = value
+        elif action_type == "url_text_input":
+            parsed = urlparse(value)
+            if parsed.scheme and parsed.netloc:
+                summary["inputKind"] = "url"
+                summary["inputUrl"] = value
+        elif action_type == "rich_text_input":
+            summary["inputKind"] = "rich_text"
+        else:
+            summary["inputKind"] = "text"
+        summary["value"] = value
+        summary["inputValue"] = value
+    if selected_values:
+        summary["selectedValues"] = selected_values
+    if selected_users:
+        summary["selectedUsers"] = selected_users
+    if selected_channels:
+        summary["selectedChannels"] = selected_channels
+    if selected_conversations:
+        summary["selectedConversations"] = selected_conversations
+    if selected_labels:
+        summary["selectedLabels"] = selected_labels
+    selected_date = _slack_inbound_optional_string(action.get("selected_date"))
+    selected_time = _slack_inbound_optional_string(action.get("selected_time"))
+    selected_date_time = action.get("selected_date_time")
+    if selected_date is not None:
+        summary["selectedDate"] = selected_date
+    if selected_time is not None:
+        summary["selectedTime"] = selected_time
+    if isinstance(selected_date_time, (int, float)) and not isinstance(
+        selected_date_time, bool
+    ):
+        summary["selectedDateTime"] = selected_date_time
+    workflow = _slack_inbound_mapping(action.get("workflow"))
+    workflow_trigger_url = _slack_inbound_optional_string(workflow.get("trigger_url"))
+    workflow_id = _slack_inbound_optional_string(workflow.get("workflow_id"))
+    if workflow_trigger_url is not None:
+        summary["workflowTriggerUrl"] = workflow_trigger_url
+    if workflow_id is not None:
+        summary["workflowId"] = workflow_id
+    return summary
+
+
+def _slack_modal_private_metadata(raw: object) -> Mapping[str, str]:
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, Mapping):
+        return {}
+    metadata: dict[str, str] = {}
+    for key in ("sessionKey", "channelId", "channelType", "userId"):
+        value = _slack_inbound_optional_string(parsed.get(key))
+        if value is not None:
+            metadata[key] = value
+    return metadata
+
+
+def _slack_modal_input_summaries(values: object) -> list[dict[str, object]]:
+    if not isinstance(values, Mapping):
+        return []
+    inputs: list[dict[str, object]] = []
+    for block_id, block_value in values.items():
+        block = _slack_inbound_mapping(block_value)
+        if not block:
+            continue
+        for action_id, raw_action in block.items():
+            action = _slack_inbound_mapping(raw_action)
+            if not action:
+                continue
+            entry: dict[str, object] = {
+                "blockId": str(block_id),
+                "actionId": str(action_id),
+            }
+            entry.update(_slack_summarize_interaction_action(action))
+            inputs.append(entry)
+    return inputs
+
+
+_SLACK_INTERACTION_REDACTED_KEYS = {
+    "triggerId",
+    "responseUrl",
+    "workflowTriggerUrl",
+    "privateMetadata",
+    "viewHash",
+}
+
+
+def _slack_sanitize_interaction_payload_value(
+    value: object,
+    *,
+    key: str | None = None,
+) -> object | None:
+    if key in _SLACK_INTERACTION_REDACTED_KEYS:
+        if _slack_inbound_optional_string(value) is None:
+            return None
+        return "[redacted]"
+    if isinstance(value, Mapping):
+        output: dict[str, object] = {}
+        for entry_key, entry_value in value.items():
+            sanitized = _slack_sanitize_interaction_payload_value(
+                entry_value,
+                key=str(entry_key),
+            )
+            if sanitized is None or sanitized == "" or sanitized == []:
+                continue
+            output[str(entry_key)] = sanitized
+        return output
+    if isinstance(value, list):
+        entries = [
+            sanitized
+            for item in value
+            if (sanitized := _slack_sanitize_interaction_payload_value(item))
+            is not None
+        ]
+        return entries
+    return value
+
+
+def _slack_sanitize_interaction_payload(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    sanitized = _slack_sanitize_interaction_payload_value(payload)
+    return cast(dict[str, object], sanitized if isinstance(sanitized, dict) else {})
+
+
 def _slack_inbound_event_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     event = payload.get("event")
     if isinstance(event, Mapping):
@@ -16411,6 +16631,12 @@ class OpsMeshService:
         account_id: str | None = None,
     ) -> dict[str, object]:
         interaction_type = _slack_inbound_optional_string(payload.get("type"))
+        if interaction_type in {"view_submission", "view_closed"}:
+            return await self._handle_slack_modal_interaction(
+                payload,
+                interaction_type=interaction_type,
+                account_id=account_id,
+            )
         if interaction_type != "block_actions":
             return {
                 "ok": False,
@@ -16538,6 +16764,197 @@ class OpsMeshService:
             "conversationTarget": conversation_target.model_dump(mode="json"),
             "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
         }
+
+    async def _handle_slack_modal_interaction(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        interaction_type: str,
+        account_id: str | None,
+    ) -> dict[str, object]:
+        user = _slack_inbound_mapping(payload.get("user"))
+        team = _slack_inbound_mapping(payload.get("team"))
+        view = _slack_inbound_mapping(payload.get("view"))
+        sender_id = _slack_inbound_optional_string(user.get("id"))
+        callback_id = _slack_inbound_optional_string(view.get("callback_id")) or "unknown"
+        view_id = _slack_inbound_optional_string(view.get("id"))
+        if not callback_id.startswith("openclaw:"):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_unsupported_callback",
+            }
+        if sender_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_missing_user",
+            }
+        private_metadata_raw = _slack_inbound_optional_string(
+            view.get("private_metadata")
+        )
+        metadata = _slack_modal_private_metadata(private_metadata_raw)
+        expected_user_id = metadata.get("userId")
+        if expected_user_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_missing_expected_user",
+            }
+        channel_id = metadata.get("channelId")
+        channel_type = (
+            metadata.get("channelType")
+            if metadata.get("channelType") in {"im", "mpim", "channel", "group"}
+            else None
+        )
+        if channel_id is not None and channel_type is None:
+            channel_type = _slack_infer_channel_type(channel_id)
+        if sender_id != expected_user_id:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_sender_unauthorized",
+            }
+        if channel_id is not None and channel_type is not None:
+            channel_config = self._slack_channel_config(account_id=account_id)
+            if not _slack_reaction_sender_allowed(
+                channel_config=channel_config,
+                channel_id=channel_id,
+                channel_type=channel_type,
+                sender_id=sender_id,
+            ):
+                return {
+                    "ok": False,
+                    "channel": "slack",
+                    "interactionType": interaction_type,
+                    "skipped": True,
+                    "reason": "slack_interaction_sender_unauthorized",
+                }
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        conversation_target: ConversationTargetView | None = None
+        if channel_id is not None:
+            if channel_type == "im":
+                peer_kind: ConversationTargetPeerKind = "direct"
+                peer_id = sender_id
+            elif channel_type == "mpim":
+                peer_kind = "group"
+                peer_id = channel_id
+            else:
+                peer_kind = "channel"
+                peer_id = channel_id
+            conversation_target = ConversationTargetView(
+                channel="slack",
+                account_id=normalized_account_id,
+                peer_kind=peer_kind,
+                peer_id=peer_id,
+            )
+        session_key = metadata.get("sessionKey")
+        if session_key is None and conversation_target is not None:
+            session_key = build_launch_session_key(
+                mode="workspace_affinity",
+                preferred_instance_id=None,
+                task_id=None,
+                project_id=None,
+                operator_id=None,
+                conversation_target=conversation_target,
+            )
+        if session_key is None:
+            conversation_target = ConversationTargetView(
+                channel="slack",
+                account_id=normalized_account_id,
+                peer_kind="direct",
+                peer_id=sender_id,
+            )
+            session_key = build_launch_session_key(
+                mode="workspace_affinity",
+                preferred_instance_id=None,
+                task_id=None,
+                project_id=None,
+                operator_id=None,
+                conversation_target=conversation_target,
+            )
+        state = _slack_inbound_mapping(view.get("state"))
+        event_payload: dict[str, object] = {
+            "interactionType": interaction_type,
+            "actionId": f"view:{callback_id}",
+            "callbackId": callback_id,
+        }
+        if view_id is not None:
+            event_payload["viewId"] = view_id
+        event_payload["userId"] = sender_id
+        team_id = _slack_inbound_optional_string(team.get("id"))
+        if team_id is not None:
+            event_payload["teamId"] = team_id
+        root_view_id = _slack_inbound_optional_string(view.get("root_view_id"))
+        previous_view_id = _slack_inbound_optional_string(view.get("previous_view_id"))
+        external_id = _slack_inbound_optional_string(view.get("external_id"))
+        view_hash = _slack_inbound_optional_string(view.get("hash"))
+        if root_view_id is not None:
+            event_payload["rootViewId"] = root_view_id
+        if previous_view_id is not None:
+            event_payload["previousViewId"] = previous_view_id
+        if external_id is not None:
+            event_payload["externalId"] = external_id
+        if view_hash is not None:
+            event_payload["viewHash"] = view_hash
+        event_payload["isStackedView"] = previous_view_id is not None
+        if private_metadata_raw is not None:
+            event_payload["privateMetadata"] = private_metadata_raw
+        if channel_id is not None:
+            event_payload["routedChannelId"] = channel_id
+        if channel_type is not None:
+            event_payload["routedChannelType"] = channel_type
+        inputs = _slack_modal_input_summaries(state.get("values"))
+        if inputs:
+            event_payload["inputs"] = inputs
+        if interaction_type == "view_closed":
+            event_payload["isCleared"] = payload.get("is_cleared") is True
+        sanitized_event_payload = _slack_sanitize_interaction_payload(event_payload)
+        text = (
+            "Slack interaction: "
+            f"{json.dumps(sanitized_event_payload, separators=(',', ':'))}"
+        )
+        context_prefix = (
+            "slack:interaction:view-closed"
+            if interaction_type == "view_closed"
+            else "slack:interaction:view"
+        )
+        context_key = ":".join(
+            part
+            for part in [context_prefix, callback_id, view_id, sender_id]
+            if part
+        )
+        if self.wake_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack interaction system-event wake is unavailable."
+            )
+        await self.wake_service.wake(
+            mode="next-heartbeat",
+            text=text,
+            reason=context_key,
+            session_key=session_key,
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "slack",
+            "interactionType": interaction_type,
+            "actionId": f"view:{callback_id}",
+            "sessionKey": session_key,
+            "text": text,
+            "contextKey": context_key,
+            "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+        if conversation_target is not None:
+            result["conversationTarget"] = conversation_target.model_dump(mode="json")
+        return result
 
     async def handle_slack_system_event(
         self,
