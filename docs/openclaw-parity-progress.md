@@ -21931,6 +21931,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\app.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
   `git diff --check`. Source/test checkpointed in `9d07244d`.
+- Slack Events API channel lifecycle callbacks now match the OpenClaw monitor
+  system-event path for `channel_created` and `channel_rename`: route-backed
+  payloads unwrap `event_callback`, enforce native Slack channel allow/disable
+  config, derive a channel/account session key, and enqueue a next-heartbeat
+  `system-event` wake with the OpenClaw-style
+  `slack:channel:<verb>:<channel>` context key. This closes
+  `OZ-PROV-001EA`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.4%.
+- Verified the Slack channel lifecycle system-event seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_channel_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_channel_event_when_disabled tests\test_ops_mesh.py::test_slack_events_route_dispatches_channel_event_callbacks -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`11 passed, 412 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `7474eb85`.
 
 ## References
 

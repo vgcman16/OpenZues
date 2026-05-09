@@ -187,6 +187,20 @@ closes `OZ-PROV-001DZ`; provider-native inbound/outbound breadth moves to
 ~99.3%. Continue provider-specific media/reply edges, companion breadth, or
 the next package startup/update edge.
 
+Current queue-head adjustment: Slack Events API channel lifecycle callbacks now
+match the OpenClaw monitor path in
+`extensions/slack/src/monitor/events/channels.ts`: `channel_created` and
+`channel_rename` unwrap Slack `event_callback`, enforce native Slack
+channel allow/disable config, derive a channel/account session key, and enqueue
+next-heartbeat `system-event` wakes with
+`slack:channel:<verb>:<channel>` context keys. Verified on 2026-05-09 with
+focused red/green Slack channel service/route proofs, adjacent Slack
+provider/inbound proof, `ruff check`, `mypy`, and focused
+`git diff --check`; source/test checkpointed in `7474eb85`. This closes
+`OZ-PROV-001EA`; provider-native inbound/outbound breadth moves to ~99.4%.
+Continue provider-specific media/reply edges, companion breadth, or the next
+package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11379,3 +11393,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound/outbound breadth moves to ~99.3%. Continue provider-specific
   media/reply edges, companion breadth, or the next package startup/update
   edge.
+- Current queue-head adjustment: Slack `channel_created` and `channel_rename`
+  event callbacks now route through the native Slack Events endpoint into
+  session-keyed next-heartbeat `system-event` wakes with OpenClaw-style
+  `slack:channel:<verb>:<channel>` context keys and config-backed channel
+  allow/disable gating. Source/test checkpointed in `7474eb85`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth moves to ~99.4%. Continue provider-specific media/reply edges,
+  companion breadth, or the next package startup/update edge.

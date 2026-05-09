@@ -8041,6 +8041,28 @@ may lag behind this tracker.
     tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
     src\openzues\app.py`, and focused `git diff --check`.
 
+- [x] Slack channel event system wakes.
+  - Source: `openclaw-main/extensions/slack/src/monitor/events.ts`,
+    `openclaw-main/extensions/slack/src/monitor/events/channels.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: native Slack Events API payloads for `channel_created` and
+    `channel_rename` unwrap Slack `event_callback`, enforce Slack
+    channel allow/disable config, derive a channel/account session key, and
+    enqueue a next-heartbeat `system-event` wake with an OpenClaw-style
+    `slack:channel:<verb>:<channel>` context key.
+  - Evidence required: focused Slack channel service/route proofs, adjacent
+    provider/inbound proof, ruff, mypy
+  - Status: checkpointed in `7474eb85`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_channel_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_channel_event_when_disabled tests\test_ops_mesh.py::test_slack_events_route_dispatches_channel_event_callbacks -q`
+    (`3 failed` before implementation, then `3 passed`), adjacent
+    provider/inbound proof (`11 passed, 412 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py src\openzues\app.py
+    tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+    src\openzues\app.py`, and focused `git diff --check`.
+
 - [x] Doctor preflight git update offer.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,
     `openclaw-main/src/commands/doctor-update.ts`
