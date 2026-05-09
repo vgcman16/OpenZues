@@ -21,8 +21,8 @@ may lag behind this tracker.
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.94% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.997% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.997% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.998% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.998% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
@@ -63,6 +63,10 @@ may lag behind this tracker.
   `completion --write-state`, bounded 30s post-doctor dispatch, plugin-command
   skip env, and non-fatal manual refresh warnings.
   - Status: checkpointed in `6df2f067`
+
+- [x] All-shell native completion write-state cache generation for
+  `openzues.bash`, `openzues.fish`, `openzues.ps1`, and `openzues.zsh`.
+  - Status: checkpointed in `9afdb51c`
 
 - [x] Gateway-status slash command diagnostics for `/gateway-status` and
   `/gwstatus`, keeping gateway diagnostics separate from session `/status` in

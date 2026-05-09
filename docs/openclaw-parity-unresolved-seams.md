@@ -13,11 +13,12 @@ Current percentage rollup:
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
   monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.997% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.998% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
-  post-update completion-cache refresh, secrets reload CLI surface, QR remote
-  config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef
-  diagnostics/unresolved-auth preflight, plugin imported-state projection,
+  post-update completion-cache refresh, all-shell completion write-state,
+  secrets reload CLI surface, QR remote config lookup/auth/Tailscale
+  MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
+  preflight, plugin imported-state projection,
   errored runtime-imported plugin projection, facade-loaded plugin imported-state
   preservation, diagnostics-loaded plugin imported-state counts, bundled plugin
   reported-version normalization, bundled plugin env discovery/default-disable,
@@ -11743,3 +11744,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor plus CLI/operator parity move to ~99.997%. Continue
   remaining provider-specific media/reply edges, companion breadth, real
   installed plugin activation, or the next packaging edge.
+- Current queue-head adjustment: native `completion --write-state` now writes
+  the OpenClaw all-shell cache set (`bash`, `fish`, `ps1`, `zsh`) using Typer's
+  installed-command completion scripts instead of only caching the detected
+  host shell. Source/test checkpointed in `9afdb51c`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to
+  ~99.998%. Continue remaining provider-specific media/reply edges, companion
+  breadth, real installed plugin activation, or the next packaging edge.

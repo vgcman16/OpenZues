@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.94% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.997% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.997% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.998% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.998% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.1% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -346,8 +346,32 @@ completion cache state after successful post-update doctor, source/test
 checkpointed in `6df2f067`; runtime/CLI/doctor and CLI/operator parity move
 to ~99.997%. Continue provider-specific media/reply edges, companion breadth,
 real installed plugin activation, or the next packaging edge.
+Packaging addendum: `OZ-PKG-001CP` native `completion --write-state` now writes
+all shell cache files (`bash`, `fish`, `ps1`, `zsh`), source/test checkpointed
+in `9afdb51c`; runtime/CLI/doctor and CLI/operator parity move to ~99.998%.
+Continue provider-specific media/reply edges, companion breadth, real installed
+plugin activation, or the next packaging edge.
 
 ## Active Slice Detail
+
+- [x] `OZ-PKG-001CP` All-shell completion write-state cache
+  - Source: `openclaw-main/src/cli/completion-cli.ts`,
+    `openclaw-main/src/cli/completion-cli.write-state.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues completion --write-state` writes the full native cache
+    set for `bash`, `fish`, `powershell`/`ps1`, and `zsh` under the OpenZues
+    completions state directory with no stdout.
+  - Evidence required: focused CLI write-state proof, adjacent shell-completion
+    CLI tests, ruff, mypy
+  - Status: checkpointed in `9afdb51c`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_cli.py::test_completion_write_state_generates_native_cache -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent
+    shell-completion CLI proof (`4 passed`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
 
 - [x] `OZ-PKG-001CO` Package post-update completion cache refresh
   - Source: `openclaw-main/src/cli/update-cli/shared.ts`,
