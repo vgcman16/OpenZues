@@ -8110,6 +8110,28 @@ may lag behind this tracker.
     src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
     `git diff --check`.
 
+- [x] Slack App Home publish.
+  - Source: `openclaw-main/extensions/slack/src/monitor/events/home.ts`,
+    `openclaw-main/extensions/slack/src/monitor/events/home.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: native Slack Events API `app_home_opened` payloads skip the
+    Messages tab, resolve a native Slack account route and token, call
+    `views.publish` with the OpenZues Home view, and return a precise
+    unavailable response when route credentials are absent.
+  - Evidence required: focused Slack App Home service/route proofs, adjacent
+    provider/inbound proof, ruff, mypy
+  - Status: checkpointed in `58bc6b72`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_publishes_slack_app_home_view tests\test_ops_mesh.py::test_ops_mesh_service_skips_slack_app_home_messages_tab tests\test_ops_mesh.py::test_slack_events_route_dispatches_app_home_callbacks -q`
+    (`3 failed` before implementation, then `3 passed`), adjacent
+    provider/inbound proof (`19 passed, 413 deselected`; existing aiosqlite
+    event-loop-close warnings), `ruff check src\openzues\services\ops_mesh.py
+    src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+    `git diff --check`.
+
 - [x] Doctor preflight git update offer.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,
     `openclaw-main/src/commands/doctor-update.ts`

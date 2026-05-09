@@ -21986,6 +21986,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
   src\openzues\app.py`, and focused `git diff --check`. Source/test
   checkpointed in `8c4e74ef`.
+- Slack App Home open callbacks now match the OpenClaw monitor publish path:
+  `app_home_opened` skips the Messages tab, resolves a native Slack account
+  route and token, posts `views.publish` with the OpenZues Home view, and
+  returns an honest unavailable response when route credentials are absent.
+  This closes `OZ-PROV-001ED`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.7%.
+- Verified the Slack App Home publish seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_publishes_slack_app_home_view tests\test_ops_mesh.py::test_ops_mesh_service_skips_slack_app_home_messages_tab tests\test_ops_mesh.py::test_slack_events_route_dispatches_app_home_callbacks -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`19 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `58bc6b72`.
 
 ## References
 

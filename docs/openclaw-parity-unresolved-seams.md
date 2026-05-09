@@ -228,6 +228,18 @@ service/route proofs, adjacent Slack provider/inbound proof, `ruff check`,
 breadth moves to ~99.6%. Continue provider-specific media/reply edges,
 companion breadth, or the next package startup/update edge.
 
+Current queue-head adjustment: Slack App Home callbacks now match the
+OpenClaw monitor path in `extensions/slack/src/monitor/events/home.ts`:
+`app_home_opened` skips the Messages tab, resolves a native Slack account route
+and token, posts `views.publish` with the OpenZues Home view, and returns an
+honest unavailable response when route credentials are absent. Verified on
+2026-05-09 with focused red/green Slack App Home service/route proofs,
+adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and focused
+`git diff --check`; source/test checkpointed in `58bc6b72`. This closes
+`OZ-PROV-001ED`; provider-native inbound/outbound breadth moves to ~99.7%.
+Continue provider-specific media/reply edges, companion breadth, or the next
+package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11446,3 +11458,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and provider-native inbound/outbound breadth moves to ~99.6%. Continue
   provider-specific media/reply edges, companion breadth, or the next package
   startup/update edge.
+- Current queue-head adjustment: Slack `app_home_opened` callbacks now route
+  through the native Slack Events endpoint, skip the Messages tab, and publish
+  an OpenZues Home view through route-backed Slack `views.publish` when a
+  native route/token is configured. Source/test checkpointed in `58bc6b72`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.7%. Continue provider-specific
+  media/reply edges, companion breadth, or the next package startup/update
+  edge.
