@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.94% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.998% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.998% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.999% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.1% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -351,8 +351,33 @@ all shell cache files (`bash`, `fish`, `ps1`, `zsh`), source/test checkpointed
 in `9afdb51c`; runtime/CLI/doctor and CLI/operator parity move to ~99.998%.
 Continue provider-specific media/reply edges, companion breadth, real installed
 plugin activation, or the next packaging edge.
+Plugin runtime addendum: `OZ-PLUGIN-00379` source plugin SDK subpath aliases
+now resolve through the real native activation loader, source/test
+checkpointed in `5a2e8804`; runtime/CLI/doctor and CLI/operator parity move
+to ~99.999%. Continue provider-specific media/reply edges, companion breadth,
+deeper installed plugin activation, or packaging edges.
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-00379` Source SDK alias runtime activation
+  - Source: `openclaw-main/src/plugins/sdk-alias.test.ts`,
+    `openclaw-main/src/plugins/loader.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: source-installed runtime plugins importing
+    `@openclaw/plugin-sdk/<subpath>` resolve to plugin-local `plugin-sdk`
+    shims during the real native activation adapter import path and register
+    manifest-declared executor tools without a fake adapter.
+  - Evidence required: focused source-alias activation proof, adjacent plugin
+    activation/import tests, ruff, mypy
+  - Status: checkpointed in `5a2e8804`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_cli.py::test_plugins_doctor_json_imports_source_sdk_alias_runtime_entry_without_fake_adapter -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent plugin
+    activation/import proof (`5 passed`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
 
 - [x] `OZ-PKG-001CP` All-shell completion write-state cache
   - Source: `openclaw-main/src/cli/completion-cli.ts`,

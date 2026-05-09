@@ -13,7 +13,7 @@ Current percentage rollup:
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
   monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.998% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.999% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
@@ -64,6 +64,7 @@ Current percentage rollup:
   configured-channel workspace owner activation gate,
   manifest toolMetadata availability gate,
   installed plugin runtime activation adapter,
+  installed plugin source SDK subpath alias runtime activation,
   installed plugin disabled activation gate,
   active-registry executor projection, runtime activation doctor posture, and
   speech facade helper,
@@ -11751,3 +11752,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to
   ~99.998%. Continue remaining provider-specific media/reply edges, companion
   breadth, real installed plugin activation, or the next packaging edge.
+- Current queue-head adjustment: the native installed-plugin runtime loader now
+  resolves source `pluginSdkAliasMap` subpath shims across Node's synchronous
+  module-load boundary, so source runtime entries can import
+  `@openclaw/plugin-sdk/outbound-send-deps` and register real executor tools
+  without a fake activation adapter. Source/test checkpointed in `5a2e8804`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor plus
+  CLI/operator parity move to ~99.999%. Continue remaining provider-specific
+  media/reply edges, companion breadth, deeper installed plugin activation, or
+  packaging edges.
