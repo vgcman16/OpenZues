@@ -27466,6 +27466,151 @@ def test_slack_slash_route_accepts_valid_env_secretref_signature(
     assert payload["text"] == "env signed route"
 
 
+def test_slack_slash_route_rejects_invalid_file_secretref_signature(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    secret_file = tmp_path / "slack-signing-secret.txt"
+    secret_file.write_text("file-slack-signing-secret\n", encoding="utf-8")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "signingSecret": {
+                        "source": "file",
+                        "provider": "default",
+                        "id": str(secret_file),
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    body = urlencode(
+        {
+            "command": "/openzues",
+            "text": "signed route",
+            "user_id": "U123",
+            "channel_id": "D123",
+        }
+    ).encode("utf-8")
+
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            content=body,
+            headers={
+                "content-type": "application/x-www-form-urlencoded",
+                "x-slack-request-timestamp": str(int(datetime.now(UTC).timestamp())),
+                "x-slack-signature": "v0=invalid",
+            },
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Invalid Slack signature"}
+
+
+def test_slack_slash_route_accepts_valid_file_secretref_signature(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    signing_secret = "file-slack-signing-secret"
+    secret_file = tmp_path / "slack-signing-secret.txt"
+    secret_file.write_text(f"{signing_secret}\n", encoding="utf-8")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "signingSecret": {
+                        "source": "file",
+                        "provider": "default",
+                        "id": str(secret_file),
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    body = urlencode(
+        {
+            "command": "/openzues",
+            "text": "file signed route",
+            "user_id": "U123",
+            "channel_id": "D123",
+        }
+    ).encode("utf-8")
+    timestamp = str(int(datetime.now(UTC).timestamp()))
+    signature = hmac.new(
+        signing_secret.encode("utf-8"),
+        b"v0:" + timestamp.encode("utf-8") + b":" + body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            content=body,
+            headers={
+                "content-type": "application/x-www-form-urlencoded",
+                "x-slack-request-timestamp": timestamp,
+                "x-slack-signature": f"v0={signature}",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["text"] == "file signed route"
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_session() -> None:
     conversation_id = "19:ops-thread@thread.tacv2"

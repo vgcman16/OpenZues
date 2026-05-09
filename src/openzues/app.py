@@ -327,9 +327,16 @@ def _slack_signing_secret_from_snapshot(
             return candidate.strip()
         if isinstance(candidate, Mapping):
             source = str(candidate.get("source") or "").strip().lower()
-            env_id = str(candidate.get("id") or "").strip()
-            if source == "env" and env_id:
-                return os.environ.get(env_id, "").strip()
+            secret_id = str(candidate.get("id") or "").strip()
+            if source == "env" and secret_id:
+                return os.environ.get(secret_id, "").strip()
+            if source == "file" and secret_id:
+                try:
+                    return Path(os.path.expandvars(secret_id)).expanduser().read_text(
+                        encoding="utf-8"
+                    ).strip()
+                except OSError:
+                    return ""
     return None
 
 
