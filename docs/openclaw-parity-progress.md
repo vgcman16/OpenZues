@@ -22106,6 +22106,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\app.py tests\test_ops_mesh.py`, `mypy
   src\openzues\app.py`, and focused `git diff --check`. Source/test
   checkpointed in `47c1a605`.
+- Slack native HTTP signature verification now resolves file-backed SecretRefs
+  for `channels.slack.signingSecret` and account `signingSecret`, trimming the
+  file content and failing closed when the configured file cannot be read. This
+  closes `OZ-PROV-001EK`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%.
+- Verified the Slack signing file SecretRef seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_rejects_invalid_file_secretref_signature tests\test_ops_mesh.py::test_slack_slash_route_accepts_valid_file_secretref_signature -q`
+  (`1 failed, 1 passed` before implementation, then `2 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "file_secretref_signature or env_secretref_signature or configured_signature or slack_slash or slack_view_submission or slack_modal or slack_interactions_route or slack_block_action or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`37 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `adac6624`.
 
 ## References
 

@@ -319,6 +319,17 @@ provider-native inbound/outbound breadth remains ~99.9%. Continue file/exec
 SecretRef signing-secret resolution, provider-specific media/reply edges,
 companion breadth, or the next package startup/update edge.
 
+Current queue-head adjustment: Slack native HTTP signing-secret resolution now
+accepts file-backed SecretRefs for `channels.slack.signingSecret` and account
+`signingSecret`, trimming file content and failing closed when the configured
+file cannot be read. Verified on 2026-05-09 with focused red/green Slack
+signing file SecretRef route proofs, adjacent Slack provider/inbound proof,
+`ruff check`, `mypy`, and focused `git diff --check`; source/test checkpointed
+in `adac6624`. This closes `OZ-PROV-001EK`; provider-native inbound/outbound
+breadth remains ~99.9%. Continue exec SecretRef signing-secret resolution,
+provider-specific media/reply edges, companion breadth, or the next package
+startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11592,5 +11603,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and fails closed when the env ref is unresolved. Source/test checkpointed in
   `47c1a605`; repo-wide parity remains estimated at ~99.9%, and
   provider-native inbound/outbound breadth remains ~99.9%. Continue file/exec
+  SecretRef signing-secret resolution, provider-specific media/reply edges,
+  companion breadth, or the next package startup/update edge.
+- Current queue-head adjustment: Slack native HTTP signing-secret resolution
+  now accepts file-backed SecretRefs for top-level and account signing secrets,
+  and fails closed when the configured file cannot be read. Source/test
+  checkpointed in `adac6624`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth remains ~99.9%. Continue exec
   SecretRef signing-secret resolution, provider-specific media/reply edges,
   companion breadth, or the next package startup/update edge.
