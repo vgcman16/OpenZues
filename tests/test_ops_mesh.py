@@ -26591,6 +26591,193 @@ def test_slack_events_route_dispatches_app_home_callbacks(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_slack_block_action_interaction_to_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_interaction(
+        {
+            "type": "block_actions",
+            "user": {"id": "U123"},
+            "team": {"id": "T9"},
+            "trigger_id": "123.trigger",
+            "response_url": "https://hooks.slack.test/response",
+            "channel": {"id": "C1"},
+            "container": {
+                "channel_id": "C1",
+                "message_ts": "100.200",
+                "thread_ts": "100.100",
+            },
+            "actions": [
+                {
+                    "type": "button",
+                    "action_id": "openclaw:verify",
+                    "block_id": "verify_block",
+                    "value": "approved",
+                }
+            ],
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C1",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert result["ok"] is True
+    assert result["channel"] == "slack"
+    assert result["interactionType"] == "block_actions"
+    assert result["actionId"] == "openclaw:verify"
+    assert result["sessionKey"] == expected_session_key
+    assert result["contextKey"] == "slack:interaction:C1:100.200:openclaw:verify"
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+    event_text = str(result["text"])
+    assert event_text.startswith("Slack interaction: ")
+    event_payload = json.loads(event_text.removeprefix("Slack interaction: "))
+    assert event_payload == {
+        "interactionType": "block_action",
+        "actionId": "openclaw:verify",
+        "blockId": "verify_block",
+        "actionType": "button",
+        "value": "approved",
+        "userId": "U123",
+        "teamId": "T9",
+        "triggerId": "[redacted]",
+        "responseUrl": "[redacted]",
+        "channelId": "C1",
+        "messageTs": "100.200",
+        "threadTs": "100.100",
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == expected_session_key
+    assert wake_requests[0]["reason"] == result["contextKey"]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["text"] == result["text"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_block_action_when_sender_denied(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "accounts": {
+                        "workspace": {
+                            "channels": {"C1": {"users": ["U_ALLOWED"]}},
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_interaction(
+        {
+            "type": "block_actions",
+            "user": {"id": "U_DENIED"},
+            "channel": {"id": "C1"},
+            "container": {"channel_id": "C1", "message_ts": "100.200"},
+            "actions": [{"type": "button", "action_id": "codex"}],
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "interactionType": "block_actions",
+        "skipped": True,
+        "reason": "slack_interaction_sender_unauthorized",
+    }
+    assert await database.list_gateway_wake_requests() == []
+    assert await database.list_events() == []
+
+
+def test_slack_interactions_route_dispatches_block_actions(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/interactions?accountId=workspace",
+            json={
+                "type": "block_actions",
+                "user": {"id": "U123"},
+                "channel": {"id": "C1"},
+                "container": {"channel_id": "C1", "message_ts": "100.200"},
+                "actions": [{"type": "button", "action_id": "codex"}],
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["interactionType"] == "block_actions"
+    assert payload["actionId"] == "codex"
+    assert payload["contextKey"] == "slack:interaction:C1:100.200:codex"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_session() -> None:
     conversation_id = "19:ops-thread@thread.tacv2"
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-adaptive-card-inbound"

@@ -18,6 +18,7 @@ from pathlib import Path
 from time import perf_counter
 from types import SimpleNamespace
 from typing import Any, Literal, cast
+from urllib.parse import parse_qsl
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -4528,6 +4529,35 @@ def create_app(
             or request.query_params.get("account_id")
         )
         result = await active_ops_mesh_service.handle_slack_system_event(
+            cast(Mapping[str, Any], payload),
+            account_id=account_id,
+        )
+        return JSONResponse(result)
+
+    @fastapi_app.post("/api/channels/slack/interactions")
+    async def handle_slack_interactions(request: Request) -> JSONResponse:
+        body = await request.body()
+        if len(body) > SLACK_EVENTS_MAX_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        content_type = request.headers.get("content-type", "")
+        try:
+            if "application/json" in content_type:
+                payload = json.loads(body.decode("utf-8")) if body else {}
+            else:
+                form = dict(parse_qsl(body.decode("utf-8"), keep_blank_values=True))
+                payload = json.loads(form.get("payload", "{}"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid Slack interaction body") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Slack interaction payload must be an object.",
+            )
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        result = await active_ops_mesh_service.handle_slack_interaction(
             cast(Mapping[str, Any], payload),
             account_id=account_id,
         )

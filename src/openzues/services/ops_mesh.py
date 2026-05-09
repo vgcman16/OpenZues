@@ -16404,6 +16404,141 @@ class OpsMeshService:
             },
         }
 
+    async def handle_slack_interaction(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        interaction_type = _slack_inbound_optional_string(payload.get("type"))
+        if interaction_type != "block_actions":
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_unsupported",
+            }
+        actions_value = payload.get("actions")
+        first_action = (
+            _slack_inbound_mapping(actions_value[0])
+            if isinstance(actions_value, list) and actions_value
+            else {}
+        )
+        user = _slack_inbound_mapping(payload.get("user"))
+        team = _slack_inbound_mapping(payload.get("team"))
+        channel = _slack_inbound_mapping(payload.get("channel"))
+        container = _slack_inbound_mapping(payload.get("container"))
+        sender_id = _slack_inbound_optional_string(user.get("id"))
+        channel_id = _slack_inbound_optional_string(
+            container.get("channel_id")
+        ) or _slack_inbound_optional_string(channel.get("id"))
+        action_id = _slack_inbound_optional_string(first_action.get("action_id"))
+        if sender_id is None or channel_id is None or action_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_missing_action",
+            }
+        channel_type = _slack_infer_channel_type(channel_id, payload.get("channel_type"))
+        channel_config = self._slack_channel_config(account_id=account_id)
+        if not _slack_reaction_sender_allowed(
+            channel_config=channel_config,
+            channel_id=channel_id,
+            channel_type=channel_type,
+            sender_id=sender_id,
+        ):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_sender_unauthorized",
+            }
+        if channel_type == "im":
+            peer_kind: ConversationTargetPeerKind = "direct"
+            peer_id = sender_id
+        elif channel_type == "mpim":
+            peer_kind = "group"
+            peer_id = channel_id
+        else:
+            peer_kind = "channel"
+            peer_id = channel_id
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        conversation_target = ConversationTargetView(
+            channel="slack",
+            account_id=normalized_account_id,
+            peer_kind=peer_kind,
+            peer_id=peer_id,
+        )
+        session_key = build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=conversation_target,
+        )
+        message_ts = _slack_inbound_optional_string(container.get("message_ts"))
+        thread_ts = _slack_inbound_optional_string(container.get("thread_ts"))
+        event_payload: dict[str, object] = {
+            "interactionType": "block_action",
+            "actionId": action_id,
+        }
+        block_id = _slack_inbound_optional_string(first_action.get("block_id"))
+        action_type = _slack_inbound_optional_string(first_action.get("type"))
+        value = _slack_inbound_optional_string(first_action.get("value"))
+        team_id = _slack_inbound_optional_string(team.get("id"))
+        trigger_id = _slack_inbound_optional_string(payload.get("trigger_id"))
+        response_url = _slack_inbound_optional_string(payload.get("response_url"))
+        if block_id is not None:
+            event_payload["blockId"] = block_id
+        if action_type is not None:
+            event_payload["actionType"] = action_type
+        if value is not None:
+            event_payload["value"] = value
+        event_payload["userId"] = sender_id
+        if team_id is not None:
+            event_payload["teamId"] = team_id
+        if trigger_id is not None:
+            event_payload["triggerId"] = "[redacted]"
+        if response_url is not None:
+            event_payload["responseUrl"] = "[redacted]"
+        event_payload["channelId"] = channel_id
+        if message_ts is not None:
+            event_payload["messageTs"] = message_ts
+        if thread_ts is not None:
+            event_payload["threadTs"] = thread_ts
+        text = f"Slack interaction: {json.dumps(event_payload, separators=(',', ':'))}"
+        context_key = ":".join(
+            part
+            for part in ["slack:interaction", channel_id, message_ts, action_id]
+            if part
+        )
+        if self.wake_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack interaction system-event wake is unavailable."
+            )
+        await self.wake_service.wake(
+            mode="next-heartbeat",
+            text=text,
+            reason=context_key,
+            session_key=session_key,
+        )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "interactionType": interaction_type,
+            "actionId": action_id,
+            "sessionKey": session_key,
+            "text": text,
+            "contextKey": context_key,
+            "conversationTarget": conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+
     async def handle_slack_system_event(
         self,
         payload: Mapping[str, Any],
