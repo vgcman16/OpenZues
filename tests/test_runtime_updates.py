@@ -96,6 +96,31 @@ def _post_update_doctor_args() -> list[str]:
     ]
 
 
+def _git_update_ui_build_args() -> list[str]:
+    return [sys.executable, "-m", "compileall", "-q", "src/openzues/web"]
+
+
+def _write_native_control_ui_assets(root: Path) -> None:
+    (root / "src" / "openzues").mkdir(parents=True, exist_ok=True)
+    (root / "src" / "openzues" / "cli.py").write_text("# cli\n", encoding="utf-8")
+    templates = root / "src" / "openzues" / "web" / "templates"
+    static = root / "src" / "openzues" / "web" / "static"
+    templates.mkdir(parents=True, exist_ok=True)
+    static.mkdir(parents=True, exist_ok=True)
+    (templates / "index.html").write_text("<html></html>\n", encoding="utf-8")
+    (static / "app.js").write_text("console.log('ok');\n", encoding="utf-8")
+    (static / "app.css").write_text("body {}\n", encoding="utf-8")
+
+
+def _remove_native_control_ui_assets(root: Path) -> None:
+    for relative in (
+        "src/openzues/web/templates/index.html",
+        "src/openzues/web/static/app.js",
+        "src/openzues/web/static/app.css",
+    ):
+        (root / relative).unlink(missing_ok=True)
+
+
 @pytest.mark.asyncio
 async def test_runtime_update_requests_restart_after_repo_head_changes(tmp_path) -> None:
     database = Database(tmp_path / "openzues.db")
@@ -1038,6 +1063,128 @@ async def test_runtime_update_run_update_ignores_control_ui_dist_dirty_files(
         tmp_path,
         1000,
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_repairs_control_ui_assets_after_post_update_doctor(
+    tmp_path,
+) -> None:
+    _write_native_control_ui_assets(tmp_path)
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+    revision_probe = RevisionProbe("rev-a", "rev-b")
+    ui_build_count = 0
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        nonlocal ui_build_count
+        command_calls.append((argv, cwd, timeout_ms))
+        if argv == ["git", "rev-parse", "@{upstream}"]:
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        if argv[:2] == ["git", "rev-list"]:
+            return {"stdout": "rev-b\nrev-a\n", "stderr": "", "exitCode": 0}
+        if argv == _git_update_ui_build_args():
+            ui_build_count += 1
+            _write_native_control_ui_assets(cwd)
+            return {"stdout": f"ui build {ui_build_count}\n", "stderr": "", "exitCode": 0}
+        if argv == _post_update_doctor_args():
+            _remove_native_control_ui_assets(cwd)
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("run_update should report restart posture, not exec immediately")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=revision_probe,
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "ok"
+    assert ui_build_count == 2
+    assert [step["name"] for step in result["steps"]][-4:] == [
+        "ui:build",
+        "openzues doctor entry",
+        "openzues doctor",
+        "ui:build (post-doctor repair)",
+    ]
+    assert all(
+        (tmp_path / relative).exists()
+        for relative in (
+            "src/openzues/web/templates/index.html",
+            "src/openzues/web/static/app.js",
+            "src/openzues/web/static/app.css",
+        )
+    )
+    assert command_calls[-3:] == [
+        (_git_update_ui_build_args(), tmp_path, 1000),
+        (_post_update_doctor_args(), tmp_path, 1000),
+        (_git_update_ui_build_args(), tmp_path, 1000),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_fails_when_control_ui_repair_still_missing(
+    tmp_path,
+) -> None:
+    _write_native_control_ui_assets(tmp_path)
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    revision_probe = RevisionProbe("rev-a", "rev-b")
+    ui_build_count = 0
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        nonlocal ui_build_count
+        del timeout_ms
+        if argv == ["git", "rev-parse", "@{upstream}"]:
+            return {"stdout": "rev-b\n", "stderr": "", "exitCode": 0}
+        if argv[:2] == ["git", "rev-list"]:
+            return {"stdout": "rev-b\nrev-a\n", "stderr": "", "exitCode": 0}
+        if argv == _git_update_ui_build_args():
+            ui_build_count += 1
+            if ui_build_count == 1:
+                _write_native_control_ui_assets(cwd)
+            return {"stdout": f"ui build {ui_build_count}\n", "stderr": "", "exitCode": 0}
+        if argv == _post_update_doctor_args():
+            _remove_native_control_ui_assets(cwd)
+            return {"stdout": "doctor ok\n", "stderr": "", "exitCode": 0}
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("run_update should report restart posture, not exec immediately")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=revision_probe,
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "error"
+    assert result["reason"] == "ui-assets-missing"
+    assert ui_build_count == 2
+    assert result["failedStep"]["name"] == "ui assets verify"
+    assert [step["name"] for step in result["steps"]][-1] == "ui assets verify"
 
 
 @pytest.mark.asyncio
