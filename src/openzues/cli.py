@@ -98405,14 +98405,24 @@ def _resolve_qr_auth_label(
     auth_mode = str(auth_config.get("mode") or "").strip().lower()
     has_token = _qr_config_text(auth_config.get("token")) is not None
     has_password = _qr_config_text(auth_config.get("password")) is not None
-    if auth_mode == "password" and has_password:
-        return "password"
-    if auth_mode == "token" and has_token:
-        return "token"
+    if auth_mode == "password":
+        if has_password:
+            return "password"
+        if remote:
+            raise ValueError(
+                "Gateway auth is set to password, but no password is configured."
+            )
+    if auth_mode == "token":
+        if has_token:
+            return "token"
+        if remote:
+            raise ValueError("Gateway auth is set to token, but no token is configured.")
     if has_token:
         return "token"
     if has_password:
         return "password"
+    if remote:
+        raise ValueError("Gateway auth is not configured (no token or password).")
     return "bootstrap-token"
 
 

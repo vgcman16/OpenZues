@@ -400,6 +400,54 @@ def test_qr_remote_json_resolves_remote_token_secretref_to_stderr(
     assert payload["urlSource"] == "gateway.remote.url"
 
 
+def test_qr_remote_rejects_unresolved_remote_secretref_before_token_issue(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("QR_REMOTE_TOKEN", raising=False)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {},
+                    "remote": {
+                        "url": "wss://remote.example.com:444",
+                        "token": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "QR_REMOTE_TOKEN",
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only", "--remote"])
+
+    assert result.exit_code == 1
+    assert "gateway.remote.token SecretRef is unresolved" in result.stderr
+    assert "Gateway auth is not configured (no token or password)." in result.stderr
+    assert result.stdout == ""
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_qr_json_output_matches_openclaw_setup_code_contract(
     tmp_path, monkeypatch
 ) -> None:
