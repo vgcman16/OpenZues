@@ -26132,18 +26132,23 @@ class OpsMeshService:
         normalized_template_message = _normalize_line_template_message_payload(
             template_message
         )
+        normalized_channel_data = dict(channel_data) if channel_data is not None else None
+        has_channel_data_payload = bool(normalized_channel_data)
+        normalized_message = "" if has_channel_data_payload and not message.strip() else message
         if (
             not message.strip()
             and not normalized_media_urls
             and normalized_location is None
             and normalized_flex_message is None
             and normalized_template_message is None
+            and not has_channel_data_payload
         ):
             raise ValueError(
-                "send requires text, media, location, flex message, or template message"
+                "send requires text, media, location, flex message, "
+                "template message, or channel data"
             )
         payload: dict[str, Any] = {
-            "message": message,
+            "message": normalized_message,
             "channel": conversation_target.channel,
             "to": str(to).strip(),
             "gatewayClientScopes": list(_normalize_gateway_client_scopes(gateway_client_scopes)),
@@ -26195,8 +26200,8 @@ class OpsMeshService:
             payload["silent"] = silent
         if force_document is not None:
             payload["forceDocument"] = force_document
-        if channel_data is not None:
-            payload["channelData"] = dict(channel_data)
+        if normalized_channel_data is not None:
+            payload["channelData"] = normalized_channel_data
         if account_id is not None:
             payload["accountId"] = account_id
         if agent_id is not None:
@@ -26242,7 +26247,7 @@ class OpsMeshService:
             event_type="gateway/send",
             payload=payload,
             message=_format_direct_channel_send_message(
-                message=message,
+                message=normalized_message,
                 media_urls=normalized_media_urls,
                 gif_playback=gif_playback if normalized_media_urls else None,
                 audio_as_voice=audio_as_voice if normalized_media_urls else None,

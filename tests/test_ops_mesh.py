@@ -11145,6 +11145,77 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_reply_poli
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_preserves_channel_data_only_payload(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-channel-data-only"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-channel-data-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="line",
+        to="user:U123",
+        message=" \n\t ",
+        account_id="bot",
+        channel_data={"mode": "flex"},
+        idempotency_key="idem-provider-channel-data-only",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="line",
+            account_id="bot",
+            peer_kind="direct",
+            peer_id="user:U123",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert provider_requests == [
+        GatewayOutboundRuntimeMessageRequest(
+            channel="line",
+            target="user:U123",
+            message="",
+            account_id="bot",
+            session_key=expected_session_key,
+            channel_data={"mode": "flex"},
+        )
+    ]
+    assert result["ok"] is True
+    assert result["messageId"] == "provider-channel-data-1"
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == ""
+    assert delivery["event_payload"]["channelData"] == {"mode": "flex"}
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_audio_as_voice(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-audio-voice"
