@@ -5,6 +5,7 @@ import base64
 import codecs
 import copy
 import inspect
+import ipaddress
 import json
 import math
 import os
@@ -98175,7 +98176,35 @@ def _normalize_pairing_setup_url(raw: str) -> str:
     except ValueError as exc:
         raise ValueError("Configured publicUrl is invalid.") from exc
     port = f":{parsed_port}" if parsed_port is not None else ""
+    if scheme == "ws" and not _is_mobile_pairing_cleartext_allowed_host(parsed.hostname):
+        raise ValueError(_mobile_pairing_cleartext_error())
     return f"{scheme}://{_format_pairing_host(parsed.hostname)}{port}"
+
+
+def _mobile_pairing_cleartext_error() -> str:
+    return (
+        "Tailscale and public mobile pairing require a secure gateway URL (wss://) "
+        "or Tailscale Serve/Funnel. Fix: use a private LAN IP address, prefer "
+        "gateway.tailscale.mode=serve, or set gateway.remote.url / "
+        "plugins.entries.device-pair.config.publicUrl to a wss:// URL. "
+        "ws:// is only valid for localhost, private LAN IP addresses, or the "
+        "Android emulator."
+    )
+
+
+def _is_mobile_pairing_cleartext_allowed_host(host: str) -> bool:
+    normalized = str(host or "").strip().strip("[]").lower()
+    if normalized in {"localhost", "10.0.2.2"}:
+        return True
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    if address.is_loopback or address.is_link_local:
+        return True
+    if address.version == 4:
+        return address.is_private and not str(address).startswith("100.")
+    return address.is_private
 
 
 def _resolve_qr_gateway_url(
