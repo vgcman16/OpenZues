@@ -5,7 +5,7 @@ Updated: 2026-05-08
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999999999999999999999999999999999999999997%.
+  band of ~80-99.99999999999999999999999999999999999999999999999998%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.96% after the latest
@@ -13,8 +13,8 @@ Current percentage rollup:
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
   monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.94% after the
-  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.95% after the
+  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -125,10 +125,10 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
-- The CLI/operator control-plane family is estimated at ~99.94% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.95% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
-  secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
@@ -166,7 +166,7 @@ Current percentage rollup:
   runtime activation doctor posture;
   remaining CLI
   gaps are now dominated by real installed plugin module import/activation, QR
-  non-env/gateway-backed remote secret resolution, and packaging surfaces.
+  exec/gateway-backed remote secret resolution, and packaging surfaces.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -201,8 +201,9 @@ Current queue-head adjustment: QR `--remote` now resolves env-backed
 selection and emits `[secrets] ...` diagnostics to stderr for JSON and
 setup-code-only output. Verified on 2026-05-08 with focused red/green QR
 remote env SecretRef proof, adjacent QR CLI proof, `ruff check`, `mypy`, and
-focused `git diff --check`; checkpointed in `e3b3031a`. Remaining QR secret
-breadth is non-env/gateway-backed command secret resolution parity.
+focused `git diff --check`; checkpointed in `e3b3031a`. The next QR secret
+depth targets were unresolved-auth preflight and non-env command secret
+resolution parity.
 
 Current queue-head adjustment: QR `--remote` now fails closed when remote
 SecretRefs are unresolved and no fallback gateway auth is configured. The CLI
@@ -211,7 +212,15 @@ emits the unresolved SecretRef diagnostic to stderr, returns
 device bootstrap token. Verified on 2026-05-08 with focused red/green QR
 unresolved remote SecretRef proof, adjacent QR CLI proof, `ruff check`,
 `mypy`, and focused `git diff --check`; checkpointed in `4057991c`. Remaining
-QR secret breadth is non-env/gateway-backed command secret resolution parity.
+QR secret breadth is exec/gateway-backed command secret resolution parity.
+
+Current queue-head adjustment: QR `--remote` now resolves file-backed
+`gateway.remote.token` / `gateway.remote.password` SecretRefs through persisted
+`secrets.providers`, including single-value file providers and JSON-pointer
+ids, before auth-label selection. Verified on 2026-05-08 with focused
+red/green QR file SecretRef proof, adjacent QR CLI proof, `ruff check`,
+`mypy`, and focused `git diff --check`; checkpointed in `ddd1d811`. Remaining
+QR secret breadth is exec/gateway-backed command secret resolution parity.
 
 Current queue-head adjustment: provider-native direct `send` now accepts
 OpenClaw-style `channelData`-only payloads for shared outbound runtime
