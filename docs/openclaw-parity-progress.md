@@ -22002,6 +22002,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
   src\openzues\app.py`, and focused `git diff --check`. Source/test
   checkpointed in `58bc6b72`.
+- Slack `channel_id_changed` callbacks now match the OpenClaw monitor config
+  migration path: route-backed events require `old_channel_id` and
+  `new_channel_id`, honor `channels.slack.configWrites` plus account override
+  gating, migrate matching global/account channel config keys, and preserve the
+  upstream `skippedExisting` / scope projection. This closes
+  `OZ-PROV-001EE`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.8%.
+- Verified the Slack channel-id migration seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_migrates_slack_channel_id_changed_config tests\test_ops_mesh.py::test_ops_mesh_service_skips_slack_channel_id_change_when_writes_disabled tests\test_ops_mesh.py::test_slack_events_route_dispatches_channel_id_changed_callbacks -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`22 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `22b9bd10`.
 
 ## References
 

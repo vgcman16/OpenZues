@@ -240,6 +240,19 @@ adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and focused
 Continue provider-specific media/reply edges, companion breadth, or the next
 package startup/update edge.
 
+Current queue-head adjustment: Slack `channel_id_changed` callbacks now match
+the OpenClaw config migration path in
+`extensions/slack/src/monitor/events/channels.ts` and
+`extensions/slack/src/channel-migration.ts`: events require old/new channel
+ids, honor `channels.slack.configWrites` plus account overrides, migrate
+matching global/account channel config keys, and preserve `skippedExisting`
+plus scope projection. Verified on 2026-05-09 with focused red/green Slack
+channel-id migration service/route proofs, adjacent Slack provider/inbound
+proof, `ruff check`, `mypy`, and focused `git diff --check`; source/test
+checkpointed in `22b9bd10`. This closes `OZ-PROV-001EE`; provider-native
+inbound/outbound breadth moves to ~99.8%. Continue provider-specific
+media/reply edges, companion breadth, or the next package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11466,3 +11479,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound/outbound breadth moves to ~99.7%. Continue provider-specific
   media/reply edges, companion breadth, or the next package startup/update
   edge.
+- Current queue-head adjustment: Slack `channel_id_changed` callbacks now
+  migrate global/account Slack channel config keys behind config-write gating,
+  preserving OpenClaw-shaped `skippedExisting` and migrated scope projection.
+  Source/test checkpointed in `22b9bd10`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.8%.
+  Continue provider-specific media/reply edges, companion breadth, or the next
+  package startup/update edge.

@@ -8132,6 +8132,28 @@ may lag behind this tracker.
     src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
     `git diff --check`.
 
+- [x] Slack channel ID change config migration.
+  - Source: `openclaw-main/extensions/slack/src/monitor/events/channels.ts`,
+    `openclaw-main/extensions/slack/src/channel-migration.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: native Slack Events API `channel_id_changed` payloads require
+    old/new ids, honor `channels.slack.configWrites` plus account override
+    gating, migrate matching global/account channel config keys, and preserve
+    OpenClaw-shaped `skippedExisting` and scope projection.
+  - Evidence required: focused Slack channel-id migration service/route
+    proofs, adjacent provider/inbound proof, ruff, mypy
+  - Status: checkpointed in `22b9bd10`
+  - Weight: 1
+  - Last verified: 2026-05-09, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_migrates_slack_channel_id_changed_config tests\test_ops_mesh.py::test_ops_mesh_service_skips_slack_channel_id_change_when_writes_disabled tests\test_ops_mesh.py::test_slack_events_route_dispatches_channel_id_changed_callbacks -q`
+    (`3 failed` before implementation, then `3 passed`), adjacent
+    provider/inbound proof (`22 passed, 413 deselected`; existing aiosqlite
+    event-loop-close warnings), `ruff check src\openzues\services\ops_mesh.py
+    src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+    `git diff --check`.
+
 - [x] Doctor preflight git update offer.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,
     `openclaw-main/src/commands/doctor-update.ts`
