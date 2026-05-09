@@ -342,6 +342,18 @@ focused `git diff --check`; source/test checkpointed in `a4b67444`. This closes
 Continue provider-specific media/reply edges, companion breadth, or the next
 package startup/update edge.
 
+Current queue-head adjustment: Slack slash command arg-menu action selections
+now decode OpenClaw's `cmdarg|command|arg|value|user` action values, reject
+stale or other-user menu submissions with Slack-shaped ephemeral responses, and
+dispatch valid selections through the session-backed slash command delivery path
+instead of downgrading them to generic interaction wake events. Verified on
+2026-05-09 with focused red/green Slack command arg interaction proofs, adjacent
+Slack provider/interaction proof, `ruff check`, `mypy`, and focused
+`git diff --check`; source/test checkpointed in `f6cad264`. This closes
+`OZ-PROV-001EM`; provider-native inbound/outbound breadth remains ~99.9%.
+Continue Slack external arg-menu options, provider-specific media/reply edges,
+companion breadth, or the next package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps

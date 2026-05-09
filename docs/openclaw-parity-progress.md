@@ -22136,6 +22136,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\app.py tests\test_ops_mesh.py`, `mypy
   src\openzues\app.py`, and focused `git diff --check`. Source/test
   checkpointed in `a4b67444`.
+- Slack slash command arg-menu action selections now decode OpenClaw's
+  `cmdarg|command|arg|value|user` action values, reject stale/other-user menu
+  submissions with Slack-shaped ephemeral responses, and dispatch valid
+  selections through the session-backed slash command delivery path instead of
+  downgrading them to generic interaction wake events. This closes
+  `OZ-PROV-001EM`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%.
+- Verified the Slack command arg-menu action seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_dispatches_slack_command_arg_interaction_to_session tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_command_arg_interaction_for_wrong_user -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent provider/
+  interaction proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_command_arg or slack_slash or slack_interactions_route or slack_block_action or slack_view_submission or slack_modal or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`41 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+  `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `f6cad264`.
 
 ## References
 
