@@ -16,12 +16,12 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999998% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
-| Runtime/CLI/doctor native bridge | ~99.95% | High for bounded native bridge | Packaging, QR exec/gateway-backed remote secret resolution, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.95% | High for bounded native path | Remaining gaps are deeper plugin import/activation, QR exec/gateway-backed remote secret resolution, and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.96% | High for bounded native bridge | Packaging, QR gateway-backed remote secret resolution, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.96% | High for bounded native path | Remaining gaps are deeper plugin import/activation, QR gateway-backed remote secret resolution, and packaging surfaces |
 
 ## Implemented / Locked Bounded Areas
 
@@ -1673,6 +1673,10 @@ may lag behind this tracker.
 - [x] Companion QR remote file SecretRef resolution, preserving file provider
   `singleValue` / JSON-pointer remote auth resolution for QR setup codes.
   - Status: checkpointed in `ddd1d811`
+
+- [x] Companion QR remote exec SecretRef resolution, preserving protocol v1
+  exec-provider remote auth resolution for QR setup codes.
+  - Status: checkpointed in `6e1b84c4`
 
 - [x] Companion QR JSON setup-code contract, preserving OpenClaw's four-field
   `setupCode` / `gatewayUrl` / `auth` / `urlSource` response shape.
@@ -7875,6 +7879,28 @@ may lag behind this tracker.
     `python -m pytest tests\test_cli.py::test_qr_remote_json_resolves_file_secretref_single_value -q`
     (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
     (`12 passed, 558 deselected`), `ruff check src\openzues\cli.py
+    src\openzues\schemas.py tests\test_cli.py`, `mypy src\openzues\cli.py
+    src\openzues\schemas.py`, and focused `git diff --check`.
+
+- [x] QR remote exec SecretRef resolution.
+  - Source: `openclaw-main/src/secrets/resolve.ts`,
+    `openclaw-main/src/secrets/resolve.test.ts`,
+    `openclaw-main/src/cli/qr-cli.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues qr --remote` resolves exec-backed remote auth
+    SecretRefs through persisted `secrets.providers`, sends the OpenClaw
+    protocol v1 request envelope to the configured command, reads protocol v1
+    `values`, routes diagnostics to stderr for JSON output, and keeps resolved
+    secret values out of output.
+  - Evidence required: focused QR exec SecretRef proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `6e1b84c4`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_remote_json_resolves_exec_secretref_protocol_v1 -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
+    (`13 passed, 558 deselected`), `ruff check src\openzues\cli.py
     src\openzues\schemas.py tests\test_cli.py`, `mypy src\openzues\cli.py
     src\openzues\schemas.py`, and focused `git diff --check`.
 
