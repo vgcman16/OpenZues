@@ -26990,6 +26990,208 @@ def test_slack_interactions_route_dispatches_view_closed_form_payload(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_dispatches_slack_slash_command_to_session(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, text: str) -> dict[str, str]:
+        deliveries.append((session_key, text))
+        return {"messageId": "slash-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_slash_command(
+        {
+            "command": "/openzues",
+            "text": "ship status",
+            "user_id": "U123",
+            "user_name": "Ada",
+            "channel_id": "C1",
+            "channel_name": "general",
+            "team_id": "T1",
+            "trigger_id": "trigger-1",
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C1",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    assert result["ok"] is True
+    assert result["channel"] == "slack"
+    assert result["command"] == "/openzues"
+    assert result["text"] == "ship status"
+    assert result["sessionKey"] == expected_session_key
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+    assert result["messageId"] == "slash-message-1"
+    assert result["response"] == {
+        "response_type": "ephemeral",
+        "text": "Queued for OpenZues.",
+    }
+    assert deliveries == [(expected_session_key, "ship status")]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_slash_command_when_channel_disabled(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, text: str) -> dict[str, str]:
+        deliveries.append((session_key, text))
+        return {"messageId": "unexpected"}
+
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "accounts": {
+                        "workspace": {
+                            "channels": {"C_DENIED": {"enabled": False}},
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_slash_command(
+        {
+            "command": "/openzues",
+            "text": "ship status",
+            "user_id": "U123",
+            "channel_id": "C_DENIED",
+            "channel_name": "denied",
+            "team_id": "T1",
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "command": "/openzues",
+        "skipped": True,
+        "reason": "slack_slash_channel_unauthorized",
+        "response": {
+            "response_type": "ephemeral",
+            "text": "This channel is not allowed.",
+        },
+    }
+    assert deliveries == []
+
+
+def test_slack_slash_route_dispatches_form_payload_to_session(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, text: str) -> dict[str, str]:
+        deliveries.append((session_key, text))
+        return {"messageId": "slash-route-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            data={
+                "command": "/openzues",
+                "text": "run deploy check",
+                "user_id": "U123",
+                "user_name": "Ada",
+                "channel_id": "D123",
+                "channel_name": "directmessage",
+                "team_id": "T1",
+                "trigger_id": "trigger-1",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["command"] == "/openzues"
+    assert payload["text"] == "run deploy check"
+    assert str(payload["messageId"]).strip()
+    assert payload["response"] == {
+        "response_type": "ephemeral",
+        "text": "Queued for OpenZues.",
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_session() -> None:
     conversation_id = "19:ops-thread@thread.tacv2"
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-adaptive-card-inbound"

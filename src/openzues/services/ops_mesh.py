@@ -16956,6 +16956,131 @@ class OpsMeshService:
             result["conversationTarget"] = conversation_target.model_dump(mode="json")
         return result
 
+    async def handle_slack_slash_command(
+        self,
+        command: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        command_name = _slack_inbound_optional_string(command.get("command")) or ""
+        sender_id = _slack_inbound_optional_string(command.get("user_id"))
+        channel_id = _slack_inbound_optional_string(command.get("channel_id"))
+        if sender_id is None or channel_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "command": command_name or None,
+                "skipped": True,
+                "reason": "slack_slash_missing_sender_or_channel",
+                "response": {
+                    "response_type": "ephemeral",
+                    "text": "Sorry, that command payload was incomplete.",
+                },
+            }
+        channel_name = _slack_inbound_optional_string(command.get("channel_name"))
+        sender_name = _slack_inbound_optional_string(command.get("user_name"))
+        team_id = _slack_inbound_optional_string(command.get("team_id"))
+        trigger_id = _slack_inbound_optional_string(command.get("trigger_id"))
+        channel_type = _slack_infer_channel_type(channel_id)
+        channel_config = self._slack_channel_config(account_id=account_id)
+        if not _slack_channel_event_allowed(
+            channel_config=channel_config,
+            channel_id=channel_id,
+            channel_name=channel_name,
+        ):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "command": command_name or None,
+                "skipped": True,
+                "reason": "slack_slash_channel_unauthorized",
+                "response": {
+                    "response_type": "ephemeral",
+                    "text": "This channel is not allowed.",
+                },
+            }
+        if not _slack_reaction_sender_allowed(
+            channel_config=channel_config,
+            channel_id=channel_id,
+            channel_type=channel_type,
+            sender_id=sender_id,
+        ):
+            response_text = (
+                "Slack DMs are disabled."
+                if channel_type == "im"
+                else "You are not authorized to use this command."
+            )
+            return {
+                "ok": False,
+                "channel": "slack",
+                "command": command_name or None,
+                "skipped": True,
+                "reason": "slack_slash_sender_unauthorized",
+                "response": {
+                    "response_type": "ephemeral",
+                    "text": response_text,
+                },
+            }
+        if self.session_delivery_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack slash command session delivery is unavailable."
+            )
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        if channel_type == "im":
+            peer_kind: ConversationTargetPeerKind = "direct"
+            peer_id = sender_id
+        elif channel_type == "mpim":
+            peer_kind = "group"
+            peer_id = channel_id
+        else:
+            peer_kind = "channel"
+            peer_id = channel_id
+        conversation_target = ConversationTargetView(
+            channel="slack",
+            account_id=normalized_account_id,
+            peer_kind=peer_kind,
+            peer_id=peer_id,
+        )
+        session_key = build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=conversation_target,
+        )
+        raw_text = _slack_inbound_optional_string(command.get("text")) or ""
+        prompt = raw_text or command_name
+        delivery_result = await self.session_delivery_service(session_key, prompt)
+        message_id = _session_delivery_message_id(delivery_result)
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "slack",
+            "command": command_name or None,
+            "text": prompt,
+            "sessionKey": session_key,
+            "senderId": sender_id,
+            "channelId": channel_id,
+            "channelType": channel_type,
+            "conversationTarget": conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "session-backed", "commandSource": "native"},
+            "response": {
+                "response_type": "ephemeral",
+                "text": "Queued for OpenZues.",
+            },
+        }
+        if message_id is not None:
+            result["messageId"] = message_id
+        if sender_name is not None:
+            result["senderName"] = sender_name
+        if channel_name is not None:
+            result["channelName"] = channel_name
+        if team_id is not None:
+            result["teamId"] = team_id
+        if trigger_id is not None:
+            result["triggerId"] = "[redacted]"
+        return result
+
     async def handle_slack_system_event(
         self,
         payload: Mapping[str, Any],

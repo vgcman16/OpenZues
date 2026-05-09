@@ -4563,6 +4563,34 @@ def create_app(
         )
         return JSONResponse(result)
 
+    @fastapi_app.post("/api/channels/slack/slash")
+    async def handle_slack_slash(request: Request) -> JSONResponse:
+        body = await request.body()
+        if len(body) > SLACK_EVENTS_MAX_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        content_type = request.headers.get("content-type", "")
+        try:
+            if "application/json" in content_type:
+                payload = json.loads(body.decode("utf-8")) if body else {}
+            else:
+                payload = dict(parse_qsl(body.decode("utf-8"), keep_blank_values=True))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid Slack slash body") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Slack slash payload must be an object.",
+            )
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        result = await active_ops_mesh_service.handle_slack_slash_command(
+            cast(Mapping[str, Any], payload),
+            account_id=account_id,
+        )
+        return JSONResponse(result)
+
     @fastapi_app.post("/api/gateway/memory/prove", response_model=MissionView)
     async def run_gateway_memory_proof(
         request: Request,
