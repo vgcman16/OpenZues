@@ -307,6 +307,18 @@ closes `OZ-PROV-001EI`; provider-native inbound/outbound breadth remains
 ~99.9%. Continue SecretRef-backed signing-secret resolution, provider-specific
 media/reply edges, companion breadth, or the next package startup/update edge.
 
+Current queue-head adjustment: Slack native HTTP signing-secret resolution now
+accepts env-backed SecretRefs for `channels.slack.signingSecret` and account
+`signingSecret`, matching
+`extensions/slack/src/config-schema.test.ts` while failing closed when the
+configured env ref is unresolved. Verified on 2026-05-09 with focused
+red/green Slack signing Env SecretRef route proofs, adjacent Slack
+provider/inbound proof, `ruff check`, `mypy`, and focused `git diff --check`;
+source/test checkpointed in `47c1a605`. This closes `OZ-PROV-001EJ`;
+provider-native inbound/outbound breadth remains ~99.9%. Continue file/exec
+SecretRef signing-secret resolution, provider-specific media/reply edges,
+companion breadth, or the next package startup/update edge.
+
 Current queue-head adjustment: QR `--remote` now loads persisted
 `gateway.remote.url` plus remote token/password auth material from the native
 control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
@@ -11575,3 +11587,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Continue SecretRef-backed signing-secret resolution, provider-specific
   media/reply edges, companion breadth, or the next package startup/update
   edge.
+- Current queue-head adjustment: Slack native HTTP signing-secret resolution
+  now accepts env-backed SecretRefs for top-level and account signing secrets,
+  and fails closed when the env ref is unresolved. Source/test checkpointed in
+  `47c1a605`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%. Continue file/exec
+  SecretRef signing-secret resolution, provider-specific media/reply edges,
+  companion breadth, or the next package startup/update edge.
