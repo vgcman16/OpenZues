@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.999999999999999999999999999999999999999999999999% |
+| Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.9999999999999999999999999999999999999999999999995% |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -7723,6 +7723,26 @@ may lag behind this tracker.
     passed, 425 deselected`), adjacent scope-upgrade method/API proofs (`2
     passed` each), `ruff check` on touched source/tests, `mypy` on touched
     source modules, and focused `git diff --check`.
+
+- [x] QR public cleartext mobile pairing URL rejection.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: OpenZues-native QR setup-code generation rejects public
+    cleartext `ws://` pairing URLs before bootstrap token issue, while
+    allowing OpenClaw's loopback/private LAN/link-local and Android emulator
+    cleartext exceptions.
+  - Evidence required: focused public-cleartext rejection proof, private-LAN
+    allow proof, adjacent QR CLI proof, ruff, mypy
+  - Status: checkpointed in `24d89215`
+  - Weight: 1
+  - Last verified: 2026-05-08, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_setup_code_only_rejects_public_cleartext_url_before_token_issue -q`
+    (`1 failed` before implementation, then `1 passed`), focused allow/reject
+    pair (`2 passed`), adjacent QR CLI proof (`7 passed, 558 deselected`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+    src\openzues\cli.py`, and focused `git diff --check`.
 
 ## Update Rule
 

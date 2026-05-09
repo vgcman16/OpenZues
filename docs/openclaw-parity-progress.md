@@ -21615,6 +21615,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_node_service.py src\openzues\database.py`, and
   focused `git diff --check`. Source/test checkpointed in `bef0652f`.
+- QR setup-code generation now matches OpenClaw's mobile pairing URL safety
+  gate for cleartext `ws://` URLs: public hosts are rejected before bootstrap
+  token issue, while loopback/private LAN/link-local and Android emulator
+  hosts remain allowed. This closes `OZ-COMP-001D`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999999999995%.
+- Verified the QR cleartext URL seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_setup_code_only_rejects_public_cleartext_url_before_token_issue -q`
+  (`1 failed` before implementation, then `1 passed`), focused allow/reject
+  pair
+  `python -m pytest tests\test_cli.py::test_qr_setup_code_only_allows_private_lan_cleartext_url tests\test_cli.py::test_qr_setup_code_only_rejects_public_cleartext_url_before_token_issue -q`
+  (`2 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`7 passed, 558
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `24d89215`.
 
 ## References
 
