@@ -107,8 +107,10 @@ session-local tab label projection and targeted-close cleanup.
 `extensions/browser/src/browser/routes/permissions.ts` is checkpointed in
 `1a27af54`; it maps `POST /permissions/grant` onto native CDP
 `Browser.grantPermissions` dispatch through `agent-browser get cdp-url`.
-Remaining browser-request depth is persistent profile mutation boundary review
-beyond the current native adapter.
+`OZ-CANVAS-001V` reverified the persistent profile mutation boundary from
+`extensions/browser/src/browser/request-policy.ts`; browser local-request
+route breadth has no remaining OpenClaw-backed queue head in the accepted
+native adapter scope.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers

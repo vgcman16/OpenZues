@@ -17,9 +17,9 @@ may lag behind this tracker.
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
-| Active gateway/session/tool-contract family | ~99.962% | High for bounded local path | Does not mean whole product parity |
+| Active gateway/session/tool-contract family | ~99.963% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
-| Browser/canvas/nodes/voice bounded command family | ~99.99% | High for bounded local path | No longer active queue head |
+| Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.9991% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99989% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99989% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
@@ -358,6 +358,21 @@ may lag behind this tracker.
   - Last verified: 2026-05-12, focused red/green permission grant route test,
     adjacent browser proof (`28 passed, 1232 deselected`), ruff, mypy, and
     focused `git diff --check`.
+
+- [x] `browser.request` persistent profile mutation boundary.
+  - Source: `openclaw-main/extensions/browser/src/browser/request-policy.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `node.invoke command=browser.proxy` and `browser.request` reject
+    `POST /profiles/create`, `POST /reset-profile`, and one-segment
+    `DELETE /profiles/:name` before wake/proxy dispatch.
+  - Evidence required: focused persistent mutation guard proof, adjacent
+    browser request guard proof, ruff, mypy
+  - Status: verified as `OZ-CANVAS-001V`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused guard proof (`4 passed`), adjacent
+    browser proof (`23 passed, 1237 deselected`), ruff, and mypy.
 
 - [x] Requester-scoped `agents_list` spawn-target projection.
   - Source: `openclaw-main/src/agents/tools/agents-list-tool.ts`,
