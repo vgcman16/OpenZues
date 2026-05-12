@@ -157,11 +157,12 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999996%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999997%
   after route-backed Telegram stale-thread retry fallback for JSON and
-  HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
-  sends, Discord audio-as-voice direct media sends, Signal receive envelope
-  session routing with sync-message drops, QQBot route-backed text sends,
+  HTTP-error paths, Feishu media implicit reply fanout, Matrix implicit reply
+  fanout, Discord voice message sends, Discord audio-as-voice direct media
+  sends, Signal receive envelope session routing with sync-message drops,
+  QQBot route-backed text sends,
   QQBot image media uploads, QQBot inline image media tags, QQBot structured
   self-closing media tags, QQBot reply message sequencing, QQBot local media
   file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file
@@ -12975,4 +12976,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   explicit empty list as a reset. Source/test checkpointed in `936bdc9b`;
   repo-wide parity remains estimated at ~99.9%, and packaging/companion breadth
   moves to ~6.0%. Continue device-token authz depth, provider media edges,
+  packaging/distribution, ACP lifecycle, or companion app breadth.
+- Current queue-head adjustment: native Matrix route-backed media and text
+  sends now consume implicit reply ids once across multi-send provider fanout,
+  matching OpenClaw's `replyToIdSource="implicit"` behavior while preserving
+  reusable explicit replies and Matrix thread relations. Source/test
+  checkpointed in `f837d7f2`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.999997%. Continue
+  provider media/reply edges, device-token authz depth,
   packaging/distribution, ACP lifecycle, or companion app breadth.
