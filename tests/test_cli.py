@@ -832,6 +832,80 @@ def test_devices_approve_latest_json_previews_without_approving(monkeypatch) -> 
     assert payload["approveCommand"] == "openzues devices approve req-new --json"
 
 
+def test_pairing_list_json_calls_zalo_pairing_store(monkeypatch) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    class FakeOpsMesh:
+        async def list_zalo_pairing_requests(
+            self,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            calls.append(("list", account_id))
+            return {
+                "ok": True,
+                "channel": "zalo",
+                "accountId": account_id,
+                "requests": [{"id": "user-1", "code": "PAIRCODE"}],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["pairing", "list", "zalo", "--account", "zalo-bot", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("list", "zalo-bot")]
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "requests": [{"id": "user-1", "code": "PAIRCODE"}],
+    }
+
+
+def test_pairing_approve_json_calls_zalo_pairing_store(monkeypatch) -> None:
+    calls: list[tuple[str, str, str | None]] = []
+
+    class FakeOpsMesh:
+        async def approve_zalo_pairing_code(
+            self,
+            code: str,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            calls.append(("approve", code, account_id))
+            return {
+                "ok": True,
+                "channel": "zalo",
+                "accountId": account_id,
+                "senderId": "user-1",
+                "code": code,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["pairing", "approve", "zalo", "PAIRCODE", "--account", "zalo-bot", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("approve", "PAIRCODE", "zalo-bot")]
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "senderId": "user-1",
+        "code": "PAIRCODE",
+    }
+
+
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
     assert _is_root_value_token("work") is True
     assert _is_root_value_token("-1") is True

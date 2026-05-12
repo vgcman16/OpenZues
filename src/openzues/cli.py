@@ -577,6 +577,7 @@ routes_app = typer.Typer(help="Inspect and test notification routes.")
 agents_app = typer.Typer(help="Inspect configured agent inventory.")
 channels_app = typer.Typer(help="Inspect notification route channels.")
 devices_app = typer.Typer(help="Device pairing and auth tokens.")
+pairing_app = typer.Typer(help="Secure channel DM pairing requests.")
 acp_app = typer.Typer(
     help="Run an ACP bridge backed by the Gateway.",
     invoke_without_command=True,
@@ -629,6 +630,7 @@ app.add_typer(routes_app, name="routes")
 app.add_typer(agents_app, name="agents")
 app.add_typer(channels_app, name="channels")
 app.add_typer(devices_app, name="devices")
+app.add_typer(pairing_app, name="pairing")
 app.add_typer(acp_app, name="acp")
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(sandbox_app, name="sandbox")
@@ -1123,6 +1125,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         playbooks=PlaybookService(),
         launch_routing=launch_routing,
         gateway_config_service=gateway_config,
+        canvas_state_dir=app_settings.data_dir,
     )
     gateway_bootstrap = GatewayBootstrapService(database, manager, access, launch_routing)
     gateway_agents = GatewayAgentsService(database=database)
@@ -105466,6 +105469,109 @@ def devices_approve_command(
     device = result.get("device") if isinstance(result.get("device"), dict) else {}
     device_id = _optional_cli_string(device.get("deviceId")) if isinstance(device, dict) else None
     typer.echo(f"Approved {device_id or normalized_request_id}")
+
+
+def _resolve_pairing_channel(channel: object) -> str:
+    normalized = _optional_cli_string(channel)
+    if normalized is None:
+        raise typer.BadParameter("Channel required. Use `zalo` or --channel zalo.")
+    lowered = normalized.lower()
+    if lowered in {"zalo", "zalobot"}:
+        return "zalo"
+    raise typer.BadParameter("Only native Zalo pairing is available in OpenZues.")
+
+
+def _emit_pairing_list(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    channel = _optional_cli_string(payload.get("channel")) or "zalo"
+    requests_value = payload.get("requests")
+    requests: list[object] = requests_value if isinstance(requests_value, list) else []
+    if not requests:
+        typer.echo(f"No pending {channel} pairing requests.")
+        return
+    typer.echo(f"Pairing requests ({len(requests)})")
+    for item in requests:
+        if not isinstance(item, dict):
+            continue
+        code = _optional_cli_string(item.get("code")) or "<missing>"
+        sender_id = _optional_cli_string(item.get("id")) or "<unknown>"
+        created_at = _optional_cli_string(item.get("createdAt"))
+        suffix = f" requested {created_at}" if created_at is not None else ""
+        typer.echo(f"  {code} {sender_id}{suffix}")
+
+
+@pairing_app.command("list")
+def pairing_list_command(
+    channel_arg: str | None = typer.Argument(None, help="Pairing channel."),
+    channel_option: str | None = typer.Option(None, "--channel", help="Pairing channel."),
+    account_id: str | None = typer.Option(
+        None,
+        "--account",
+        "--account-id",
+        help="Provider account id.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    channel = _resolve_pairing_channel(channel_option or channel_arg)
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        if channel == "zalo":
+            return await services.ops_mesh.list_zalo_pairing_requests(account_id=account_id)
+        raise typer.BadParameter("Unsupported pairing channel.")
+
+    result = _run(_run_with_services(_action))
+    _emit_pairing_list(result, json_output=json_output)
+
+
+@pairing_app.command("approve")
+def pairing_approve_command(
+    code_or_channel: str = typer.Argument(..., help="Pairing code or channel."),
+    code: str | None = typer.Argument(None, help="Pairing code when channel is positional."),
+    channel_option: str | None = typer.Option(None, "--channel", help="Pairing channel."),
+    account_id: str | None = typer.Option(
+        None,
+        "--account",
+        "--account-id",
+        help="Provider account id.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    explicit_channel = _optional_cli_string(channel_option)
+    if explicit_channel is not None:
+        if code is not None:
+            raise typer.BadParameter(
+                "Too many arguments. Use `openzues pairing approve --channel zalo <code>`."
+            )
+        channel = _resolve_pairing_channel(explicit_channel)
+        resolved_code = code_or_channel
+    elif code is None:
+        channel = "zalo"
+        resolved_code = code_or_channel
+    else:
+        channel = _resolve_pairing_channel(code_or_channel)
+        resolved_code = code
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        if channel == "zalo":
+            return await services.ops_mesh.approve_zalo_pairing_code(
+                resolved_code,
+                account_id=account_id,
+            )
+        raise typer.BadParameter("Unsupported pairing channel.")
+
+    result = _run(_run_with_services(_action))
+    if json_output:
+        typer.echo(json.dumps(result, indent=2))
+    elif result.get("ok") is True:
+        sender_id = _optional_cli_string(result.get("senderId")) or "<unknown>"
+        typer.echo(f"Approved {channel} sender {sender_id}.")
+    else:
+        reason = _optional_cli_string(result.get("reason")) or "pairing approval failed"
+        typer.echo(reason, err=True)
+    if result.get("ok") is not True:
+        raise typer.Exit(code=1)
 
 
 @sessions_app.callback(invoke_without_command=True)
