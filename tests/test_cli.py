@@ -1119,6 +1119,24 @@ def test_gateway_doctor_prefers_live_gateway_view_when_available(tmp_path, monke
     assert payload["summary"] == "Live gateway summary"
 
 
+def test_gateway_status_deep_json_aliases_gateway_doctor(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["gateway", "status", "--deep", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["headline"]
+    assert payload["statusCommand"] == {
+        "probe": True,
+        "requireRpc": False,
+        "deep": True,
+    }
+    assert "connected_lane_health" in payload
+    assert "inventory" in payload
+    assert "approval_posture" in payload
+
+
 def test_doctor_json_includes_runtime_bridge_posture(monkeypatch) -> None:
     async def fake_executor(
         _tool: str,

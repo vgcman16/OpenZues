@@ -107278,6 +107278,13 @@ def gateway_show(
     _emit_gateway_bootstrap(payload, json_output=json_output)
 
 
+async def _gateway_capability_status_payload(services: CliServices) -> dict[str, object]:
+    view = await _try_live_gateway_capability_view(services.settings)
+    if view is None:
+        view = await services.gateway_capability.get_view()
+    return view.model_dump(mode="json")
+
+
 @gateway_app.command("doctor")
 def gateway_doctor(
     json_output: bool = typer.Option(
@@ -107286,13 +107293,42 @@ def gateway_doctor(
         help="Emit the gateway capability summary as JSON.",
     ),
 ) -> None:
-    async def _action(services: CliServices) -> dict[str, object]:
-        view = await _try_live_gateway_capability_view(services.settings)
-        if view is None:
-            view = await services.gateway_capability.get_view()
-        return view.model_dump(mode="json")
+    payload = _run(_run_with_services(_gateway_capability_status_payload))
+    _emit_gateway_capability(payload, json_output=json_output)
 
-    payload = _run(_run_with_services(_action))
+
+@gateway_app.command("status")
+def gateway_status(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the gateway status summary as JSON.",
+    ),
+    deep: bool = typer.Option(
+        False,
+        "--deep",
+        help="Include deep local gateway diagnostics.",
+    ),
+    probe: bool = typer.Option(
+        True,
+        "--probe/--no-probe",
+        help="Probe the live gateway before falling back to the saved snapshot.",
+    ),
+    require_rpc: bool = typer.Option(
+        False,
+        "--require-rpc",
+        help="Fail when a live gateway status probe is required but unavailable.",
+    ),
+) -> None:
+    if require_rpc and not probe:
+        typer.echo("Gateway status failed: --require-rpc cannot be used with --no-probe.", err=True)
+        raise typer.Exit(code=1)
+    payload = _run(_run_with_services(_gateway_capability_status_payload))
+    payload["statusCommand"] = {
+        "probe": probe,
+        "requireRpc": require_rpc,
+        "deep": deep,
+    }
     _emit_gateway_capability(payload, json_output=json_output)
 
 
