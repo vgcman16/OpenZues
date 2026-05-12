@@ -866,6 +866,40 @@ def test_pairing_list_json_calls_zalo_pairing_store(monkeypatch) -> None:
     }
 
 
+def test_pairing_list_json_defaults_to_zalo_channel(monkeypatch) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    class FakeOpsMesh:
+        async def list_zalo_pairing_requests(
+            self,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            calls.append(("list", account_id))
+            return {
+                "ok": True,
+                "channel": "zalo",
+                "accountId": account_id,
+                "requests": [],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["pairing", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("list", None)]
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": None,
+        "requests": [],
+    }
+
+
 def test_pairing_approve_json_calls_zalo_pairing_store(monkeypatch) -> None:
     calls: list[tuple[str, str, str | None]] = []
 

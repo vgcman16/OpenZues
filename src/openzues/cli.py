@@ -105549,7 +105549,7 @@ def pairing_list_command(
     ),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
-    channel = _resolve_pairing_channel(channel_option or channel_arg)
+    channel = _resolve_pairing_channel(channel_option or channel_arg or "zalo")
 
     async def _action(services: CliServices) -> dict[str, object]:
         if channel == "zalo":
