@@ -105646,7 +105646,10 @@ def pairing_approve_command(
         if isinstance(command_owner, Mapping):
             owner_entry = _optional_cli_string(command_owner.get("ownerEntry"))
             if owner_entry is not None:
-                typer.echo(f"Command owner configured {owner_entry}.")
+                typer.echo(
+                    f"Command owner configured {owner_entry} "
+                    "(commands.ownerAllowFrom was empty)."
+                )
     else:
         reason = _optional_cli_string(result.get("reason")) or "pairing approval failed"
         typer.echo(reason, err=True)

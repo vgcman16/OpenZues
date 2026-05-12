@@ -1051,6 +1051,47 @@ def test_pairing_approve_bootstraps_command_owner_when_empty(monkeypatch) -> Non
     }
 
 
+def test_pairing_approve_human_output_explains_command_owner_bootstrap(monkeypatch) -> None:
+    class FakeOpsMesh:
+        async def approve_zalo_pairing_code(
+            self,
+            code: str,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "channel": "zalo",
+                "accountId": account_id,
+                "senderId": "user-1",
+                "code": code,
+            }
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"commands": {"ownerAllowFrom": []}}
+
+        def patch_object(self, patch: dict[str, object]) -> dict[str, object]:
+            return patch
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                ops_mesh=FakeOpsMesh(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["pairing", "approve", "zalo", "PAIRCODE"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Command owner configured zalo:user-1 (commands.ownerAllowFrom was empty)." in (
+        result.stdout
+    )
+
+
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
     assert _is_root_value_token("work") is True
     assert _is_root_value_token("-1") is True
