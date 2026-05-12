@@ -1,6 +1,6 @@
 # Cross-Repo Implementation Tracker
 
-Last updated: 2026-05-09
+Last updated: 2026-05-11
 
 Coordinator repo: `C:\Users\skull\OneDrive\Documents\OpenZues`
 
@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.94% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.999% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.9991% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.9991% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.1% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -356,8 +356,35 @@ now resolve through the real native activation loader, source/test
 checkpointed in `5a2e8804`; runtime/CLI/doctor and CLI/operator parity move
 to ~99.999%. Continue provider-specific media/reply edges, companion breadth,
 deeper installed plugin activation, or packaging edges.
+Plugin runtime addendum: `OZ-PLUGIN-00380` source plugin SDK subpath aliases
+now also execute through `tools.invoke`, source/test checkpointed in
+`61843808`; runtime/CLI/doctor and CLI/operator parity move to ~99.9991%.
+Continue provider-specific media/reply edges, companion breadth, deeper
+installed plugin activation, or packaging edges.
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-00380` Source SDK alias runtime execution
+  - Source: `openclaw-main/src/plugins/sdk-alias.test.ts`,
+    `openclaw-main/src/plugins/loader.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_gateway_node_methods.py`,
+    `src/openzues/cli.py`
+  - Contract: source runtime entries importing
+    `@openclaw/plugin-sdk/<subpath>` preserve `pluginSdkAliasMap` from
+    activation into the executor plugin context, reload the same source runtime
+    during `tools.invoke`, and execute the registered tool with the
+    plugin-local SDK alias available.
+  - Evidence required: focused source-alias `tools.invoke` proof, adjacent
+    imported runtime-entry tests, ruff, mypy
+  - Status: checkpointed in `61843808`
+  - Weight: 1
+  - Last verified: 2026-05-11, focused proof
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_executes_source_sdk_alias_runtime_entry_tool -q`
+    (`1 passed`), adjacent runtime import proof (`4 passed`), `ruff check
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py
+    src\openzues\services\gateway_node_methods.py`, and focused
+    `git diff --check`.
 
 - [x] `OZ-PLUGIN-00379` Source SDK alias runtime activation
   - Source: `openclaw-main/src/plugins/sdk-alias.test.ts`,

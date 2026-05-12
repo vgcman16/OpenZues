@@ -1,6 +1,6 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-09
+Updated: 2026-05-11
 
 Current percentage rollup:
 
@@ -13,7 +13,7 @@ Current percentage rollup:
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
   monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.999% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.9991% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
@@ -64,7 +64,7 @@ Current percentage rollup:
   configured-channel workspace owner activation gate,
   manifest toolMetadata availability gate,
   installed plugin runtime activation adapter,
-  installed plugin source SDK subpath alias runtime activation,
+  installed plugin source SDK subpath alias runtime activation and execution,
   installed plugin disabled activation gate,
   active-registry executor projection, runtime activation doctor posture, and
   speech facade helper,
@@ -11761,3 +11761,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   CLI/operator parity move to ~99.999%. Continue remaining provider-specific
   media/reply edges, companion breadth, deeper installed plugin activation, or
   packaging edges.
+- Current queue-head adjustment: source-installed plugin runtime entries now
+  also have execution-path proof through `tools.invoke`; the activation payload
+  preserves `pluginSdkAliasMap`, the native executor reloads the same source
+  runtime with its plugin-local SDK alias map, and a tool importing
+  `@openclaw/plugin-sdk/outbound-send-deps` executes successfully. Source/test
+  checkpointed in `61843808`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor plus CLI/operator parity move to ~99.9991%.
+  Continue remaining provider-specific media/reply edges, companion breadth,
+  deeper installed plugin activation, or packaging edges.
