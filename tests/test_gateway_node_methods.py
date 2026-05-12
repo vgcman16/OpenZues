@@ -112156,6 +112156,67 @@ def test_browser_request_runtime_maps_tab_action_select_and_close(
     assert selected["targetId"] == "tab-1"
 
 
+def test_browser_request_runtime_maps_storage_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-4:] == ["storage", "local", "get", "theme"]:
+            return Completed('{"theme": "dark"}')
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    storage = service.request(
+        method="GET",
+        path="/storage/local",
+        query={"key": "theme"},
+        session="parity-browser",
+    )
+    set_result = service.request(
+        method="POST",
+        path="/storage/local/set",
+        body={"key": "theme", "value": "dark"},
+        session="parity-browser",
+    )
+    clear_result = service.request(
+        method="POST",
+        path="/storage/session/clear",
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "storage", "local", "get", "theme"],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "storage",
+            "local",
+            "set",
+            "theme",
+            "dark",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "storage", "session", "clear"],
+    ]
+    assert storage["entries"] == {"theme": "dark"}
+    assert set_result["operation"] == "set"
+    assert clear_result["operation"] == "clear"
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

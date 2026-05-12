@@ -202,6 +202,33 @@ class GatewayBrowserRuntimeService:
                     index,
                 )
                 return self.focus(target_id, session=session)
+        storage_parts = normalized_path.strip("/").split("/")
+        if len(storage_parts) >= 2 and storage_parts[0] == "storage":
+            storage_kind = unquote(storage_parts[1])
+            if normalized_method == "GET" and len(storage_parts) == 2:
+                key_value = request_query.get("key")
+                key = key_value.strip() if isinstance(key_value, str) else None
+                return self.storage_get(storage_kind, key=key, session=session)
+            if (
+                normalized_method == "POST"
+                and len(storage_parts) == 3
+                and storage_parts[2] == "set"
+            ):
+                key_value = request_body.get("key")
+                key = key_value.strip() if isinstance(key_value, str) else ""
+                value = request_body.get("value")
+                return self.storage_set(
+                    storage_kind,
+                    key=key,
+                    value=value if isinstance(value, str) else "",
+                    session=session,
+                )
+            if (
+                normalized_method == "POST"
+                and len(storage_parts) == 3
+                and storage_parts[2] == "clear"
+            ):
+                return self.storage_clear(storage_kind, session=session)
         raise GatewayBrowserRuntimeError(
             f"browser local request unsupported: {normalized_method} {normalized_path}"
         )
