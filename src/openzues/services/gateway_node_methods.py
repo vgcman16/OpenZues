@@ -12935,7 +12935,11 @@ class GatewayNodeMethodService:
             )
             device_id = _require_non_empty_string(payload.get("deviceId"), label="deviceId")
             role = _require_non_empty_string(payload.get("role"), label="role")
-            scopes = _optional_string_list(payload.get("scopes"), label="scopes")
+            scopes = (
+                _optional_string_list(payload.get("scopes"), label="scopes")
+                if "scopes" in payload
+                else None
+            )
             if self._pairing_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
@@ -12946,7 +12950,7 @@ class GatewayNodeMethodService:
                     status_code=503,
                 )
             device_token_missing_scope = _missing_requested_scope(
-                requested_scopes=scopes,
+                requested_scopes=scopes or (),
                 caller_scopes=resolved_requester.caller_scopes,
             )
             if device_token_missing_scope is not None:

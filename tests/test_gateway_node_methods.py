@@ -1456,6 +1456,57 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_device_token_rotate_preserves_existing_scopes_when_omitted(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {"nodeId": "device-token-scope-node", "displayName": "Scope Device"},
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call("device.pair.approve", {"requestId": request_id}, now_ms=2_000)
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-scope-node",
+            "role": "operator",
+            "scopes": ["operator.read", "operator.write"],
+        },
+        now_ms=3_000,
+    )
+
+    rotated = await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-scope-node",
+            "role": "operator",
+        },
+        now_ms=4_000,
+    )
+
+    assert rotated["scopes"] == ["operator.read", "operator.write"]
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.read", "operator.write"],
+            "createdAtMs": 3_000,
+            "rotatedAtMs": 4_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_device_pair_reject_removes_pending_request_and_broadcasts(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()

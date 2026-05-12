@@ -420,7 +420,13 @@ class GatewayNodePairingService:
             normalized_role,
         )
         existing = _device_token_from_row(existing_row) if existing_row is not None else None
-        resolved_scopes = _string_list(scopes)
+        resolved_scopes = (
+            _string_list(scopes)
+            if scopes is not None
+            else list(existing.scopes)
+            if existing is not None
+            else []
+        )
         row = await self.database.upsert_gateway_node_device_token(
             device_id=normalized_device_id,
             role=normalized_role,
