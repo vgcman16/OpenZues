@@ -832,6 +832,136 @@ def test_devices_approve_latest_json_previews_without_approving(monkeypatch) -> 
     assert payload["approveCommand"] == "openzues devices approve req-new --json"
 
 
+@pytest.mark.parametrize(
+    ("argv", "expected_call", "response"),
+    [
+        (
+            ["devices", "remove", "device-1", "--json"],
+            ("device.pair.remove", {"deviceId": "device-1"}),
+            {"removed": True, "deviceId": "device-1"},
+        ),
+        (
+            ["devices", "reject", "req-1", "--json"],
+            ("device.pair.reject", {"requestId": "req-1"}),
+            {"requestId": "req-1", "deviceId": "device-1"},
+        ),
+        (
+            [
+                "devices",
+                "rotate",
+                "--device",
+                "device-1",
+                "--role",
+                "operator",
+                "--scope",
+                "operator.read",
+                "--scope",
+                "operator.write",
+                "--json",
+            ],
+            (
+                "device.token.rotate",
+                {
+                    "deviceId": "device-1",
+                    "role": "operator",
+                    "scopes": ["operator.read", "operator.write"],
+                },
+            ),
+            {"deviceId": "device-1", "role": "operator", "token": "rotated-token"},
+        ),
+        (
+            [
+                "devices",
+                "revoke",
+                "--device",
+                "device-1",
+                "--role",
+                "operator",
+                "--json",
+            ],
+            (
+                "device.token.revoke",
+                {"deviceId": "device-1", "role": "operator"},
+            ),
+            {"deviceId": "device-1", "role": "operator", "revoked": True},
+        ),
+    ],
+)
+def test_devices_mutation_commands_call_openclaw_gateway_methods(
+    monkeypatch,
+    argv: list[str],
+    expected_call: tuple[str, dict[str, object]],
+    response: dict[str, object],
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return response
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, argv)
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [expected_call]
+    assert json.loads(result.stdout) == response
+
+
+def test_devices_clear_json_removes_paired_and_rejects_pending(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "device.pair.list":
+                return {
+                    "paired": [
+                        {"deviceId": "device-1"},
+                        {"deviceId": "device-2"},
+                        {"displayName": "missing-id"},
+                    ],
+                    "pending": [
+                        {"requestId": "req-1"},
+                        {"requestId": "req-2"},
+                        {"deviceId": "missing-request-id"},
+                    ],
+                }
+            return {"ok": True}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "clear", "--yes", "--pending", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        ("device.pair.list", {}),
+        ("device.pair.remove", {"deviceId": "device-1"}),
+        ("device.pair.remove", {"deviceId": "device-2"}),
+        ("device.pair.reject", {"requestId": "req-1"}),
+        ("device.pair.reject", {"requestId": "req-2"}),
+    ]
+    assert json.loads(result.stdout) == {
+        "removedDevices": ["device-1", "device-2"],
+        "rejectedPending": ["req-1", "req-2"],
+    }
+
+
 def test_pairing_list_json_calls_zalo_pairing_store(monkeypatch) -> None:
     calls: list[tuple[str, str | None]] = []
 
