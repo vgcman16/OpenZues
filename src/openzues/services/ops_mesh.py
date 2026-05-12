@@ -34554,15 +34554,30 @@ class OpsMeshService:
             media_event["to"] = str(
                 event.get("to") or (conversation_target or {}).get("peer_id") or ""
             )
-            media_results = [
-                self._post_feishu_media_provider_event(
-                    route,
-                    media_event,
-                    media_url,
-                    secret_token,
+            reply_to_id = str(event.get("replyToId") or "").strip()
+            reply_to_id_source = event.get("replyToIdSource")
+            reply_to_mode = event.get("replyToMode")
+            media_results = []
+            for index, media_url in enumerate(media_urls):
+                media_item_event = dict(media_event)
+                fanout_reply_to_id = _reply_to_fanout_id(
+                    reply_to_id=reply_to_id,
+                    reply_to_id_source=reply_to_id_source,
+                    reply_to_mode=reply_to_mode,
+                    index=index,
                 )
-                for media_url in media_urls
-            ]
+                if fanout_reply_to_id:
+                    media_item_event["replyToId"] = fanout_reply_to_id
+                else:
+                    media_item_event.pop("replyToId", None)
+                media_results.append(
+                    self._post_feishu_media_provider_event(
+                        route,
+                        media_item_event,
+                        media_url,
+                        secret_token,
+                    )
+                )
             native_result = dict(media_results[-1])
             message_ids = [
                 str(result.get("messageId")).strip()

@@ -20417,6 +20417,130 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_m
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_reply_fanout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-feishu-fanout"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    feishu_target = "feishu:chat:oc_chat_1"
+    await database.create_notification_route(
+        name="Feishu Native Media Reply Fanout",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": feishu_target,
+        },
+    )
+    feishu_uploads: list[str] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, target, fields, file_field, filename, content, content_type
+        del secret_token, timeout_seconds
+        feishu_uploads.append(f"img_direct_{len(feishu_uploads) + 1}")
+        return {"code": 0, "msg": "ok", "data": {"image_key": feishu_uploads[-1]}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": f"om_feishu_media_{len(feishu_posts)}",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    media_urls = [
+        "data:image/png;base64,aW1hZ2Ux",
+        "data:image/png;base64,aW1hZ2Uy",
+    ]
+    result = await service.send_direct_channel_message(
+        channel="feishu",
+        to=feishu_target,
+        message="",
+        media_urls=media_urls,
+        account_id="feishu-bot",
+        reply_to_id="om_parent_1",
+        reply_to_id_source="implicit",
+        reply_to_mode="batched",
+        idempotency_key="idem-native-feishu-media-fanout",
+    )
+
+    assert result["messageId"] == "om_feishu_media_2"
+    assert result["mediaIds"] == ["om_feishu_media_1", "om_feishu_media_2"]
+    assert result["mediaUrls"] == media_urls
+    assert len(feishu_posts) == 2
+    first_target, first_payload, first_header_name, first_token = feishu_posts[0]
+    second_target, second_payload, second_header_name, second_token = feishu_posts[1]
+    assert (
+        first_target
+        == "https://open.feishu.cn/open-apis/im/v1/messages/om_parent_1/reply"
+    )
+    assert first_payload == {
+        "content": json.dumps({"image_key": "img_direct_1"}, separators=(",", ":")),
+        "msg_type": "image",
+    }
+    assert second_target == (
+        "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    )
+    assert second_payload == {
+        "receive_id": "oc_chat_1",
+        "content": json.dumps({"image_key": "img_direct_2"}, separators=(",", ":")),
+        "msg_type": "image",
+    }
+    assert first_header_name == second_header_name == "Authorization"
+    assert first_token == second_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_feishu_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
