@@ -108500,6 +108500,82 @@ async def test_doctor_memory_family_mutates_workspace_dreaming_artifacts(
 
 
 @pytest.mark.asyncio
+async def test_doctor_memory_rem_harness_returns_preview_payload(
+    tmp_path: Path,
+) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True)
+    daily_path = memory_dir / "2026-05-12.md"
+    daily_path.write_text(
+        "# Daily Memory\n\n- durable fact\n- second candidate\n",
+        encoding="utf-8",
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        memory_doctor_workspace=tmp_path,
+    )
+
+    payload = await service.call(
+        "doctor.memory.remHarness",
+        {
+            "grounded": True,
+            "includePromoted": True,
+            "limit": 500,
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["agentId"] == "openzues"
+    assert payload["workspaceDir"] == str(tmp_path)
+    assert payload["remConfig"] == {
+        "enabled": True,
+        "lookbackDays": 7,
+        "limit": 25,
+        "minPatternStrength": 0.35,
+    }
+    assert payload["deepConfig"] == {
+        "minScore": 0.75,
+        "minRecallCount": 3,
+        "minUniqueQueries": 2,
+        "recencyHalfLifeDays": 14,
+        "maxAgeDays": None,
+    }
+    assert payload["rem"]["skipped"] is False
+    assert payload["rem"]["sourceEntryCount"] == 1
+    assert payload["rem"]["candidateTruths"][0] == {
+        "snippet": "durable fact",
+        "confidence": 0.5,
+    }
+    assert payload["rem"]["bodyLines"][:2] == ["## REM", "- durable fact"]
+    assert payload["grounded"] == {
+        "scannedFiles": 1,
+        "files": [
+            {
+                "path": "memory/2026-05-12.md",
+                "renderedMarkdown": "# Daily Memory\n\n- durable fact\n- second candidate\n",
+            }
+        ],
+    }
+    assert payload["deep"]["candidateLimit"] == 100
+    assert payload["deep"]["truncated"] is False
+    assert payload["deep"]["candidates"][0] == {
+        "key": "memory/2026-05-12.md:3:3",
+        "path": "memory/2026-05-12.md",
+        "startLine": 3,
+        "endLine": 3,
+        "snippet": "durable fact",
+        "recallCount": 1,
+        "uniqueQueries": 1,
+        "avgScore": 0.5,
+        "maxScore": 0.5,
+        "ageDays": 0,
+        "firstRecalledAt": None,
+        "lastRecalledAt": None,
+        "promoted": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_agent_identity_get_rejects_malformed_session_keys() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 

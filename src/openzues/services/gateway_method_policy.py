@@ -129,6 +129,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "diagnostics.stability",
         "doctor.memory.status",
         "doctor.memory.dreamDiary",
+        "doctor.memory.remHarness",
         "logs.tail",
         "channels.status",
         "status",

@@ -1750,6 +1750,10 @@ _MAX_NODE_NOTIFICATION_EVENT_TEXT_CHARS = 120
 _DREAM_DIARY_FILE_NAMES = ("DREAMS.md", "dreams.md")
 _DREAM_DIARY_BACKFILL_START = "<!-- openzues:dream-backfill:start -->"
 _DREAM_DIARY_BACKFILL_END = "<!-- openzues:dream-backfill:end -->"
+_REM_HARNESS_DEFAULT_CANDIDATE_LIMIT = 25
+_REM_HARNESS_MAX_CANDIDATE_LIMIT = 100
+_REM_HARNESS_MAX_GROUNDED_FILES = 10
+_REM_HARNESS_MAX_REM_PREVIEW_LIMIT = 50
 GatewaySandboxRemoteMediaFetchService = Callable[
     ...,
     Awaitable[bytes | bytearray | memoryview | None],
@@ -10711,6 +10715,17 @@ class GatewayNodeMethodService:
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
             return _build_doctor_memory_dream_diary_payload(self._memory_doctor_workspace)
 
+        if resolved_method == "doctor.memory.remHarness":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("grounded", "includePromoted", "limit"),
+            )
+            return _build_doctor_memory_rem_harness_payload(
+                self._memory_doctor_workspace,
+                payload,
+            )
+
         if resolved_method in {
             "doctor.memory.backfillDreamDiary",
             "doctor.memory.resetDreamDiary",
@@ -19369,6 +19384,178 @@ def _list_doctor_memory_source_files(workspace: Path) -> list[Path]:
         for path in memory_dir.rglob("*.md")
         if path.is_file() and path.name.lower() not in {"dreams.md", "dream_diary.md"}
     )
+
+
+def _build_doctor_memory_rem_harness_payload(
+    workspace: Path,
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    grounded = bool(payload.get("grounded"))
+    include_promoted = bool(payload.get("includePromoted"))
+    candidate_limit = _doctor_memory_rem_harness_candidate_limit(payload.get("limit"))
+    try:
+        return _build_doctor_memory_rem_harness_success_payload(
+            workspace,
+            grounded=grounded,
+            include_promoted=include_promoted,
+            candidate_limit=candidate_limit,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "agentId": "openzues",
+            "workspaceDir": str(workspace),
+            "error": f"gateway rem-harness probe failed: {exc}",
+        }
+
+
+def _doctor_memory_rem_harness_candidate_limit(value: object) -> int:
+    requested_limit = _REM_HARNESS_DEFAULT_CANDIDATE_LIMIT
+    if (
+        not isinstance(value, bool)
+        and isinstance(value, int | float)
+        and math.isfinite(float(value))
+    ):
+        requested_limit = math.floor(float(value))
+    return max(1, min(_REM_HARNESS_MAX_CANDIDATE_LIMIT, requested_limit))
+
+
+def _build_doctor_memory_rem_harness_success_payload(
+    workspace: Path,
+    *,
+    grounded: bool,
+    include_promoted: bool,
+    candidate_limit: int,
+) -> dict[str, object]:
+    source_files = _list_doctor_memory_source_files(workspace)
+    all_candidates = _doctor_memory_rem_harness_candidates(
+        workspace,
+        source_files,
+        include_promoted=include_promoted,
+    )
+    deep_candidates = all_candidates[:candidate_limit]
+    truth_candidates = deep_candidates[:_REM_HARNESS_DEFAULT_CANDIDATE_LIMIT]
+    body_snippets = [str(candidate["snippet"]) for candidate in deep_candidates]
+    body_lines = (
+        ["## REM", *[f"- {snippet}" for snippet in body_snippets]][
+            : _REM_HARNESS_MAX_REM_PREVIEW_LIMIT
+        ]
+        if body_snippets
+        else []
+    )
+    grounded_payload: dict[str, object] | None
+    if grounded:
+        grounded_payload = _build_doctor_memory_rem_harness_grounded_payload(
+            workspace,
+            source_files,
+        )
+    else:
+        grounded_payload = None
+    return {
+        "ok": True,
+        "agentId": "openzues",
+        "workspaceDir": str(workspace),
+        "remConfig": {
+            "enabled": True,
+            "lookbackDays": 7,
+            "limit": _REM_HARNESS_DEFAULT_CANDIDATE_LIMIT,
+            "minPatternStrength": 0.35,
+        },
+        "deepConfig": {
+            "minScore": 0.75,
+            "minRecallCount": 3,
+            "minUniqueQueries": 2,
+            "recencyHalfLifeDays": 14,
+            "maxAgeDays": None,
+        },
+        "rem": {
+            "skipped": False,
+            "sourceEntryCount": len(source_files),
+            "reflections": [],
+            "candidateTruths": [
+                {
+                    "snippet": candidate["snippet"],
+                    "confidence": candidate["avgScore"],
+                }
+                for candidate in truth_candidates
+            ],
+            "bodyLines": body_lines,
+        },
+        "grounded": grounded_payload,
+        "deep": {
+            "candidateLimit": candidate_limit,
+            "truncated": len(all_candidates) > candidate_limit,
+            "candidates": deep_candidates,
+        },
+    }
+
+
+def _doctor_memory_rem_harness_candidates(
+    workspace: Path,
+    source_files: Sequence[Path],
+    *,
+    include_promoted: bool,
+) -> list[dict[str, object]]:
+    candidates: list[dict[str, object]] = []
+    for source_file in source_files:
+        try:
+            lines = source_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        relative_path = source_file.relative_to(workspace).as_posix()
+        for index, line in enumerate(lines, start=1):
+            snippet = _doctor_memory_rem_harness_snippet(line)
+            if snippet is None:
+                continue
+            promoted = "[promoted]" in snippet.lower()
+            if promoted and not include_promoted:
+                continue
+            candidates.append(
+                {
+                    "key": f"{relative_path}:{index}:{index}",
+                    "path": relative_path,
+                    "startLine": index,
+                    "endLine": index,
+                    "snippet": snippet,
+                    "recallCount": 1,
+                    "uniqueQueries": 1,
+                    "avgScore": 0.5,
+                    "maxScore": 0.5,
+                    "ageDays": 0,
+                    "firstRecalledAt": None,
+                    "lastRecalledAt": None,
+                    "promoted": promoted,
+                }
+            )
+    return candidates
+
+
+def _doctor_memory_rem_harness_snippet(line: str) -> str | None:
+    snippet = line.strip()
+    if not snippet or snippet.startswith("#"):
+        return None
+    if snippet.startswith("- "):
+        snippet = snippet[2:].strip()
+    return snippet or None
+
+
+def _build_doctor_memory_rem_harness_grounded_payload(
+    workspace: Path,
+    source_files: Sequence[Path],
+) -> dict[str, object]:
+    files: list[dict[str, object]] = []
+    for source_file in source_files[:_REM_HARNESS_MAX_GROUNDED_FILES]:
+        try:
+            rendered_markdown = source_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        files.append(
+            {
+                "path": source_file.relative_to(workspace).as_posix(),
+                "renderedMarkdown": rendered_markdown,
+            }
+        )
+    return {"scannedFiles": len(files), "files": files}
 
 
 def _backfill_doctor_memory_dream_diary(workspace: Path) -> dict[str, object]:
