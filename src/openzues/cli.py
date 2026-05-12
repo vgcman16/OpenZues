@@ -105417,6 +105417,99 @@ def devices_list_command(
     _emit_devices_list(result, json_output=json_output)
 
 
+@devices_app.command("remove")
+def devices_remove_command(
+    device_id: str = typer.Argument(..., help="Paired device id."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    normalized_device_id = _optional_cli_string(device_id)
+    if normalized_device_id is None:
+        raise typer.BadParameter("deviceId is required")
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(
+            services,
+            "device.pair.remove",
+            {"deviceId": normalized_device_id},
+        )
+
+    result = _run(_run_with_services(_action))
+    if json_output:
+        typer.echo(json.dumps(result, indent=2))
+        return
+    typer.echo(f"Removed {normalized_device_id}")
+
+
+@devices_app.command("clear")
+def devices_clear_command(
+    pending: bool = typer.Option(
+        False,
+        "--pending",
+        help="Also reject all pending pairing requests.",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Confirm destructive clear."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    if not yes:
+        typer.echo("Refusing to clear pairing table without --yes", err=True)
+        raise typer.Exit(code=1)
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        listing = await _call_gateway_node_method(services, "device.pair.list", {})
+        paired_value = listing.get("paired")
+        pending_value = listing.get("pending")
+        paired_items = paired_value if isinstance(paired_value, list) else []
+        pending_items = pending_value if isinstance(pending_value, list) else []
+        removed_devices: list[str] = []
+        rejected_pending: list[str] = []
+        for item in paired_items:
+            if not isinstance(item, dict):
+                continue
+            device_id = _optional_cli_string(item.get("deviceId"))
+            if device_id is None:
+                continue
+            await _call_gateway_node_method(
+                services,
+                "device.pair.remove",
+                {"deviceId": device_id},
+            )
+            removed_devices.append(device_id)
+        if pending:
+            for item in pending_items:
+                if not isinstance(item, dict):
+                    continue
+                request_id = _optional_cli_string(item.get("requestId"))
+                if request_id is None:
+                    continue
+                await _call_gateway_node_method(
+                    services,
+                    "device.pair.reject",
+                    {"requestId": request_id},
+                )
+                rejected_pending.append(request_id)
+        return {
+            "removedDevices": removed_devices,
+            "rejectedPending": rejected_pending,
+        }
+
+    result = _run(_run_with_services(_action))
+    if json_output:
+        typer.echo(json.dumps(result, indent=2))
+        return
+    removed_value = result.get("removedDevices")
+    removed_count = len(removed_value) if isinstance(removed_value, list) else 0
+    typer.echo(f"Cleared {removed_count} paired device{'s' if removed_count != 1 else ''}")
+    if pending:
+        rejected_count = (
+            len(result.get("rejectedPending"))
+            if isinstance(result.get("rejectedPending"), list)
+            else 0
+        )
+        typer.echo(
+            f"Rejected {rejected_count} pending request{'s' if rejected_count != 1 else ''}"
+        )
+
+
 @devices_app.command("approve")
 def devices_approve_command(
     request_id: str | None = typer.Argument(None, help="Pending request id."),
@@ -105425,9 +105518,17 @@ def devices_approve_command(
         "--latest",
         help="Preview the latest pending request before explicit approval.",
     ),
+    url: str | None = typer.Option(None, "--url", help="Gateway WebSocket URL."),
+    timeout: str | None = typer.Option(None, "--timeout", help="Gateway timeout in ms."),
+    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    password: str | None = typer.Option(None, "--password", help="Gateway password."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     normalized_request_id = _optional_cli_string(request_id)
+    url_value = _optional_cli_string(url)
+    timeout_value = _optional_cli_string(timeout)
+    token_value = _optional_cli_string(token)
+    password_value = _optional_cli_string(password)
     if normalized_request_id is None or latest:
 
         async def _preview_action(services: CliServices) -> dict[str, object]:
@@ -105442,18 +105543,28 @@ def devices_approve_command(
         if selected_request_id is None:
             typer.echo("Selected device pairing request is missing requestId", err=True)
             raise typer.Exit(code=1)
+        approve_args = ["openzues", "devices", "approve", selected_request_id]
+        if url_value is not None:
+            approve_args.extend(["--url", url_value])
+        if timeout_value is not None:
+            approve_args.extend(["--timeout", timeout_value])
+        if json_output:
+            approve_args.append("--json")
         preview = {
             "selected": selected,
-            "approveCommand": (
-                f"openzues devices approve {selected_request_id}"
-                f"{' --json' if json_output else ''}"
-            ),
+            "approveCommand": _doctor_format_cli_args(approve_args),
+            "requiresAuthFlags": {
+                "token": token_value is not None,
+                "password": password_value is not None,
+            },
         }
         if json_output:
             typer.echo(json.dumps(preview, indent=2))
         else:
             _emit_devices_list({"pending": [selected], "paired": []}, json_output=False)
             typer.echo(f"Run: {preview['approveCommand']}", err=True)
+            if token_value is not None or password_value is not None:
+                typer.echo("Reuse the same auth flag when running approve.", err=True)
         raise typer.Exit(code=1)
 
     async def _action(services: CliServices) -> dict[str, object]:
@@ -105470,6 +105581,93 @@ def devices_approve_command(
     device = result.get("device") if isinstance(result.get("device"), dict) else {}
     device_id = _optional_cli_string(device.get("deviceId")) if isinstance(device, dict) else None
     typer.echo(f"Approved {device_id or normalized_request_id}")
+
+
+@devices_app.command("reject")
+def devices_reject_command(
+    request_id: str = typer.Argument(..., help="Pending request id."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    normalized_request_id = _optional_cli_string(request_id)
+    if normalized_request_id is None:
+        raise typer.BadParameter("requestId is required")
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(
+            services,
+            "device.pair.reject",
+            {"requestId": normalized_request_id},
+        )
+
+    result = _run(_run_with_services(_action))
+    if json_output:
+        typer.echo(json.dumps(result, indent=2))
+        return
+    device_id = _optional_cli_string(result.get("deviceId"))
+    typer.echo(f"Rejected {device_id or normalized_request_id}")
+
+
+@devices_app.command("rotate")
+def devices_rotate_command(
+    device_id: str = typer.Option(..., "--device", help="Device id."),
+    role: str = typer.Option(..., "--role", help="Role name."),
+    scopes: Annotated[
+        list[str] | None,
+        typer.Option("--scope", help="Scope to attach to the rotated token."),
+    ] = None,
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    normalized_device_id = _optional_cli_string(device_id)
+    normalized_role = _optional_cli_string(role)
+    if normalized_device_id is None:
+        raise typer.BadParameter("--device is required")
+    if normalized_role is None:
+        raise typer.BadParameter("--role is required")
+    normalized_scopes = [
+        scope for raw_scope in scopes or [] if (scope := _optional_cli_string(raw_scope))
+    ]
+    params: dict[str, object] = {
+        "deviceId": normalized_device_id,
+        "role": normalized_role,
+    }
+    if normalized_scopes:
+        params["scopes"] = normalized_scopes
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "device.token.rotate", params)
+
+    result = _run(_run_with_services(_action))
+    if json_output:
+        typer.echo(json.dumps(result, indent=2))
+        return
+    typer.echo(f"Rotated token for {normalized_device_id} ({normalized_role})")
+
+
+@devices_app.command("revoke")
+def devices_revoke_command(
+    device_id: str = typer.Option(..., "--device", help="Device id."),
+    role: str = typer.Option(..., "--role", help="Role name."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    normalized_device_id = _optional_cli_string(device_id)
+    normalized_role = _optional_cli_string(role)
+    if normalized_device_id is None:
+        raise typer.BadParameter("--device is required")
+    if normalized_role is None:
+        raise typer.BadParameter("--role is required")
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(
+            services,
+            "device.token.revoke",
+            {"deviceId": normalized_device_id, "role": normalized_role},
+        )
+
+    result = _run(_run_with_services(_action))
+    if json_output:
+        typer.echo(json.dumps(result, indent=2))
+        return
+    typer.echo(f"Revoked token for {normalized_device_id} ({normalized_role})")
 
 
 def _resolve_pairing_channel(channel: object) -> str:

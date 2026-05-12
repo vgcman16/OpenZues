@@ -6,7 +6,7 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.967% of the
+- The active gateway/session/tool-contract family is estimated at ~99.969% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.987% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -146,8 +146,8 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.967% after the
-  latest native `doctor.memory.remHarness` preview slice.
+- The gateway session/tool-contract family is estimated at ~99.969% after the
+  latest native web-push gateway method slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.99997%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
@@ -164,6 +164,10 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
+- The packaging/companion app breadth family is estimated at ~5.4% after QR
+  setup-code safety/SecretRef slices, device pairing CLI list/approve,
+  approve-preview gateway/auth flag preservation, and
+  remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -228,11 +232,22 @@ blocks for image/audio/file artifacts, project stable OpenClaw-shaped artifact
 summaries, and return base64/url download payloads without exposing raw bytes
 from list/get. Source/test checkpointed in `13eddac7`; active
 gateway/session/tool-contract parity moves to ~99.964% and chat/session parity
-moves to ~99.987%. The next method comparison queue heads are
-`update.status`, `diagnostics.stability`, `nativeHook.invoke`, web-push helper
-methods, and the memory rem-harness doctor helper.
-edges, deeper installed plugin activation, browser local fallback, or companion
-breadth.
+moves to ~99.987%. The next method comparison queue heads at that checkpoint
+were `update.status`, `diagnostics.stability`, `nativeHook.invoke`, web-push
+helper methods, and the memory rem-harness doctor helper.
+
+Current queue-head adjustment: `OZ-RT-001BG` `push.web.vapidPublicKey`,
+`push.web.subscribe`, `push.web.unsubscribe`, and `push.web.test` are now
+native write-scope gateway methods backed by OpenZues persisted VAPID and
+subscription state plus a fakeable sender. They cover OpenClaw's env-first
+VAPID lookup, endpoint-hashed subscription upsert/removal, broadcast test
+result projection, expired endpoint cleanup, and no-subscription invalid
+request. Source/test checkpointed in `af0fc977`; active
+gateway/session/tool-contract parity moves to ~99.969%. A source sweep of
+OpenClaw `src/gateway/server-methods/*.ts` currently reports no missing
+gateway method names in the OpenZues gateway owner files. Continue broader
+installed plugin activation, packaging/distribution, companion, provider, and
+UI breadth.
 
 Current queue-head adjustment: package update restart-health checks now fail
 when the restarted gateway omits its gateway version without rendering a
@@ -12085,6 +12100,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor and CLI/operator parity move to ~99.9993%, and companion
   breadth moves to ~5.2%. Continue package-update downgrade confirmation or
   remaining provider-specific media/reply edges.
+- Current queue-head adjustment: `openzues devices remove`, `clear`, `reject`,
+  `rotate`, and `revoke` now provide the remaining OpenClaw device pairing and
+  token mutation CLI surface. Source/test checkpointed in `1c25fdbb`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion app
+  breadth moves to ~5.3%. Continue remote device CLI fallback/auth ergonomics,
+  packaging/distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: `openzues devices approve --latest` now
+  preserves OpenClaw-style remote gateway preview flags: `--url` and
+  `--timeout` are echoed into the generated rerun command, while `--token` and
+  `--password` are exposed only as `requiresAuthFlags` booleans so secret
+  values never leak. Source/test checkpointed in `204bcdd2`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion app breadth moves to
+  ~5.4%. Continue actual remote device CLI fallback/auth dispatch,
+  packaging/distribution, provider/runtime, or companion app breadth.
 - Current queue-head adjustment: package-shaped updates now resolve registry
   target versions for dry-run downgrade previews, set `downgradeRisk` for
   explicit semver/dist-tag package targets, and refuse JSON/non-interactive
@@ -12531,3 +12560,37 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   to ~99.967%. Continue native hook, web-push helper methods,
   provider-specific media/reply edges, deeper installed plugin activation,
   companion breadth, or the next packaging edge.
+- Current queue-head adjustment: native `nativeHook.invoke` now relays
+  registered codex hook invocations through `GatewayNativeHookRelayService`,
+  preserving OpenClaw-shaped provider/event validation, relay lookup errors,
+  JSON payload guards, normalized invocation metadata, and no-op process
+  responses. Source/test checkpointed in `587c181b`; repo-wide parity remains
+  estimated at ~99.9%, and active gateway/session/tool-contract parity moves
+  to ~99.968%. The next queue head at that checkpoint was the web-push helper
+  method cluster.
+- Current queue-head adjustment: native `push.web.vapidPublicKey`,
+  `push.web.subscribe`, `push.web.unsubscribe`, and `push.web.test` now cover
+  OpenClaw's web-push gateway method cluster with persisted VAPID keys,
+  endpoint-hashed subscription upsert/removal, fakeable broadcast delivery,
+  expired endpoint cleanup, and no-subscription invalid requests. Source/test
+  checkpointed in `af0fc977`; repo-wide parity remains estimated at ~99.9%,
+  and active gateway/session/tool-contract parity moves to ~99.969%. Continue
+  broader installed plugin activation, packaging/distribution, companion,
+  provider, and UI breadth.
+- Current queue-head adjustment: native `openzues devices remove`, `clear`,
+  `reject`, `rotate`, and `revoke` now cover the remaining OpenClaw device CLI
+  mutation cluster by routing to the existing `device.pair.*` and
+  `device.token.*` gateway methods, preserving JSON output, `clear --yes`,
+  optional `--pending` rejection, and repeated `--scope` token rotation.
+  Source/test checkpointed in `1c25fdbb`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion app breadth moves to ~5.3%. Continue
+  remote device CLI fallback/auth ergonomics, packaging/distribution,
+  provider/runtime, or companion app breadth.
+- Current queue-head adjustment: native `openzues devices approve --latest`
+  now carries OpenClaw-style remote gateway preview flags into the safe rerun
+  command while redacting secret material. `--url` and `--timeout` survive in
+  `approveCommand`; `--token` and `--password` only set
+  `requiresAuthFlags`. Source/test checkpointed in `204bcdd2`; repo-wide
+  parity remains estimated at ~99.9%, and packaging/companion app breadth
+  moves to ~5.4%. Continue actual remote device CLI fallback/auth dispatch,
+  packaging/distribution, provider/runtime, or companion app breadth.

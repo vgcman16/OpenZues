@@ -4,10 +4,15 @@
 
 - Updated: 2026-05-12.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- Estimated active gateway/session/tool-contract family parity: ~99.967% for the bounded local OpenZues path.
+- Estimated active gateway/session/tool-contract family parity: ~99.969% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
+- Estimated packaging/companion app breadth: ~5.4% after QR setup-code
+  safety/SecretRef slices and device pairing CLI list/approve plus
+  approve preview gateway/auth flag preservation and
+  remove/clear/reject/rotate/revoke coverage; companion apps remain broadly
+  open.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.99999% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, deeper installed plugin module import/activation, and broader runtime command ergonomics.
 - Estimated provider-native inbound/outbound breadth: ~99.99997% after Slack
   event/interactions/slash/signing coverage, command aliases/plugin command
@@ -2518,7 +2523,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
 | Channels + direct announce delivery | Strong partial | ~97% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, direct-announce provider metadata/replay, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, active/archived `thread-list`, core `thread-reply`, `search`, `sticker`, `sticker-upload`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `kick`, `ban`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, route-backed Feishu/Lark `send`, presentation-card `send`/`thread-reply`, image/file/audio/video media `send`, `read`, `edit`, `pin`, `unpin`, `list-pins`, `channel-info`, `member-info`, `channel-list`, `react`, and `reactions` action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
 | Browser/canvas/nodes/voice | Locked bounded family | ~99.4% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, `browser.request` browser-node proxy dispatch, proxy-file persistence/path rewriting, configured-node selection, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, password-safe auth save, and voicewake routing methods are now landed. |
-| Packaging + companion apps | Minimal | ~5.1% | QR setup-code security, remote URL/auth, Tailscale, SecretRef, device-pairing, and inferred-loopback guards are landed, but companion apps remain largely outside the current shipped OpenZues surface. |
+| Packaging + companion apps | Minimal | ~5.4% | QR setup-code security, remote URL/auth, Tailscale, SecretRef, device-pairing, device CLI mutations, and approve-preview gateway/auth flag preservation are landed, but companion apps remain largely outside the current shipped OpenZues surface. |
 
 ## Remaining Not-Fully-Complete Areas
 
@@ -23669,6 +23674,89 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `mypy src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_method_policy.py`, and focused `git diff
   --check`. Source/test checkpointed in `5e6d43f6`.
+- Native `nativeHook.invoke` now covers OpenClaw's gateway native hook relay
+  method from `src/gateway/server-methods/native-hook-relay.ts`. The
+  `GatewayNativeHookRelayService` registers live codex relays, validates
+  provider/event/relay ids, rejects missing/expired/mismatched relays and
+  non-JSON payloads, records normalized hook invocations, and returns the
+  Codex no-op process response. This closes `OZ-RT-001BF`; repo-wide parity
+  remains estimated at ~99.9%, and active gateway/session/tool-contract parity
+  moves to ~99.968%.
+- Verified the gateway native-hook relay seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_native_hook_invoke_accepts_live_codex_relay tests\test_gateway_node_methods.py::test_native_hook_invoke_rejects_unknown_relay -q`
+  (`ModuleNotFoundError: No module named 'openzues.services.gateway_native_hook_relay'`
+  before implementation, then `2 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "native_hook or doctor_memory"`
+  (`6 passed, 1261 deselected`), policy proof
+  `python -m pytest tests\test_gateway_method_policy.py -q -k "nativeHook or method_scope or admin"`
+  (`2 passed, 17 deselected`), `ruff check
+  src\openzues\services\gateway_native_hook_relay.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`,
+  `mypy src\openzues\services\gateway_native_hook_relay.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`, and focused `git diff
+  --check`. Source/test checkpointed in `587c181b`.
+- Native web-push gateway methods now cover OpenClaw's
+  `push.web.vapidPublicKey`, `push.web.subscribe`, `push.web.unsubscribe`,
+  and `push.web.test` cluster from `src/gateway/server-methods/push.ts` and
+  `src/infra/push-web.ts`. The native service resolves env-first/persisted
+  VAPID keys, persists endpoint-hashed subscriptions, updates repeated
+  endpoint registrations in place, broadcasts test notifications through a
+  fakeable sender, removes expired endpoint registrations, and preserves the
+  no-subscriptions invalid request. This closes `OZ-RT-001BG`; repo-wide
+  parity remains estimated at ~99.9%, and active
+  gateway/session/tool-contract parity moves to ~99.969%.
+- Verified the gateway web-push seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_push_web_subscribe_test_and_unsubscribe_round_trip tests\test_gateway_node_methods.py::test_push_web_rejects_invalid_params -q`
+  (`ModuleNotFoundError: No module named 'openzues.services.gateway_web_push'`
+  before implementation, then `2 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "push_web or push_test"`
+  (`6 passed, 1263 deselected`), policy proof
+  `python -m pytest tests\test_gateway_method_policy.py -q -k "push_web or method_scope or runtime_handlers"`
+  (`2 passed, 17 deselected`), handler-string sweep with no missing
+  OpenClaw `server-methods/*.ts` methods, `ruff check
+  src\openzues\services\gateway_web_push.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`,
+  `mypy src\openzues\services\gateway_web_push.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`, and focused `git diff
+  --check`. Source/test checkpointed in `af0fc977`.
+- Native device-pairing CLI breadth now covers OpenClaw's `devices remove`,
+  `devices clear`, `devices reject`, `devices rotate`, and `devices revoke`
+  command cluster from `src/cli/devices-cli.ts`. These commands route through
+  `device.pair.remove`, `device.pair.list`, `device.pair.reject`,
+  `device.token.rotate`, and `device.token.revoke`, preserve JSON output, keep
+  clear destructive behind `--yes`, optionally reject pending requests with
+  `--pending`, and support repeated `--scope` values for token rotation. This
+  closes `OZ-COMP-001P`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion app breadth moves to ~5.3%.
+- Verified the device-pairing CLI mutation seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_mutation_commands_call_openclaw_gateway_methods tests\test_cli.py::test_devices_clear_json_removes_paired_and_rejects_pending -q`
+  (`5 failed` before implementation, then `5 passed`), adjacent CLI proof
+  `python -m pytest tests\test_cli.py -q -k "devices_ or pairing_approve"`
+  (`13 passed, 596 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `1c25fdbb`.
+- Native `openzues devices approve --latest` now preserves OpenClaw-style
+  gateway preview flags from `src/cli/devices-cli.ts` / `devices-cli.test.ts`:
+  `--url` and `--timeout` are copied into the generated rerun command, while
+  `--token` and `--password` are represented only as `requiresAuthFlags`
+  booleans so secret values never leak to JSON or human preview output. This
+  closes `OZ-COMP-001Q`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion app breadth moves to ~5.4%.
+- Verified the device approve preview gateway-flag seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_approve_latest_json_preserves_gateway_flags_without_secrets -q`
+  (`1 failed` before implementation with Typer exit 2, then included in
+  focused `2 passed`), focused preview proof
+  `python -m pytest tests\test_cli.py::test_devices_approve_latest_json_preserves_gateway_flags_without_secrets tests\test_cli.py::test_devices_approve_latest_json_previews_without_approving -q`
+  (`2 passed`), adjacent CLI proof `python -m pytest tests\test_cli.py -q
+  -k "devices_ or pairing_approve"` (`14 passed, 596 deselected`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`,
+  and focused `git diff --check`. Source/test checkpointed in `204bcdd2`.
 
 ## References
 

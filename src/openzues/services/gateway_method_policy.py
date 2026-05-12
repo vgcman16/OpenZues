@@ -292,6 +292,10 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "doctor.memory.repairDreamingArtifacts",
         "doctor.memory.dedupeDreamDiary",
         "push.test",
+        "push.web.vapidPublicKey",
+        "push.web.subscribe",
+        "push.web.unsubscribe",
+        "push.web.test",
         "node.pending.enqueue",
     ),
     ADMIN_GATEWAY_METHOD_SCOPE: (
@@ -317,6 +321,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "sessions.compaction.restore",
         "connect",
         "chat.inject",
+        "nativeHook.invoke",
         "web.login.start",
         "web.login.wait",
         "set-heartbeats",

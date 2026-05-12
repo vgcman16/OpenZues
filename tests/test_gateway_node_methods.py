@@ -80,6 +80,7 @@ from openzues.services.gateway_tts_runtime import (
 )
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.gateway_wake import GatewayWakeService
+from openzues.services.gateway_web_push import GatewayWebPushService
 from openzues.services.gateway_wizard import GatewayWizardService
 from openzues.services.hub import BroadcastHub
 from openzues.services.session_keys import build_launch_session_key, resolve_thread_session_keys
@@ -91950,6 +91951,115 @@ async def test_push_test_fails_as_missing_apns_registration() -> None:
 
 
 @pytest.mark.asyncio
+async def test_push_web_subscribe_test_and_unsubscribe_round_trip(
+    tmp_path: Path,
+) -> None:
+    delivered_payloads: list[dict[str, object]] = []
+
+    async def send_notification(**kwargs: object) -> dict[str, object]:
+        delivered_payloads.append(dict(kwargs))
+        subscription = kwargs["subscription"]
+        assert isinstance(subscription, dict)
+        return {
+            "ok": True,
+            "subscriptionId": subscription["subscriptionId"],
+            "statusCode": 201,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        web_push_service=GatewayWebPushService(
+            state_dir=tmp_path,
+            send_notification=send_notification,
+        ),
+    )
+
+    vapid = await service.call("push.web.vapidPublicKey", {})
+    assert isinstance(vapid["vapidPublicKey"], str)
+    assert vapid["vapidPublicKey"]
+
+    endpoint = "https://push.example.com/send/abc123"
+    keys = {"p256dh": "p256dh-key", "auth": "auth-key"}
+    subscribed = await service.call(
+        "push.web.subscribe",
+        {"endpoint": endpoint, "keys": keys},
+    )
+    subscription_id = subscribed["subscriptionId"]
+    assert isinstance(subscription_id, str)
+    assert subscription_id
+
+    updated = await service.call(
+        "push.web.subscribe",
+        {
+            "endpoint": endpoint,
+            "keys": {"p256dh": "updated-p256dh", "auth": "updated-auth"},
+        },
+    )
+    assert updated == {"subscriptionId": subscription_id}
+
+    test_result = await service.call(
+        "push.web.test",
+        {"title": "OpenZues", "body": "Web push parity ping."},
+    )
+    assert test_result == {
+        "results": [
+            {
+                "ok": True,
+                "subscriptionId": subscription_id,
+                "statusCode": 201,
+            }
+        ]
+    }
+    assert delivered_payloads[0]["payload"] == {
+        "title": "OpenZues",
+        "body": "Web push parity ping.",
+    }
+    delivered_subscription = delivered_payloads[0]["subscription"]
+    assert isinstance(delivered_subscription, dict)
+    assert delivered_subscription["endpoint"] == endpoint
+    assert delivered_subscription["keys"] == {
+        "p256dh": "updated-p256dh",
+        "auth": "updated-auth",
+    }
+
+    assert await service.call("push.web.unsubscribe", {"endpoint": endpoint}) == {
+        "removed": True
+    }
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="no web push subscriptions registered",
+    ) as exc_info:
+        await service.call("push.web.test", {})
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_push_web_rejects_invalid_params(tmp_path: Path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        web_push_service=GatewayWebPushService(state_dir=tmp_path),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as subscribe_error:
+        await service.call(
+            "push.web.subscribe",
+            {
+                "endpoint": "http://push.example.com/insecure",
+                "keys": {"p256dh": "p256dh-key", "auth": "auth-key"},
+            },
+        )
+    assert subscribe_error.value.code == "INVALID_REQUEST"
+    assert subscribe_error.value.status_code == 400
+    assert "endpoint" in subscribe_error.value.message
+
+    with pytest.raises(GatewayNodeMethodError) as vapid_error:
+        await service.call("push.web.vapidPublicKey", {"extra": True})
+    assert vapid_error.value.code == "INVALID_REQUEST"
+    assert vapid_error.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_connect_fails_as_explicit_invalid_request() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -108573,6 +108683,89 @@ async def test_doctor_memory_rem_harness_returns_preview_payload(
         "lastRecalledAt": None,
         "promoted": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_native_hook_invoke_accepts_live_codex_relay() -> None:
+    from openzues.services.gateway_native_hook_relay import GatewayNativeHookRelayService
+
+    native_hook_service = GatewayNativeHookRelayService(now_ms=lambda: 1000)
+    native_hook_service.register(
+        provider="codex",
+        relay_id="relay-1",
+        session_id="session-1",
+        run_id="run-1",
+        allowed_events=["post_tool_use"],
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        native_hook_relay_service=native_hook_service,
+    )
+
+    payload = await service.call(
+        "nativeHook.invoke",
+        {
+            "provider": "codex",
+            "relayId": "relay-1",
+            "event": "post_tool_use",
+            "rawPayload": {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "tool_use_id": "tool-1",
+                "tool_input": {"command": "echo ok"},
+                "tool_response": {"output": "ok"},
+            },
+        },
+    )
+
+    assert payload == {"stdout": "", "stderr": "", "exitCode": 0}
+    assert native_hook_service.invocations == [
+        {
+            "provider": "codex",
+            "relayId": "relay-1",
+            "event": "post_tool_use",
+            "nativeEventName": "PostToolUse",
+            "sessionId": "session-1",
+            "runId": "run-1",
+            "toolName": "Bash",
+            "toolUseId": "tool-1",
+            "rawPayload": {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "tool_use_id": "tool-1",
+                "tool_input": {"command": "echo ok"},
+                "tool_response": {"output": "ok"},
+            },
+            "receivedAt": "1970-01-01T00:00:01Z",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_native_hook_invoke_rejects_unknown_relay() -> None:
+    from openzues.services.gateway_native_hook_relay import GatewayNativeHookRelayService
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        native_hook_relay_service=GatewayNativeHookRelayService(),
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="native hook relay not found",
+    ) as exc_info:
+        await service.call(
+            "nativeHook.invoke",
+            {
+                "provider": "codex",
+                "relayId": "missing",
+                "event": "pre_tool_use",
+                "rawPayload": {},
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
 
 
 @pytest.mark.asyncio
