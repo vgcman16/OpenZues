@@ -139,8 +139,8 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.94% after the
-  latest `browser.request` proxy-file persistence slice.
+- The gateway session/tool-contract family is estimated at ~99.945% after the
+  latest `browser.request` configured-node selection slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.999%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
@@ -11988,9 +11988,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Source/test checkpointed in `430e365b`; repo-wide parity remains estimated
   at ~99.9%, active gateway/session/tool-contract parity moves to ~99.93%,
   and browser/canvas/nodes/voice bounded-command parity moves to ~99.2%.
-  Continue `browser.request` proxy file persistence, local control-service
-  fallback, remaining provider-specific media/reply edges, deeper installed
-  plugin activation, companion breadth, or the next packaging edge.
+  Continue `browser.request` proxy file persistence and node selection policy,
+  local control-service fallback, remaining provider-specific media/reply
+  edges, deeper installed plugin activation, companion breadth, or the next
+  packaging edge.
 - Current queue-head adjustment: `browser.request` now persists browser proxy
   `files[]` payloads into a native browser proxy media directory and rewrites
   `result.path`, `result.imagePath`, and `result.download.path` to the stored
@@ -11999,6 +12000,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   repo-wide parity remains estimated at ~99.9%, active
   gateway/session/tool-contract parity moves to ~99.94%, and
   browser/canvas/nodes/voice bounded-command parity moves to ~99.3%. Continue
-  `browser.request` local control-service fallback/node selection policy,
+  `browser.request` node selection policy and local control-service fallback,
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` now honors OpenClaw's
+  configured browser-node selection policy from
+  `extensions/browser/src/gateway/browser-request.ts`: native config
+  `gateway.nodes.browser` supports `auto`/`manual`/`off`, resolves a configured
+  node by id, remote IP, normalized display name, or safe id prefix, and
+  dispatches `browser.proxy` to that selected node when multiple browser nodes
+  are connected. Source/test checkpointed in `6b31e0d7`; repo-wide parity
+  remains estimated at ~99.9%, active gateway/session/tool-contract parity
+  moves to ~99.945%, and browser/canvas/nodes/voice bounded-command parity
+  moves to ~99.4%. Continue `browser.request` local control-service fallback,
   remaining provider-specific media/reply edges, deeper installed plugin
   activation, companion breadth, or the next packaging edge.

@@ -4,9 +4,9 @@
 
 - Updated: 2026-05-12.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- Estimated active gateway/session/tool-contract family parity: ~99.94% for the bounded local OpenZues path.
+- Estimated active gateway/session/tool-contract family parity: ~99.945% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.985% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
-- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.3%;
+- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.4%;
   it is no longer the active queue head.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.99987% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch restart-health failure, gateway health `serverVersion` projection, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, deeper installed plugin module import/activation, and broader runtime command ergonomics.
 - Estimated provider-native inbound/outbound breadth: ~99.999% after Slack
@@ -217,7 +217,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 - Gateway method registry, method policy wiring, strict parameter guards, config lookup/mutation, node invoke guard rails, device pairing, device-token rotation/revoke, plugin approval lifecycle, exec approval lifecycle, and node/global exec approval policy are landed and verified.
 - Cron local scheduling now covers expression schedules, due-run detection, delivery status, fallback announcement, session delivery fallback, system-event session-key wake routing, retry/backoff, one-shot cleanup, and OpenClaw-style CLI add/edit schedule parsing.
-- Browser/canvas/nodes/voice bounded command coverage is effectively locked for the local bridge: native browser commands, `browser.request` browser-node proxy dispatch plus proxy-file persistence, action grammar, storage/cookies/HAR, auth profile login/delete/save, batch execution, dashboard lifecycle, plugin node-host browser command/cap inventory, canvas/A2UI/live reload, APNS wake paths, managed attachments, scoped capability URLs, and iOS provider command bridges all have concrete gateway runtimes or honest unavailable boundaries.
+- Browser/canvas/nodes/voice bounded command coverage is effectively locked for the local bridge: native browser commands, `browser.request` browser-node proxy dispatch, proxy-file persistence, and configured node selection, action grammar, storage/cookies/HAR, auth profile login/delete/save, batch execution, dashboard lifecycle, plugin node-host browser command/cap inventory, canvas/A2UI/live reload, APNS wake paths, managed attachments, scoped capability URLs, and iOS provider command bridges all have concrete gateway runtimes or honest unavailable boundaries.
 - Chat transcript contracts are locked for the current SQLite-backed store: `chat.history` projection, usage/cost metadata, abort partial metadata, text caps, oversized payload placeholders, untrusted suffix stripping, skip-only hiding, directive cleanup, `chat.send` schema/provenance/timeout/session-key guards, `chat.inject` schema guards, and `chat.abort` run-id plus requester ownership validation.
 - Session tool contracts are locked across the bounded local path for `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.preview`, and direct session-history REST/SSE behavior.
 - Session runtime metadata projection now includes OpenClaw-shaped implicit
@@ -22772,8 +22772,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `result`. This closes `OZ-CANVAS-001C`; repo-wide parity remains estimated
   at ~99.9%, active gateway/session/tool-contract parity moves to ~99.93%,
   and browser/canvas/nodes/voice bounded-command parity moves to ~99.2%.
-  Remaining browser-request depth includes local control-service fallback and
-  browser-node selection policy.
+  Remaining browser-request depth after this slice included local
+  control-service fallback and browser-node selection policy.
 - Verified the `browser.request` node-proxy seam with focused red/green
   `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_rejects_persistent_profile_mutations_before_dispatch -q`
   and
@@ -22793,8 +22793,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   This closes `OZ-CANVAS-001D`; repo-wide parity remains estimated at
   ~99.9%, active gateway/session/tool-contract parity moves to ~99.94%, and
   browser/canvas/nodes/voice bounded-command parity moves to ~99.3%.
-  Remaining browser-request depth includes local control-service fallback and
-  browser-node selection policy.
+  Remaining browser-request depth after this slice included local
+  control-service fallback and browser-node selection policy.
 - Verified the `browser.request` proxy-file persistence seam with focused
   red/green
   `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_persists_proxy_files_and_rewrites_result_paths -q`
@@ -22805,6 +22805,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `97c32bc8`.
+- `browser.request` now honors OpenClaw's configured browser-node selection
+  policy when multiple browser-capable nodes are connected. OpenZues reads
+  `gateway.nodes.browser`, supports `mode` values `auto`/`manual`/`off`, and
+  resolves the configured `node` by id, remote IP, normalized display name, or
+  safe id prefix before dispatching `browser.proxy`. This closes
+  `OZ-CANVAS-001E`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.945%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.4%.
+  Remaining browser-request depth is local control-service fallback.
+- Verified the `browser.request` configured-node seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_uses_configured_browser_node_when_multiple_connected -q`
+  (`multiple browser-capable nodes connected; configure a browser node` before
+  implementation, then `1 passed`), adjacent browser/node proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or node_invoke_rejects_persistent_browser_proxy_mutations or node_invoke_allows_valid_canvas_a2ui_jsonl"`
+  (`8 passed, 1235 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `6b31e0d7`.
 
 ## References
 
