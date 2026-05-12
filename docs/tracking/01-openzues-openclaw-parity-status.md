@@ -21,8 +21,8 @@ may lag behind this tracker.
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.9991% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.99989% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.99989% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.99990% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.99990% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
@@ -9061,6 +9061,28 @@ may lag behind this tracker.
     update selector (`7 passed, 571 deselected`), `ruff check
     src\openzues\cli.py tests\test_cli.py tests\test_ops_mesh.py`, `mypy
     src\openzues\cli.py`, and focused `git diff --check`.
+
+- [x] Package restart-health unhealthy snapshot diagnostics.
+  - Source: `openclaw-main/src/cli/daemon-cli/restart-health.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: package-shaped `openzues update` fails restart-health when the
+    restart snapshot itself is explicitly unhealthy, preserves
+    `restartHealth` runtime/port metadata, and renders OpenClaw-shaped service
+    runtime plus gateway port diagnostics.
+  - Evidence required: focused restart-health snapshot proof, adjacent
+    restart-health/package-update proof, ruff, mypy
+  - Status: checkpointed in `23f1e2b2`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_fails_when_restart_health_snapshot_is_unhealthy -q`
+    (`Update ok` before implementation, then `1 passed`), adjacent
+    restart-health/package-update proof
+    `python -m pytest tests\test_cli.py -q -k "restart_health or restarted_gateway or package_update"`
+    (`10 passed, 584 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
 
 ## Update Rule
 

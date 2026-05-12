@@ -164,6 +164,12 @@ OpenClaw ` · ` separator for combined git/npm availability details.
 `src/cli/daemon-cli/restart-health.ts` is checkpointed in `90e3d0a3`; it covers
 generic restart-health failure when the restarted gateway omits its version
 without rendering a version-mismatch diagnostic.
+`OZ-PKG-001CY` unhealthy restart-health snapshot diagnostics from
+`src/cli/daemon-cli/restart-health.ts` and
+`src/cli/update-cli/update-command.ts` is checkpointed in `23f1e2b2`; it covers
+generic restart-health failure plus service runtime and gateway port
+diagnostics when the restart snapshot is explicitly unhealthy without
+plugin/channel/version detail families.
 
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is

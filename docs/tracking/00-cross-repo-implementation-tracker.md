@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.986% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.9991% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.99989% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.99989% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.99990% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.99990% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -551,6 +551,11 @@ diagnostics are source/test checkpointed in `90e3d0a3`; runtime/CLI/doctor and
 CLI/operator parity move to ~99.99989%. Continue remaining package
 restart-health diagnostics, provider-specific media/reply edges, browser local
 fallback, deeper installed plugin activation, or companion breadth.
+Packaging addendum: `OZ-PKG-001CY` unhealthy restart-health snapshot
+diagnostics are source/test checkpointed in `23f1e2b2`; runtime/CLI/doctor and
+CLI/operator parity move to ~99.99990%. Continue remaining
+packaging/distribution breadth, provider-specific media/reply edges, deeper
+installed plugin activation, or companion breadth.
 
 ## Active Slice Detail
 
