@@ -5053,6 +5053,45 @@ def _qqbot_channel_media_content(text: str, media_urls: Sequence[str], media_typ
     return "\n".join(part for part in content_parts if part)
 
 
+_QQBOT_MEDIA_TAG_RE = re.compile(
+    r"<(qqimg|qqvoice|qqvideo|qqfile|qqmedia)>([^<>]+)</(?:qqimg|qqvoice|qqvideo|qqfile|qqmedia|img)>",
+    flags=re.IGNORECASE,
+)
+
+
+def _qqbot_media_tag_kind(tag_name: str) -> str | None:
+    normalized = str(tag_name or "").strip().lower()
+    if normalized == "qqimg":
+        return "image"
+    if normalized == "qqvoice":
+        return "voice"
+    if normalized == "qqvideo":
+        return "video"
+    if normalized == "qqfile":
+        return "file"
+    return None
+
+
+def _qqbot_inline_media_tags(text: str) -> tuple[str, list[tuple[str, str | None]]]:
+    entries: list[tuple[str, str | None]] = []
+    caption_parts: list[str] = []
+    last_index = 0
+    for match in _QQBOT_MEDIA_TAG_RE.finditer(text):
+        before = text[last_index : match.start()].strip()
+        if before:
+            caption_parts.append(before)
+        media_url = html.unescape(str(match.group(2) or "").strip())
+        if media_url:
+            entries.append((media_url, _qqbot_media_tag_kind(str(match.group(1)))))
+        last_index = match.end()
+    if not entries:
+        return text, []
+    after = text[last_index:].strip()
+    if after:
+        caption_parts.append(after)
+    return "\n".join(caption_parts).strip(), entries
+
+
 def _qqbot_message_id(result: object) -> str | None:
     if not isinstance(result, Mapping):
         return None
@@ -35359,6 +35398,7 @@ class OpsMeshService:
         target_type, target_id = parsed_target
         canonical_target = _qqbot_canonical_target(target_type, target_id)
         text = str(event.get("message") or "").strip()
+        inline_text, inline_media_entries = _qqbot_inline_media_tags(text)
         raw_media_urls = event.get("mediaUrls")
         media_urls = _normalize_direct_channel_media_urls(
             media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
@@ -35368,7 +35408,14 @@ class OpsMeshService:
                 else None
             ),
         )
+        if not media_urls and inline_media_entries:
+            text = inline_text
+            media_urls = [media_url for media_url, _ in inline_media_entries]
         media_kind = event.get("mediaKind")
+        if media_kind is None and inline_media_entries:
+            inline_media_kinds = {kind for _, kind in inline_media_entries if kind is not None}
+            if len(inline_media_kinds) == 1:
+                media_kind = next(iter(inline_media_kinds))
         reply_to_id = str(event.get("replyToId") or "").strip()
         if media_urls:
             first_file_type, first_media_type = _qqbot_media_file_type(media_urls[0], media_kind)

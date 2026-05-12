@@ -20808,6 +20808,130 @@ async def test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_image_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-qqbot-image-tag"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="QQBot Native Image Tag Provider",
+        kind="qqbot",
+        target="https://api.sgroup.qq.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="qqbot-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "qqbot",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "qqbot:c2c:openid-1",
+        },
+    )
+    qqbot_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        qqbot_posts.append((target, payload, secret_header_name, secret_token))
+        if target.endswith("/files"):
+            return {
+                "file_info": "qq-inline-file-info",
+                "file_uuid": "qq-inline-file-uuid",
+                "ttl": 3600,
+            }
+        return {"id": "qq-inline-msg-1", "timestamp": "2026-05-12T12:05:00Z"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="qqbot",
+        to="qqbot:c2c:openid-1",
+        message="Caption <qqimg>https://example.com/inline.png</qqimg>",
+        account_id="default",
+        idempotency_key="idem-native-qqbot-image-tag",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="qqbot",
+            account_id="default",
+            peer_kind="direct",
+            peer_id="qqbot:c2c:openid-1",
+        ),
+    )
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-qqbot-image-tag",
+        "channel": "qqbot",
+        "messageId": "qq-inline-msg-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "qqbot",
+            "target": "qqbot:c2c:openid-1",
+            "accountId": "default",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "qqbot:c2c:openid-1",
+        "channelId": "qqbot:c2c:openid-1",
+        "mediaIds": ["qq-inline-file-uuid"],
+        "mediaUrls": ["https://example.com/inline.png"],
+        "messageIds": ["qq-inline-msg-1"],
+        "meta": {"targetId": "openid-1", "targetType": "c2c", "mediaType": "image"},
+    }
+    assert qqbot_posts == [
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/files",
+            {
+                "file_type": 1,
+                "srv_send_msg": False,
+                "url": "https://example.com/inline.png",
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "msg_type": 7,
+                "media": {"file_info": "qq-inline-file-info"},
+                "msg_seq": 1,
+                "content": "Caption",
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
