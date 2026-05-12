@@ -5097,6 +5097,14 @@ class GatewayNodeMethodService:
                 now_ms=_timestamp_ms(now_ms),
             )
 
+        if resolved_method == "update.status":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            return {
+                "sentinel": await _read_latest_update_restart_sentinel(
+                    self._database,
+                ),
+            }
+
         if resolved_method == "update.run":
             _validate_exact_keys(
                 resolved_method,
@@ -19233,6 +19241,27 @@ async def _write_restart_sentinel(
         return await asyncio.to_thread(write_payload)
     except OSError:
         return None
+
+
+async def _read_latest_update_restart_sentinel(
+    database: Database | None,
+) -> dict[str, object] | None:
+    if database is None:
+        return None
+    path = database.path.parent / "runtime" / "restart-sentinel.json"
+
+    def read_payload() -> dict[str, object] | None:
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        if not isinstance(parsed, Mapping):
+            return None
+        if parsed.get("kind") != "update":
+            return None
+        return dict(parsed)
+
+    return await asyncio.to_thread(read_payload)
 
 
 def _validate_optional_restart_delivery_context(value: object, *, label: str) -> None:

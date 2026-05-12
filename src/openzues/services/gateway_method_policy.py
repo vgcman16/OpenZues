@@ -136,6 +136,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "tts.status",
         "tts.providers",
         "tts.personas",
+        "update.status",
         "commands.list",
         "artifacts.download",
         "artifacts.get",

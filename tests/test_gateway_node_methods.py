@@ -92430,6 +92430,37 @@ async def test_update_run_returns_openclaw_envelope_sentinel_and_timeout_minimum
 
 
 @pytest.mark.asyncio
+async def test_update_status_returns_latest_openclaw_update_sentinel(tmp_path) -> None:
+    async def fake_update_runner(*, timeout_ms: int | None) -> dict[str, object]:
+        return {
+            "status": "ok",
+            "mode": "git",
+            "root": "C:/workspace/OpenZues",
+            "after": {"version": "2.0.0"},
+            "steps": [],
+            "durationMs": 12,
+            "timeoutMs": timeout_ms,
+        }
+
+    database = Database(tmp_path / "openzues.db")
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        runtime_update_runner=fake_update_runner,
+    )
+
+    run_payload = await service.call("update.run", {"note": "Apply update."})
+    status_payload = await service.call("update.status", {})
+
+    assert status_payload == {
+        "sentinel": run_payload["sentinel"]["payload"],
+    }
+    assert status_payload["sentinel"]["kind"] == "update"
+    assert status_payload["sentinel"]["status"] == "ok"
+    assert status_payload["sentinel"]["stats"]["after"] == {"version": "2.0.0"}
+
+
+@pytest.mark.asyncio
 async def test_update_run_triggers_runtime_update_tick_and_returns_fresh_view() -> None:
     payload: dict[str, object] = {
         "headline": "Runtime self-update is watching the repo",

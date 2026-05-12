@@ -121,7 +121,7 @@ def test_gateway_method_policy_mirrors_openclaw_operator_scope_groups() -> None:
     } == {
             APPROVALS_GATEWAY_METHOD_SCOPE: 9,
             PAIRING_GATEWAY_METHOD_SCOPE: 12,
-            READ_GATEWAY_METHOD_SCOPE: 73,
+            READ_GATEWAY_METHOD_SCOPE: 74,
             WRITE_GATEWAY_METHOD_SCOPE: 73,
             ADMIN_GATEWAY_METHOD_SCOPE: 25,
             TALK_SECRETS_GATEWAY_METHOD_SCOPE: 0,
