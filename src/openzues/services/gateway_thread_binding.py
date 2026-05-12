@@ -97,6 +97,14 @@ def _thread_binding_display_name(*, agent_id: str | None, label: str | None) -> 
     return " ".join(base.split())[:100] or "agent"
 
 
+def _binding_target_kind(child: dict[str, object]) -> str:
+    explicit = _optional_string(child.get("targetKind"))
+    if explicit in {"session", "subagent"}:
+        return explicit
+    runtime = _optional_string(child.get("runtime"))
+    return "session" if runtime == "acp" else "subagent"
+
+
 def _discord_channel_id(value: str | None) -> str | None:
     text = _optional_string(value)
     if text is None:
@@ -210,7 +218,7 @@ def _session_binding_record(
     return {
         "bindingId": f"{_CURRENT_BINDINGS_ID_PREFIX}{binding_key}",
         "targetSessionKey": target_session_key,
-        "targetKind": "subagent",
+        "targetKind": _binding_target_kind(child),
         "conversation": conversation,
         "status": "active",
         "boundAt": bound_at,
@@ -244,7 +252,7 @@ def _matrix_child_session_binding_record(
     return {
         "bindingId": f"{account_id}:{room_id}:{thread_id}",
         "targetSessionKey": target_session_key,
-        "targetKind": "subagent",
+        "targetKind": _binding_target_kind(child),
         "conversation": {
             "channel": "matrix",
             "accountId": account_id,

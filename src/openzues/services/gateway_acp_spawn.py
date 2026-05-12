@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from openzues.services.codex_rpc import extract_turn_id
+from openzues.services.gateway_thread_binding import resolve_thread_binding_result
 from openzues.services.session_keys import normalize_agent_id
 
 _ACP_TARGET_AGENT_REQUIRED_ERROR = (
@@ -180,6 +181,48 @@ def _parent_delivery_context_from_context(
     if thread_id is not None:
         delivery_context["threadId"] = thread_id
     return delivery_context
+
+
+def _thread_binder_context_from_context(
+    context: Mapping[str, object],
+) -> dict[str, object] | None:
+    channel = _requester_channel_from_context(context)
+    to = _requester_to_from_context(context)
+    if channel is None or to is None:
+        return None
+    binder_context: dict[str, object] = {
+        "channel": channel,
+        "accountId": _requester_account_id_from_context(context),
+        "to": to,
+    }
+    thread_id = _requester_thread_id_from_context(context)
+    if thread_id is not None:
+        binder_context["threadId"] = thread_id
+    group_id = _requester_group_id_from_context(context)
+    if group_id is not None:
+        binder_context["groupId"] = group_id
+    return binder_context
+
+
+def _thread_binding_payload_from_result(
+    result: Mapping[str, object],
+) -> tuple[dict[str, object] | None, str | None]:
+    thread_binding, error = resolve_thread_binding_result(result)
+    if error is not None:
+        return None, error
+    if thread_binding is None:
+        return None, (
+            "Unable to create or bind a thread for this ACP session. "
+            "Session mode is unavailable for this target."
+        )
+    payload: dict[str, object] = {
+        "threadBinding": dict(thread_binding),
+        "completionDelivery": {"mode": "thread", **dict(thread_binding)},
+    }
+    raw_session_binding = result.get("sessionBinding")
+    if isinstance(raw_session_binding, Mapping):
+        payload["sessionBinding"] = json.loads(json.dumps(dict(raw_session_binding)))
+    return payload, None
 
 
 def _read_thread_id(result: object) -> str | None:
@@ -638,10 +681,12 @@ class RuntimeManagerAcpSpawnService:
         *,
         default_model: str = "gpt-5.4",
         parent_stream_relay: GatewayAcpParentStreamRelay | None = None,
+        thread_binder: Any | None = None,
     ) -> None:
         self._manager = manager
         self._default_model = default_model
         self._parent_stream_relay = parent_stream_relay or FileAcpParentStreamRelay()
+        self._thread_binder = thread_binder
 
     async def spawn(
         self,
@@ -738,6 +783,42 @@ class RuntimeManagerAcpSpawnService:
                     delivery_context=_parent_delivery_context_from_context(context),
                     emit_start_notice=False,
                 )
+            thread_binding_payload: dict[str, object] | None = None
+            if thread_requested and self._thread_binder is not None:
+                binder_context = _thread_binder_context_from_context(context)
+                if binder_context is not None:
+                    raw_thread_binding = await self._thread_binder(
+                        {
+                            "sessionKey": parent_session_key,
+                        },
+                        {
+                            "sessionKey": child_session_key,
+                            "agentId": target_agent_id,
+                            "label": label,
+                            "cwd": cwd,
+                            "runtime": "acp",
+                            "targetKind": "session",
+                        },
+                        binder_context,
+                    )
+                    if isinstance(raw_thread_binding, Mapping):
+                        (
+                            thread_binding_payload,
+                            thread_binding_error,
+                        ) = _thread_binding_payload_from_result(raw_thread_binding)
+                    else:
+                        thread_binding_error = (
+                            "Unable to create or bind a thread for this ACP session. "
+                            "Session mode is unavailable for this target."
+                        )
+                    if thread_binding_error is not None:
+                        if parent_relay is not None:
+                            parent_relay.dispose()
+                        return {
+                            "status": "error",
+                            "errorCode": "thread_binding_invalid",
+                            "error": thread_binding_error,
+                        }
             turn_result = await self._manager.start_turn(
                 instance_id,
                 thread_id=thread_id,
@@ -796,24 +877,27 @@ class RuntimeManagerAcpSpawnService:
         if stream_log_path is not None:
             payload["streamLogPath"] = stream_log_path
         if thread_requested:
-            binding_metadata = _current_acp_thread_binding_metadata(
-                context=context,
-                child_session_key=child_session_key,
-                target_agent_id=target_agent_id,
-                label=label,
-                cwd=cwd,
-            )
-            if binding_metadata is None:
-                binding_metadata = _child_acp_thread_binding_metadata(
+            if thread_binding_payload is not None:
+                payload.update(thread_binding_payload)
+            else:
+                binding_metadata = _current_acp_thread_binding_metadata(
                     context=context,
                     child_session_key=child_session_key,
                     target_agent_id=target_agent_id,
                     label=label,
                     cwd=cwd,
-                    child_thread_id=thread_id,
                 )
-            if binding_metadata is not None:
-                payload.update(binding_metadata)
+                if binding_metadata is None:
+                    binding_metadata = _child_acp_thread_binding_metadata(
+                        context=context,
+                        child_session_key=child_session_key,
+                        target_agent_id=target_agent_id,
+                        label=label,
+                        cwd=cwd,
+                        child_thread_id=thread_id,
+                    )
+                if binding_metadata is not None:
+                    payload.update(binding_metadata)
         return payload
 
     async def _select_instance_id(self) -> int | None:

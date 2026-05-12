@@ -678,6 +678,116 @@ async def test_runtime_manager_acp_spawn_formats_matrix_top_level_delivery_targe
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_uses_route_backed_matrix_thread_binder() -> None:
+    from datetime import UTC, datetime
+
+    from openzues.schemas import ConversationTargetView, NotificationRouteView
+    from openzues.services.gateway_message_actions import (
+        GatewayMessageActionDispatchRequest,
+    )
+    from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
+
+    events: list[str] = []
+    manager = FakeManager(events)
+    action_calls: list[GatewayMessageActionDispatchRequest] = []
+
+    async def fake_message_action_dispatcher(
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        events.append("bind")
+        action_calls.append(request)
+        return {"ok": True, "result": {"messageId": "$matrix-child-root"}}
+
+    async def list_routes() -> list[NotificationRouteView]:
+        now = datetime.now(UTC)
+        return [
+            NotificationRouteView(
+                id=1,
+                name="Matrix room route",
+                kind="matrix",
+                target="native://route",
+                events=["gateway/send"],
+                conversation_target=ConversationTargetView(
+                    channel="matrix",
+                    account_id="default",
+                    peer_kind="channel",
+                    peer_id="room:!Room:Example.org",
+                ),
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+
+    service = RuntimeManagerAcpSpawnService(
+        manager,
+        thread_binder=GatewaySubagentThreadBinderRegistry(
+            list_notification_route_views=list_routes,
+            message_action_dispatcher=fake_message_action_dispatcher,
+        ),
+    )
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate Matrix top-level thread tests.",
+            "agentId": "codex",
+            "label": "Matrix child",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": "agent:main:matrix:channel:!room:example.org",
+            "requesterChannel": "matrix",
+            "requesterAccountId": "default",
+            "requesterTo": "room:!Room:Example.org",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert events == ["thread", "bind", "turn"]
+    assert len(action_calls) == 1
+    action_request = action_calls[0]
+    assert action_request.channel == "matrix"
+    assert action_request.action == "send"
+    assert action_request.account_id == "default"
+    assert action_request.session_key == "agent:codex:acp:thread-acp-new"
+    assert action_request.agent_id == "codex"
+    assert action_request.params == {
+        "to": "room:!Room:Example.org",
+        "message": (
+            "\u2699\ufe0f Matrix child session active. "
+            "Messages here go directly to this session."
+        ),
+    }
+    assert payload["threadBinding"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!Room:Example.org",
+        "threadId": "$matrix-child-root",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!Room:Example.org",
+        "threadId": "$matrix-child-root",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["targetSessionKey"] == "agent:codex:acp:thread-acp-new"
+    assert session_binding["targetKind"] == "session"
+    assert session_binding["conversation"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "conversationId": "$matrix-child-root",
+        "parentConversationId": "!Room:Example.org",
+    }
+    assert session_binding["metadata"]["placement"] == "child"
+    assert session_binding["metadata"]["threadId"] == "$matrix-child-root"
+    assert session_binding["metadata"]["label"] == "Matrix child"
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_formats_discord_child_delivery_target() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)
