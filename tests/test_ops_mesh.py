@@ -66,6 +66,7 @@ from openzues.services.ops_mesh import (
     GatewayMSTeamsFeedbackReflectionRequest,
     GatewayMSTeamsInboundMediaFetchRequest,
     GatewayZaloInboundMediaFetchRequest,
+    GatewayZaloPairingChallengeRequest,
     OpsMeshService,
     _IrcRouteConfig,
     _saved_outbound_delivery_replay_message,
@@ -34518,6 +34519,112 @@ async def test_ops_mesh_service_handle_zalo_webhook_skips_group_sender_not_allow
             "conversationType": "group",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_issues_pairing_challenge_for_unknown_dm(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    pairing_requests: list[GatewayZaloPairingChallengeRequest] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-pairing-session-1"}
+
+    async def fake_pairing_challenge(
+        request: GatewayZaloPairingChallengeRequest,
+    ) -> dict[str, object]:
+        pairing_requests.append(request)
+        return {
+            "created": True,
+            "code": "PAIRCODE",
+            "messageId": "zalo-pairing-reply-1",
+        }
+
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="zues",
+        server_version="test",
+        data_dir=tmp_path / "config",
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "zalo": {
+                    "accounts": {
+                        "zalo-bot": {
+                            "dmPolicy": "pairing",
+                            "allowFrom": ["zl:trusted-user"],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+        zalo_pairing_challenge_service=fake_pairing_challenge,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "zalo-pairing-dm-1",
+                "text": "pair me",
+                "date": 1760000000,
+                "chat": {"id": "dm-pairing-1", "chat_type": "PRIVATE"},
+                "from": {"id": "unknown-user", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    assert session_deliveries == []
+    assert len(pairing_requests) == 1
+    pairing_request = pairing_requests[0]
+    assert pairing_request.account_id == "zalo-bot"
+    assert pairing_request.sender_id == "unknown-user"
+    assert pairing_request.sender_name == "Ada"
+    assert pairing_request.chat_id == "dm-pairing-1"
+    assert pairing_request.inbound_message_id == "zalo-pairing-dm-1"
+    assert pairing_request.sender_id_line == "Your Zalo user id: unknown-user"
+    assert result == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "eventName": "message.text.received",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skippedCount": 1,
+        "skips": [
+            {
+                "eventName": "message.text.received",
+                "reason": "zalo_dm_pairing_required",
+                "inboundMessageId": "zalo-pairing-dm-1",
+                "senderId": "unknown-user",
+                "conversationId": "dm-pairing-1",
+                "conversationType": "direct",
+                "pairing": {
+                    "created": True,
+                    "code": "PAIRCODE",
+                    "messageId": "zalo-pairing-reply-1",
+                },
+            }
+        ],
+    }
 
 
 @pytest.mark.asyncio
