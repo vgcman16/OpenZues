@@ -122,7 +122,7 @@ def test_gateway_method_policy_mirrors_openclaw_operator_scope_groups() -> None:
             APPROVALS_GATEWAY_METHOD_SCOPE: 9,
             PAIRING_GATEWAY_METHOD_SCOPE: 12,
             READ_GATEWAY_METHOD_SCOPE: 76,
-            WRITE_GATEWAY_METHOD_SCOPE: 73,
+            WRITE_GATEWAY_METHOD_SCOPE: 77,
             ADMIN_GATEWAY_METHOD_SCOPE: 26,
             TALK_SECRETS_GATEWAY_METHOD_SCOPE: 0,
         }
@@ -199,6 +199,10 @@ def test_gateway_method_policy_mirrors_openclaw_operator_scope_groups() -> None:
     assert resolve_gateway_method_scope("browser.trace.start") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.trace.stop") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.upload") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("push.web.vapidPublicKey") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("push.web.subscribe") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("push.web.unsubscribe") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("push.web.test") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("exec.approval.resolve") == APPROVALS_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("node.pair.approve") == PAIRING_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("connect") == ADMIN_GATEWAY_METHOD_SCOPE

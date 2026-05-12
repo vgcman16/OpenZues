@@ -123,6 +123,11 @@ from openzues.services.gateway_tts_runtime import (
 )
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.gateway_wake import GatewayWakeService
+from openzues.services.gateway_web_push import (
+    GatewayWebPushInvalidRequestError,
+    GatewayWebPushService,
+    GatewayWebPushUnavailableError,
+)
 from openzues.services.gateway_wizard import GatewayWizardService
 from openzues.services.hub import BroadcastHub
 from openzues.services.session_keys import (
@@ -1857,6 +1862,7 @@ class GatewayNodeMethodService:
         plugin_runtime_service: GatewayPluginRuntimeService | None = None,
         message_action_dispatcher: GatewayMessageActionDispatcher | None = None,
         native_hook_relay_service: GatewayNativeHookRelayService | None = None,
+        web_push_service: GatewayWebPushService | None = None,
     ) -> None:
         self.registry = registry
         self._database = database
@@ -2010,6 +2016,7 @@ class GatewayNodeMethodService:
         self._native_hook_relay_service = (
             native_hook_relay_service or GatewayNativeHookRelayService()
         )
+        self._web_push_service = web_push_service or GatewayWebPushService()
         if tools_catalog_service is None:
             self._tools_catalog_service = GatewayToolsCatalogService(
                 plugin_runtime_service=self._plugin_runtime_service
@@ -5795,6 +5802,93 @@ class GatewayNodeMethodService:
                 message=f"node {node_id} has no APNs registration (connect iOS node first)",
                 status_code=400,
             )
+
+        if resolved_method == "push.web.vapidPublicKey":
+            try:
+                _validate_exact_keys(resolved_method, payload, allowed_keys=())
+                return await self._web_push_service.vapid_public_key()
+            except GatewayWebPushUnavailableError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            except (GatewayWebPushInvalidRequestError, ValueError) as exc:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=str(exc),
+                    status_code=400,
+                ) from exc
+
+        if resolved_method == "push.web.subscribe":
+            try:
+                _validate_exact_keys(
+                    resolved_method,
+                    payload,
+                    allowed_keys=("endpoint", "keys"),
+                )
+                endpoint = _require_non_empty_string(payload.get("endpoint"), label="endpoint")
+                keys = payload.get("keys")
+                if not isinstance(keys, dict):
+                    raise ValueError("keys must be an object")
+                return await self._web_push_service.subscribe(endpoint=endpoint, keys=keys)
+            except GatewayWebPushUnavailableError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            except (GatewayWebPushInvalidRequestError, ValueError) as exc:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=str(exc),
+                    status_code=400,
+                ) from exc
+
+        if resolved_method == "push.web.unsubscribe":
+            try:
+                _validate_exact_keys(resolved_method, payload, allowed_keys=("endpoint",))
+                endpoint = _require_non_empty_string(payload.get("endpoint"), label="endpoint")
+                return await self._web_push_service.unsubscribe(endpoint=endpoint)
+            except GatewayWebPushUnavailableError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            except (GatewayWebPushInvalidRequestError, ValueError) as exc:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=str(exc),
+                    status_code=400,
+                ) from exc
+
+        if resolved_method == "push.web.test":
+            try:
+                _validate_exact_keys(resolved_method, payload, allowed_keys=("title", "body"))
+                title = (
+                    _require_string(payload.get("title"), label="title").strip()
+                    if "title" in payload and payload.get("title") is not None
+                    else "OpenClaw"
+                ) or "OpenClaw"
+                body = (
+                    _require_string(payload.get("body"), label="body").strip()
+                    if "body" in payload and payload.get("body") is not None
+                    else "Web push test notification"
+                ) or "Web push test notification"
+                return await self._web_push_service.test(title=title, body=body)
+            except GatewayWebPushUnavailableError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            except (GatewayWebPushInvalidRequestError, ValueError) as exc:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=str(exc),
+                    status_code=400,
+                ) from exc
 
         if resolved_method == "sessions.list":
             _validate_exact_keys(

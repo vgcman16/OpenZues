@@ -80,6 +80,7 @@ from openzues.services.gateway_tts_runtime import (
 )
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.gateway_wake import GatewayWakeService
+from openzues.services.gateway_web_push import GatewayWebPushService
 from openzues.services.gateway_wizard import GatewayWizardService
 from openzues.services.hub import BroadcastHub
 from openzues.services.session_keys import build_launch_session_key, resolve_thread_session_keys
@@ -91947,6 +91948,115 @@ async def test_push_test_fails_as_missing_apns_registration() -> None:
 
     assert exc_info.value.code == "INVALID_REQUEST"
     assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_push_web_subscribe_test_and_unsubscribe_round_trip(
+    tmp_path: Path,
+) -> None:
+    delivered_payloads: list[dict[str, object]] = []
+
+    async def send_notification(**kwargs: object) -> dict[str, object]:
+        delivered_payloads.append(dict(kwargs))
+        subscription = kwargs["subscription"]
+        assert isinstance(subscription, dict)
+        return {
+            "ok": True,
+            "subscriptionId": subscription["subscriptionId"],
+            "statusCode": 201,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        web_push_service=GatewayWebPushService(
+            state_dir=tmp_path,
+            send_notification=send_notification,
+        ),
+    )
+
+    vapid = await service.call("push.web.vapidPublicKey", {})
+    assert isinstance(vapid["vapidPublicKey"], str)
+    assert vapid["vapidPublicKey"]
+
+    endpoint = "https://push.example.com/send/abc123"
+    keys = {"p256dh": "p256dh-key", "auth": "auth-key"}
+    subscribed = await service.call(
+        "push.web.subscribe",
+        {"endpoint": endpoint, "keys": keys},
+    )
+    subscription_id = subscribed["subscriptionId"]
+    assert isinstance(subscription_id, str)
+    assert subscription_id
+
+    updated = await service.call(
+        "push.web.subscribe",
+        {
+            "endpoint": endpoint,
+            "keys": {"p256dh": "updated-p256dh", "auth": "updated-auth"},
+        },
+    )
+    assert updated == {"subscriptionId": subscription_id}
+
+    test_result = await service.call(
+        "push.web.test",
+        {"title": "OpenZues", "body": "Web push parity ping."},
+    )
+    assert test_result == {
+        "results": [
+            {
+                "ok": True,
+                "subscriptionId": subscription_id,
+                "statusCode": 201,
+            }
+        ]
+    }
+    assert delivered_payloads[0]["payload"] == {
+        "title": "OpenZues",
+        "body": "Web push parity ping.",
+    }
+    delivered_subscription = delivered_payloads[0]["subscription"]
+    assert isinstance(delivered_subscription, dict)
+    assert delivered_subscription["endpoint"] == endpoint
+    assert delivered_subscription["keys"] == {
+        "p256dh": "updated-p256dh",
+        "auth": "updated-auth",
+    }
+
+    assert await service.call("push.web.unsubscribe", {"endpoint": endpoint}) == {
+        "removed": True
+    }
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="no web push subscriptions registered",
+    ) as exc_info:
+        await service.call("push.web.test", {})
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_push_web_rejects_invalid_params(tmp_path: Path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        web_push_service=GatewayWebPushService(state_dir=tmp_path),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as subscribe_error:
+        await service.call(
+            "push.web.subscribe",
+            {
+                "endpoint": "http://push.example.com/insecure",
+                "keys": {"p256dh": "p256dh-key", "auth": "auth-key"},
+            },
+        )
+    assert subscribe_error.value.code == "INVALID_REQUEST"
+    assert subscribe_error.value.status_code == 400
+    assert "endpoint" in subscribe_error.value.message
+
+    with pytest.raises(GatewayNodeMethodError) as vapid_error:
+        await service.call("push.web.vapidPublicKey", {"extra": True})
+    assert vapid_error.value.code == "INVALID_REQUEST"
+    assert vapid_error.value.status_code == 400
 
 
 @pytest.mark.asyncio
