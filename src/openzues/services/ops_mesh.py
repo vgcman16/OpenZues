@@ -5033,6 +5033,15 @@ def _qqbot_upload_media_id(result: object, file_info: str) -> str:
     return file_info
 
 
+def _qqbot_next_msg_seq(msg_id: str | None) -> int:
+    normalized = str(msg_id or "").strip()
+    if not normalized:
+        return 1
+    digest = hashlib.sha256(normalized.encode("utf-8")).digest()
+    sequence = int.from_bytes(digest[:4], "big") % 65536
+    return sequence if sequence != 1 else 2
+
+
 def _qqbot_error_detail(result: Mapping[str, object]) -> str:
     return str(
         result.get("message")
@@ -35472,7 +35481,11 @@ class OpsMeshService:
                     message_payload: dict[str, object] = {
                         "msg_type": 7,
                         "media": {"file_info": file_info},
-                        "msg_seq": 1,
+                        "msg_seq": (
+                            _qqbot_next_msg_seq(reply_to_id)
+                            if reply_to_id and index == 0
+                            else 1
+                        ),
                     }
                     if index == 0 and text and file_type in {1, 2}:
                         message_payload["content"] = text
@@ -35519,6 +35532,8 @@ class OpsMeshService:
         payload: dict[str, object] = {"content": text, "msg_type": 0}
         if reply_to_id:
             payload["msg_id"] = reply_to_id
+            if target_type in {"c2c", "group"}:
+                payload["msg_seq"] = _qqbot_next_msg_seq(reply_to_id)
         result = self._post_json_webhook(
             _qqbot_message_endpoint(str(route.get("target") or ""), target_type, target_id),
             payload,

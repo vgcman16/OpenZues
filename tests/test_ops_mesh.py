@@ -20932,6 +20932,74 @@ async def test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_replies_to_qqbot_text_with_msg_seq(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-qqbot-reply-seq"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="QQBot Native Reply Provider",
+        kind="qqbot",
+        target="https://api.sgroup.qq.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="qqbot-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "qqbot",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "qqbot:c2c:openid-1",
+        },
+    )
+    qqbot_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        qqbot_posts.append((target, payload, secret_header_name, secret_token))
+        return {"id": "qq-reply-msg-1", "timestamp": "2026-05-12T12:10:00Z"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="qqbot",
+        to="qqbot:c2c:openid-1",
+        message="Reply with sequence.",
+        reply_to_id="parent-msg-1",
+        account_id="default",
+        idempotency_key="idem-native-qqbot-reply-seq",
+    )
+
+    assert result["messageId"] == "qq-reply-msg-1"
+    assert len(qqbot_posts) == 1
+    payload = qqbot_posts[0][1]
+    assert payload["msg_id"] == "parent-msg-1"
+    assert isinstance(payload["msg_seq"], int)
+    assert 0 <= payload["msg_seq"] <= 65535
+    assert payload["msg_seq"] != 1
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
