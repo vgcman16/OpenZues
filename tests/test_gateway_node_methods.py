@@ -98540,7 +98540,11 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
     assert payload["ok"] is True
     assert payload["path"] == str(database.path)
     assert payload["key"] == current_session_key
-    assert payload["resolved"] == {"modelProvider": "openai", "model": "gpt-5.4-mini"}
+    assert payload["resolved"] == {
+        "modelProvider": "openai",
+        "model": "gpt-5.4-mini",
+        "agentRuntime": {"id": "pi", "source": "implicit"},
+    }
     assert payload["entry"]["key"] == current_session_key
     assert payload["entry"]["label"] == "Parity Session"
     assert payload["entry"]["thinkingLevel"] == "low"
@@ -98578,6 +98582,7 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
             "totalTokensFresh": False,
             "modelProvider": "openai",
             "model": "gpt-5.4-mini",
+            "agentRuntime": {"id": "pi", "source": "implicit"},
             "contextTokens": None,
             "label": "Parity Session",
             "responseUsage": "tokens",
@@ -98942,6 +98947,7 @@ async def test_sessions_patch_preserves_provider_model_override_split() -> None:
     assert payload["resolved"] == {
         "modelProvider": "nvidia",
         "model": "moonshotai/kimi-k2.5",
+        "agentRuntime": {"id": "pi", "source": "implicit"},
     }
 
     metadata_row = await database.get_gateway_session_metadata(current_session_key)
@@ -98959,6 +98965,7 @@ async def test_sessions_patch_preserves_provider_model_override_split() -> None:
     main_session = sessions_payload["sessions"][0]
     assert main_session["modelProvider"] == "nvidia"
     assert main_session["model"] == "moonshotai/kimi-k2.5"
+    assert main_session["agentRuntime"] == {"id": "pi", "source": "implicit"}
     assert main_session["providerOverride"] == "nvidia"
     assert main_session["modelOverride"] == "moonshotai/kimi-k2.5"
 
@@ -108474,6 +108481,7 @@ async def test_sessions_list_returns_bounded_singleton_control_chat_inventory() 
             "totalTokensFresh": False,
             "modelProvider": "openai",
             "model": "gpt-5.4",
+            "agentRuntime": {"id": "pi", "source": "implicit"},
             "contextTokens": None,
         }
     ]

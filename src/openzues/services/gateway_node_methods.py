@@ -90,7 +90,10 @@ from openzues.services.gateway_session_compaction import (
     GatewaySessionCompactionService,
     GatewaySessionCompactionUnavailableError,
 )
-from openzues.services.gateway_sessions import GatewaySessionsService
+from openzues.services.gateway_sessions import (
+    GatewaySessionsService,
+    openclaw_agent_runtime_metadata_for_session_key,
+)
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
 from openzues.services.gateway_skill_catalog import GatewaySkillCatalogService
 from openzues.services.gateway_skill_clawhub import (
@@ -9576,6 +9579,9 @@ class GatewayNodeMethodService:
                 "resolved": {
                     "modelProvider": entry.get("modelProvider"),
                     "model": entry.get("model"),
+                    "agentRuntime": openclaw_agent_runtime_metadata_for_session_key(
+                        canonical_key
+                    ),
                 },
             }
 
