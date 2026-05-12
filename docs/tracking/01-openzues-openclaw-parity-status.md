@@ -21,7 +21,7 @@ may lag behind this tracker.
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.99998% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.999991% | High for bounded native bridge | Packaging post-core resume mode, ACP bridge depth, and deeper installed plugin activation remain |
+| Runtime/CLI/doctor native bridge | ~99.999992% | High for bounded native bridge | Packaging post-core resume/fresh-process handoff, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.9% | Low, broad parity still open | QR setup-code safety, SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, and approval-state preview metadata are landed; companion apps remain mostly open |
 
@@ -2640,6 +2640,11 @@ may lag behind this tracker.
   `OPENCLAW_UPDATE_POST_CORE` environment handoff so the updated process skips
   core update dispatch and only runs post-update plugin sync.
   - Status: checkpointed in `4f874859`
+
+- [x] Package update post-core fresh-process handoff, preserving OpenClaw's
+  parent process delegation of plugin post-update sync after package/git core
+  updates and fallback inline sync when no fresh process resumes.
+  - Status: checkpointed in `81f715ab`
 
 - [x] Inherited update-status parent options, preserving OpenClaw's parent
   `update --json/--timeout status` option behavior.
@@ -9550,6 +9555,30 @@ may lag behind this tracker.
     then `1 passed`), adjacent package-update proof
     `python -m pytest tests\test_cli.py -q -k "update_post_core or post_update_plugin_sync or package_update"`
     (`7 passed, 614 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] Package update post-core fresh-process handoff.
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/cli/update-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: package-manager core updates and changed git core updates try a
+    fresh `openzues update` process with `OPENCLAW_UPDATE_POST_CORE` env for
+    plugin post-update sync, preserve result-file plugin metadata in the
+    parent update envelope, and fall back to inline sync when the fresh process
+    does not resume.
+  - Evidence required: focused fresh-process handoff proof, focused post-core
+    pair proof, adjacent package-update proof, ruff, mypy
+  - Status: checkpointed in `81f715ab`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_json_uses_fresh_process_for_package_post_update_plugins -q`
+    (`1 failed` before implementation because the parent ran inline plugin
+    update, then `1 passed`), focused post-core pair proof (`2 passed`),
+    adjacent package-update proof
+    `python -m pytest tests\test_cli.py -q -k "update_post_core or fresh_process or post_update_plugin_sync or package_update"`
+    (`8 passed, 614 deselected`), `ruff check src\openzues\cli.py
     tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
     `git diff --check`.
 

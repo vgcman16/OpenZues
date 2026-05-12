@@ -15,10 +15,10 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.999991% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.999992% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
-  post-core resume mode, package post-update completion-cache refresh,
-  all-shell completion write-state,
+  post-core resume mode, package post-core fresh-process handoff, package
+  post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
   preflight, devices list/approve CLI, package-update downgrade confirmation,
@@ -12690,3 +12690,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor native-bridge parity moves to ~99.999991%. Continue
   package-update fresh-process handoff, deeper installed plugin activation,
   ACP bridge lifecycle depth, provider media edges, or companion breadth.
+- Current queue-head adjustment: native `openzues update` now mirrors
+  OpenClaw's parent-side post-core fresh-process handoff after package/git core
+  updates. Package-manager modes and changed git results delegate plugin
+  post-update sync to a fresh `openzues update` process with
+  `OPENCLAW_UPDATE_POST_CORE` env, preserve returned plugin metadata in the
+  parent JSON envelope, and fall back to inline sync when no fresh process
+  resumes. Source/test checkpointed in `81f715ab`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999992%. Continue deeper installed plugin activation, ACP bridge
+  lifecycle depth, provider media edges, or companion breadth.
