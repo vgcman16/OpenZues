@@ -15,13 +15,14 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.9999996% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.9999997% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
   `resumeSessionId` ownership enforcement, ACP model/thinking override
   propagation, ACP configured runtime agent alias mapping, ACP runtime-agent
   mismatch preflight, ACP run-timeout runtime propagation, ACP subagent
   depth/child-cap policy, ACP subagent target allowlist policy, ACP
-  route-backed thread binding, ACP thread-binding dispatch-failure cleanup, package
+  route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP
+  accepted-spawn registration-failure cleanup, package
   post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback,
   startup-optimization doctor notes, installed runtime session/control-UI
   contribution capture, package
@@ -12959,4 +12960,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Source/test checkpointed in `1a92baa2`; repo-wide parity remains estimated at
   ~99.9%, and runtime/CLI/doctor native-bridge parity moves to ~99.9999996%.
   Continue deeper ACP lifecycle edges, installed plugin activation,
+  packaging/distribution, provider media edges, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now cleans up
+  accepted ACP runs if gateway metadata/session registration fails after the
+  runtime returns `accepted`, including thread unbind, runtime cancel/close,
+  partial local-state deletion, and `spawn_failed` projection. Source/test
+  checkpointed in `2236d019`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.9999997%. Continue
+  deeper ACP lifecycle edges, installed plugin activation,
   packaging/distribution, provider media edges, or companion breadth.
