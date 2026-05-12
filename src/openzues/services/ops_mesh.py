@@ -186,6 +186,10 @@ SLACK_COMMAND_ARG_ACTION_BLOCKS_MAX = SLACK_MAX_BLOCKS - SLACK_COMMAND_ARG_CHROM
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
+LINE_GROUP_HISTORY_LIMIT = 50
+LINE_HISTORY_CONTEXT_MARKER = "[Chat messages since your last reply - for context]"
+LINE_CURRENT_MESSAGE_MARKER = "[Current message - respond to this]"
+LINE_MAX_HISTORY_KEYS = 1000
 BLUEBUBBLES_ROUTE_CHANNEL_ALIASES = {"bluebubbles", "imessage"}
 BLUEBUBBLES_AUDIO_MIME_MP3 = {"audio/mpeg", "audio/mp3"}
 BLUEBUBBLES_AUDIO_MIME_CAF = {"audio/x-caf", "audio/caf"}
@@ -10185,6 +10189,96 @@ def _line_group_message_requires_mention_skip(
     return not _line_text_mentions_openzues(text)
 
 
+def _line_group_history_key(context: _LineInboundSessionContext) -> str | None:
+    if context.conversation_type not in {"group", "room"}:
+        return None
+    return context.conversation_id or None
+
+
+def _line_group_history_entry(
+    *,
+    context: _LineInboundSessionContext,
+    event: Mapping[str, Any],
+    text: str,
+) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "sender": f"user:{context.sender_id or 'unknown'}",
+        "body": text,
+    }
+    timestamp = event.get("timestamp")
+    if isinstance(timestamp, int):
+        entry["timestamp"] = timestamp
+    return entry
+
+
+def _line_record_pending_history(
+    histories: dict[str, list[dict[str, object]]],
+    *,
+    context: _LineInboundSessionContext,
+    event: Mapping[str, Any],
+    text: str,
+) -> None:
+    history_key = _line_group_history_key(context)
+    if history_key is None or LINE_GROUP_HISTORY_LIMIT <= 0:
+        return
+    history = list(histories.get(history_key, []))
+    history.append(_line_group_history_entry(context=context, event=event, text=text))
+    while len(history) > LINE_GROUP_HISTORY_LIMIT:
+        history.pop(0)
+    if history_key in histories:
+        del histories[history_key]
+    histories[history_key] = history
+    while len(histories) > LINE_MAX_HISTORY_KEYS:
+        oldest_key = next(iter(histories))
+        del histories[oldest_key]
+
+
+def _line_pending_history(
+    histories: Mapping[str, list[dict[str, object]]],
+    context: _LineInboundSessionContext,
+) -> list[dict[str, object]]:
+    history_key = _line_group_history_key(context)
+    if history_key is None or LINE_GROUP_HISTORY_LIMIT <= 0:
+        return []
+    return [dict(entry) for entry in histories.get(history_key, [])]
+
+
+def _line_clear_pending_history(
+    histories: dict[str, list[dict[str, object]]],
+    context: _LineInboundSessionContext,
+) -> None:
+    history_key = _line_group_history_key(context)
+    if history_key is None or LINE_GROUP_HISTORY_LIMIT <= 0:
+        return
+    if history_key in histories:
+        histories[history_key] = []
+
+
+def _line_text_with_pending_history(
+    history: Sequence[Mapping[str, object]],
+    text: str,
+) -> str:
+    if not history:
+        return text
+    history_lines = []
+    for entry in history:
+        sender = _line_inbound_optional_string(entry.get("sender")) or "unknown"
+        body = _line_inbound_optional_string(entry.get("body")) or ""
+        if body:
+            history_lines.append(f"{sender}: {body}")
+    if not history_lines:
+        return text
+    return "\n".join(
+        [
+            LINE_HISTORY_CONTEXT_MARKER,
+            *history_lines,
+            "",
+            LINE_CURRENT_MESSAGE_MARKER,
+            text,
+        ]
+    )
+
+
 def _line_webhook_event_text(event: Mapping[str, Any]) -> str | None:
     event_type = str(event.get("type") or "").strip().lower()
     if event_type == "message":
@@ -14225,6 +14319,10 @@ class OpsMeshService:
         init=False,
         default_factory=dict,
     )
+    _line_group_histories: dict[str, list[dict[str, object]]] = field(
+        init=False,
+        default_factory=dict,
+    )
 
     async def start(self) -> None:
         if self._task is not None:
@@ -18072,6 +18170,12 @@ class OpsMeshService:
                 event=event,
                 text=text,
             ):
+                _line_record_pending_history(
+                    self._line_group_histories,
+                    context=context,
+                    event=event,
+                    text=text,
+                )
                 skip: dict[str, object] = {
                     "eventType": str(event.get("type") or "").strip() or "message",
                     "reason": "line_group_message_requires_mention",
@@ -18087,10 +18191,14 @@ class OpsMeshService:
                 raise GatewayOutboundRuntimeUnavailableError(
                     "LINE inbound session delivery is unavailable."
                 )
+            pending_history = _line_pending_history(self._line_group_histories, context)
+            delivery_text = _line_text_with_pending_history(pending_history, text)
             delivery_result = await self.session_delivery_service(
                 context.session_key,
-                text,
+                delivery_text,
             )
+            if pending_history:
+                _line_clear_pending_history(self._line_group_histories, context)
             delivery_message_id = _session_delivery_message_id(delivery_result)
             delivery: dict[str, object] = {
                 "eventType": str(event.get("type") or "").strip() or "message",
@@ -18113,6 +18221,8 @@ class OpsMeshService:
             timestamp = event.get("timestamp")
             if isinstance(timestamp, int):
                 delivery["timestamp"] = timestamp
+            if pending_history:
+                delivery["inboundHistory"] = pending_history
             deliveries.append(delivery)
         result: dict[str, object] = {
             "ok": True,
