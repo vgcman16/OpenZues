@@ -132,6 +132,11 @@ media metadata for `message.image.received`. `OZ-PROV-001FO` fakeable inbound
 image media staging from the same upstream lifecycle path is checkpointed in
 `652f0938`; it covers native fetch adapter request metadata, inbound attachment
 storage, and `MediaPath`/`MediaType`/`stagedMedia` projection.
+`OZ-PROV-001FP` production Zalo inbound media fetch from
+`extensions/zalo/src/monitor.ts` and `extensions/zalo/src/api.ts` is
+checkpointed in `00241ee2`; it covers default `photo_url` download, 5 MB cap,
+content-type preservation, and shared inbound attachment storage when app state
+storage is configured.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
