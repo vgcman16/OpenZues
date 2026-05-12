@@ -96,10 +96,12 @@ projection. `OZ-CANVAS-001R` dialog-hook route breadth from
 `extensions/browser/src/browser/routes/agent.act.hooks.ts` is checkpointed in
 `4be4d540`; it maps `POST /hooks/dialog` onto native `agent-browser eval
 --stdin` execution with temporary alert/confirm/prompt handlers and
-accept/prompt metadata.
+accept/prompt metadata. `OZ-CANVAS-001S` locale/timezone route breadth from
+`extensions/browser/src/browser/routes/agent.storage.ts` is checkpointed in
+`003b0d5a`; it maps `POST /set/timezone` and `POST /set/locale` onto native
+page emulation through `agent-browser eval --stdin`.
 Remaining browser-request depth is profile mutation, permission,
-locale/timezone, and label-action route breadth beyond the current native
-adapter.
+and label-action route breadth beyond the current native adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers

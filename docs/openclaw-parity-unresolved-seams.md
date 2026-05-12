@@ -6,7 +6,7 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.959% of the
+- The active gateway/session/tool-contract family is estimated at ~99.960% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.986% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -140,7 +140,7 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.959% after the
+- The gateway session/tool-contract family is estimated at ~99.960% after the
   latest requester-scoped `agents_list` spawn-target projection slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.9991%
   after route-backed Telegram stale-thread retry fallback for JSON and
@@ -12198,3 +12198,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Continue profile mutation, permissions, locale/timezone, label-action route
   breadth, remaining provider-specific media/reply edges, deeper installed
   plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control
+  locale/timezone route breadth now maps upstream `POST /set/timezone` and
+  `POST /set/locale` from
+  `extensions/browser/src/browser/routes/agent.storage.ts` onto native
+  `agent-browser eval --stdin` page emulation with `Intl.DateTimeFormat` and
+  navigator locale projection. Source/test checkpointed in `003b0d5a`;
+  repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.960%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.97%.
+  Continue profile mutation, permissions, label-action route breadth,
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, companion breadth, or the next packaging edge.
