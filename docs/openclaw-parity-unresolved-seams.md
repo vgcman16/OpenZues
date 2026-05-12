@@ -141,13 +141,13 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.92% after the
   latest provider-gated plugin native command-spec slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.998%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
   delivery plus postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
-  pending-history replay, non-text group media mention-gate bypass, and LINE
-  inbound media staging.
+  pending-history replay, non-text group media mention-gate bypass, LINE
+  inbound media staging, and production credential-backed LINE media download.
 - The CLI/operator control-plane family is estimated at ~99.99987% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -11971,3 +11971,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   provider-native inbound/outbound breadth moves to ~99.998%. Continue LINE
   production credential-backed download fallback, remaining provider-specific
   media/reply edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: LINE signed webhook media events now fall back
+  to a production native LINE content download when no fake fetch adapter is
+  injected, resolving the configured account token, applying bearer auth,
+  enforcing the 10 MB cap, detecting content type, and staging the downloaded
+  bytes through the inbound attachment store. Source/test checkpointed in
+  `adbf3f62`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.999%. Continue
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, companion breadth, or the next packaging edge.
