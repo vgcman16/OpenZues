@@ -1,6 +1,6 @@
 # Cross-Repo Implementation Tracker
 
-Last updated: 2026-05-11
+Last updated: 2026-05-12
 
 Coordinator repo: `C:\Users\skull\OneDrive\Documents\OpenZues`
 
@@ -21,8 +21,8 @@ Hermes or Warp integration.
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Active gateway/session/tool-contract path | ~99.91% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Chat/session contract subfamily | ~99.985% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.965% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9991% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -15594,6 +15594,32 @@ installed plugin activation, or packaging edges.
     (`2 passed, 1233 deselected`), `ruff check src\openzues\cli.py
     tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
     focused `git diff --check`.
+
+- [x] `OZ-RT-001BA` Session agent runtime metadata projection
+  - Source: `openclaw-main/src/gateway/server-methods/sessions.ts`,
+    `openclaw-main/src/gateway/session-utils.ts`,
+    `openclaw-main/src/agents/agent-runtime-metadata.ts`,
+    `openclaw-main/src/gateway/server.sessions.store-rpc.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_sessions.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `sessions.patch` resolved payloads and `sessions.list` rows
+    include OpenClaw-shaped implicit `agentRuntime` metadata as
+    `{ id: "pi", source: "implicit" }`.
+  - Evidence required: focused session patch proof, adjacent session patch/list
+    selector, ruff, mypy
+  - Status: checkpointed in `6c807e10`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_patch_persists_current_session_metadata_and_surfaces_it -q`
+    (`1 passed`), `python -m pytest tests\test_gateway_node_methods.py -q -k
+    "sessions_patch or sessions_list"` (`32 passed, 1206 deselected`), `ruff
+    check src\openzues\services\gateway_node_methods.py
+    src\openzues\services\gateway_sessions.py tests\test_gateway_node_methods.py`,
+    `mypy src\openzues\services\gateway_node_methods.py
+    src\openzues\services\gateway_sessions.py`, and focused
+    `git diff --check`.
 
 ## Canonical Checklist Format
 

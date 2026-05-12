@@ -1,18 +1,19 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-11
+Updated: 2026-05-12
 
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.9% of the
+- The active gateway/session/tool-contract family is estimated at ~99.91% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~99.96% after the latest
+- The chat/session contract subfamily is estimated at ~99.985% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
-  `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
-  monitor lifecycle runtime seams.
+  `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed
+  remote media staging, `tools.invoke`, and Tlon monitor lifecycle runtime
+  seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9991% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
   post-update completion-cache refresh, all-shell completion write-state,
@@ -134,8 +135,8 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.9% after the
-  latest companion remote macOS bin discovery slice.
+- The gateway session/tool-contract family is estimated at ~99.91% after the
+  latest OpenClaw `agentRuntime` session metadata projection slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.965%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths.
@@ -11791,3 +11792,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   provider-native inbound/outbound breadth moves to ~99.965%.
   Continue remaining provider-specific media/reply edges, companion breadth,
   deeper installed plugin activation, or packaging edges.
+- Current queue-head adjustment: OpenClaw implicit `agentRuntime` metadata now
+  projects through `sessions.patch` resolved payloads and `sessions.list` rows
+  as `{ id: "pi", source: "implicit" }`, matching
+  `resolveAgentRuntimeMetadata` in the upstream session RPC path. Source/test
+  checkpointed in `6c807e10`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.91%, and the
+  chat/session contract subfamily moves to ~99.985%. Continue the
+  provider-gated plugin command-spec seam, `openzues devices list/approve` CLI
+  surface, package-update downgrade confirmation edge, or remaining
+  provider-specific media/reply edges.

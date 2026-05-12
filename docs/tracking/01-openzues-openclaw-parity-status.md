@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-11
+Last updated: 2026-05-12
 
 Primary ledgers:
 
@@ -17,8 +17,8 @@ may lag behind this tracker.
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
-| Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
-| Chat/session contract subfamily | ~99.98% | High for bounded local path | Current local session/chat contracts are near complete |
+| Active gateway/session/tool-contract family | ~99.91% | High for bounded local path | Does not mean whole product parity |
+| Chat/session contract subfamily | ~99.985% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.965% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.9991% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
@@ -101,6 +101,11 @@ may lag behind this tracker.
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.preview`, and direct session REST/SSE behavior.
   - Status: verified in ledger
+
+- [x] Session `agentRuntime` metadata projection for `sessions.patch`
+  resolved payloads and `sessions.list` rows, including the OpenClaw implicit
+  runtime metadata shape `{ id: "pi", source: "implicit" }`.
+  - Status: checkpointed in `6c807e10`
 
 - [x] `tools.invoke` core bridge for allow/deny policy, owner-only controls,
   before-call hooks, ordered registry-backed plugin runtime service envelopes,
