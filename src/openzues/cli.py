@@ -10518,6 +10518,25 @@ def _openclaw_update_restart_snapshot_diagnostics(
     ]
 
 
+def _openclaw_update_restart_log_path(
+    health_payload: Mapping[str, object] | None,
+) -> str | None:
+    if health_payload is None:
+        return None
+    log_path = _optional_cli_string(health_payload.get("restartLogPath"))
+    if log_path is not None:
+        return log_path
+    log_path = _optional_cli_string(health_payload.get("restartLog"))
+    if log_path is not None:
+        return log_path
+    restart = health_payload.get("restart")
+    if isinstance(restart, Mapping):
+        return _optional_cli_string(restart.get("logPath")) or _optional_cli_string(
+            restart.get("restartLogPath")
+        )
+    return None
+
+
 def _openclaw_update_restart_health_diagnostics(
     version_mismatch: Mapping[str, object] | None,
     activated_plugin_errors: Sequence[Mapping[str, object]],
@@ -10556,6 +10575,10 @@ def _openclaw_update_restart_health_diagnostics(
             error = _optional_cli_string(channel.get("error")) or "probe failed"
             lines.append(f"- {channel_id}: {error}")
     lines.extend(_openclaw_update_restart_snapshot_diagnostics(health_payload))
+    restart_log_path = _openclaw_update_restart_log_path(health_payload)
+    if restart_log_path is not None:
+        lines.append(f"Restart log: {restart_log_path}")
+    lines.append("Run `openzues gateway status --deep` for details.")
     return lines
 
 
@@ -10634,6 +10657,7 @@ async def _openclaw_update_attach_restart_health(
         "portUsage",
         "staleGatewayPids",
         "gatewayVersion",
+        "restartLogPath",
     ):
         if key in health_payload:
             restart_health[key] = health_payload[key]
