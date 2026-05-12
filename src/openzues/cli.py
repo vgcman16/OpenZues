@@ -99,7 +99,10 @@ from openzues.services.gateway_plugin_activation import (
 from openzues.services.gateway_plugin_runtime import (
     GatewayPluginExecutor,
     GatewayPluginRuntimeExecutorSpec,
+    GatewayPluginRuntimeService,
+    build_plugin_runtime_control_ui_descriptor_specs_from_active_registry,
     build_plugin_runtime_executor_specs_from_active_registry,
+    build_plugin_runtime_session_extension_specs_from_active_registry,
 )
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
 from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
@@ -94241,6 +94244,17 @@ async function activatePlugin(plugin) {
   }
   const tools = [];
   const providers = [];
+  const sessionExtensions = [];
+  const controlUiDescriptors = [];
+  const pluginId = plugin.id || plugin.pluginId;
+  const pluginName = plugin.name || plugin.pluginName || plugin.id || plugin.pluginId;
+  const cloneJsonValue = (value) => {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (_error) {
+      return undefined;
+    }
+  };
   const registerTool = (definition, opts) => {
     const names = toolNamesFromDefinition(definition, opts);
     if (!names.length) {
@@ -94249,8 +94263,8 @@ async function activatePlugin(plugin) {
     const isFactory = typeof definition === "function";
     const metadata = isFactory && opts && typeof opts === "object" ? opts : definition;
     tools.push({
-      pluginId: plugin.id || plugin.pluginId,
-      pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+      pluginId,
+      pluginName,
       source: "openclaw-plugin",
       names,
       factory: isFactory ? definition : undefined,
@@ -94301,16 +94315,54 @@ async function activatePlugin(plugin) {
     providers.push({
       ...provider,
       id: providerId,
-      pluginId: plugin.id || plugin.pluginId,
-      pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+      pluginId,
+      pluginName,
+    });
+  };
+  const registerSessionExtension = (extension) => {
+    if (!extension || typeof extension !== "object") {
+      return;
+    }
+    const namespace = normalizeOptionalString(extension.namespace);
+    const description = normalizeOptionalString(extension.description);
+    if (!namespace || !description) {
+      return;
+    }
+    sessionExtensions.push({
+      pluginId,
+      pluginName,
+      source: "openclaw-plugin",
+      namespace,
+      description,
+      enabled: extension.enabled !== false,
+    });
+  };
+  const registerControlUiDescriptor = (descriptor) => {
+    if (!descriptor || typeof descriptor !== "object") {
+      return;
+    }
+    const cloned = cloneJsonValue(descriptor);
+    if (!cloned || typeof cloned !== "object" || Array.isArray(cloned)) {
+      return;
+    }
+    controlUiDescriptors.push({
+      ...cloned,
+      pluginId,
+      pluginName,
+      source: "openclaw-plugin",
+      enabled: descriptor.enabled !== false,
     });
   };
   const api = {
-    pluginId: plugin.id || plugin.pluginId,
-    pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+    pluginId,
+    pluginName,
+    registerControlUiDescriptor,
     registerProvider,
+    registerSessionExtension,
     registerTool,
+    controlUi: { register: registerControlUiDescriptor, registerControlUiDescriptor },
     providers: { register: registerProvider, registerProvider },
+    sessionExtensions: { register: registerSessionExtension, registerSessionExtension },
     tools: { register: registerTool, registerTool },
     tool: { register: registerTool, registerTool },
   };
@@ -94321,8 +94373,10 @@ async function activatePlugin(plugin) {
     }
   }
   return {
-    pluginId: plugin.id || plugin.pluginId,
+    pluginId,
+    controlUiDescriptors,
     providers,
+    sessionExtensions,
     tools,
   };
 }
@@ -94355,6 +94409,8 @@ async function activatePlugin(plugin) {
     return;
   }
   const tools = [];
+  const sessionExtensions = [];
+  const controlUiDescriptors = [];
   const importedPluginIds = [];
   for (const plugin of Array.isArray(context.plugins) ? context.plugins : []) {
     if (!plugin || typeof plugin !== "object") {
@@ -94371,8 +94427,16 @@ async function activatePlugin(plugin) {
       importedPluginIds.push(result.pluginId);
     }
     tools.push(...result.tools);
+    sessionExtensions.push(
+      ...(Array.isArray(result.sessionExtensions) ? result.sessionExtensions : []),
+    );
+    controlUiDescriptors.push(
+      ...(Array.isArray(result.controlUiDescriptors) ? result.controlUiDescriptors : []),
+    );
   }
-  process.stdout.write(JSON.stringify({ tools, importedPluginIds }));
+  process.stdout.write(
+    JSON.stringify({ tools, sessionExtensions, controlUiDescriptors, importedPluginIds }),
+  );
 })().catch((error) => {
   const message = error && error.stack ? error.stack : String(error);
   process.stderr.write(message);
@@ -94382,19 +94446,19 @@ async function activatePlugin(plugin) {
 
 
 class _NativeInstalledPluginRuntimeActivationAdapter:
-    def activate_installed_plugins(
+    def _load_installed_plugins_payload(
         self,
         context: dict[str, object],
-    ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    ) -> object:
         plugins = context.get("plugins")
         if not isinstance(plugins, list):
-            return ()
+            return {}
         if not any(
             isinstance(plugin, Mapping)
             and _optional_cli_string(plugin.get("runtimeEntrySource")) is not None
             for plugin in plugins
         ):
-            return ()
+            return {}
         if shutil.which("node") is None:
             raise RuntimeError("Node.js is required to import OpenClaw plugin runtimes.")
         with tempfile.TemporaryDirectory(prefix="openzues-plugin-runtime-") as tmp_dir:
@@ -94419,10 +94483,39 @@ class _NativeInstalledPluginRuntimeActivationAdapter:
             detail = (completed.stderr or completed.stdout or "unknown error").strip()
             raise RuntimeError(detail[:1000])
         try:
-            payload = json.loads(completed.stdout or "{}")
+            return json.loads(completed.stdout or "{}")
         except json.JSONDecodeError as exc:
             raise RuntimeError("plugin runtime loader returned invalid JSON") from exc
+
+    def activate_installed_plugins(
+        self,
+        context: dict[str, object],
+    ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+        payload = self._load_installed_plugins_payload(context)
         return _native_plugin_runtime_specs_from_loader_payload(payload)
+
+    def activate_installed_plugin_runtime_service(
+        self,
+        context: dict[str, object],
+    ) -> GatewayPluginRuntimeService:
+        payload = self._load_installed_plugins_payload(context)
+        registry_payload = _native_plugin_runtime_registry_from_loader_payload(payload)
+        return GatewayPluginRuntimeService(
+            registry_executors=build_plugin_runtime_executor_specs_from_active_registry(
+                registry_payload,
+                tool_allowlist=("group:plugins",),
+            ),
+            session_extensions=(
+                build_plugin_runtime_session_extension_specs_from_active_registry(
+                    registry_payload
+                )
+            ),
+            control_ui_descriptors=(
+                build_plugin_runtime_control_ui_descriptor_specs_from_active_registry(
+                    registry_payload
+                )
+            ),
+        )
 
 
 async def _native_plugin_runtime_executor(
@@ -94506,6 +94599,22 @@ def _native_plugin_runtime_executor_factory(
         )
 
     return execute
+
+
+def _native_plugin_runtime_registry_from_loader_payload(
+    payload: object,
+) -> dict[str, object]:
+    if not isinstance(payload, Mapping):
+        return {}
+    registry: dict[str, object] = {}
+    for key in ("tools", "sessionExtensions", "controlUiDescriptors"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            registry[key] = [dict(entry) for entry in value if isinstance(entry, Mapping)]
+    imported_plugin_ids = _string_list_or_none(payload.get("importedPluginIds"))
+    if imported_plugin_ids is not None:
+        registry["importedPluginIds"] = imported_plugin_ids
+    return registry
 
 
 def _native_plugin_runtime_specs_from_loader_payload(

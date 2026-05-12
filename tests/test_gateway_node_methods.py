@@ -82742,6 +82742,117 @@ async def test_plugins_ui_descriptors_returns_registered_control_ui_descriptors(
 
 
 @pytest.mark.asyncio
+async def test_installed_runtime_activation_registers_session_extension_and_control_ui_descriptor(
+    tmp_path: Path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-session-ui-contributions.cjs"
+    runtime_entry.write_text(
+        """
+module.exports = {
+  register(api) {
+    api.registerSessionExtension({
+      namespace: "focus",
+      description: "Focus state shown on session rows."
+    });
+    api.registerControlUiDescriptor({
+      id: "runtime-session-panel",
+      surface: "session",
+      label: "Runtime Session Panel",
+      description: "Runtime control UI descriptor.",
+      placement: "sidebar",
+      requiredScopes: ["operator.read"],
+      schema: {
+        type: "object",
+        properties: {
+          mode: { type: "string" }
+        }
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    plugin_runtime = adapter.activate_installed_plugin_runtime_service(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-contrib-plugin",
+                    "name": "Runtime Contributions",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-installed-runtime-contributions.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    ui_payload = await service.call("plugins.uiDescriptors", {})
+
+    assert ui_payload == {
+        "ok": True,
+        "descriptors": [
+            {
+                "id": "runtime-session-panel",
+                "pluginId": "runtime-contrib-plugin",
+                "pluginName": "Runtime Contributions",
+                "surface": "session",
+                "label": "Runtime Session Panel",
+                "description": "Runtime control UI descriptor.",
+                "placement": "sidebar",
+                "schema": {
+                    "type": "object",
+                    "properties": {"mode": {"type": "string"}},
+                },
+                "requiredScopes": [READ_GATEWAY_METHOD_SCOPE],
+            }
+        ],
+    }
+
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    patch_payload = await service.call(
+        "sessions.pluginPatch",
+        {
+            "key": session_key,
+            "pluginId": "runtime-contrib-plugin",
+            "namespace": "focus",
+            "value": {"state": "active"},
+        },
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+    )
+
+    assert patch_payload == {
+        "ok": True,
+        "key": session_key,
+        "value": {"state": "active"},
+    }
+    snapshot = await service.call("sessions.list", {"includeGlobal": True})
+    session = next(item for item in snapshot["sessions"] if item["key"] == session_key)
+    assert session["pluginExtensions"] == [
+        {
+            "pluginId": "runtime-contrib-plugin",
+            "namespace": "focus",
+            "value": {"state": "active"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tools_effective_exposes_explicit_sessions_history_toolset(tmp_path) -> None:
     database = Database(tmp_path / "gateway-tools-effective-sessions-history.db")
     await database.initialize()
