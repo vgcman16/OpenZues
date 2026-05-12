@@ -136,8 +136,9 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.95%
-  after route-backed Telegram stale-thread retry fallback.
+- The provider-native inbound/outbound breadth family is estimated at ~99.96%
+  after route-backed Telegram stale-thread retry fallback for JSON and
+  HTTP-error paths.
 - The CLI/operator control-plane family is estimated at ~99.995% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -11782,3 +11783,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   provider-native inbound/outbound breadth moves to ~99.95%. Continue
   remaining provider-specific media/reply edges, companion breadth, deeper
   installed plugin activation, or packaging edges.
+- Current queue-head adjustment: route-backed Telegram sends now also retry
+  stale-topic sends when the provider error is raised by the native HTTP layer
+  as `RuntimeError`, not only when the Bot API returns JSON `{ ok: false }`.
+  Source/test checkpointed in `0544ceb2`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.96%.
+  Continue remaining provider-specific media/reply edges, companion breadth,
+  deeper installed plugin activation, or packaging edges.

@@ -24,7 +24,7 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.95% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.96% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9991% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.9991% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.1% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
@@ -367,8 +367,33 @@ checkpointed in `f38aec97` with poll-specific proof in `813645f6`;
 provider-native inbound/outbound breadth moves to ~99.95%. Continue
 provider-specific media/reply edges, companion breadth, deeper installed plugin
 activation, or packaging edges.
+Provider addendum: `OZ-PROV-001EX` route-backed Telegram sends now retry
+stale thread/topic errors raised by the HTTP layer, source/test checkpointed
+in `0544ceb2`; provider-native inbound/outbound breadth moves to ~99.96%.
+Continue provider-specific media/reply edges, companion breadth, deeper
+installed plugin activation, or packaging edges.
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001EX` Telegram HTTP stale-thread fallback
+  - Source: `openclaw-main/extensions/telegram/src/send.ts`,
+    `openclaw-main/extensions/telegram/src/send.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: route-backed Telegram sends retry once without
+    `message_thread_id` when the native HTTP layer raises a thread-not-found
+    `RuntimeError`, while preserving media/reply/silent payload fields on the
+    retry and surfacing non-thread errors.
+  - Evidence required: focused HTTP-error stale-thread fallback proof,
+    adjacent Telegram send/poll proof, ruff, mypy
+  - Status: checkpointed in `0544ceb2`
+  - Weight: 1
+  - Last verified: 2026-05-11, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_retries_telegram_http_thread_error -q`
+    (`1 failed` before implementation, then `1 passed`), send/poll fallback
+    pair (`3 passed`), adjacent Telegram send/poll proof (`10 passed`),
+    `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+    `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 
 - [x] `OZ-PROV-001EW` Telegram stale-thread send fallback
   - Source: `openclaw-main/extensions/telegram/src/send.ts`,
