@@ -205,7 +205,10 @@ from openzues.services.gateway_node_methods import (
 )
 from openzues.services.gateway_node_pairing import GatewayNodePairingService
 from openzues.services.gateway_node_service import GatewayNodeService
-from openzues.services.gateway_outbound_runtime import GatewayOutboundRuntimeService
+from openzues.services.gateway_outbound_runtime import (
+    GatewayOutboundRuntimeService,
+    GatewayOutboundRuntimeUnavailableError,
+)
 from openzues.services.gateway_remote_node_bins import GatewayRemoteNodeBinsService
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
 from openzues.services.gateway_talk_mode import GatewayTalkModeService
@@ -262,6 +265,7 @@ SLACK_EVENTS_MAX_BODY_BYTES = 1024 * 1024
 SLACK_SIGNATURE_TOLERANCE_SECONDS = 60 * 5
 LINE_WEBHOOK_MAX_RAW_BODY_BYTES = 64 * 1024
 ZALO_WEBHOOK_MAX_RAW_BODY_BYTES = 1024 * 1024
+SIGNAL_RECEIVE_MAX_RAW_BODY_BYTES = 1024 * 1024
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -5122,6 +5126,39 @@ def create_app(
             methods=["POST"],
             include_in_schema=False,
         )
+
+    async def dispatch_signal_receive(request: Request) -> JSONResponse:
+        body = await request.body()
+        if len(body) > SIGNAL_RECEIVE_MAX_RAW_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        content_type = request.headers.get("content-type", "")
+        if "application/json" not in content_type.lower():
+            return JSONResponse({"error": "Unsupported media type"}, status_code=415)
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return JSONResponse({"error": "Invalid Signal receive payload"}, status_code=400)
+        if not isinstance(payload, dict):
+            return JSONResponse({"error": "Invalid Signal receive payload"}, status_code=400)
+        try:
+            result = await active_ops_mesh_service.handle_signal_receive_event(
+                cast(Mapping[str, Any], payload),
+                account_id=account_id,
+            )
+        except GatewayOutboundRuntimeUnavailableError as exc:
+            return JSONResponse(
+                {"error": str(exc).strip() or "Signal inbound unavailable"},
+                status_code=503,
+            )
+        return JSONResponse(result)
+
+    @fastapi_app.post("/api/channels/signal/receive")
+    async def handle_signal_receive(request: Request) -> JSONResponse:
+        return await dispatch_signal_receive(request)
 
     @fastapi_app.post("/api/gateway/memory/prove", response_model=MissionView)
     async def run_gateway_memory_proof(

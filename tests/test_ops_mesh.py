@@ -34084,6 +34084,206 @@ async def test_ops_mesh_service_message_action_dispatches_signal_react_current_m
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_signal_receive_delivers_direct_context(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "signal-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_signal_receive_event(
+        {
+            "event": "receive",
+            "data": json.dumps(
+                {
+                    "envelope": {
+                        "sourceNumber": "+15550002222",
+                        "sourceUuid": "sender-uuid",
+                        "sourceName": "Bob",
+                        "timestamp": 1700000000000,
+                        "dataMessage": {
+                            "message": "/status please",
+                            "timestamp": 1700000000000,
+                            "attachments": [],
+                        },
+                    }
+                }
+            ),
+        },
+        account_id="signal-bot",
+    )
+
+    expected_session_key = "agent:main:signal:direct:+15550002222"
+    expected_target = ConversationTargetView(
+        channel="signal",
+        account_id="signal-bot",
+        peer_kind="direct",
+        peer_id="signal:+15550002222",
+    )
+    assert session_deliveries == [(expected_session_key, "/status please")]
+    assert result["ok"] is True
+    assert result["channel"] == "signal"
+    assert result["deliveredCount"] == 1
+    delivery = result["deliveries"][0]
+    assert delivery["sessionKey"] == expected_session_key
+    assert delivery["messageId"] == "signal-session-message-1"
+    assert delivery["inboundMessageId"] == "1700000000000"
+    assert delivery["senderId"] == "+15550002222"
+    assert delivery["senderUuid"] == "sender-uuid"
+    assert delivery["senderName"] == "Bob"
+    assert delivery["conversationType"] == "direct"
+    assert delivery["conversationTarget"] == expected_target.model_dump(mode="json")
+    assert delivery["reply"] == {
+        "to": "signal:+15550002222",
+        "originatingTo": "+15550002222",
+    }
+    assert delivery["delivery"] == {"runtime": "session-backed"}
+    assert delivery["inboundContext"] == {
+        "Body": "Bob: /status please",
+        "BodyForAgent": "/status please",
+        "RawBody": "/status please",
+        "CommandBody": "/status please",
+        "BodyForCommands": "/status please",
+        "From": "+15550002222",
+        "To": "+15550002222",
+        "SessionKey": expected_session_key,
+        "AccountId": "signal-bot",
+        "ChatType": "direct",
+        "ConversationLabel": "Bob",
+        "SenderName": "Bob",
+        "SenderId": "+15550002222",
+        "Provider": "signal",
+        "Surface": "signal",
+        "MessageSid": "1700000000000",
+        "OriginatingChannel": "signal",
+        "OriginatingTo": "+15550002222",
+        "CommandAuthorized": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_signal_receive_skips_sync_message(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "unexpected"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_signal_receive_event(
+        {
+            "event": "receive",
+            "data": json.dumps(
+                {
+                    "envelope": {
+                        "sourceNumber": "+15550002222",
+                        "syncMessage": None,
+                        "dataMessage": {"message": "do not replay"},
+                    }
+                }
+            ),
+        },
+        account_id="signal-bot",
+    )
+
+    assert session_deliveries == []
+    assert result == {
+        "ok": True,
+        "channel": "signal",
+        "eventType": "receive",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skipped": True,
+        "reason": "signal_sync_message",
+    }
+
+
+def test_signal_receive_route_dispatches_native_receive_event(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    delivered: list[tuple[str, str]] = []
+
+    async def fake_deliver(session_key: str, prompt: str) -> dict[str, object]:
+        delivered.append((session_key, prompt))
+        return {"messageId": "signal-route-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_deliver,
+    )
+
+    app = create_app(app_settings, database=database, ops_mesh_service=service)
+    with TestClient(app) as client:
+        app.state.ops_mesh_service.session_delivery_service = fake_deliver
+        response = client.post(
+            "/api/channels/signal/receive?accountId=signal-bot",
+            json={
+                "event": "receive",
+                "data": json.dumps(
+                    {
+                        "envelope": {
+                            "sourceNumber": "+15550003333",
+                            "sourceName": "Grace",
+                            "timestamp": 1700000000123,
+                            "dataMessage": {"message": "route this Signal event"},
+                        }
+                    }
+                ),
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["channel"] == "signal"
+    assert payload["deliveredCount"] == 1
+    assert payload["deliveries"][0]["messageId"] == "signal-route-session-message-1"
+    assert delivered == [
+        ("agent:main:signal:direct:+15550003333", "route this Signal event")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_irc_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

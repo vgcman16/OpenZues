@@ -136,6 +136,7 @@ from openzues.services.reflexes import build_reflex_deck
 from openzues.services.scope_enforcer import build_scope_assessment
 from openzues.services.session_keys import (
     DEFAULT_ACCOUNT_ID,
+    build_agent_session_key,
     build_launch_session_key,
     canonicalize_session_key,
     normalize_optional_account_id,
@@ -8927,6 +8928,211 @@ def _signal_rpc_result_timestamp(result: object) -> int | None:
         timestamp = result.get("timestamp")
         return timestamp if isinstance(timestamp, int) else None
     return None
+
+
+def _signal_inbound_mapping(value: object) -> Mapping[str, Any]:
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _signal_inbound_optional_string(value: object) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _signal_inbound_payload(event: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    if isinstance(event.get("envelope"), Mapping):
+        return event
+    if _signal_inbound_optional_string(event.get("event")) != "receive":
+        return None
+    data = event.get("data")
+    if isinstance(data, Mapping):
+        return cast(Mapping[str, Any], data)
+    if not isinstance(data, str) or not data.strip():
+        return None
+    try:
+        parsed = json.loads(data)
+    except json.JSONDecodeError:
+        return None
+    return cast(Mapping[str, Any], parsed) if isinstance(parsed, Mapping) else None
+
+
+def _signal_inbound_data_message(
+    envelope: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    data_message = _signal_inbound_mapping(envelope.get("dataMessage"))
+    if data_message:
+        return data_message
+    edit_message = _signal_inbound_mapping(envelope.get("editMessage"))
+    return _signal_inbound_mapping(edit_message.get("dataMessage"))
+
+
+def _signal_inbound_message_id(
+    envelope: Mapping[str, Any],
+    data_message: Mapping[str, Any],
+) -> str | None:
+    for value in (envelope.get("timestamp"), data_message.get("timestamp")):
+        if value is None or isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return str(value)
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _signal_inbound_body_text(data_message: Mapping[str, Any]) -> str | None:
+    message = _signal_inbound_optional_string(data_message.get("message"))
+    if message is not None:
+        return message
+    attachments = data_message.get("attachments")
+    if not isinstance(attachments, list) or not attachments:
+        return None
+    if len(attachments) > 1:
+        return "<media:attachments>"
+    first = attachments[0]
+    content_type = ""
+    if isinstance(first, Mapping):
+        content_type = str(first.get("contentType") or "").strip().lower()
+    if content_type.startswith("image/"):
+        return "<media:image>"
+    if content_type.startswith("video/"):
+        return "<media:video>"
+    if content_type.startswith("audio/"):
+        return "<media:audio>"
+    return "<media:attachment>"
+
+
+def _signal_inbound_command_authorized(text: str) -> bool:
+    stripped = text.lstrip()
+    return stripped.startswith("/") or stripped.startswith("!")
+
+
+@dataclass(frozen=True, slots=True)
+class _SignalInboundSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    sender_id: str
+    sender_uuid: str | None
+    sender_name: str | None
+    conversation_id: str
+    conversation_type: str
+    reply_to: str
+    originating_to: str
+    group_name: str | None
+
+
+def _signal_inbound_session_context(
+    envelope: Mapping[str, Any],
+    data_message: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _SignalInboundSessionContext:
+    source_number = _signal_inbound_optional_string(envelope.get("sourceNumber"))
+    source_uuid = _signal_inbound_optional_string(envelope.get("sourceUuid"))
+    sender_id = source_number or source_uuid
+    if sender_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Signal inbound envelope is missing sender identity."
+        )
+    group_info = _signal_inbound_mapping(data_message.get("groupInfo"))
+    group_id = _signal_inbound_optional_string(group_info.get("groupId"))
+    group_name = _signal_inbound_optional_string(group_info.get("groupName"))
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    sender_name = _signal_inbound_optional_string(envelope.get("sourceName"))
+    if group_id is not None:
+        conversation_target = ConversationTargetView(
+            channel="signal",
+            account_id=normalized_account_id,
+            peer_kind="group",
+            peer_id=f"signal:group:{group_id}",
+        )
+        return _SignalInboundSessionContext(
+            conversation_target=conversation_target,
+            session_key=build_agent_session_key(
+                agent_id="main",
+                channel="signal",
+                account_id=normalized_account_id,
+                peer_kind="group",
+                peer_id=group_id,
+            ),
+            sender_id=sender_id,
+            sender_uuid=source_uuid,
+            sender_name=sender_name,
+            conversation_id=group_id,
+            conversation_type="group",
+            reply_to=f"signal:group:{group_id}",
+            originating_to=f"group:{group_id}",
+            group_name=group_name,
+        )
+    target_peer_id = (
+        f"signal:{source_number}" if source_number is not None else f"signal:uuid:{source_uuid}"
+    )
+    conversation_target = ConversationTargetView(
+        channel="signal",
+        account_id=normalized_account_id,
+        peer_kind="direct",
+        peer_id=target_peer_id,
+    )
+    return _SignalInboundSessionContext(
+        conversation_target=conversation_target,
+        session_key=build_agent_session_key(
+            agent_id="main",
+            channel="signal",
+            account_id=normalized_account_id,
+            peer_kind="direct",
+            peer_id=sender_id,
+            dm_scope="per-channel-peer",
+        ),
+        sender_id=sender_id,
+        sender_uuid=source_uuid,
+        sender_name=sender_name,
+        conversation_id=sender_id,
+        conversation_type="direct",
+        reply_to=target_peer_id,
+        originating_to=sender_id,
+        group_name=None,
+    )
+
+
+def _signal_inbound_context_payload(
+    context: _SignalInboundSessionContext,
+    *,
+    text: str,
+    inbound_message_id: str | None,
+    command_authorized: bool,
+) -> dict[str, object]:
+    label = context.sender_name or context.sender_id
+    if context.conversation_type == "group" and context.group_name:
+        label = f"{context.group_name} / {label}"
+    body = f"{label}: {text}" if label else text
+    payload: dict[str, object] = {
+        "Body": body,
+        "BodyForAgent": text,
+        "RawBody": text,
+        "CommandBody": text,
+        "BodyForCommands": text,
+        "From": context.originating_to,
+        "To": context.originating_to,
+        "SessionKey": context.session_key,
+        "AccountId": context.conversation_target.account_id or DEFAULT_ACCOUNT_ID,
+        "ChatType": context.conversation_type,
+        "ConversationLabel": label,
+        "SenderName": context.sender_name or context.sender_id,
+        "SenderId": context.sender_id,
+        "Provider": "signal",
+        "Surface": "signal",
+        "OriginatingChannel": "signal",
+        "OriginatingTo": context.originating_to,
+        "CommandAuthorized": command_authorized,
+    }
+    if inbound_message_id is not None:
+        payload["MessageSid"] = inbound_message_id
+    if context.group_name is not None:
+        payload["GroupSubject"] = context.group_name
+    return payload
 
 
 def _irc_wire_value(value: str | None, label: str) -> str:
@@ -19525,6 +19731,124 @@ class OpsMeshService:
             inbound_message_id = _zalo_inbound_message_id(payload)
             if inbound_message_id is not None:
                 result["inboundMessageId"] = inbound_message_id
+        return result
+
+    async def handle_signal_receive_event(
+        self,
+        event: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        receive_payload = _signal_inbound_payload(event)
+        if receive_payload is None:
+            return {
+                "ok": False,
+                "channel": "signal",
+                "eventType": _signal_inbound_optional_string(event.get("event")),
+                "skipped": True,
+                "reason": "signal_receive_event_unsupported",
+            }
+        envelope = _signal_inbound_mapping(receive_payload.get("envelope"))
+        if not envelope:
+            return {
+                "ok": False,
+                "channel": "signal",
+                "eventType": "receive",
+                "eventCount": 1,
+                "deliveredCount": 0,
+                "skipped": True,
+                "reason": "signal_receive_missing_envelope",
+            }
+        if "syncMessage" in envelope:
+            return {
+                "ok": True,
+                "channel": "signal",
+                "eventType": "receive",
+                "eventCount": 1,
+                "deliveredCount": 0,
+                "skipped": True,
+                "reason": "signal_sync_message",
+            }
+        data_message = _signal_inbound_data_message(envelope)
+        if not data_message:
+            return {
+                "ok": True,
+                "channel": "signal",
+                "eventType": "receive",
+                "eventCount": 1,
+                "deliveredCount": 0,
+                "skipped": True,
+                "reason": "signal_receive_without_data_message",
+            }
+        text = _signal_inbound_body_text(data_message)
+        if text is None:
+            return {
+                "ok": True,
+                "channel": "signal",
+                "eventType": "receive",
+                "eventCount": 1,
+                "deliveredCount": 0,
+                "skipped": True,
+                "reason": "signal_receive_without_message_text",
+            }
+        context = _signal_inbound_session_context(
+            envelope,
+            data_message,
+            account_id=account_id,
+        )
+        if self.session_delivery_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Signal inbound session delivery is unavailable."
+            )
+        delivery_result = await self.session_delivery_service(context.session_key, text)
+        delivery_message_id = _session_delivery_message_id(delivery_result)
+        inbound_message_id = _signal_inbound_message_id(envelope, data_message)
+        command_authorized = _signal_inbound_command_authorized(text)
+        delivery: dict[str, object] = {
+            "eventType": "receive",
+            "sessionKey": context.session_key,
+            "text": text,
+            "senderId": context.sender_id,
+            "conversationId": context.conversation_id,
+            "conversationType": context.conversation_type,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "reply": {
+                "to": context.reply_to,
+                "originatingTo": context.originating_to,
+            },
+            "delivery": {"runtime": "session-backed"},
+            "inboundContext": _signal_inbound_context_payload(
+                context,
+                text=text,
+                inbound_message_id=inbound_message_id,
+                command_authorized=command_authorized,
+            ),
+            "commandAuthorized": command_authorized,
+        }
+        if delivery_message_id is not None:
+            delivery["messageId"] = delivery_message_id
+        if inbound_message_id is not None:
+            delivery["inboundMessageId"] = inbound_message_id
+            delivery["timestamp"] = int(inbound_message_id) if inbound_message_id.isdigit() else (
+                inbound_message_id
+            )
+        if context.sender_uuid is not None:
+            delivery["senderUuid"] = context.sender_uuid
+        if context.sender_name is not None:
+            delivery["senderName"] = context.sender_name
+        if context.group_name is not None:
+            delivery["groupName"] = context.group_name
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "signal",
+            "eventType": "receive",
+            "eventCount": 1,
+            "deliveredCount": 1,
+            "deliveries": [delivery],
+        }
+        normalized_account_id = normalize_optional_account_id(account_id)
+        if normalized_account_id is not None:
+            result["accountId"] = normalized_account_id
         return result
 
     async def _stage_zalo_inbound_media(
