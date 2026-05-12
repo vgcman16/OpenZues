@@ -96758,6 +96758,111 @@ async def test_sessions_spawn_acp_honors_configured_max_children_per_agent(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_counts_persisted_task_records_for_child_cap(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-task-record-child-cap.db")
+    await database.initialize()
+    requester_session_key = "agent:main:subagent:parent"
+    existing_child_session_key = "agent:codex:acp:existing-parent-stream"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Parent", "spawnDepth": 1},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=existing_child_session_key,
+        metadata={
+            "runtime": "acp",
+            "spawnedBy": requester_session_key,
+            "parentSessionKey": requester_session_key,
+            "runtimeThreadId": "thread-existing-parent-stream",
+            "runtimeSessionId": "session-existing-parent-stream",
+            "taskRecord": {
+                "runtime": "acp",
+                "status": "running",
+                "childSessionKey": existing_child_session_key,
+                "requesterSessionKey": requester_session_key,
+                "ownerKey": requester_session_key,
+            },
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "maxSpawnDepth": 3,
+                                "maxChildrenPerAgent": 1,
+                                "allowAgents": ["codex"],
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:new-parent-stream",
+                "runId": "run-acp-new-parent-stream",
+                "mode": "run",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Start another ACP child while one persisted task is active.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "streamTo": "parent",
+            "requesterSessionKey": requester_session_key,
+        },
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "errorCode": "subagent_policy",
+        "error": "sessions_spawn has reached max active children for this session (1/1)",
+        "role": "codex",
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_rejects_agent_outside_subagent_allowlist(
     tmp_path,
 ) -> None:

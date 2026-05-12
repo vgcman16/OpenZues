@@ -14232,7 +14232,7 @@ class GatewayNodeMethodService:
         if self._database is None:
             return 0
         requester_aliases = set(_session_key_aliases(requester_session_key))
-        active_count = 0
+        active_child_session_keys: set[str] = set()
         for run_id, tracked_run in list(self._gateway_tracked_chat_runs_by_id.items()):
             if (
                 await self._gateway_chat_terminal_snapshot(
@@ -14259,8 +14259,34 @@ class GatewayNodeMethodService:
                 continue
             parent_aliases = set(_session_key_aliases(parent_key))
             if requester_aliases.intersection(parent_aliases):
-                active_count += 1
-        return active_count
+                active_child_session_keys.add(_canonical_session_key(tracked_run.session_key))
+        for row in await self._database.list_gateway_session_metadata_rows():
+            metadata = row.get("metadata") if isinstance(row, dict) else None
+            if not isinstance(metadata, dict):
+                continue
+            task_record = _mapping_or_none(metadata.get("taskRecord"))
+            if task_record is None:
+                continue
+            current_status = _string_or_none(task_record.get("status"))
+            if current_status not in {"queued", "running"}:
+                continue
+            parent_key = (
+                _string_or_none(task_record.get("requesterSessionKey"))
+                or _string_or_none(task_record.get("ownerKey"))
+                or _string_or_none(metadata.get("spawnedBy"))
+                or _string_or_none(metadata.get("parentSessionKey"))
+            )
+            if parent_key is None:
+                continue
+            parent_aliases = set(_session_key_aliases(parent_key))
+            if not requester_aliases.intersection(parent_aliases):
+                continue
+            child_session_key = _string_or_none(
+                task_record.get("childSessionKey")
+            ) or _string_or_none(row.get("session_key"))
+            if child_session_key is not None:
+                active_child_session_keys.add(_canonical_session_key(child_session_key))
+        return len(active_child_session_keys)
 
     async def _wait_for_gateway_chat_run(
         self,
