@@ -15,14 +15,14 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.9999997% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.9999998% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
   `resumeSessionId` ownership enforcement, ACP model/thinking override
   propagation, ACP configured runtime agent alias mapping, ACP runtime-agent
   mismatch preflight, ACP run-timeout runtime propagation, ACP subagent
   depth/child-cap policy, ACP subagent target allowlist policy, ACP
   route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP
-  accepted-spawn registration-failure cleanup, package
+  accepted-spawn registration-failure cleanup, Docker runtime home bootstrap, package
   post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback,
   startup-optimization doctor notes, installed runtime session/control-UI
   contribution capture, package
@@ -13001,3 +13001,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   moves to ~99.999998%. Continue provider media/reply edges,
   packaging/distribution, device-token authz depth, ACP lifecycle, or
   companion app breadth.
+- Current queue-head adjustment: native Docker packaging now pre-creates
+  `/home/node/.openzues` with `node:node` ownership and mode `700` before
+  switching the runtime image to `USER node`, matching OpenClaw's container
+  state-dir bootstrap behavior for mounted volumes. Source/test checkpointed
+  in `a6e64d0e`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.9999998%. Continue
+  packaging/distribution edges, deeper ACP lifecycle, installed plugin
+  activation, provider media edges, or companion app breadth.
