@@ -10122,6 +10122,26 @@ def _line_sticker_text(message: Mapping[str, Any]) -> str:
     return f"[Sent a {package_name} sticker]"
 
 
+def _line_location_text(message: Mapping[str, Any]) -> str | None:
+    try:
+        latitude = float(message.get("latitude"))  # type: ignore[arg-type]
+        longitude = float(message.get("longitude"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(latitude) or not math.isfinite(longitude):
+        return None
+    accuracy = ""
+    raw_accuracy = message.get("accuracy")
+    if raw_accuracy is not None:
+        try:
+            accuracy_value = float(raw_accuracy)
+        except (TypeError, ValueError):
+            accuracy_value = math.nan
+        if math.isfinite(accuracy_value):
+            accuracy = f" \u00b1{round(accuracy_value)}m"
+    return f"\U0001f4cd {latitude:.6f}, {longitude:.6f}{accuracy}"
+
+
 def _line_webhook_event_text(event: Mapping[str, Any]) -> str | None:
     event_type = str(event.get("type") or "").strip().lower()
     if event_type == "message":
@@ -10129,6 +10149,8 @@ def _line_webhook_event_text(event: Mapping[str, Any]) -> str | None:
         message_type = str(message.get("type") or "").strip().lower()
         if message_type == "sticker":
             return _line_sticker_text(message)
+        if message_type == "location":
+            return _line_location_text(message)
         if message_type != "text":
             media_placeholder = {
                 "image": "<media:image>",

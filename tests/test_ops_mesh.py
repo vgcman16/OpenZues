@@ -34276,6 +34276,75 @@ async def test_ops_mesh_service_handle_line_webhook_delivers_sticker_text(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_delivers_location_text(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-location-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "replyToken": "line-location-reply-token",
+                    "timestamp": 1760000001111,
+                    "source": {"type": "user", "userId": "ULOCATION123"},
+                    "message": {
+                        "id": "line-location-1",
+                        "type": "location",
+                        "title": "OpenZues HQ",
+                        "address": "1 Parity Way",
+                        "latitude": 37.422,
+                        "longitude": -122.084,
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="direct",
+        peer_id="line:user:ULOCATION123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    expected_text = "\U0001f4cd 37.422000, -122.084000"
+
+    assert session_deliveries == [(expected_session_key, expected_text)]
+    assert result["deliveredCount"] == 1
+    assert result["deliveries"][0]["text"] == expected_text
+    assert result["deliveries"][0]["conversationTarget"] == expected_target.model_dump(
+        mode="json"
+    )
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_line_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
