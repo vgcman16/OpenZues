@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.969% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.999992% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.999993% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.999998% | High for bounded native bridge | ACP resume ownership, ACP model/thinking overrides, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.9% | Low, broad parity still open | QR setup-code safety, SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, and approval-state preview metadata are landed; companion apps remain mostly open |
@@ -7435,6 +7435,28 @@ may lag behind this tracker.
     (`8 passed, 497 deselected`), adjacent
     `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
     (`13 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot file-media text follow-up delivery.
+  - Source: `openclaw-main/extensions/qqbot/src/engine/messaging/outbound.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: file/document media sends post the media message first, then
+    send accompanying text through the normal QQBot text path without replacing
+    the media result's `messageId`/`messageIds`.
+  - Evidence required: focused text-after-media test, focused adjacent QQBot
+    provider proof, adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `ea9dfe30`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_sends_qqbot_file_text_after_media -q`
+    (`1 failed` before implementation because only the media message was
+    posted, then `1 passed`), focused adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (file_text or falls_back or chunked or self_closing or image_tag or image_media or reply_seq or local_media or native_route)"`
+    (`9 passed, 497 deselected`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`14 passed, 492 deselected`), `ruff check
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 
