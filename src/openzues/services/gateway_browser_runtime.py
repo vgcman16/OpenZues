@@ -8,7 +8,9 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
+
+from websockets.sync.client import connect as websocket_connect
 
 DEFAULT_BROWSER_SESSION = "openzues-browser"
 _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
@@ -318,6 +320,27 @@ class GatewayBrowserRuntimeService:
             return self.dialog_hook(
                 accept=browser_request_bool(request_body.get("accept")),
                 prompt_text=browser_request_string(request_body, "promptText") or None,
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/permissions/grant":
+            origin = browser_permission_origin(request_body.get("origin"))
+            if origin is None:
+                raise GatewayBrowserRuntimeError("origin must be an http(s) origin")
+            permissions = browser_permission_list(
+                request_body,
+                "permissions",
+                required=True,
+            )
+            optional_permissions = browser_permission_list(
+                request_body,
+                "optionalPermissions",
+            )
+            timeout_ms = max(browser_request_int(request_body, "timeoutMs") or 5000, 1000)
+            return self.grant_permissions(
+                origin=origin,
+                permissions=permissions,
+                optional_permissions=optional_permissions,
+                timeout_ms=timeout_ms,
                 session=session,
             )
         if normalized_method == "POST" and normalized_path == "/tabs/open":
@@ -1244,6 +1267,38 @@ class GatewayBrowserRuntimeService:
             accept=accept,
             prompt_text=prompt_text,
             output=output,
+        )
+
+    def grant_permissions(
+        self,
+        *,
+        origin: str,
+        permissions: list[str],
+        optional_permissions: list[str],
+        timeout_ms: int,
+        session: str,
+    ) -> dict[str, object]:
+        cdp_url = strip_browser_value(
+            self._run(
+                ["get", "cdp-url"],
+                session=session,
+                timeout_seconds=max(timeout_ms / 1000, 1.0),
+            )
+        )
+        if not cdp_url.startswith(("ws://", "wss://")):
+            raise GatewayBrowserRuntimeError("browser CDP WebSocket unavailable")
+        granted_permissions, unsupported_permissions = browser_grant_permissions_via_cdp(
+            cdp_url=cdp_url,
+            origin=origin,
+            permissions=permissions,
+            optional_permissions=optional_permissions,
+            timeout_seconds=max(timeout_ms / 1000, 1.0),
+        )
+        return browser_permissions_payload(
+            session=session,
+            origin=origin,
+            granted_permissions=granted_permissions,
+            unsupported_permissions=unsupported_permissions,
         )
 
     def trace_start(self, *, session: str) -> dict[str, object]:
@@ -2394,6 +2449,85 @@ def browser_dialog_hook_payload(
     }
 
 
+def browser_grant_permissions_via_cdp(
+    *,
+    cdp_url: str,
+    origin: str,
+    permissions: list[str],
+    optional_permissions: list[str],
+    timeout_seconds: float,
+) -> tuple[list[str], list[str]]:
+    all_permissions = list(dict.fromkeys([*permissions, *optional_permissions]))
+    try:
+        with websocket_connect(cdp_url, open_timeout=timeout_seconds) as socket:
+            error = browser_cdp_send(
+                socket,
+                message_id=1,
+                method="Browser.grantPermissions",
+                params={"origin": origin, "permissions": all_permissions},
+            )
+            if error is None:
+                return all_permissions, []
+            if not optional_permissions:
+                raise GatewayBrowserRuntimeError(error)
+            retry_error = browser_cdp_send(
+                socket,
+                message_id=2,
+                method="Browser.grantPermissions",
+                params={"origin": origin, "permissions": permissions},
+            )
+            if retry_error is not None:
+                raise GatewayBrowserRuntimeError(retry_error)
+            return permissions, optional_permissions
+    except GatewayBrowserRuntimeError:
+        raise
+    except Exception as exc:
+        raise GatewayBrowserRuntimeError(f"browser permission grant failed: {exc}") from exc
+
+
+def browser_cdp_send(
+    socket: Any,
+    *,
+    message_id: int,
+    method: str,
+    params: dict[str, object],
+) -> str | None:
+    socket.send(json.dumps({"id": message_id, "method": method, "params": params}))
+    raw_response = socket.recv()
+    try:
+        response = json.loads(raw_response) if isinstance(raw_response, str) else {}
+    except json.JSONDecodeError as exc:
+        raise GatewayBrowserRuntimeError("browser CDP returned invalid JSON") from exc
+    if not isinstance(response, dict):
+        raise GatewayBrowserRuntimeError("browser CDP returned invalid response")
+    error = response.get("error")
+    if isinstance(error, dict):
+        message = error.get("message")
+        return str(message) if message else "browser CDP command failed"
+    if error:
+        return str(error)
+    return None
+
+
+def browser_permissions_payload(
+    *,
+    session: str,
+    origin: str,
+    granted_permissions: list[str],
+    unsupported_permissions: list[str],
+) -> dict[str, object]:
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser permissions granted",
+        "summary": f"Granted {len(granted_permissions)} browser permission(s).",
+        "session": session,
+        "origin": origin,
+        "grantedPermissions": granted_permissions,
+        "unsupportedPermissions": unsupported_permissions,
+    }
+
+
 def browser_page_emulation_script(
     *,
     timezone_id: str | None = None,
@@ -3152,6 +3286,39 @@ def browser_request_number_text(request: dict[str, Any], key: str, *, label: str
     if isinstance(value, str) and value.strip():
         return value.strip()
     raise GatewayBrowserRuntimeError(f"{label} is required")
+
+
+def browser_permission_origin(value: object) -> str | None:
+    text = value.strip() if isinstance(value, str) else ""
+    if not text:
+        return None
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def browser_permission_list(
+    request: dict[str, Any],
+    key: str,
+    *,
+    required: bool = False,
+) -> list[str]:
+    raw = request.get(key)
+    if raw is None and not required:
+        return []
+    if not isinstance(raw, list):
+        raise GatewayBrowserRuntimeError(f"{key} must be a string array")
+    values: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, str) or not entry.strip():
+            raise GatewayBrowserRuntimeError(f"{key} must be a string array")
+        value = entry.strip()
+        if value not in values:
+            values.append(value)
+    if required and not values:
+        raise GatewayBrowserRuntimeError(f"{key} must be a non-empty string array")
+    return values
 
 
 def browser_required_selector(request: dict[str, Any], kind: str) -> str:

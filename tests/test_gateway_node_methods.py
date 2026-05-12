@@ -112583,6 +112583,84 @@ def test_browser_request_runtime_maps_locale_timezone_routes(
     assert locale["targetId"] == "tab-1"
 
 
+def test_browser_request_runtime_maps_permission_grant_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+    sent_messages: list[dict[str, object]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = '"ws://127.0.0.1:9222/devtools/browser/abc"'
+        stderr = ""
+
+    class FakeSocket:
+        def __enter__(self) -> FakeSocket:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def send(self, message: str) -> None:
+            parsed = json.loads(message)
+            assert isinstance(parsed, dict)
+            sent_messages.append(parsed)
+
+        def recv(self) -> str:
+            if len(sent_messages) == 1:
+                return '{"id": 1, "error": {"message": "Unknown permission type"}}'
+            return '{"id": 2, "result": {}}'
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    def fake_connect(url: str, **kwargs: object) -> FakeSocket:
+        assert url == "ws://127.0.0.1:9222/devtools/browser/abc"
+        assert kwargs["open_timeout"] == 2.5
+        return FakeSocket()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.websocket_connect",
+        fake_connect,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.request(
+        method="POST",
+        path="/permissions/grant",
+        body={
+            "origin": "https://meet.google.com/abc-defg-hij",
+            "permissions": ["audioCapture", "videoCapture"],
+            "optionalPermissions": ["speakerSelection"],
+            "timeoutMs": 2500,
+        },
+        session="parity-browser",
+    )
+
+    assert calls == [["agent-browser.cmd", "--session", "parity-browser", "get", "cdp-url"]]
+    assert [message["method"] for message in sent_messages] == [
+        "Browser.grantPermissions",
+        "Browser.grantPermissions",
+    ]
+    assert sent_messages[0]["params"] == {
+        "origin": "https://meet.google.com",
+        "permissions": ["audioCapture", "videoCapture", "speakerSelection"],
+    }
+    assert sent_messages[1]["params"] == {
+        "origin": "https://meet.google.com",
+        "permissions": ["audioCapture", "videoCapture"],
+    }
+    assert payload["ok"] is True
+    assert payload["origin"] == "https://meet.google.com"
+    assert payload["grantedPermissions"] == ["audioCapture", "videoCapture"]
+    assert payload["unsupportedPermissions"] == ["speakerSelection"]
+
+
 def test_browser_request_runtime_maps_act_utility_routes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
