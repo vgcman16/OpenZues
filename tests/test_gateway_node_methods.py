@@ -112748,6 +112748,49 @@ def test_browser_request_runtime_maps_response_body_route(
     assert payload["response"]["truncated"] is False
 
 
+def test_browser_request_runtime_maps_dialog_hook_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "true"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **kwargs: object) -> Completed:
+        input_text = kwargs.get("input")
+        calls.append((invocation, input_text if isinstance(input_text, str) else None))
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.request(
+        method="POST",
+        path="/hooks/dialog",
+        body={"accept": True, "promptText": "approved"},
+        session="parity-browser",
+    )
+
+    assert calls[0][0] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "eval",
+        "--stdin",
+    ]
+    assert "window.__openclawDialogHook" in (calls[0][1] or "")
+    assert "return true" in (calls[0][1] or "")
+    assert '"approved"' in (calls[0][1] or "")
+    assert payload["ok"] is True
+    assert payload["accept"] is True
+    assert payload["promptText"] == "approved"
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

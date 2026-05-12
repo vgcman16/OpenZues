@@ -295,6 +295,14 @@ class GatewayBrowserRuntimeService:
                 browser_request_string_list(request_body, "paths"),
                 session=session,
             )
+        if normalized_method == "POST" and normalized_path == "/hooks/dialog":
+            if "accept" not in request_body:
+                raise GatewayBrowserRuntimeError("accept is required")
+            return self.dialog_hook(
+                accept=browser_request_bool(request_body.get("accept")),
+                prompt_text=browser_request_string(request_body, "promptText") or None,
+                session=session,
+            )
         if normalized_method == "POST" and normalized_path == "/tabs/open":
             target = request_body.get("url")
             if not isinstance(target, str) or not target.strip():
@@ -1144,6 +1152,27 @@ class GatewayBrowserRuntimeService:
             session=session,
             selector=selector,
             files=[str(path) for path in guarded_paths],
+            output=output,
+        )
+
+    def dialog_hook(
+        self,
+        *,
+        session: str,
+        accept: bool,
+        prompt_text: str | None = None,
+    ) -> dict[str, object]:
+        script = browser_dialog_hook_script(accept=accept, prompt_text=prompt_text)
+        output = self._run(
+            ["eval", "--stdin"],
+            session=session,
+            timeout_seconds=5.0,
+            input_text=script,
+        )
+        return browser_dialog_hook_payload(
+            session=session,
+            accept=accept,
+            prompt_text=prompt_text,
             output=output,
         )
 
@@ -2150,6 +2179,72 @@ def browser_upload_payload(
         "selector": selector,
         "fileCount": len(files),
         "files": files,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+
+
+def browser_dialog_hook_script(*, accept: bool, prompt_text: str | None) -> str:
+    confirm_value = "true" if accept else "false"
+    prompt_value = json.dumps(prompt_text or "") if accept else "null"
+    return f"""() => {{
+  const state = (window.__openclawDialogHook ??= {{}});
+  if (!state.originals) {{
+    state.originals = {{
+      alert: window.alert.bind(window),
+      confirm: window.confirm.bind(window),
+      prompt: window.prompt.bind(window),
+    }};
+  }}
+  const originals = state.originals;
+  const restore = () => {{
+    window.alert = originals.alert;
+    window.confirm = originals.confirm;
+    window.prompt = originals.prompt;
+    delete window.__openclawDialogHook;
+  }};
+  window.alert = (...args) => {{
+    try {{
+      return undefined;
+    }} finally {{
+      restore();
+    }}
+  }};
+  window.confirm = (...args) => {{
+    try {{
+      return {confirm_value};
+    }} finally {{
+      restore();
+    }}
+  }};
+  window.prompt = (...args) => {{
+    try {{
+      return {prompt_value};
+    }} finally {{
+      restore();
+    }}
+  }};
+  return true;
+}}"""
+
+
+def browser_dialog_hook_payload(
+    *,
+    session: str,
+    accept: bool,
+    prompt_text: str | None,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser dialog hook armed",
+        "summary": first_browser_output_line(output) or "Browser dialog hook armed.",
+        "session": session,
+        "accept": accept,
+        "promptText": prompt_text,
         "lineCount": len(lines),
         "lines": lines,
         "output": output,
