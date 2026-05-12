@@ -10142,6 +10142,29 @@ def _line_location_text(message: Mapping[str, Any]) -> str | None:
     return f"\U0001f4cd {latitude:.6f}, {longitude:.6f}{accuracy}"
 
 
+def _line_inbound_message_id(event: Mapping[str, Any]) -> str | None:
+    message = _line_inbound_mapping(event.get("message"))
+    inbound_message_id = _line_inbound_optional_string(message.get("id"))
+    if inbound_message_id is not None:
+        return inbound_message_id
+    return _line_inbound_optional_string(event.get("webhookEventId"))
+
+
+def _line_text_mentions_openzues(text: str) -> bool:
+    normalized = text.casefold()
+    return "openzues" in normalized or "open zues" in normalized
+
+
+def _line_group_message_requires_mention_skip(
+    *,
+    context: _LineInboundSessionContext,
+    text: str,
+) -> bool:
+    if context.conversation_type not in {"group", "room"}:
+        return False
+    return not _line_text_mentions_openzues(text)
+
+
 def _line_webhook_event_text(event: Mapping[str, Any]) -> str | None:
     event_type = str(event.get("type") or "").strip().lower()
     if event_type == "message":
@@ -18018,21 +18041,33 @@ class OpsMeshService:
                 if isinstance(event, Mapping)
             ]
         deliveries: list[dict[str, object]] = []
+        skips: list[dict[str, object]] = []
         for event in events:
             text = _line_webhook_event_text(event)
             if text is None:
+                continue
+            context = _line_inbound_session_context(event, account_id=account_id)
+            if _line_group_message_requires_mention_skip(context=context, text=text):
+                skip: dict[str, object] = {
+                    "eventType": str(event.get("type") or "").strip() or "message",
+                    "reason": "line_group_message_requires_mention",
+                    "conversationId": context.conversation_id,
+                    "conversationType": context.conversation_type,
+                }
+                inbound_message_id = _line_inbound_message_id(event)
+                if inbound_message_id is not None:
+                    skip["inboundMessageId"] = inbound_message_id
+                skips.append(skip)
                 continue
             if self.session_delivery_service is None:
                 raise GatewayOutboundRuntimeUnavailableError(
                     "LINE inbound session delivery is unavailable."
                 )
-            context = _line_inbound_session_context(event, account_id=account_id)
             delivery_result = await self.session_delivery_service(
                 context.session_key,
                 text,
             )
             delivery_message_id = _session_delivery_message_id(delivery_result)
-            message = _line_inbound_mapping(event.get("message"))
             delivery: dict[str, object] = {
                 "eventType": str(event.get("type") or "").strip() or "message",
                 "sessionKey": context.session_key,
@@ -18045,11 +18080,7 @@ class OpsMeshService:
             }
             if delivery_message_id is not None:
                 delivery["messageId"] = delivery_message_id
-            inbound_message_id = _line_inbound_optional_string(message.get("id"))
-            if inbound_message_id is None:
-                inbound_message_id = _line_inbound_optional_string(
-                    event.get("webhookEventId")
-                )
+            inbound_message_id = _line_inbound_message_id(event)
             if inbound_message_id is not None:
                 delivery["inboundMessageId"] = inbound_message_id
             reply_token = _line_inbound_optional_string(event.get("replyToken"))
@@ -18070,6 +18101,9 @@ class OpsMeshService:
             result["accountId"] = normalized_account_id
         if deliveries:
             result["deliveries"] = deliveries
+        if skips:
+            result["skippedCount"] = len(skips)
+            result["skips"] = skips
         return result
 
     async def handle_msteams_inbound_activity(
