@@ -171,6 +171,11 @@ pruning, and `createdAt` ordering.
 `src/pairing/pairing-store.ts` is checkpointed in `6de9e5a1`; it covers
 native `openzues pairing list`/`approve` JSON and human output, Zalo
 channel/account scoping, and CLI data-dir pairing-store wiring.
+`OZ-PROV-001FX` Zalo pairing approval notification CLI from
+`src/cli/pairing-cli.ts`, `src/channels/plugins/pairing.ts`, and
+`extensions/zalo/src/channel.runtime.ts` is checkpointed in `3a77ccf5`; it
+covers `openzues pairing approve --notify` sending the Zalo approved message
+through direct-channel delivery with idempotency metadata.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
