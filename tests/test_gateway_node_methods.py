@@ -112685,6 +112685,69 @@ def test_browser_request_runtime_maps_snapshot_artifact_routes(
     assert pdf["sizeBytes"] == 4
 
 
+def test_browser_request_runtime_maps_response_body_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-4:] == [
+            "network",
+            "requests",
+            "--filter",
+            "https://example.test/api",
+        ]:
+            return Completed(
+                '{"requests": [{"id": "req-1", "url": "https://example.test/api"}]}'
+            )
+        if invocation[-3:] == ["network", "request", "req-1"]:
+            return Completed(
+                '{"id": "req-1", "url": "https://example.test/api", '
+                '"response": {"status": 200, "headers": {"content-type": '
+                '"application/json"}, "body": "{\\"ok\\":true}"}}'
+            )
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.request(
+        method="POST",
+        path="/response/body",
+        body={"url": "https://example.test/api", "maxChars": 20},
+        session="parity-browser",
+    )
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "network",
+            "requests",
+            "--filter",
+            "https://example.test/api",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "network", "request", "req-1"],
+    ]
+    assert payload["ok"] is True
+    assert payload["response"]["requestId"] == "req-1"
+    assert payload["response"]["status"] == 200
+    assert payload["response"]["body"] == '{"ok":true}'
+    assert payload["response"]["truncated"] is False
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

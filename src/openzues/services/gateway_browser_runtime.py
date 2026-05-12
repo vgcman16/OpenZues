@@ -155,6 +155,12 @@ class GatewayBrowserRuntimeService:
             )
         if normalized_method == "POST" and normalized_path == "/pdf":
             return self.pdf(session=session)
+        if normalized_method == "POST" and normalized_path == "/response/body":
+            return self.response_body(
+                browser_required_string(request_body, "url", label="url"),
+                session=session,
+                max_chars=browser_request_int(request_body, "maxChars"),
+            )
         if normalized_method == "POST" and normalized_path == "/act":
             return self.act(dict(request_body), session=session)
         if normalized_method == "POST" and normalized_path == "/screenshot":
@@ -827,6 +833,26 @@ class GatewayBrowserRuntimeService:
             session=session,
             request_id=request_id,
             output=output,
+        )
+
+    def response_body(
+        self,
+        url: str,
+        *,
+        session: str,
+        max_chars: int | None = None,
+    ) -> dict[str, object]:
+        requests = self.network_requests(session=session, filter_pattern=url)
+        request_id = browser_first_network_request_id(requests)
+        if not request_id:
+            raise GatewayBrowserRuntimeError("matching network request not found")
+        detail = self.network_request(request_id, session=session)
+        return browser_response_body_payload(
+            session=session,
+            url=url,
+            request_id=request_id,
+            detail=detail,
+            max_chars=max_chars,
         )
 
     def network_har_start(self, *, session: str) -> dict[str, object]:
@@ -1652,6 +1678,72 @@ def browser_network_request_payload(
         "detail": detail,
         "lines": lines,
     }
+
+
+def browser_first_network_request_id(requests_payload: dict[str, object]) -> str:
+    requests = requests_payload.get("requests")
+    if not isinstance(requests, list):
+        return ""
+    for entry in requests:
+        if not isinstance(entry, dict):
+            continue
+        for key in ("id", "requestId"):
+            value = entry.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def browser_response_body_payload(
+    *,
+    session: str,
+    url: str,
+    request_id: str,
+    detail: dict[str, object],
+    max_chars: int | None,
+) -> dict[str, object]:
+    raw_detail = detail.get("detail")
+    detail_map = raw_detail if isinstance(raw_detail, dict) else {}
+    raw_response = detail_map.get("response")
+    response_map = raw_response if isinstance(raw_response, dict) else {}
+    body = browser_response_body_text(response_map, detail_map)
+    truncated = False
+    if max_chars is not None and max_chars >= 0 and len(body) > max_chars:
+        body = body[:max_chars]
+        truncated = True
+    headers = response_map.get("headers")
+    response: dict[str, object] = {
+        "requestId": request_id,
+        "url": browser_response_string(detail_map.get("url")) or url,
+        "status": response_map.get("status") or detail_map.get("status"),
+        "headers": headers if isinstance(headers, dict) else {},
+        "body": body,
+        "truncated": truncated,
+    }
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser response body captured",
+        "summary": f"Captured response body for {url}.",
+        "session": session,
+        "response": response,
+    }
+
+
+def browser_response_body_text(
+    response: dict[str, object],
+    detail: dict[str, object],
+) -> str:
+    for source in (response, detail):
+        for key in ("body", "text", "content"):
+            value = source.get(key)
+            if isinstance(value, str):
+                return value
+    return ""
+
+
+def browser_response_string(value: object) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
 
 
 def browser_network_har_start_payload(*, session: str, output: str) -> dict[str, object]:
