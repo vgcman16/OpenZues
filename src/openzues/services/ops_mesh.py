@@ -18792,7 +18792,7 @@ class OpsMeshService:
     ) -> list[_MSTeamsStagedInboundMedia]:
         if str(payload.get("event_name") or "").strip() != "message.image.received":
             return []
-        fetcher = self.zalo_inbound_media_fetch_service
+        fetcher = self._zalo_inbound_media_fetcher()
         if fetcher is None:
             return []
         message = _zalo_inbound_message(payload)
@@ -18835,6 +18835,59 @@ class OpsMeshService:
             index=1,
         )
         return [staged] if staged is not None else []
+
+    def _zalo_inbound_media_fetcher(
+        self,
+    ) -> GatewayZaloInboundMediaFetchService | None:
+        if self.zalo_inbound_media_fetch_service is not None:
+            return self.zalo_inbound_media_fetch_service
+        if self.canvas_state_dir is None:
+            return None
+        return self._default_zalo_inbound_media_fetch
+
+    async def _default_zalo_inbound_media_fetch(
+        self,
+        request: GatewayZaloInboundMediaFetchRequest,
+    ) -> object:
+        return await asyncio.to_thread(self._download_zalo_inbound_media, request)
+
+    def _download_zalo_inbound_media(
+        self,
+        request: GatewayZaloInboundMediaFetchRequest,
+    ) -> dict[str, object]:
+        media_url = _normalized_http_webhook_url(request.url)
+        if media_url is None:
+            raise RuntimeError("Zalo inbound media URL must be http(s).")
+        http_request = Request(
+            media_url,
+            headers={"User-Agent": "OpenZues-Zalo-Media/1.0"},
+            method="GET",
+        )
+        content_type: str | None = None
+        try:
+            with urlopen(http_request, timeout=30) as response:
+                status = int(getattr(response, "status", 200) or 200)
+                if status >= 400:
+                    raise RuntimeError(f"Zalo inbound media URL returned HTTP {status}.")
+                media_bytes = response.read(request.max_bytes + 1)
+                if len(media_bytes) > request.max_bytes:
+                    raise RuntimeError("Zalo inbound media attachment is too large.")
+                headers = getattr(response, "headers", None)
+                if headers is not None:
+                    raw_content_type = headers.get("Content-Type")
+                    if isinstance(raw_content_type, str) and raw_content_type.strip():
+                        content_type = raw_content_type.strip()
+        except HTTPError as exc:
+            message = _http_error_message("Zalo inbound media URL returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Zalo inbound media URL failed: {exc.reason}") from exc
+        result: dict[str, object] = {"bytes": media_bytes}
+        if content_type:
+            result["contentType"] = content_type
+        if request.filename:
+            result["filename"] = request.filename
+        return result
 
     async def _stage_line_inbound_media(
         self,

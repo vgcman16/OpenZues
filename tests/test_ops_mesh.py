@@ -34297,6 +34297,76 @@ async def test_ops_mesh_service_handle_zalo_webhook_stages_downloaded_image_medi
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_downloads_image_media_with_default_fetcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    requests: list[Request] = []
+    jpeg_bytes = b"\xff\xd8\xff\xe0zalo-production-media"
+
+    class FakeZaloMediaResponse:
+        status = 200
+        headers = {"Content-Type": "image/jpeg"}
+
+        def __enter__(self) -> FakeZaloMediaResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            return jpeg_bytes
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeZaloMediaResponse:
+        requests.append(request)
+        return FakeZaloMediaResponse()
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-production-image-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        canvas_state_dir=tmp_path / "state",
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.image.received",
+            "message": {
+                "message_id": "zalo-production-image-1",
+                "caption": "",
+                "photo_url": "https://example.com/zalo-production-image.jpg",
+                "date": 1760000000,
+                "chat": {"id": "chat-production-image", "chat_type": "PRIVATE"},
+                "from": {"id": "zalo-user-image", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    assert len(requests) == 1
+    assert requests[0].full_url == "https://example.com/zalo-production-image.jpg"
+    assert session_deliveries[0][1] == "<media:image>"
+    delivery = result["deliveries"][0]
+    assert delivery["MediaType"] == "image/jpeg"
+    assert delivery["stagedMedia"][0]["filename"] == "zalo-production-image.jpg"
+    assert Path(str(delivery["MediaPath"])).read_bytes() == jpeg_bytes
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message(
     tmp_path: Path,
 ) -> None:
