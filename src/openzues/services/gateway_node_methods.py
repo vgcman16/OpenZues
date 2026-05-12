@@ -62,6 +62,7 @@ from openzues.services.gateway_method_policy import (
     WRITE_GATEWAY_METHOD_SCOPE,
 )
 from openzues.services.gateway_models import GatewayModelsService
+from openzues.services.gateway_native_hook_relay import GatewayNativeHookRelayService
 from openzues.services.gateway_node_command_policy import (
     is_node_command_allowed,
     normalize_declared_node_commands,
@@ -1855,6 +1856,7 @@ class GatewayNodeMethodService:
         ) = None,
         plugin_runtime_service: GatewayPluginRuntimeService | None = None,
         message_action_dispatcher: GatewayMessageActionDispatcher | None = None,
+        native_hook_relay_service: GatewayNativeHookRelayService | None = None,
     ) -> None:
         self.registry = registry
         self._database = database
@@ -2005,6 +2007,9 @@ class GatewayNodeMethodService:
         self._acp_spawn_service = acp_spawn_service
         self._exec_approvals_path = exec_approvals_path
         self._message_action_dispatcher = message_action_dispatcher
+        self._native_hook_relay_service = (
+            native_hook_relay_service or GatewayNativeHookRelayService()
+        )
         if tools_catalog_service is None:
             self._tools_catalog_service = GatewayToolsCatalogService(
                 plugin_runtime_service=self._plugin_runtime_service
@@ -10745,6 +10750,26 @@ class GatewayNodeMethodService:
             if resolved_method == "doctor.memory.repairDreamingArtifacts":
                 return _repair_doctor_memory_dreaming_artifacts(self._memory_doctor_workspace)
             return _dedupe_doctor_memory_dream_diary(self._memory_doctor_workspace)
+
+        if resolved_method == "nativeHook.invoke":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("provider", "relayId", "event", "rawPayload"),
+            )
+            try:
+                return await self._native_hook_relay_service.invoke(
+                    provider=payload.get("provider"),
+                    relay_id=payload.get("relayId"),
+                    event=payload.get("event"),
+                    raw_payload=payload.get("rawPayload"),
+                )
+            except ValueError as exc:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=str(exc),
+                    status_code=400,
+                ) from exc
 
         if resolved_method == "agents.list":
             _validate_exact_keys(

@@ -317,6 +317,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "sessions.compaction.restore",
         "connect",
         "chat.inject",
+        "nativeHook.invoke",
         "web.login.start",
         "web.login.wait",
         "set-heartbeats",

@@ -123,12 +123,13 @@ def test_gateway_method_policy_mirrors_openclaw_operator_scope_groups() -> None:
             PAIRING_GATEWAY_METHOD_SCOPE: 12,
             READ_GATEWAY_METHOD_SCOPE: 76,
             WRITE_GATEWAY_METHOD_SCOPE: 73,
-            ADMIN_GATEWAY_METHOD_SCOPE: 25,
+            ADMIN_GATEWAY_METHOD_SCOPE: 26,
             TALK_SECRETS_GATEWAY_METHOD_SCOPE: 0,
         }
     assert resolve_gateway_method_scope("status") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("diagnostics.stability") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("doctor.memory.remHarness") == READ_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("nativeHook.invoke") == ADMIN_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.status") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.auth.list") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.auth.show") == READ_GATEWAY_METHOD_SCOPE

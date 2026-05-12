@@ -108576,6 +108576,89 @@ async def test_doctor_memory_rem_harness_returns_preview_payload(
 
 
 @pytest.mark.asyncio
+async def test_native_hook_invoke_accepts_live_codex_relay() -> None:
+    from openzues.services.gateway_native_hook_relay import GatewayNativeHookRelayService
+
+    native_hook_service = GatewayNativeHookRelayService(now_ms=lambda: 1000)
+    native_hook_service.register(
+        provider="codex",
+        relay_id="relay-1",
+        session_id="session-1",
+        run_id="run-1",
+        allowed_events=["post_tool_use"],
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        native_hook_relay_service=native_hook_service,
+    )
+
+    payload = await service.call(
+        "nativeHook.invoke",
+        {
+            "provider": "codex",
+            "relayId": "relay-1",
+            "event": "post_tool_use",
+            "rawPayload": {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "tool_use_id": "tool-1",
+                "tool_input": {"command": "echo ok"},
+                "tool_response": {"output": "ok"},
+            },
+        },
+    )
+
+    assert payload == {"stdout": "", "stderr": "", "exitCode": 0}
+    assert native_hook_service.invocations == [
+        {
+            "provider": "codex",
+            "relayId": "relay-1",
+            "event": "post_tool_use",
+            "nativeEventName": "PostToolUse",
+            "sessionId": "session-1",
+            "runId": "run-1",
+            "toolName": "Bash",
+            "toolUseId": "tool-1",
+            "rawPayload": {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "tool_use_id": "tool-1",
+                "tool_input": {"command": "echo ok"},
+                "tool_response": {"output": "ok"},
+            },
+            "receivedAt": "1970-01-01T00:00:01Z",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_native_hook_invoke_rejects_unknown_relay() -> None:
+    from openzues.services.gateway_native_hook_relay import GatewayNativeHookRelayService
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        native_hook_relay_service=GatewayNativeHookRelayService(),
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="native hook relay not found",
+    ) as exc_info:
+        await service.call(
+            "nativeHook.invoke",
+            {
+                "provider": "codex",
+                "relayId": "missing",
+                "event": "pre_tool_use",
+                "rawPayload": {},
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_agent_identity_get_rejects_malformed_session_keys() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
