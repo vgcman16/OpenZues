@@ -363,9 +363,10 @@ Continue provider-specific media/reply edges, companion breadth, deeper
 installed plugin activation, or packaging edges.
 Provider addendum: `OZ-PROV-001EW` route-backed Telegram sends and polls now
 retry stale thread/topic sends without `message_thread_id`, source/test
-checkpointed in `f38aec97`; provider-native inbound/outbound breadth moves to
-~99.95%. Continue provider-specific media/reply edges, companion breadth,
-deeper installed plugin activation, or packaging edges.
+checkpointed in `f38aec97` with poll-specific proof in `813645f6`;
+provider-native inbound/outbound breadth moves to ~99.95%. Continue
+provider-specific media/reply edges, companion breadth, deeper installed plugin
+activation, or packaging edges.
 
 ## Active Slice Detail
 
@@ -380,7 +381,7 @@ deeper installed plugin activation, or packaging edges.
     and continuing to surface non-thread errors.
   - Evidence required: focused stale-thread fallback proof, adjacent Telegram
     send/poll proof, ruff, mypy
-  - Status: checkpointed in `f38aec97`
+  - Status: checkpointed in `f38aec97`; poll-specific proof in `813645f6`
   - Weight: 1
   - Last verified: 2026-05-11, focused red/green
     `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_retries_telegram_missing_thread -q`
@@ -388,6 +389,9 @@ deeper installed plugin activation, or packaging edges.
     send/poll proof (`8 passed`), `ruff check
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+    Poll-specific proof verified on 2026-05-11 with
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_retries_telegram_missing_thread -q`
+    (`1 passed`) and send/poll fallback pair (`3 passed`).
 
 - [x] `OZ-PLUGIN-00380` Source SDK alias runtime execution
   - Source: `openclaw-main/src/plugins/sdk-alias.test.ts`,

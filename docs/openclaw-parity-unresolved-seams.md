@@ -11777,7 +11777,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `message_thread_id` when Telegram returns `message thread not found`, while
   preserving reply, silent, text/media/document/keyboard/poll fields and
   continuing to surface non-thread errors. Source/test checkpointed in
-  `f38aec97`; repo-wide parity remains estimated at ~99.9%, and
+  `f38aec97`, with poll-specific proof checkpointed in `813645f6`; repo-wide
+  parity remains estimated at ~99.9%, and
   provider-native inbound/outbound breadth moves to ~99.95%. Continue
   remaining provider-specific media/reply edges, companion breadth, deeper
   installed plugin activation, or packaging edges.

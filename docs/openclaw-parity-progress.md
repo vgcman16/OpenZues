@@ -22417,6 +22417,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`8 passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
   focused `git diff --check`. Source/test checkpointed in `f38aec97`.
+  Follow-up poll-specific proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_retries_telegram_missing_thread -q`
+  (`1 passed`) and send/poll fallback pair (`3 passed`) are checkpointed in
+  `813645f6`.
 
 ## References
 

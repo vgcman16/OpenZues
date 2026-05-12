@@ -79,7 +79,7 @@ may lag behind this tracker.
 
 - [x] Route-backed Telegram stale-thread fallback for sends and polls, retrying
   once without `message_thread_id` on `message thread not found`.
-  - Status: checkpointed in `f38aec97`
+  - Status: checkpointed in `f38aec97`; poll proof in `813645f6`
 
 - [x] Gateway-status slash command diagnostics for `/gateway-status` and
   `/gwstatus`, keeping gateway diagnostics separate from session `/status` in
