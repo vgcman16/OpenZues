@@ -268,6 +268,22 @@ class GatewayBrowserRuntimeService:
                 ],
                 session=session,
             )
+        if normalized_method == "POST" and normalized_path == "/set/timezone":
+            return self.set_timezone(
+                browser_required_string(
+                    request_body,
+                    "timezoneId",
+                    label="timezoneId",
+                ),
+                session=session,
+                target_id=browser_request_string(request_body, "targetId") or None,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/locale":
+            return self.set_locale(
+                browser_required_string(request_body, "locale", label="locale"),
+                session=session,
+                target_id=browser_request_string(request_body, "targetId") or None,
+            )
         if normalized_method == "POST" and normalized_path == "/set/device":
             return self.set_setting(
                 "device",
@@ -442,6 +458,50 @@ class GatewayBrowserRuntimeService:
         payload["values"] = payload_values
         payload["output"] = safe_output
         return payload
+
+    def set_timezone(
+        self,
+        timezone_id: str,
+        *,
+        session: str,
+        target_id: str | None = None,
+    ) -> dict[str, object]:
+        output = self._run(
+            ["eval", "--stdin"],
+            session=session,
+            timeout_seconds=5.0,
+            input_text=browser_page_emulation_script(timezone_id=timezone_id),
+        )
+        return browser_page_emulation_payload(
+            session=session,
+            feature="timezone",
+            field="timezoneId",
+            value=timezone_id,
+            target_id=target_id,
+            output=output,
+        )
+
+    def set_locale(
+        self,
+        locale: str,
+        *,
+        session: str,
+        target_id: str | None = None,
+    ) -> dict[str, object]:
+        output = self._run(
+            ["eval", "--stdin"],
+            session=session,
+            timeout_seconds=5.0,
+            input_text=browser_page_emulation_script(locale=locale),
+        )
+        return browser_page_emulation_payload(
+            session=session,
+            feature="locale",
+            field="locale",
+            value=locale,
+            target_id=target_id,
+            output=output,
+        )
 
     def batch(
         self,
@@ -2249,6 +2309,75 @@ def browser_dialog_hook_payload(
         "lines": lines,
         "output": output,
     }
+
+
+def browser_page_emulation_script(
+    *,
+    timezone_id: str | None = None,
+    locale: str | None = None,
+) -> str:
+    timezone_line = (
+        f"  state.timezoneId = {json.dumps(timezone_id)};\n" if timezone_id else ""
+    )
+    locale_line = f"  state.locale = {json.dumps(locale)};\n" if locale else ""
+    return f"""() => {{
+  const state = (window.__openclawPageEmulation ??= {{}});
+{timezone_line}{locale_line}  if (!state.originalDateTimeResolvedOptions) {{
+    state.originalDateTimeResolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
+    Intl.DateTimeFormat.prototype.resolvedOptions = function(...args) {{
+      const result = state.originalDateTimeResolvedOptions.apply(this, args);
+      if (state.timezoneId) {{
+        result.timeZone = state.timezoneId;
+      }}
+      if (state.locale) {{
+        result.locale = state.locale;
+      }}
+      return result;
+    }};
+  }}
+  if (state.locale) {{
+    try {{
+      Object.defineProperty(window.navigator, "language", {{
+        configurable: true,
+        get: () => state.locale,
+      }});
+    }} catch (error) {{}}
+    try {{
+      Object.defineProperty(window.navigator, "languages", {{
+        configurable: true,
+        get: () => [state.locale],
+      }});
+    }} catch (error) {{}}
+  }}
+  return true;
+}}"""
+
+
+def browser_page_emulation_payload(
+    *,
+    session: str,
+    feature: str,
+    field: str,
+    value: str,
+    target_id: str | None,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    payload: dict[str, object] = {
+        "ok": True,
+        "status": "ready",
+        "headline": f"Browser {feature} emulation updated",
+        "summary": first_browser_output_line(output)
+        or f"Browser {feature} emulation updated.",
+        "session": session,
+        "feature": feature,
+        field: value,
+        "targetId": target_id,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+    return payload
 
 
 def browser_trace_start_payload(*, session: str, output: str) -> dict[str, object]:

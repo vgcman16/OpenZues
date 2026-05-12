@@ -112490,6 +112490,56 @@ def test_browser_request_runtime_maps_setting_routes(
     assert device["values"] == ["iPhone 12"]
 
 
+def test_browser_request_runtime_maps_locale_timezone_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "true"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **kwargs: object) -> Completed:
+        input_text = kwargs.get("input")
+        calls.append((invocation, input_text if isinstance(input_text, str) else None))
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    timezone = service.request(
+        method="POST",
+        path="/set/timezone",
+        body={"timezoneId": "America/Chicago", "targetId": "tab-1"},
+        session="parity-browser",
+    )
+    locale = service.request(
+        method="POST",
+        path="/set/locale",
+        body={"locale": "en-US", "targetId": "tab-1"},
+        session="parity-browser",
+    )
+
+    assert [call[0] for call in calls] == [
+        ["agent-browser.cmd", "--session", "parity-browser", "eval", "--stdin"],
+        ["agent-browser.cmd", "--session", "parity-browser", "eval", "--stdin"],
+    ]
+    assert "Intl.DateTimeFormat" in (calls[0][1] or "")
+    assert '"America/Chicago"' in (calls[0][1] or "")
+    assert "navigator" in (calls[1][1] or "")
+    assert '"en-US"' in (calls[1][1] or "")
+    assert timezone["ok"] is True
+    assert timezone["timezoneId"] == "America/Chicago"
+    assert timezone["targetId"] == "tab-1"
+    assert locale["ok"] is True
+    assert locale["locale"] == "en-US"
+    assert locale["targetId"] == "tab-1"
+
+
 def test_browser_request_runtime_maps_act_utility_routes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
