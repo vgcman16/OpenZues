@@ -48402,6 +48402,38 @@ function datetimePickerAction(label, data, mode, options = {}) {
   };
 }
 
+function createGridLayout(height, actions = []) {
+  const colWidth = Math.floor(2500 / 3);
+  const rowHeight = Math.floor(Number(height) / 2);
+  const slots = Array.isArray(actions) ? actions.slice(0, 6) : [];
+  return [0, 1, 2, 3, 4, 5].map((index) => ({
+    bounds: {
+      x: (index % 3) * colWidth,
+      y: Math.floor(index / 3) * rowHeight,
+      width: colWidth,
+      height: rowHeight,
+    },
+    action: slots[index],
+  }));
+}
+
+function createDefaultMenuConfig() {
+  return {
+    size: { width: 2500, height: 843 },
+    selected: false,
+    name: "Default Menu",
+    chatBarText: "Menu",
+    areas: createGridLayout(843, [
+      messageAction("Help", "/help"),
+      messageAction("Status", "/status"),
+      messageAction("Settings", "/settings"),
+      messageAction("About", "/about"),
+      messageAction("Feedback", "/feedback"),
+      messageAction("Contact", "/contact"),
+    ]),
+  };
+}
+
 function createQuickReplyItems(labels = []) {
   return {
     items: labels.slice(0, 13).map((label) => ({
@@ -48486,7 +48518,8 @@ const lineSurfaceRuntime = {
 const lineRuntimeRuntime = {
   ...lineSurfaceRuntime,
   buildTemplateMessageFromPayload: (payload) => payload,
-  createDefaultMenuConfig: () => ({}),
+  createDefaultMenuConfig,
+  createGridLayout,
   createQuickReplyItems,
   datetimePickerAction,
   firstDefined,

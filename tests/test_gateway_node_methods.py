@@ -55282,6 +55282,18 @@ module.exports = {
         const processed = surface.processLineMessage(
           "## Heading\\nHello **world**\\n\\n```js\\nconsole.log(1)\\n```"
         );
+        const defaultMenu = runtime.createDefaultMenuConfig();
+        const gridActions = [
+          runtime.messageAction("One", "/one"),
+          runtime.messageAction("Two", "/two"),
+          runtime.messageAction("Three", "/three"),
+          runtime.messageAction("Four", "/four"),
+          runtime.messageAction("Five", "/five"),
+          runtime.messageAction("Six", "/six")
+        ];
+        const grid = typeof runtime.createGridLayout === "function"
+          ? runtime.createGridLayout(843, gridActions)
+          : null;
         return {
           keys: Object.keys(surface).sort(),
           scopedTypes: [
@@ -55291,7 +55303,9 @@ module.exports = {
           runtimeTypes: [
             typeof runtime.messageAction,
             typeof runtime.createQuickReplyItems,
-            typeof runtime.parseLineDirectives
+            typeof runtime.parseLineDirectives,
+            typeof runtime.createDefaultMenuConfig,
+            typeof runtime.createGridLayout
           ],
           accounts: {
             ids: surface.listLineAccountIds(cfg),
@@ -55317,6 +55331,20 @@ module.exports = {
             imageRatio: image.hero.aspectRatio,
             actionStyle: action.footer.contents[0].style
           },
+          menu: {
+            size: defaultMenu.size,
+            selected: defaultMenu.selected,
+            name: defaultMenu.name,
+            chatBarText: defaultMenu.chatBarText,
+            areaCount: Array.isArray(defaultMenu.areas) ? defaultMenu.areas.length : 0,
+            labels: Array.isArray(defaultMenu.areas)
+              ? defaultMenu.areas.map((area) => area.action.label)
+              : [],
+            texts: Array.isArray(defaultMenu.areas)
+              ? defaultMenu.areas.map((area) => area.action.text)
+              : []
+          },
+          grid: grid ? grid.map((area) => area.bounds) : null,
           processed
         };
       }
@@ -55392,7 +55420,13 @@ module.exports = {
         "resolveLineAccount",
     ]
     assert result["scopedTypes"] == ["function", "function"]
-    assert result["runtimeTypes"] == ["function", "function", "function"]
+    assert result["runtimeTypes"] == [
+        "function",
+        "function",
+        "function",
+        "function",
+        "function",
+    ]
     assert result["accounts"]["ids"] == ["default", "work", "other"]
     assert result["accounts"]["defaultAccount"] == "work"
     assert result["accounts"]["normalized"] == "work-account"
@@ -55445,6 +55479,23 @@ module.exports = {
         "imageRatio": "1:1",
         "actionStyle": "primary",
     }
+    assert result["menu"] == {
+        "size": {"width": 2500, "height": 843},
+        "selected": False,
+        "name": "Default Menu",
+        "chatBarText": "Menu",
+        "areaCount": 6,
+        "labels": ["Help", "Status", "Settings", "About", "Feedback", "Contact"],
+        "texts": ["/help", "/status", "/settings", "/about", "/feedback", "/contact"],
+    }
+    assert result["grid"] == [
+        {"x": 0, "y": 0, "width": 833, "height": 421},
+        {"x": 833, "y": 0, "width": 833, "height": 421},
+        {"x": 1666, "y": 0, "width": 833, "height": 421},
+        {"x": 0, "y": 421, "width": 833, "height": 421},
+        {"x": 833, "y": 421, "width": 833, "height": 421},
+        {"x": 1666, "y": 421, "width": 833, "height": 421},
+    ]
     assert result["processed"]["text"] == "Heading\nHello world"
     assert [message["altText"] for message in result["processed"]["flexMessages"]] == ["Code"]
 
