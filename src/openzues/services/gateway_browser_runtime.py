@@ -148,6 +148,13 @@ class GatewayBrowserRuntimeService:
             )
         if normalized_method == "GET" and normalized_path == "/snapshot":
             return self.snapshot(session=session)
+        if normalized_method == "POST" and normalized_path == "/navigate":
+            return self.navigate(
+                browser_required_string(request_body, "url", label="url"),
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/pdf":
+            return self.pdf(session=session)
         if normalized_method == "POST" and normalized_path == "/act":
             return self.act(dict(request_body), session=session)
         if normalized_method == "POST" and normalized_path == "/screenshot":

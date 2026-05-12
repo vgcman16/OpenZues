@@ -112627,6 +112627,64 @@ def test_browser_request_runtime_maps_status_and_doctor_routes(
     assert any(check["id"] == "live-snapshot" for check in doctor["checks"])
 
 
+def test_browser_request_runtime_maps_snapshot_artifact_routes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "ok") -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if "pdf" in invocation:
+            Path(invocation[-1]).write_bytes(b"%PDF")
+            return Completed("pdf complete")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    navigated = service.request(
+        method="POST",
+        path="/navigate",
+        body={"url": "https://example.test/docs"},
+        session="parity-browser",
+    )
+    pdf = service.request(
+        method="POST",
+        path="/pdf",
+        body={"targetId": "tab-1"},
+        session="parity-browser",
+    )
+
+    assert calls[0] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "open",
+        "https://example.test/docs",
+    ]
+    assert calls[1][:4] == ["agent-browser.cmd", "--session", "parity-browser", "pdf"]
+    assert navigated["url"] == "https://example.test/docs"
+    assert pdf["path"]
+    assert str(pdf["path"]).startswith(str(tmp_path))
+    assert str(pdf["path"]).endswith(".pdf")
+    assert pdf["sizeBytes"] == 4
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 
