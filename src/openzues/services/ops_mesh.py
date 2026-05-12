@@ -18622,9 +18622,40 @@ class OpsMeshService:
         context: _ZaloInboundSessionContext,
         account_id: str | None,
     ) -> dict[str, object] | None:
+        channel_config = self._zalo_inbound_channel_config(account_id=account_id)
+        if context.conversation_type == "group":
+            group_policy = str(channel_config.get("groupPolicy") or "").strip().lower()
+            if group_policy not in {"disabled", "allowlist"}:
+                return None
+            group_allow_from = _zalo_inbound_string_list(
+                channel_config.get("groupAllowFrom")
+            )
+            if not group_allow_from:
+                group_allow_from = _zalo_inbound_string_list(channel_config.get("allowFrom"))
+            if group_policy == "allowlist" and _zalo_sender_allowed(
+                context.sender_id,
+                group_allow_from,
+            ):
+                return None
+            if group_policy == "disabled":
+                reason = "zalo_group_policy_disabled"
+            elif group_allow_from:
+                reason = "zalo_group_sender_not_allowlisted"
+            else:
+                reason = "zalo_group_allowlist_empty"
+            group_skip: dict[str, object] = {
+                "eventName": str(payload.get("event_name") or "").strip() or "event",
+                "reason": reason,
+                "senderId": context.sender_id,
+                "conversationId": context.conversation_id,
+                "conversationType": context.conversation_type,
+            }
+            inbound_message_id = _zalo_inbound_message_id(payload)
+            if inbound_message_id is not None:
+                group_skip["inboundMessageId"] = inbound_message_id
+            return group_skip
         if context.conversation_type != "direct":
             return None
-        channel_config = self._zalo_inbound_channel_config(account_id=account_id)
         dm_policy = str(channel_config.get("dmPolicy") or "").strip().lower()
         if dm_policy not in {"disabled", "allowlist"}:
             return None

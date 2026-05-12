@@ -34448,6 +34448,79 @@ async def test_ops_mesh_service_handle_zalo_webhook_skips_disabled_direct_dm_pol
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_skips_group_sender_not_allowlisted(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-group-session-1"}
+
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="zues",
+        server_version="test",
+        data_dir=tmp_path / "config",
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "zalo": {
+                    "accounts": {
+                        "zalo-bot": {
+                            "groupPolicy": "allowlist",
+                            "groupAllowFrom": ["zl:allowed-user"],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "zalo-group-blocked-1",
+                "text": "do not deliver this group message",
+                "date": 1760000000,
+                "chat": {"id": "group-chat-1", "chat_type": "GROUP"},
+                "from": {"id": "blocked-user", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    assert session_deliveries == []
+    assert result["deliveredCount"] == 0
+    assert result["skips"] == [
+        {
+            "eventName": "message.text.received",
+            "reason": "zalo_group_sender_not_allowlisted",
+            "inboundMessageId": "zalo-group-blocked-1",
+            "senderId": "blocked-user",
+            "conversationId": "group-chat-1",
+            "conversationType": "group",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message(
     tmp_path: Path,
 ) -> None:
