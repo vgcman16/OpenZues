@@ -10731,6 +10731,44 @@ def _openclaw_update_attach_requested_channel(
     return result
 
 
+async def _openclaw_update_run_post_core_resume(
+    services: CliServices,
+    *,
+    root: Path,
+    requested_channel: str | None,
+) -> dict[str, object]:
+    payload = _openclaw_update_attach_requested_channel(
+        services,
+        {
+            "status": "ok",
+            "mode": "unknown",
+            "root": str(root),
+            "steps": [],
+            "durationMs": 0,
+        },
+        requested_channel,
+    )
+    return await _openclaw_update_attach_post_update_plugins(services, payload)
+
+
+def _openclaw_update_write_post_core_plugin_result(
+    result_path: str | None,
+    payload: Mapping[str, object],
+) -> None:
+    normalized_path = _optional_cli_string(result_path)
+    if normalized_path is None:
+        return
+    post_update = payload.get("postUpdate")
+    plugins = (
+        post_update.get("plugins")
+        if isinstance(post_update, Mapping)
+        else {"status": "error", "sync": {"errors": ["Missing post-update plugin result."]}}
+    )
+    path = Path(normalized_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(plugins), encoding="utf-8")
+
+
 def _openclaw_update_read_stored_channel_for_preview() -> str | None:
     async def read_channel(services: object) -> str | None:
         config_service = getattr(services, "gateway_config", None)
@@ -10781,6 +10819,12 @@ _OPENCLAW_UPDATE_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS = 2.0
 _OPENZUES_MAIN_PACKAGE_SPEC = "github:openzues/openzues#main"
 _OPENCLAW_GATEWAY_SERVICE_MARKER = "openclaw"
 _OPENCLAW_GATEWAY_SERVICE_KIND = "gateway"
+_OPENCLAW_UPDATE_POST_CORE_ENV = "OPENCLAW_UPDATE_POST_CORE"
+_OPENCLAW_UPDATE_POST_CORE_CHANNEL_ENV = "OPENCLAW_UPDATE_POST_CORE_CHANNEL"
+_OPENCLAW_UPDATE_POST_CORE_REQUESTED_CHANNEL_ENV = (
+    "OPENCLAW_UPDATE_POST_CORE_REQUESTED_CHANNEL"
+)
+_OPENCLAW_UPDATE_POST_CORE_RESULT_PATH_ENV = "OPENCLAW_UPDATE_POST_CORE_RESULT_PATH"
 
 
 def _openclaw_update_config_channel(config_snapshot: object) -> str | None:
@@ -107643,6 +107687,46 @@ def update_root(
         typer.echo(f'--channel must be "stable", "beta", or "dev" (got "{channel}")', err=True)
         raise typer.Exit(code=1)
     timeout_seconds = _parse_openclaw_update_timeout_seconds(timeout)
+    timeout_ms = int(timeout_seconds * 1000) if timeout_seconds is not None else None
+    post_core_resume = os.environ.get(_OPENCLAW_UPDATE_POST_CORE_ENV) == "1"
+    if post_core_resume:
+        if _openclaw_update_normalize_channel(
+            os.environ.get(_OPENCLAW_UPDATE_POST_CORE_CHANNEL_ENV)
+        ) is None:
+            typer.echo("Missing post-core update channel context.", err=True)
+            raise typer.Exit(code=1)
+        requested_channel_input = str(
+            os.environ.get(_OPENCLAW_UPDATE_POST_CORE_REQUESTED_CHANNEL_ENV) or ""
+        ).strip()
+        post_core_requested_channel = (
+            _openclaw_update_normalize_channel(requested_channel_input)
+            if requested_channel_input
+            else None
+        )
+        if requested_channel_input and post_core_requested_channel is None:
+            typer.echo("Invalid post-core requested update channel context.", err=True)
+            raise typer.Exit(code=1)
+
+        root = _openzues_package_root()
+
+        async def run_post_core_resume(services: CliServices) -> dict[str, object]:
+            return await _openclaw_update_run_post_core_resume(
+                services,
+                root=root,
+                requested_channel=post_core_requested_channel,
+            )
+
+        payload = _run(_run_with_services(run_post_core_resume))
+        result_path = _optional_cli_string(
+            os.environ.get(_OPENCLAW_UPDATE_POST_CORE_RESULT_PATH_ENV)
+        )
+        if result_path is not None:
+            _openclaw_update_write_post_core_plugin_result(result_path, payload)
+        else:
+            _emit_update_run_result(payload, json_output=json_output)
+        if payload.get("status") == "error":
+            raise typer.Exit(code=1)
+        return
     if dry_run:
         stored_channel = _openclaw_update_read_stored_channel_for_preview()
         payload = _openclaw_update_dry_run_preview(
@@ -107653,7 +107737,6 @@ def update_root(
         )
         _emit_update_dry_run_preview(payload, json_output=json_output)
         return
-    timeout_ms = int(timeout_seconds * 1000) if timeout_seconds is not None else None
     root = _openzues_package_root()
     install_kind = _openclaw_update_install_kind(root)
     if install_kind == "package":
