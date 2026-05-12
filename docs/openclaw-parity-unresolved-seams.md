@@ -149,11 +149,12 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999983%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999984%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
-  sends, Discord audio-as-voice direct media sends, LINE signed webhook
-  ingress, and LINE text webhook session delivery plus
+  sends, Discord audio-as-voice direct media sends, Signal receive envelope
+  session routing with sync-message drops, LINE signed webhook ingress, and
+  LINE text webhook session delivery plus
   postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
   pending-history replay, non-text group media mention-gate bypass, LINE
@@ -12730,3 +12731,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, and provider-native inbound/outbound breadth moves to ~99.999983%.
   Continue remaining provider-specific media/reply edges, deeper
   runtime/plugin activation, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native Signal receive routing now consumes
+  signal-cli `receive` envelopes through the OpsMesh handler and
+  `/api/channels/signal/receive`, drops `syncMessage` envelopes, maps
+  direct/group messages to OpenClaw-shaped `agent:main:signal:*` session keys,
+  and projects `BodyForAgent`, `CommandBody`, `MessageSid`, provider/surface,
+  reply target, and session-backed delivery metadata. Source/test checkpointed
+  in `25279aa3`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.999984%. Continue
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, packaging/distribution, or companion breadth.
