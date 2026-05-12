@@ -126,6 +126,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     READ_GATEWAY_METHOD_SCOPE: (
         "health",
+        "diagnostics.stability",
         "doctor.memory.status",
         "doctor.memory.dreamDiary",
         "logs.tail",

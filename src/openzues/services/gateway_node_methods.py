@@ -43,6 +43,7 @@ from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_config_schema import GatewayConfigSchemaService
 from openzues.services.gateway_cron import GatewayCronService, build_gateway_cron_task_blueprint
+from openzues.services.gateway_diagnostics import GatewayDiagnosticStabilityService
 from openzues.services.gateway_health import GatewayHealthService
 from openzues.services.gateway_identity import GatewayIdentityService
 from openzues.services.gateway_last_heartbeat import GatewayLastHeartbeatService
@@ -1785,6 +1786,7 @@ class GatewayNodeMethodService:
         gateway_identity_service: GatewayIdentityService | None = None,
         last_heartbeat_service: GatewayLastHeartbeatService | None = None,
         logs_service: GatewayLogsService | None = None,
+        diagnostic_stability_service: GatewayDiagnosticStabilityService | None = None,
         models_service: GatewayModelsService | None = None,
         sessions_service: GatewaySessionsService | None = None,
         session_compaction_service: GatewaySessionCompactionService | None = None,
@@ -1887,6 +1889,9 @@ class GatewayNodeMethodService:
                 registry=registry,
             )
         self._logs_service = logs_service or GatewayLogsService()
+        self._diagnostic_stability_service = (
+            diagnostic_stability_service or GatewayDiagnosticStabilityService()
+        )
         self._models_service = models_service or GatewayModelsService()
         self._tools_invoke_executors = dict(tools_invoke_executors or {})
         self._tools_invoke_owner_only = {
@@ -5312,6 +5317,9 @@ class GatewayNodeMethodService:
                     message=str(exc),
                     status_code=503,
                 ) from exc
+
+        if resolved_method == "diagnostics.stability":
+            return self._diagnostic_stability_service.snapshot(payload)
 
         if resolved_method == "models.list":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())

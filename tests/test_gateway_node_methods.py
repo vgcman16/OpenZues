@@ -92349,6 +92349,88 @@ async def test_logs_tail_redacts_sensitive_tokens_from_returned_lines(
 
 
 @pytest.mark.asyncio
+async def test_diagnostics_stability_returns_filtered_payload_free_snapshot() -> None:
+    from openzues.services.gateway_diagnostics import GatewayDiagnosticStabilityService
+
+    stability_service = GatewayDiagnosticStabilityService(
+        now=lambda: datetime(2026, 5, 12, 12, 0, tzinfo=UTC),
+    )
+    stability_service.record_event(
+        {
+            "type": "webhook.received",
+            "channel": "telegram",
+            "payload": {"secret": "do-not-leak"},
+        }
+    )
+    stability_service.record_event(
+        {
+            "type": "payload.large",
+            "surface": "gateway.http.json",
+            "action": "rejected",
+            "bytes": 1024,
+            "limitBytes": 512,
+            "reason": "payload.too_large",
+            "payload": {"secret": "do-not-leak"},
+        }
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        diagnostic_stability_service=stability_service,
+    )
+    payload = await service.call(
+        "diagnostics.stability",
+        {
+            "type": "payload.large",
+            "limit": 10,
+        },
+    )
+
+    assert payload["generatedAt"] == "2026-05-12T12:00:00Z"
+    assert payload["capacity"] == 1000
+    assert payload["count"] == 1
+    assert payload["dropped"] == 0
+    assert payload["firstSeq"] == 2
+    assert payload["lastSeq"] == 2
+    assert payload["events"] == [
+        {
+            "seq": 2,
+            "ts": payload["events"][0]["ts"],
+            "type": "payload.large",
+            "surface": "gateway.http.json",
+            "action": "rejected",
+            "reason": "payload.too_large",
+            "bytes": 1024,
+            "limitBytes": 512,
+        }
+    ]
+    assert "payload" not in payload["events"][0]
+    assert payload["summary"] == {
+        "byType": {"payload.large": 1},
+        "payloadLarge": {
+            "count": 1,
+            "rejected": 1,
+            "truncated": 0,
+            "chunked": 0,
+            "bySurface": {"gateway.http.json": 1},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_stability_rejects_invalid_limit() -> None:
+    from openzues.services.gateway_diagnostics import GatewayDiagnosticStabilityService
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        diagnostic_stability_service=GatewayDiagnosticStabilityService(),
+    )
+
+    with pytest.raises(ValueError, match="limit must be between 1 and 1000"):
+        await service.call("diagnostics.stability", {"limit": 0})
+
+
+@pytest.mark.asyncio
 async def test_update_run_returns_openclaw_envelope_sentinel_and_timeout_minimum(
     tmp_path,
 ) -> None:
