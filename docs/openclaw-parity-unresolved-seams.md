@@ -144,14 +144,14 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.963% after the
   latest requester-scoped `agents_list` spawn-target projection slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.9991%
+- The provider-native inbound/outbound breadth family is estimated at ~99.9992%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
   delivery plus postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
   pending-history replay, non-text group media mention-gate bypass, LINE
   inbound media staging, production credential-backed LINE media download, and
-  LINE webhook redelivery dedupe.
+  LINE webhook redelivery dedupe, and authenticated Zalo webhook ingress.
 - The CLI/operator control-plane family is estimated at ~99.99992% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -243,6 +243,15 @@ include OpenClaw-shaped follow-up lines for a restart log path and
 Source/test checkpointed in `8e989b2d`; repo-wide parity remains estimated at
 ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to ~99.99992%.
 Continue remaining packaging/distribution breadth, provider-specific
+media/reply edges, deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo Bot webhook ingress now exposes
+`/zalo/webhook`, validates `x-bot-api-secret-token` against native Zalo channel
+config, enforces JSON update payloads, unwraps OpenClaw-style `{ ok, result }`
+bodies, and dispatches authenticated updates through OpsMesh. Source/test
+checkpointed in `c0e8588e`; repo-wide parity remains estimated at ~99.9%, and
+provider-native inbound/outbound breadth moves to ~99.9992%. Continue Zalo
+webhook session delivery/replay/media breadth, remaining provider-specific
 media/reply edges, deeper installed plugin activation, or companion breadth.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
@@ -12302,3 +12311,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.99992%. Continue remaining packaging/distribution breadth,
   provider-specific media/reply edges, deeper installed plugin activation, or
   companion breadth.
+- Current queue-head adjustment: Zalo Bot webhook ingress now exposes
+  `/zalo/webhook`, validates `x-bot-api-secret-token` against native Zalo
+  channel config, enforces JSON update payloads, unwraps OpenClaw-style
+  `{ ok, result }` bodies, and dispatches authenticated updates through
+  OpsMesh. Source/test checkpointed in `c0e8588e`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.9992%. Continue Zalo webhook session delivery/replay/media breadth,
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, or companion breadth.

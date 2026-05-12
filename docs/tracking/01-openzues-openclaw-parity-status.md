@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.963% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.9991% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.9992% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99992% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99992% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
@@ -9125,6 +9125,30 @@ may lag behind this tracker.
     `python -m pytest tests\test_cli.py -q -k "restart_health or restarted_gateway or package_update or gateway_status"`
     (`12 passed, 584 deselected`), `ruff check src\openzues\cli.py
     tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] Zalo Bot authenticated webhook ingress.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.webhook.ts`,
+    `openclaw-main/extensions/zalo/src/monitor.webhook.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`, `src/openzues/services/ops_mesh.py`,
+    `tests/test_zalo_webhook.py`
+  - Contract: `/zalo/webhook` accepts JSON `POST` updates with a valid
+    `x-bot-api-secret-token`, rejects missing/bad tokens before dispatch,
+    unwraps `{ ok, result }` bodies, and dispatches authenticated updates into
+    OpsMesh with account metadata.
+  - Evidence required: focused Zalo webhook route proof, adjacent Zalo/LINE
+    webhook and Zalo provider proof, ruff, mypy
+  - Status: checkpointed in `c0e8588e`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_zalo_webhook.py::test_zalo_webhook_validates_secret_token_and_dispatches_update -q`
+    (`404` before implementation, then focused file `2 passed`), adjacent
+    Zalo/LINE proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "zalo or line_webhook"`
+    (`23 passed, 458 deselected`), `ruff check src\openzues\app.py
+    src\openzues\services\ops_mesh.py tests\test_zalo_webhook.py`, `mypy
+    src\openzues\app.py src\openzues\services\ops_mesh.py`, and focused
     `git diff --check`.
 
 ## Update Rule

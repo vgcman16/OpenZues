@@ -24,7 +24,7 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.963% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.986% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.9991% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.9992% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.99992% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99992% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
@@ -536,6 +536,11 @@ source/test checkpointed in `9acc4cd6`; provider-native inbound/outbound
 breadth moves to ~99.9991%. Continue provider-specific media/reply edges,
 deeper installed plugin activation, companion breadth, or the next packaging
 edge.
+Provider addendum: `OZ-PROV-001FL` authenticated Zalo webhook ingress is
+source/test checkpointed in `c0e8588e`; provider-native inbound/outbound
+breadth moves to ~99.9992%. Continue Zalo webhook session delivery/replay/media
+breadth, provider-specific media/reply edges, deeper installed plugin
+activation, companion breadth, or the next packaging edge.
 Packaging addendum: `OZ-PKG-001CV` package-update gateway-version restart
 health failure is source/test checkpointed in `fd5f8117`; runtime/CLI/doctor
 and CLI/operator parity move to ~99.99985%. Continue remaining package

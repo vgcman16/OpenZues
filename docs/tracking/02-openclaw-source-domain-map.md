@@ -116,6 +116,10 @@ LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers
 message-id dedupe for message redeliveries plus account/type/source/event-id
 dedupe for postback and other non-message events.
+Zalo webhook addendum: `OZ-PROV-001FL` authenticated webhook ingress from
+`extensions/zalo/src/monitor.webhook.ts` is checkpointed in `c0e8588e`; it
+covers `/zalo/webhook`, `x-bot-api-secret-token` validation, JSON update
+validation, `{ ok, result }` unwrap, and OpsMesh dispatch.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
