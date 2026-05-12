@@ -109311,6 +109311,68 @@ async def test_sessions_get_returns_openclaw_shaped_control_chat_messages() -> N
 
 
 @pytest.mark.asyncio
+async def test_artifacts_methods_discover_and_download_inline_session_artifacts() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-artifacts-inline"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-artifacts-inline.db")
+    await database.initialize()
+    session_key = "openzues:thread:artifacts"
+    await database.append_control_chat_message(
+        role="assistant",
+        content=json.dumps(
+            [
+                {"type": "text", "text": "see attached"},
+                {
+                    "type": "image",
+                    "data": "aGVsbG8=",
+                    "mimeType": "image/png",
+                    "alt": "result.png",
+                },
+            ]
+        ),
+        session_key=session_key,
+        metadata={"runId": "run-artifact-1", "messageTaskId": "task-artifact-1"},
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    listed = await service.call("artifacts.list", {"sessionKey": session_key})
+
+    assert len(listed["artifacts"]) == 1
+    artifact = listed["artifacts"][0]
+    assert artifact["id"].startswith("artifact_")
+    assert artifact == {
+        "id": artifact["id"],
+        "type": "image",
+        "title": "result.png",
+        "mimeType": "image/png",
+        "sizeBytes": 5,
+        "sessionKey": session_key,
+        "runId": "run-artifact-1",
+        "taskId": "task-artifact-1",
+        "messageSeq": 1,
+        "source": "session-transcript",
+        "download": {"mode": "bytes"},
+    }
+
+    fetched = await service.call(
+        "artifacts.get",
+        {"sessionKey": session_key, "artifactId": artifact["id"]},
+    )
+    assert fetched == {"artifact": artifact}
+
+    downloaded = await service.call(
+        "artifacts.download",
+        {"sessionKey": session_key, "artifactId": artifact["id"]},
+    )
+    assert downloaded == {
+        "artifact": artifact,
+        "encoding": "base64",
+        "data": "aGVsbG8=",
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_get_uses_openclaw_default_limit_of_200() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-get-default-limit"
     shutil.rmtree(tmp_path, ignore_errors=True)
