@@ -185,6 +185,12 @@ SLACK_COMMAND_ARG_CHROME_BLOCKS = 3
 SLACK_COMMAND_ARG_ACTION_BLOCKS_MAX = SLACK_MAX_BLOCKS - SLACK_COMMAND_ARG_CHROME_BLOCKS
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
+ZALO_WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60
+ZALO_WEBHOOK_REPLAY_MAX_ENTRIES = 5000
+ZALO_PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+ZALO_PAIRING_CODE_LENGTH = 8
+ZALO_PAIRING_PENDING_MAX = 3
+ZALO_PAIRING_PENDING_TTL_SECONDS = 60 * 60
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
 LINE_GROUP_HISTORY_LIMIT = 50
 LINE_HISTORY_CONTEXT_MARKER = "[Chat messages since your last reply - for context]"
@@ -194,6 +200,7 @@ LINE_WEBHOOK_REPLAY_WINDOW_SECONDS = 10 * 60
 LINE_WEBHOOK_REPLAY_MAX_ENTRIES = 4096
 LINE_DEFAULT_MEDIA_MAX_BYTES = 10 * 1024 * 1024
 LINE_MEDIA_CONTENT_ENDPOINT = "https://api-data.line.me/v2/bot/message/{message_id}/content"
+ZALO_DEFAULT_MEDIA_MAX_BYTES = 5 * 1024 * 1024
 LINE_AUDIO_FTYP_BRANDS = frozenset(
     {
         "m4a ",
@@ -616,6 +623,40 @@ class GatewayLineInboundMediaFetchRequest:
 
 GatewayLineInboundMediaFetchService = Callable[
     [GatewayLineInboundMediaFetchRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayZaloInboundMediaFetchRequest:
+    url: str
+    source_url: str
+    filename: str | None
+    content_type: str | None
+    placeholder: str
+    max_bytes: int
+    account_id: str | None
+    message_id: str | None
+
+
+GatewayZaloInboundMediaFetchService = Callable[
+    [GatewayZaloInboundMediaFetchRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayZaloPairingChallengeRequest:
+    account_id: str | None
+    sender_id: str
+    sender_name: str | None
+    chat_id: str
+    inbound_message_id: str | None
+    sender_id_line: str
+
+
+GatewayZaloPairingChallengeService = Callable[
+    [GatewayZaloPairingChallengeRequest],
     Awaitable[object],
 ]
 
@@ -4883,6 +4924,471 @@ def _zalo_chat_from_result(result: object, fallback: str) -> str:
                 if candidate:
                     return candidate
     return fallback
+
+
+def _zalo_inbound_mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _zalo_inbound_optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _zalo_inbound_string_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _zalo_sender_allow_token(value: str) -> str:
+    normalized = value.strip().lower()
+    for prefix in ("zalo:", "zl:"):
+        if normalized.startswith(prefix):
+            return normalized[len(prefix) :].strip()
+    return normalized
+
+
+def _zalo_sender_allowed(sender_id: str, allow_from: Sequence[str]) -> bool:
+    normalized_sender = _zalo_sender_allow_token(sender_id)
+    for raw_entry in allow_from:
+        entry = _zalo_sender_allow_token(raw_entry)
+        if entry == "*" or entry == normalized_sender:
+            return True
+    return False
+
+
+def _zalo_pairing_code(existing_codes: set[str] | None = None) -> str:
+    existing = existing_codes or set()
+    for _attempt in range(500):
+        code = "".join(
+            secrets.choice(ZALO_PAIRING_CODE_ALPHABET)
+            for _index in range(ZALO_PAIRING_CODE_LENGTH)
+        )
+        if code not in existing:
+            return code
+    raise RuntimeError("Failed to generate a unique Zalo pairing code.")
+
+
+def _zalo_pairing_store_dir(state_dir: Path) -> Path:
+    return state_dir / "settings" / "oauth"
+
+
+def _zalo_pairing_store_path(state_dir: Path) -> Path:
+    return _zalo_pairing_store_dir(state_dir) / "zalo-pairing.json"
+
+
+def _zalo_pairing_safe_key(value: str) -> str:
+    raw = value.strip().lower()
+    safe = re.sub(r'[\\/:*?"<>|]', "_", raw).replace("..", "_")
+    return safe or "_"
+
+
+def _zalo_pairing_allow_from_paths(
+    state_dir: Path,
+    *,
+    account_id: str | None,
+) -> list[Path]:
+    channel_key = _zalo_pairing_safe_key("zalo")
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    account_key = _zalo_pairing_safe_key(normalized_account_id)
+    paths: list[Path] = []
+    for base_dir in (_zalo_pairing_store_dir(state_dir), state_dir / "oauth"):
+        if normalized_account_id != DEFAULT_ACCOUNT_ID:
+            paths.append(base_dir / f"{channel_key}-{account_key}-allowFrom.json")
+        else:
+            paths.append(base_dir / f"{channel_key}-{DEFAULT_ACCOUNT_ID}-allowFrom.json")
+            paths.append(base_dir / f"{channel_key}-allowFrom.json")
+    return paths
+
+
+def _zalo_pairing_read_allow_from_file(path: Path) -> list[str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, Mapping):
+        return []
+    allow_from = payload.get("allowFrom")
+    if not isinstance(allow_from, list):
+        return []
+    seen: set[str] = set()
+    entries: list[str] = []
+    for item in allow_from:
+        entry = str(item).strip()
+        if not entry or entry in seen:
+            continue
+        seen.add(entry)
+        entries.append(entry)
+    return entries
+
+
+def _zalo_pairing_write_allow_from_file(path: Path, allow_from: Sequence[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "allowFrom": list(allow_from),
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _zalo_pairing_add_allow_from_entry(path: Path, entry: str) -> list[str]:
+    normalized_entry = _zalo_sender_allow_token(entry)
+    current = _zalo_pairing_read_allow_from_file(path)
+    seen = {_zalo_sender_allow_token(item) for item in current}
+    if normalized_entry and normalized_entry not in seen:
+        current.append(normalized_entry)
+        _zalo_pairing_write_allow_from_file(path, current)
+        return current
+    if not path.exists():
+        _zalo_pairing_write_allow_from_file(path, current)
+    return current
+
+
+def _zalo_pairing_reply_text(*, code: str, sender_id_line: str) -> str:
+    approve_command = f"openclaw pairing approve zalo {code}"
+    return "\n".join(
+        [
+            "OpenClaw: access not configured.",
+            "",
+            sender_id_line,
+            "Pairing code:",
+            "```",
+            code,
+            "```",
+            "",
+            "Ask the bot owner to approve with:",
+            approve_command,
+            "```",
+            approve_command,
+            "```",
+        ]
+    )
+
+
+def _zalo_pairing_result_payload(result: object) -> dict[str, object]:
+    if not isinstance(result, Mapping):
+        return {}
+    payload: dict[str, object] = {}
+    created = result.get("created")
+    if isinstance(created, bool):
+        payload["created"] = created
+    for key in ("code", "messageId", "deliveryId", "replyError"):
+        value = _zalo_inbound_optional_string(result.get(key))
+        if value is not None:
+            payload[key] = value
+    return payload
+
+
+def _zalo_pairing_request_meta(request: GatewayZaloPairingChallengeRequest) -> dict[str, str]:
+    meta: dict[str, str] = {
+        "accountId": normalize_optional_account_id(request.account_id) or DEFAULT_ACCOUNT_ID,
+    }
+    if request.sender_name is not None:
+        meta["name"] = request.sender_name
+    return meta
+
+
+def _zalo_pairing_entry_matches_account(
+    entry: Mapping[str, Any],
+    normalized_account_id: str,
+) -> bool:
+    return _zalo_pairing_entry_account_id(entry) == normalized_account_id
+
+
+def _zalo_pairing_entry_account_id(entry: Mapping[str, Any]) -> str:
+    meta = _zalo_inbound_mapping(entry.get("meta"))
+    entry_account = normalize_optional_account_id(
+        _zalo_inbound_optional_string(meta.get("accountId"))
+    )
+    return entry_account or DEFAULT_ACCOUNT_ID
+
+
+def _zalo_pairing_entry_timestamp(
+    entry: Mapping[str, Any],
+    key: str,
+) -> float | None:
+    value = _zalo_inbound_optional_string(entry.get(key))
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _zalo_pairing_entry_last_seen_timestamp(entry: Mapping[str, Any]) -> float:
+    return (
+        _zalo_pairing_entry_timestamp(entry, "lastSeenAt")
+        or _zalo_pairing_entry_timestamp(entry, "createdAt")
+        or 0.0
+    )
+
+
+def _zalo_pairing_entry_is_expired(entry: Mapping[str, Any], *, now: float) -> bool:
+    created_at = _zalo_inbound_optional_string(entry.get("createdAt"))
+    if created_at is None:
+        return True
+    try:
+        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    created_ts = created.timestamp()
+    return now - created_ts > ZALO_PAIRING_PENDING_TTL_SECONDS
+
+
+def _zalo_pairing_read_store(path: Path) -> list[dict[str, object]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, Mapping):
+        return []
+    requests = payload.get("requests")
+    if not isinstance(requests, list):
+        return []
+    return [dict(item) for item in requests if isinstance(item, Mapping)]
+
+
+def _zalo_pairing_prune_excess_requests_by_account(
+    requests: Sequence[Mapping[str, object]],
+) -> tuple[list[dict[str, object]], bool]:
+    entries = [dict(item) for item in requests]
+    if ZALO_PAIRING_PENDING_MAX <= 0 or len(entries) <= ZALO_PAIRING_PENDING_MAX:
+        return entries, False
+    grouped: dict[str, list[int]] = {}
+    for index, entry in enumerate(entries):
+        grouped.setdefault(_zalo_pairing_entry_account_id(entry), []).append(index)
+    dropped: set[int] = set()
+    for indexes in grouped.values():
+        if len(indexes) <= ZALO_PAIRING_PENDING_MAX:
+            continue
+        sorted_indexes = sorted(
+            indexes,
+            key=lambda index: _zalo_pairing_entry_last_seen_timestamp(entries[index]),
+        )
+        dropped.update(sorted_indexes[: len(sorted_indexes) - ZALO_PAIRING_PENDING_MAX])
+    if not dropped:
+        return entries, False
+    return [entry for index, entry in enumerate(entries) if index not in dropped], True
+
+
+def _zalo_pairing_public_request(entry: Mapping[str, object]) -> dict[str, object] | None:
+    sender_id = _zalo_inbound_optional_string(entry.get("id"))
+    code = _zalo_inbound_optional_string(entry.get("code"))
+    created_at = _zalo_inbound_optional_string(entry.get("createdAt"))
+    if sender_id is None or code is None or created_at is None:
+        return None
+    payload: dict[str, object] = {
+        "id": sender_id,
+        "code": code,
+        "createdAt": created_at,
+    }
+    last_seen_at = _zalo_inbound_optional_string(entry.get("lastSeenAt"))
+    if last_seen_at is not None:
+        payload["lastSeenAt"] = last_seen_at
+    meta = _zalo_inbound_mapping(entry.get("meta"))
+    if meta:
+        payload["meta"] = dict(meta)
+    return payload
+
+
+def _zalo_pairing_write_store(path: Path, requests: Sequence[Mapping[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "requests": [dict(item) for item in requests],
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _zalo_channel_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> dict[str, Any]:
+    channels = _zalo_inbound_mapping(snapshot.get("channels"))
+    channel_config = _zalo_inbound_mapping(channels.get("zalo"))
+    merged: dict[str, Any] = dict(channel_config)
+    accounts = _zalo_inbound_mapping(channel_config.get("accounts"))
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    account_config = _zalo_inbound_mapping(accounts.get(normalized_account_id))
+    if not account_config and account_id is not None:
+        account_config = _zalo_inbound_mapping(accounts.get(str(account_id).strip()))
+    merged.update(account_config)
+    return merged
+
+
+def _zalo_inbound_message(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    return _zalo_inbound_mapping(payload.get("message"))
+
+
+def _zalo_inbound_message_id(payload: Mapping[str, Any]) -> str | None:
+    message = _zalo_inbound_message(payload)
+    return _zalo_inbound_optional_string(message.get("message_id"))
+
+
+def _zalo_webhook_event_text(payload: Mapping[str, Any]) -> str | None:
+    event_name = str(payload.get("event_name") or "").strip()
+    message = _zalo_inbound_message(payload)
+    if event_name == "message.image.received":
+        caption = _zalo_inbound_optional_string(message.get("caption"))
+        if caption is not None:
+            return caption
+        if _zalo_inbound_optional_string(message.get("photo_url")) is not None:
+            return "<media:image>"
+        return None
+    if event_name != "message.text.received":
+        return None
+    return _zalo_inbound_optional_string(message.get("text"))
+
+
+def _zalo_webhook_media_urls(payload: Mapping[str, Any]) -> list[str]:
+    event_name = str(payload.get("event_name") or "").strip()
+    if event_name != "message.image.received":
+        return []
+    message = _zalo_inbound_message(payload)
+    photo_url = _zalo_inbound_optional_string(message.get("photo_url"))
+    return [photo_url] if photo_url is not None else []
+
+
+def _zalo_message_timestamp_ms(message: Mapping[str, Any]) -> int | None:
+    raw_timestamp = message.get("date")
+    if raw_timestamp is None:
+        return None
+    try:
+        timestamp = float(raw_timestamp)
+    except (TypeError, ValueError):
+        return None
+    if timestamp <= 0:
+        return None
+    if timestamp >= 1_000_000_000_000:
+        return int(timestamp)
+    return int(timestamp * 1000)
+
+
+@dataclass(frozen=True, slots=True)
+class _ZaloWebhookReplayCandidate:
+    key: str
+    replay_id: str
+    inbound_message_id: str | None
+
+
+def _zalo_webhook_replay_candidate(
+    payload: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _ZaloWebhookReplayCandidate | None:
+    message = _zalo_inbound_message(payload)
+    message_id = _zalo_inbound_optional_string(message.get("message_id"))
+    if message_id is None:
+        return None
+    event_name = str(payload.get("event_name") or "").strip()
+    chat = _zalo_inbound_mapping(message.get("chat"))
+    sender = _zalo_inbound_mapping(message.get("from"))
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    chat_id = _zalo_inbound_optional_string(chat.get("id")) or ""
+    sender_id = _zalo_inbound_optional_string(sender.get("id")) or ""
+    replay_id = f"message:{message_id}"
+    return _ZaloWebhookReplayCandidate(
+        key=json.dumps(
+            [
+                normalized_account_id,
+                event_name,
+                chat_id,
+                sender_id,
+                message_id,
+            ],
+            separators=(",", ":"),
+        ),
+        replay_id=replay_id,
+        inbound_message_id=message_id,
+    )
+
+
+def _zalo_webhook_replay_skip(
+    payload: Mapping[str, Any],
+    candidate: _ZaloWebhookReplayCandidate,
+) -> dict[str, object]:
+    skip: dict[str, object] = {
+        "eventName": str(payload.get("event_name") or "").strip() or "event",
+        "reason": "zalo_webhook_replay_duplicate",
+        "replayId": candidate.replay_id,
+    }
+    if candidate.inbound_message_id is not None:
+        skip["inboundMessageId"] = candidate.inbound_message_id
+    return skip
+
+
+@dataclass(frozen=True, slots=True)
+class _ZaloInboundSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    sender_id: str
+    sender_name: str | None
+    conversation_id: str
+    conversation_type: str
+    reply_to: str
+
+
+def _zalo_inbound_session_context(
+    payload: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _ZaloInboundSessionContext:
+    message = _zalo_inbound_message(payload)
+    chat = _zalo_inbound_mapping(message.get("chat"))
+    sender = _zalo_inbound_mapping(message.get("from"))
+    chat_id = _zalo_inbound_optional_string(chat.get("id"))
+    sender_id = _zalo_inbound_optional_string(sender.get("id"))
+    if chat_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Zalo inbound message is missing chat id."
+        )
+    if sender_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Zalo inbound message is missing sender id."
+        )
+    chat_type = str(chat.get("chat_type") or "").strip().upper()
+    is_group = chat_type == "GROUP"
+    conversation_type = "group" if is_group else "direct"
+    peer_kind: ConversationTargetPeerKind = "group" if is_group else "direct"
+    peer_id = f"zalo:group:{chat_id}" if is_group else f"zalo:{chat_id}"
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="zalo",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    sender_name = _zalo_inbound_optional_string(
+        sender.get("display_name") or sender.get("name")
+    )
+    return _ZaloInboundSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        sender_id=sender_id,
+        sender_name=sender_name,
+        conversation_id=chat_id,
+        conversation_type=conversation_type,
+        reply_to=f"zalo:{chat_id}",
+    )
 
 
 GOOGLE_CHAT_API_BASE_URL = "https://chat.googleapis.com/v1"
@@ -14479,6 +14985,8 @@ class OpsMeshService:
     msteams_inbound_media_fetch_service: GatewayMSTeamsInboundMediaFetchService | None = None
     tlon_inbound_media_fetch_service: GatewayTlonInboundMediaFetchService | None = None
     line_inbound_media_fetch_service: GatewayLineInboundMediaFetchService | None = None
+    zalo_inbound_media_fetch_service: GatewayZaloInboundMediaFetchService | None = None
+    zalo_pairing_challenge_service: GatewayZaloPairingChallengeService | None = None
     tlon_approval_queue_service: GatewayTlonApprovalQueueService | None = None
     tlon_monitor_runtime_service: GatewayTlonMonitorRuntimeService | None = None
     msteams_feedback_reflection_service: GatewayMSTeamsFeedbackReflectionService | None = None
@@ -14514,6 +15022,10 @@ class OpsMeshService:
         default_factory=dict,
     )
     _line_webhook_replay_cache: dict[str, float] = field(
+        init=False,
+        default_factory=dict,
+    )
+    _zalo_webhook_replay_cache: dict[str, float] = field(
         init=False,
         default_factory=dict,
     )
@@ -18351,6 +18863,409 @@ class OpsMeshService:
             del cache[oldest_key]
         return True
 
+    def _claim_zalo_webhook_replay(self, candidate: _ZaloWebhookReplayCandidate) -> bool:
+        now = time.monotonic()
+        cache = self._zalo_webhook_replay_cache
+        for key, expires_at in list(cache.items()):
+            if expires_at <= now:
+                del cache[key]
+        if candidate.key in cache:
+            return False
+        cache[candidate.key] = now + ZALO_WEBHOOK_REPLAY_WINDOW_SECONDS
+        while len(cache) > ZALO_WEBHOOK_REPLAY_MAX_ENTRIES:
+            oldest_key = min(cache, key=cache.__getitem__)
+            del cache[oldest_key]
+        return True
+
+    def _zalo_inbound_channel_config(self, *, account_id: str | None) -> dict[str, Any]:
+        if self.gateway_config_service is None:
+            return {}
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return {}
+        return _zalo_channel_config_from_snapshot(snapshot, account_id=account_id)
+
+    def _zalo_pairing_allow_from_store(self, *, account_id: str | None) -> list[str]:
+        if self.canvas_state_dir is None:
+            return []
+        seen: set[str] = set()
+        entries: list[str] = []
+        for path in _zalo_pairing_allow_from_paths(
+            self.canvas_state_dir,
+            account_id=account_id,
+        ):
+            for entry in _zalo_pairing_read_allow_from_file(path):
+                normalized = _zalo_sender_allow_token(entry)
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                entries.append(entry)
+        return entries
+
+    async def _zalo_pairing_challenge(
+        self,
+        request: GatewayZaloPairingChallengeRequest,
+    ) -> dict[str, object]:
+        if self.zalo_pairing_challenge_service is not None:
+            return _zalo_pairing_result_payload(
+                await self.zalo_pairing_challenge_service(request)
+            )
+        if self.canvas_state_dir is None:
+            return {
+                "created": False,
+                "replyError": "Zalo pairing storage is unavailable.",
+            }
+        return await self._default_zalo_pairing_challenge(request)
+
+    async def _default_zalo_pairing_challenge(
+        self,
+        request: GatewayZaloPairingChallengeRequest,
+    ) -> dict[str, object]:
+        upsert = await asyncio.to_thread(self._upsert_zalo_pairing_request, request)
+        result: dict[str, object] = {
+            "created": bool(upsert.get("created")),
+        }
+        code = _zalo_inbound_optional_string(upsert.get("code"))
+        if code is not None:
+            result["code"] = code
+        if not result["created"] or code is None:
+            return result
+        reply_text = _zalo_pairing_reply_text(
+            code=code,
+            sender_id_line=request.sender_id_line,
+        )
+        try:
+            delivery = await self.send_direct_channel_message(
+                channel="zalo",
+                to=request.chat_id,
+                message=reply_text,
+                account_id=request.account_id,
+                idempotency_key=(
+                    "zalo-pairing:"
+                    f"{normalize_optional_account_id(request.account_id) or DEFAULT_ACCOUNT_ID}:"
+                    f"{request.sender_id}"
+                ),
+            )
+        except Exception as exc:
+            result["replyError"] = str(exc)[:240]
+            return result
+        message_id = _zalo_inbound_optional_string(delivery.get("messageId"))
+        if message_id is not None:
+            result["messageId"] = message_id
+        delivery_id = _zalo_inbound_optional_string(delivery.get("deliveryId"))
+        if delivery_id is not None:
+            result["deliveryId"] = delivery_id
+        return result
+
+    def _upsert_zalo_pairing_request(
+        self,
+        request: GatewayZaloPairingChallengeRequest,
+    ) -> dict[str, object]:
+        if self.canvas_state_dir is None:
+            return {"created": False}
+        path = _zalo_pairing_store_path(self.canvas_state_dir)
+        now = datetime.now(UTC)
+        now_iso = now.isoformat().replace("+00:00", "Z")
+        now_ts = now.timestamp()
+        normalized_account_id = (
+            normalize_optional_account_id(request.account_id) or DEFAULT_ACCOUNT_ID
+        )
+        entries = [
+            entry
+            for entry in _zalo_pairing_read_store(path)
+            if not _zalo_pairing_entry_is_expired(entry, now=now_ts)
+        ]
+        existing_index: int | None = None
+        for index, entry in enumerate(entries):
+            if str(entry.get("id") or "") != request.sender_id:
+                continue
+            if not _zalo_pairing_entry_matches_account(entry, normalized_account_id):
+                continue
+            existing_index = index
+            break
+        existing_codes = {
+            str(entry.get("code") or "").strip().upper()
+            for entry in entries
+            if str(entry.get("code") or "").strip()
+        }
+        meta = _zalo_pairing_request_meta(request)
+        if existing_index is not None:
+            existing = dict(entries[existing_index])
+            code = str(existing.get("code") or "").strip().upper()
+            if not code:
+                code = _zalo_pairing_code(existing_codes)
+            existing.update(
+                {
+                    "id": request.sender_id,
+                    "code": code,
+                    "lastSeenAt": now_iso,
+                    "meta": meta,
+                }
+            )
+            existing.setdefault("createdAt", now_iso)
+            entries[existing_index] = existing
+            _zalo_pairing_write_store(path, entries)
+            return {"code": code, "created": False}
+        account_entries = [
+            entry
+            for entry in entries
+            if _zalo_pairing_entry_matches_account(entry, normalized_account_id)
+        ]
+        if len(account_entries) >= ZALO_PAIRING_PENDING_MAX:
+            _zalo_pairing_write_store(path, entries)
+            return {"created": False}
+        code = _zalo_pairing_code(existing_codes)
+        entries.append(
+            {
+                "id": request.sender_id,
+                "code": code,
+                "createdAt": now_iso,
+                "lastSeenAt": now_iso,
+                "meta": meta,
+            }
+        )
+        _zalo_pairing_write_store(path, entries)
+        return {"code": code, "created": True}
+
+    async def list_zalo_pairing_requests(
+        self,
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        if self.canvas_state_dir is None:
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "reason": "zalo_pairing_storage_unavailable",
+            }
+        return await asyncio.to_thread(
+            self._list_zalo_pairing_requests,
+            account_id=account_id,
+        )
+
+    def _list_zalo_pairing_requests(
+        self,
+        *,
+        account_id: str | None,
+    ) -> dict[str, object]:
+        if self.canvas_state_dir is None:
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "reason": "zalo_pairing_storage_unavailable",
+            }
+        path = _zalo_pairing_store_path(self.canvas_state_dir)
+        now_ts = datetime.now(UTC).timestamp()
+        raw_entries = _zalo_pairing_read_store(path)
+        unexpired_entries = [
+            entry
+            for entry in raw_entries
+            if not _zalo_pairing_entry_is_expired(entry, now=now_ts)
+        ]
+        pruned_entries, capped_removed = _zalo_pairing_prune_excess_requests_by_account(
+            unexpired_entries
+        )
+        if capped_removed or len(unexpired_entries) != len(raw_entries):
+            _zalo_pairing_write_store(path, pruned_entries)
+        normalized_account_id = normalize_optional_account_id(account_id)
+        if normalized_account_id is not None:
+            filtered_entries: Sequence[Mapping[str, object]] = [
+                entry
+                for entry in pruned_entries
+                if _zalo_pairing_entry_matches_account(entry, normalized_account_id)
+            ]
+        else:
+            filtered_entries = pruned_entries
+        requests = [
+            public_entry
+            for public_entry in (
+                _zalo_pairing_public_request(entry) for entry in filtered_entries
+            )
+            if public_entry is not None
+        ]
+        requests.sort(key=lambda entry: str(entry.get("createdAt") or ""))
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "zalo",
+            "requests": requests,
+        }
+        if normalized_account_id is not None:
+            result["accountId"] = normalized_account_id
+        return result
+
+    async def approve_zalo_pairing_code(
+        self,
+        code: str,
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        if self.canvas_state_dir is None:
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "reason": "zalo_pairing_storage_unavailable",
+            }
+        return await asyncio.to_thread(
+            self._approve_zalo_pairing_code,
+            code,
+            account_id=account_id,
+        )
+
+    def _approve_zalo_pairing_code(
+        self,
+        code: str,
+        *,
+        account_id: str | None,
+    ) -> dict[str, object]:
+        if self.canvas_state_dir is None:
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "reason": "zalo_pairing_storage_unavailable",
+            }
+        normalized_code = str(code or "").strip().upper()
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        path = _zalo_pairing_store_path(self.canvas_state_dir)
+        now_ts = datetime.now(UTC).timestamp()
+        entries = [
+            entry
+            for entry in _zalo_pairing_read_store(path)
+            if not _zalo_pairing_entry_is_expired(entry, now=now_ts)
+        ]
+        matched_entry: dict[str, object] | None = None
+        remaining: list[dict[str, object]] = []
+        for entry in entries:
+            entry_code = str(entry.get("code") or "").strip().upper()
+            if (
+                matched_entry is None
+                and entry_code == normalized_code
+                and _zalo_pairing_entry_matches_account(entry, normalized_account_id)
+            ):
+                matched_entry = entry
+                continue
+            remaining.append(entry)
+        if matched_entry is None:
+            _zalo_pairing_write_store(path, remaining)
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "accountId": normalized_account_id,
+                "code": normalized_code,
+                "reason": "zalo_pairing_code_not_found",
+            }
+        sender_id = str(matched_entry.get("id") or "").strip()
+        allow_from_path = _zalo_pairing_allow_from_paths(
+            self.canvas_state_dir,
+            account_id=normalized_account_id,
+        )[0]
+        _zalo_pairing_add_allow_from_entry(allow_from_path, sender_id)
+        _zalo_pairing_write_store(path, remaining)
+        return {
+            "ok": True,
+            "channel": "zalo",
+            "accountId": normalized_account_id,
+            "senderId": sender_id,
+            "code": normalized_code,
+        }
+
+    async def _zalo_inbound_authorization_skip(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        context: _ZaloInboundSessionContext,
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        channel_config = self._zalo_inbound_channel_config(account_id=account_id)
+        if context.conversation_type == "group":
+            group_policy = str(channel_config.get("groupPolicy") or "").strip().lower()
+            if group_policy not in {"disabled", "allowlist"}:
+                return None
+            group_allow_from = _zalo_inbound_string_list(
+                channel_config.get("groupAllowFrom")
+            )
+            if not group_allow_from:
+                group_allow_from = _zalo_inbound_string_list(channel_config.get("allowFrom"))
+            if group_policy == "allowlist" and _zalo_sender_allowed(
+                context.sender_id,
+                group_allow_from,
+            ):
+                return None
+            if group_policy == "disabled":
+                reason = "zalo_group_policy_disabled"
+            elif group_allow_from:
+                reason = "zalo_group_sender_not_allowlisted"
+            else:
+                reason = "zalo_group_allowlist_empty"
+            group_skip: dict[str, object] = {
+                "eventName": str(payload.get("event_name") or "").strip() or "event",
+                "reason": reason,
+                "senderId": context.sender_id,
+                "conversationId": context.conversation_id,
+                "conversationType": context.conversation_type,
+            }
+            inbound_message_id = _zalo_inbound_message_id(payload)
+            if inbound_message_id is not None:
+                group_skip["inboundMessageId"] = inbound_message_id
+            return group_skip
+        if context.conversation_type != "direct":
+            return None
+        dm_policy = str(
+            channel_config.get("dmPolicy") or ("pairing" if channel_config else "")
+        ).strip().lower()
+        if dm_policy in {"", "open"}:
+            return None
+        if dm_policy in {"allowlist", "pairing"}:
+            allow_from = _zalo_inbound_string_list(channel_config.get("allowFrom"))
+            if dm_policy == "pairing":
+                allow_from.extend(
+                    self._zalo_pairing_allow_from_store(account_id=account_id)
+                )
+            if _zalo_sender_allowed(context.sender_id, allow_from):
+                return None
+        if dm_policy == "pairing":
+            inbound_message_id = _zalo_inbound_message_id(payload)
+            pairing_result = await self._zalo_pairing_challenge(
+                GatewayZaloPairingChallengeRequest(
+                    account_id=account_id,
+                    sender_id=context.sender_id,
+                    sender_name=context.sender_name,
+                    chat_id=context.conversation_id,
+                    inbound_message_id=inbound_message_id,
+                    sender_id_line=f"Your Zalo user id: {context.sender_id}",
+                )
+            )
+            pairing_skip: dict[str, object] = {
+                "eventName": str(payload.get("event_name") or "").strip() or "event",
+                "reason": "zalo_dm_pairing_required",
+                "senderId": context.sender_id,
+                "conversationId": context.conversation_id,
+                "conversationType": context.conversation_type,
+            }
+            if inbound_message_id is not None:
+                pairing_skip["inboundMessageId"] = inbound_message_id
+            if pairing_result:
+                pairing_skip["pairing"] = pairing_result
+            return pairing_skip
+        if dm_policy not in {"disabled", "allowlist"}:
+            return None
+        reason = (
+            "zalo_dm_policy_disabled"
+            if dm_policy == "disabled"
+            else "zalo_dm_sender_not_allowlisted"
+        )
+        skip: dict[str, object] = {
+            "eventName": str(payload.get("event_name") or "").strip() or "event",
+            "reason": reason,
+            "senderId": context.sender_id,
+            "conversationId": context.conversation_id,
+            "conversationType": context.conversation_type,
+        }
+        inbound_message_id = _zalo_inbound_message_id(payload)
+        if inbound_message_id is not None:
+            skip["inboundMessageId"] = inbound_message_id
+        return skip
+
     async def handle_line_webhook(
         self,
         payload: Mapping[str, Any],
@@ -18466,6 +19381,220 @@ class OpsMeshService:
         if skips:
             result["skippedCount"] = len(skips)
             result["skips"] = skips
+        return result
+
+    async def handle_zalo_webhook(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event_name = str(payload.get("event_name") or "").strip()
+        event_count = 1 if event_name else 0
+        deliveries: list[dict[str, object]] = []
+        skips: list[dict[str, object]] = []
+        replay_candidate = _zalo_webhook_replay_candidate(
+            payload,
+            account_id=account_id,
+        )
+        if replay_candidate is not None and not self._claim_zalo_webhook_replay(
+            replay_candidate
+        ):
+            skips.append(_zalo_webhook_replay_skip(payload, replay_candidate))
+        else:
+            text = _zalo_webhook_event_text(payload)
+            if text is not None:
+                context = _zalo_inbound_session_context(payload, account_id=account_id)
+                authorization_skip = await self._zalo_inbound_authorization_skip(
+                    payload,
+                    context=context,
+                    account_id=account_id,
+                )
+                if authorization_skip is not None:
+                    skips.append(authorization_skip)
+                else:
+                    if self.session_delivery_service is None:
+                        raise GatewayOutboundRuntimeUnavailableError(
+                            "Zalo inbound session delivery is unavailable."
+                        )
+                    staged_media = await self._stage_zalo_inbound_media(
+                        payload,
+                        account_id=account_id,
+                    )
+                    delivery_result = await self.session_delivery_service(
+                        context.session_key,
+                        text,
+                    )
+                    delivery_message_id = _session_delivery_message_id(delivery_result)
+                    message = _zalo_inbound_message(payload)
+                    delivery: dict[str, object] = {
+                        "eventName": event_name or "event",
+                        "sessionKey": context.session_key,
+                        "text": text,
+                        "senderId": context.sender_id,
+                        "conversationId": context.conversation_id,
+                        "conversationType": context.conversation_type,
+                        "conversationTarget": context.conversation_target.model_dump(
+                            mode="json"
+                        ),
+                        "reply": {
+                            "to": context.reply_to,
+                            "originatingTo": context.reply_to,
+                        },
+                        "delivery": {"runtime": "session-backed"},
+                    }
+                    if delivery_message_id is not None:
+                        delivery["messageId"] = delivery_message_id
+                    inbound_message_id = _zalo_inbound_message_id(payload)
+                    if inbound_message_id is not None:
+                        delivery["inboundMessageId"] = inbound_message_id
+                    timestamp = _zalo_message_timestamp_ms(message)
+                    if timestamp is not None:
+                        delivery["timestamp"] = timestamp
+                    if context.sender_name is not None:
+                        delivery["senderName"] = context.sender_name
+                    media_urls = _zalo_webhook_media_urls(payload)
+                    if media_urls:
+                        delivery["mediaUrls"] = media_urls
+                        delivery["photoUrl"] = media_urls[0]
+                        delivery["delivery"] = {
+                            "runtime": "session-backed",
+                            "media": {"urls": len(media_urls)},
+                        }
+                    if staged_media:
+                        delivery["delivery"] = {
+                            "runtime": "session-backed",
+                            "media": {"staged": len(staged_media)},
+                        }
+                        delivery.update(_msteams_media_payload(staged_media))
+                        delivery["stagedMedia"] = _msteams_staged_media_metadata(
+                            staged_media
+                        )
+                    deliveries.append(delivery)
+        result: dict[str, object] = {
+            "ok": bool(event_name),
+            "channel": "zalo",
+            "eventName": event_name or "unknown",
+            "eventCount": event_count,
+            "deliveredCount": len(deliveries),
+        }
+        normalized_account_id = str(account_id or "").strip()
+        if normalized_account_id:
+            result["accountId"] = normalized_account_id
+        if deliveries:
+            result["deliveries"] = deliveries
+        if skips:
+            result["skippedCount"] = len(skips)
+            result["skips"] = skips
+        if not deliveries and not skips:
+            inbound_message_id = _zalo_inbound_message_id(payload)
+            if inbound_message_id is not None:
+                result["inboundMessageId"] = inbound_message_id
+        return result
+
+    async def _stage_zalo_inbound_media(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None,
+    ) -> list[_MSTeamsStagedInboundMedia]:
+        if str(payload.get("event_name") or "").strip() != "message.image.received":
+            return []
+        fetcher = self._zalo_inbound_media_fetcher()
+        if fetcher is None:
+            return []
+        message = _zalo_inbound_message(payload)
+        photo_url = _zalo_inbound_optional_string(message.get("photo_url"))
+        if photo_url is None:
+            return []
+        message_id = _zalo_inbound_message_id(payload)
+        parsed_path = Path(unquote(urlparse(photo_url).path))
+        file_hint = parsed_path.name.strip() or (
+            f"zalo-image-{message_id}" if message_id else "zalo-image"
+        )
+        candidate = _MSTeamsInboundMediaCandidate(
+            url=photo_url,
+            source_url=photo_url,
+            file_hint=file_hint,
+            content_type_hint=None,
+            placeholder="<media:image>",
+        )
+        request = GatewayZaloInboundMediaFetchRequest(
+            url=photo_url,
+            source_url=photo_url,
+            filename=file_hint,
+            content_type=None,
+            placeholder="<media:image>",
+            max_bytes=ZALO_DEFAULT_MEDIA_MAX_BYTES,
+            account_id=account_id,
+            message_id=message_id,
+        )
+        try:
+            response = await fetcher(request)
+        except Exception:
+            return []
+        media_bytes = _msteams_fetch_response_bytes(response)
+        if media_bytes is None or len(media_bytes) > ZALO_DEFAULT_MEDIA_MAX_BYTES:
+            return []
+        staged = self._save_msteams_inbound_media(
+            candidate=candidate,
+            response=response,
+            media_bytes=media_bytes,
+            index=1,
+        )
+        return [staged] if staged is not None else []
+
+    def _zalo_inbound_media_fetcher(
+        self,
+    ) -> GatewayZaloInboundMediaFetchService | None:
+        if self.zalo_inbound_media_fetch_service is not None:
+            return self.zalo_inbound_media_fetch_service
+        if self.canvas_state_dir is None:
+            return None
+        return self._default_zalo_inbound_media_fetch
+
+    async def _default_zalo_inbound_media_fetch(
+        self,
+        request: GatewayZaloInboundMediaFetchRequest,
+    ) -> object:
+        return await asyncio.to_thread(self._download_zalo_inbound_media, request)
+
+    def _download_zalo_inbound_media(
+        self,
+        request: GatewayZaloInboundMediaFetchRequest,
+    ) -> dict[str, object]:
+        media_url = _normalized_http_webhook_url(request.url)
+        if media_url is None:
+            raise RuntimeError("Zalo inbound media URL must be http(s).")
+        http_request = Request(
+            media_url,
+            headers={"User-Agent": "OpenZues-Zalo-Media/1.0"},
+            method="GET",
+        )
+        content_type: str | None = None
+        try:
+            with urlopen(http_request, timeout=30) as response:
+                status = int(getattr(response, "status", 200) or 200)
+                if status >= 400:
+                    raise RuntimeError(f"Zalo inbound media URL returned HTTP {status}.")
+                media_bytes = response.read(request.max_bytes + 1)
+                if len(media_bytes) > request.max_bytes:
+                    raise RuntimeError("Zalo inbound media attachment is too large.")
+                headers = getattr(response, "headers", None)
+                if headers is not None:
+                    raw_content_type = headers.get("Content-Type")
+                    if isinstance(raw_content_type, str) and raw_content_type.strip():
+                        content_type = raw_content_type.strip()
+        except HTTPError as exc:
+            message = _http_error_message("Zalo inbound media URL returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Zalo inbound media URL failed: {exc.reason}") from exc
+        result: dict[str, object] = {"bytes": media_bytes}
+        if content_type:
+            result["contentType"] = content_type
+        if request.filename:
+            result["filename"] = request.filename
         return result
 
     async def _stage_line_inbound_media(

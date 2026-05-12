@@ -6,7 +6,7 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.946% of the
+- The active gateway/session/tool-contract family is estimated at ~99.963% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.986% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -14,7 +14,7 @@ Current percentage rollup:
   `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99989% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99992% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
@@ -60,7 +60,9 @@ Current percentage rollup:
   human compatibility warnings section, plugin inspect typed/custom hook
   sections, plugin inspect human header/bundle-format labels, plugin list
   verbose activation/import state, LINE rich-menu runtime helpers,
-  restart-health missing-version diagnostics, plugin list human enabled label, plugin list
+  restart-health missing-version diagnostics, restart-health unhealthy snapshot
+  diagnostics, restart-health follow-up diagnostics,
+  `gateway status --deep` command alias, plugin list human enabled label, plugin list
   human enabled count, manifest load-path activation-state projection,
   plugin public-surface/runtime-sidecar artifact metadata projection,
   configured-channel owner activation projection,
@@ -140,17 +142,22 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.946% after the
+- The gateway session/tool-contract family is estimated at ~99.963% after the
   latest requester-scoped `agents_list` spawn-target projection slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.9991%
+- The provider-native inbound/outbound breadth family is estimated at ~99.99990%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
   delivery plus postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
   pending-history replay, non-text group media mention-gate bypass, LINE
   inbound media staging, production credential-backed LINE media download, and
-  LINE webhook redelivery dedupe.
-- The CLI/operator control-plane family is estimated at ~99.99989% after the bundle
+  LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text
+  webhook session delivery/replay dedupe, Zalo image webhook media URL
+  delivery, fakeable Zalo inbound image media staging, production Zalo inbound
+  media fetch, Zalo direct DM disabled-policy gating, Zalo group allowlist
+  policy gating, Zalo direct DM pairing challenges, and Zalo pairing
+  allowFrom-store authorization, approval-store mutation, and request listing.
+- The CLI/operator control-plane family is estimated at ~99.99992% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
   secrets reload CLI surface, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch restart-health failure, gateway health `serverVersion` projection, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
@@ -177,7 +184,9 @@ Current percentage rollup:
   compatibility warnings section, plugin inspect typed/custom hook sections,
   plugin inspect human header/bundle-format labels, plugin list verbose
   activation/import state, LINE rich-menu runtime helpers,
-  restart-health missing-version diagnostics, plugin list human enabled label, plugin list human
+  restart-health missing-version diagnostics, restart-health unhealthy snapshot
+  diagnostics, restart-health follow-up diagnostics,
+  `gateway status --deep` command alias, plugin list human enabled label, plugin list human
   enabled count, manifest load-path activation-state projection,
   plugin public-surface/runtime-sidecar artifact metadata projection,
   configured-channel owner activation projection,
@@ -211,6 +220,136 @@ Source/test checkpointed in `90e3d0a3`; repo-wide parity remains estimated at
 Continue remaining package restart-health diagnostics, provider-specific
 media/reply edges, browser local fallback, deeper installed plugin activation,
 or companion breadth.
+
+Current queue-head adjustment: package update restart-health checks now also
+fail when the restart snapshot itself is explicitly unhealthy, preserving
+OpenClaw-shaped `Service runtime:` and gateway port diagnostics from
+`src/cli/daemon-cli/restart-health.ts` even when plugin/channel/version detail
+families are absent. Source/test checkpointed in `23f1e2b2`; repo-wide parity
+remains estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity
+move to ~99.99990%. Continue remaining packaging/distribution breadth,
+provider-specific media/reply edges, deeper installed plugin activation, or
+companion breadth.
+
+Current queue-head adjustment: the native CLI now exposes
+`openzues gateway status --deep --json` as an OpenZues-native alias over the
+gateway capability/status view, covering the OpenClaw `gateway status --deep`
+operator command posture from `src/cli/daemon-cli/status.ts` and
+`src/cli/daemon-cli/register-service-commands.ts`. Source/test checkpointed in
+`005dc599`; repo-wide parity remains estimated at ~99.9%, and
+runtime/CLI/doctor plus CLI/operator parity move to ~99.99991%. Continue
+remaining packaging/distribution breadth, provider-specific media/reply edges,
+deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: package update restart-health diagnostics now
+include OpenClaw-shaped follow-up lines for a restart log path and
+`openzues gateway status --deep`, matching
+`src/cli/update-cli/update-command.ts` once restart verification fails.
+Source/test checkpointed in `8e989b2d`; repo-wide parity remains estimated at
+~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to ~99.99992%.
+Continue remaining packaging/distribution breadth, provider-specific
+media/reply edges, deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo Bot webhook ingress now exposes
+`/zalo/webhook`, validates `x-bot-api-secret-token` against native Zalo channel
+config, enforces JSON update payloads, unwraps OpenClaw-style `{ ok, result }`
+bodies, and dispatches authenticated updates through OpsMesh. Source/test
+checkpointed in `c0e8588e`; repo-wide parity remains estimated at ~99.9%, and
+provider-native inbound/outbound breadth moves to ~99.9992%. Continue Zalo
+webhook session delivery/replay/media breadth, remaining provider-specific
+media/reply edges, deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo Bot text webhook updates now route
+`message.text.received` payloads into native session delivery with Zalo
+conversation targets, sender/timestamp/reply metadata, and OpenClaw-shaped
+message-id replay dedupe from `extensions/zalo/src/monitor.webhook.ts` and
+`extensions/zalo/src/monitor.ts`. Source/test checkpointed in `edcccea3`;
+repo-wide parity remains estimated at ~99.9%, and provider-native
+inbound/outbound breadth moves to ~99.9993%. Continue Zalo image/media webhook
+delivery breadth, remaining provider-specific media/reply edges, deeper
+installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo Bot image webhook updates now route
+`message.image.received` payloads into native session delivery using caption
+text or `<media:image>` while preserving `photo_url` as media metadata,
+matching the visible inbound-media contract from
+`extensions/zalo/src/monitor.ts` and
+`extensions/zalo/src/test-support/lifecycle-test-support.ts`. Source/test
+checkpointed in `6c87d9e5`; repo-wide parity remains estimated at ~99.9%, and
+provider-native inbound/outbound breadth moves to ~99.9994%. Continue Zalo
+remote-media download/staging depth, remaining provider-specific media/reply
+edges, deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo Bot image webhook media now supports a
+fakeable native staging adapter that saves downloaded bytes into the shared
+inbound attachment store and projects `MediaPath`, `MediaType`, `MediaUrls`,
+and `stagedMedia` metadata beside the original `photo_url`. Source/test
+checkpointed in `652f0938`; repo-wide parity remains estimated at ~99.9%, and
+provider-native inbound/outbound breadth moves to ~99.9995%. Continue
+production Zalo remote-media fetch wiring, remaining provider-specific
+media/reply edges, deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo Bot image webhook media now has a
+production default fetch path that downloads `photo_url` when native app state
+storage is configured, enforces the upstream 5 MB cap, preserves content type,
+and stages bytes through the shared inbound attachment store. Source/test
+checkpointed in `00241ee2`; repo-wide parity remains estimated at ~99.9%, and
+provider-native inbound/outbound breadth moves to ~99.9996%. Continue Zalo
+inbound authorization/group-policy breadth, remaining provider-specific
+media/reply edges, deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo direct inbound authorization now honors
+configured `dmPolicy="disabled"` by skipping direct webhook delivery before
+session dispatch and returning explicit skip metadata. Source/test checkpointed
+in `ac0e17e3`; repo-wide parity remains estimated at ~99.9%, and
+provider-native inbound/outbound breadth moves to ~99.9997%. Continue Zalo
+allowlist and group-policy authorization breadth, remaining provider-specific
+media/reply edges, deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo group inbound authorization now honors
+configured `groupPolicy="allowlist"` and `groupAllowFrom`, skipping
+non-allowlisted group senders before session dispatch with explicit metadata.
+Source/test checkpointed in `d0d548e2`; repo-wide parity remains estimated at
+~99.9%, and provider-native inbound/outbound breadth moves to ~99.9998%.
+Continue remaining Zalo allowlist/pairing breadth, provider-specific
+media/reply edges, deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo direct inbound authorization now honors
+`dmPolicy="pairing"` for unknown direct senders by issuing a fakeable/native
+pairing challenge, persisting pending Zalo pairing state, sending the challenge
+reply through route-backed outbound delivery when available, and skipping
+session dispatch with explicit metadata. Source/test checkpointed in
+`74ce8fbd`; repo-wide parity remains estimated at ~99.9%, and
+provider-native inbound/outbound breadth moves to ~99.99985%. Continue
+remaining Zalo pairing-store approval/allowFrom restoration breadth,
+provider-specific media/reply edges, deeper installed plugin activation, or
+companion breadth.
+
+Current queue-head adjustment: Zalo direct inbound authorization now honors the
+account-scoped pairing `allowFrom` store for `dmPolicy="pairing"`, delivering
+already-approved direct senders instead of issuing a new challenge. Source/test
+checkpointed in `1b2d5009`; repo-wide parity remains estimated at ~99.9%, and
+provider-native inbound/outbound breadth moves to ~99.99987%. Continue
+remaining Zalo pairing approval/allowFrom mutation breadth, provider-specific
+media/reply edges, deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo pairing approval now consumes pending
+account-scoped pairing codes, prunes expired requests, and appends approved
+senders to the account-scoped `allowFrom` store before returning
+OpenClaw-shaped success/error metadata. Source/test checkpointed in
+`9409ad9b`; repo-wide parity remains estimated at ~99.9%, and
+provider-native inbound/outbound breadth moves to ~99.99989%. Continue native
+pairing list/approve CLI/RPC surface, provider-specific media/reply edges,
+deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo pairing request listing now reads pending
+requests from the native Zalo pairing store, prunes expired entries, enforces
+the OpenClaw per-account pending cap by dropping oldest `lastSeenAt` entries,
+filters by account, and returns visible requests ordered by `createdAt`.
+Source/test checkpointed in `d1c79fea`; repo-wide parity remains estimated at
+~99.9%, and provider-native inbound/outbound breadth moves to ~99.99990%.
+Continue native pairing list/approve CLI/RPC surface, provider-specific
+media/reply edges, deeper installed plugin activation, or companion breadth.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -12155,3 +12294,126 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   locale/timezone, response body/dialog-hook route breadth, remaining
   provider-specific media/reply edges, deeper installed plugin activation,
   companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control status/doctor
+  route breadth now maps upstream `GET /` and `GET /doctor` from
+  `extensions/browser/src/browser/routes/basic.ts` onto a native
+  `agent-browser` session/profile posture report with optional live/deep
+  snapshot checks. Source/test checkpointed in `4b1f8028`; repo-wide parity
+  remains estimated at ~99.9%, active gateway/session/tool-contract parity
+  moves to ~99.956%, and browser/canvas/nodes/voice bounded-command parity
+  moves to ~99.92%. Continue profile mutation, permissions, locale/timezone,
+  response body/dialog-hook route breadth, remaining provider-specific
+  media/reply edges, deeper installed plugin activation, companion breadth, or
+  the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control snapshot
+  artifact route breadth now maps upstream `POST /navigate` and `POST /pdf`
+  from `extensions/browser/src/browser/routes/agent.snapshot.ts` onto native
+  navigation and controlled PDF artifact export. Source/test checkpointed in
+  `2ecdba40`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.957%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.94%.
+  Continue profile mutation, permissions, locale/timezone, response
+  body/dialog-hook route breadth, remaining provider-specific media/reply
+  edges, deeper installed plugin activation, companion breadth, or the next
+  packaging edge.
+- Current queue-head adjustment: `browser.request` local-control response body
+  route breadth now maps upstream `POST /response/body` from
+  `extensions/browser/src/browser/routes/agent.act.ts` onto native network
+  request inventory/detail commands with response body truncation metadata.
+  Source/test checkpointed in `e7084f1f`; repo-wide parity remains estimated
+  at ~99.9%, active gateway/session/tool-contract parity moves to ~99.958%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.95%.
+  Continue profile mutation, permissions, locale/timezone, dialog-hook route
+  breadth, remaining provider-specific media/reply edges, deeper installed
+  plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control dialog hook
+  route breadth now maps upstream `POST /hooks/dialog` from
+  `extensions/browser/src/browser/routes/agent.act.hooks.ts` onto native
+  `agent-browser eval --stdin` execution, with temporary alert/confirm/prompt
+  handlers and OpenClaw-shaped accept/prompt metadata. Source/test
+  checkpointed in `4be4d540`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.959%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.96%.
+  Continue profile mutation, permissions, locale/timezone, label-action route
+  breadth, remaining provider-specific media/reply edges, deeper installed
+  plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control
+  locale/timezone route breadth now maps upstream `POST /set/timezone` and
+  `POST /set/locale` from
+  `extensions/browser/src/browser/routes/agent.storage.ts` onto native
+  `agent-browser eval --stdin` page emulation with `Intl.DateTimeFormat` and
+  navigator locale projection. Source/test checkpointed in `003b0d5a`;
+  repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.960%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.97%.
+  Continue profile mutation, permissions, label-action route breadth,
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control tab label
+  action route breadth now maps upstream `/tabs/action` `label` from
+  `extensions/browser/src/browser/routes/tabs.ts` onto native session-local
+  tab label projection, including subsequent `GET /tabs` label enrichment and
+  targeted-close cleanup. Source/test checkpointed in `c6fb16d3`; repo-wide
+  parity remains estimated at ~99.9%, active gateway/session/tool-contract
+  parity moves to ~99.961%, and browser/canvas/nodes/voice bounded-command
+  parity moves to ~99.98%. Continue persistent-profile mutation boundary
+  review, permissions, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control permission
+  grant route breadth now maps upstream `POST /permissions/grant` from
+  `extensions/browser/src/browser/routes/permissions.ts` onto native
+  `agent-browser get cdp-url` plus CDP `Browser.grantPermissions` over
+  WebSocket, including optional-permission fallback retry. Source/test
+  checkpointed in `1a27af54`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.962%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.99%.
+  Continue persistent-profile mutation boundary review, remaining
+  provider-specific media/reply edges, deeper installed plugin activation,
+  companion breadth, or the next packaging edge.
+- Current queue-head adjustment: the persistent browser profile mutation guard
+  has been reverified against
+  `extensions/browser/src/browser/request-policy.ts`: `node.invoke
+  command=browser.proxy` and `browser.request` reject persistent profile
+  mutation routes before wake/proxy dispatch. Verification checkpointed in the
+  ledgers as `OZ-CANVAS-001V`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.963%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.995%.
+  The browser local-request mini-queue has no remaining OpenClaw-backed route
+  head in the accepted native adapter scope. Continue provider-specific
+  media/reply edges, deeper installed plugin activation, companion breadth, or
+  the next packaging edge.
+- Current queue-head adjustment: package update restart-health checks now fail
+  when the restart snapshot itself is explicitly unhealthy, even without
+  plugin/channel/version detail families. Native diagnostics preserve
+  OpenClaw-shaped service runtime and port diagnostics from
+  `src/cli/daemon-cli/restart-health.ts`. Source/test checkpointed in
+  `23f1e2b2`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.99990%. Continue
+  remaining packaging/distribution breadth, provider-specific media/reply
+  edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: `openzues gateway status --deep --json` now
+  aliases the native gateway capability/status view, matching the OpenClaw
+  operator command posture from `src/cli/daemon-cli/status.ts` and
+  `src/cli/daemon-cli/register-service-commands.ts`. Source/test checkpointed
+  in `005dc599`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.99991%. Continue
+  remaining packaging/distribution breadth, provider-specific media/reply
+  edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: package update restart-health diagnostics now
+  include OpenClaw-shaped follow-up lines for a restart log path and
+  `openzues gateway status --deep`, matching
+  `src/cli/update-cli/update-command.ts` once restart verification fails.
+  Source/test checkpointed in `8e989b2d`; repo-wide parity remains estimated
+  at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to
+  ~99.99992%. Continue remaining packaging/distribution breadth,
+  provider-specific media/reply edges, deeper installed plugin activation, or
+  companion breadth.
+- Current queue-head adjustment: Zalo Bot webhook ingress now exposes
+  `/zalo/webhook`, validates `x-bot-api-secret-token` against native Zalo
+  channel config, enforces JSON update payloads, unwraps OpenClaw-style
+  `{ ok, result }` bodies, and dispatches authenticated updates through
+  OpsMesh. Source/test checkpointed in `c0e8588e`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.9992%. Continue Zalo webhook session delivery/replay/media breadth,
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, or companion breadth.

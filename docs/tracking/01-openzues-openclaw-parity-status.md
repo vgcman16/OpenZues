@@ -17,12 +17,12 @@ may lag behind this tracker.
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
-| Active gateway/session/tool-contract family | ~99.955% | High for bounded local path | Does not mean whole product parity |
+| Active gateway/session/tool-contract family | ~99.963% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
-| Browser/canvas/nodes/voice bounded command family | ~99.9% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.9991% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.99989% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.99989% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
+| Provider-native inbound/outbound breadth | ~99.99990% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Runtime/CLI/doctor native bridge | ~99.99992% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.99992% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
@@ -243,6 +243,137 @@ may lag behind this tracker.
     adjacent browser proof (`22 passed, 1231 deselected`), ruff, mypy, and
     focused `git diff --check`.
 
+- [x] `browser.request` local status/doctor routes.
+  - Source: `openclaw-main/extensions/browser/src/browser/routes/basic.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_browser_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: native local request dispatch maps `GET /` and `GET /doctor`
+    onto an `agent-browser` session/profile posture report, with optional
+    live/deep snapshot checks for doctor mode.
+  - Evidence required: focused status/doctor route proof, adjacent browser
+    request/status/doctor/session/profile proof, ruff, mypy
+  - Status: checkpointed in `4b1f8028`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green status/doctor route test,
+    adjacent browser proof (`20 passed, 1234 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `browser.request` local snapshot artifact routes.
+  - Source: `openclaw-main/extensions/browser/src/browser/routes/agent.snapshot.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_browser_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: native local request dispatch maps `POST /navigate` and
+    `POST /pdf` onto native browser navigation and controlled PDF artifact
+    export.
+  - Evidence required: focused snapshot artifact route proof, adjacent browser
+    request/snapshot/pdf/navigation proof, ruff, mypy
+  - Status: checkpointed in `2ecdba40`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green snapshot artifact route test,
+    adjacent browser proof (`18 passed, 1237 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `browser.request` local response body route.
+  - Source: `openclaw-main/extensions/browser/src/browser/routes/agent.act.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_browser_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: native local request dispatch maps `POST /response/body` onto
+    native network request inventory/detail commands and returns response
+    body, status, headers, request id, URL, and truncation metadata.
+  - Evidence required: focused response body route proof, adjacent browser
+    request/network/snapshot proof, ruff, mypy
+  - Status: checkpointed in `e7084f1f`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green response body route test,
+    adjacent browser proof (`22 passed, 1234 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `browser.request` local dialog hook route.
+  - Source:
+    `openclaw-main/extensions/browser/src/browser/routes/agent.act.hooks.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_browser_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: native local request dispatch maps `POST /hooks/dialog` onto
+    `agent-browser eval --stdin`, installs temporary alert/confirm/prompt
+    handlers, restores originals after the next dialog, and returns accept and
+    prompt metadata.
+  - Evidence required: focused dialog hook route proof, adjacent browser
+    request/dialog/upload/act proof, ruff, mypy
+  - Status: checkpointed in `4be4d540`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green dialog hook route test,
+    adjacent browser proof (`22 passed, 1235 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `browser.request` local locale/timezone routes.
+  - Source: `openclaw-main/extensions/browser/src/browser/routes/agent.storage.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_browser_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: native local request dispatch maps `POST /set/timezone` and
+    `POST /set/locale` onto `agent-browser eval --stdin` page emulation,
+    preserving requested timezone/locale metadata and projecting locale
+    through navigator language fields.
+  - Evidence required: focused locale/timezone route proof, adjacent browser
+    request/settings/storage proof, ruff, mypy
+  - Status: checkpointed in `003b0d5a`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green locale/timezone route test,
+    adjacent browser proof (`27 passed, 1231 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `browser.request` local tab label action route.
+  - Source: `openclaw-main/extensions/browser/src/browser/routes/tabs.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_browser_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: native local request dispatch maps `/tabs/action` `label` onto a
+    session-local tab label store, projects labels through subsequent
+    `GET /tabs` responses, and cleans labels on targeted close.
+  - Evidence required: focused tab label route proof, adjacent browser
+    request/tab/status proof, ruff, mypy
+  - Status: checkpointed in `c6fb16d3`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green tab label route test,
+    adjacent browser proof (`23 passed, 1236 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `browser.request` local permission grant route.
+  - Source: `openclaw-main/extensions/browser/src/browser/routes/permissions.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_browser_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: native local request dispatch maps `POST /permissions/grant`
+    onto `agent-browser get cdp-url` plus CDP `Browser.grantPermissions`,
+    normalizes http(s) origins, dedupes permissions, and retries without
+    unsupported optional permissions.
+  - Evidence required: focused permission grant route proof, adjacent browser
+    request/settings/action/tab proof, ruff, mypy
+  - Status: checkpointed in `1a27af54`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green permission grant route test,
+    adjacent browser proof (`28 passed, 1232 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `browser.request` persistent profile mutation boundary.
+  - Source: `openclaw-main/extensions/browser/src/browser/request-policy.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `node.invoke command=browser.proxy` and `browser.request` reject
+    `POST /profiles/create`, `POST /reset-profile`, and one-segment
+    `DELETE /profiles/:name` before wake/proxy dispatch.
+  - Evidence required: focused persistent mutation guard proof, adjacent
+    browser request guard proof, ruff, mypy
+  - Status: verified as `OZ-CANVAS-001V`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused guard proof (`4 passed`), adjacent
+    browser proof (`23 passed, 1237 deselected`), ruff, and mypy.
+
 - [x] Requester-scoped `agents_list` spawn-target projection.
   - Source: `openclaw-main/src/agents/tools/agents-list-tool.ts`,
     `openclaw-main/src/agents/subagent-target-policy.ts`
@@ -406,6 +537,175 @@ may lag behind this tracker.
   - Last verified: 2026-05-12, focused red/green LINE redelivery tests,
     adjacent LINE/provider proof (`25 passed, 454 deselected`), ruff, mypy,
     and focused `git diff --check`.
+
+- [x] Zalo text webhook session delivery and replay dedupe.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.webhook.ts`,
+    `openclaw-main/extensions/zalo/src/monitor.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Zalo `message.text.received` webhook payloads route to native
+    session delivery with Zalo conversation target, sender/timestamp/reply
+    metadata, and message-id replay dedupe before dispatch.
+  - Evidence required: focused Zalo session-delivery/replay proof, adjacent
+    Zalo webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `edcccea3`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green Zalo session-delivery/replay
+    tests (`2 failed` before implementation, then `2 passed`), adjacent Zalo
+    webhook/provider proof (`5 passed, 476 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] Zalo image webhook media URL delivery.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/test-support/lifecycle-test-support.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Zalo image webhook payloads deliver caption text or
+    `<media:image>` into the native session and preserve `photo_url` as media
+    metadata.
+  - Evidence required: focused Zalo image webhook proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `6c87d9e5`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green Zalo image webhook test
+    (session delivery absent before implementation, then `1 passed`),
+    adjacent Zalo provider proof (`6 passed, 476 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] Fakeable Zalo inbound image media staging.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/test-support/lifecycle-test-support.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: a native Zalo media fetch adapter can stage downloaded image
+    bytes and expose saved media path/type metadata while preserving the
+    original `photo_url`.
+  - Evidence required: focused Zalo image staging proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `652f0938`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused Zalo staging proof (`1 passed`),
+    adjacent Zalo provider proof (`7 passed, 476 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] Production Zalo inbound media fetch.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: with app state storage configured, native Zalo staging downloads
+    `photo_url`, enforces the 5 MB cap, preserves content type, and stores the
+    media through the inbound attachment store.
+  - Evidence required: focused production Zalo fetch proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `00241ee2`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green production Zalo fetch proof
+    (`0` fetches before implementation, then `1 passed`), adjacent Zalo
+    provider proof (`8 passed, 476 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] Zalo direct-DM disabled policy.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/config-schema.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: configured `dmPolicy="disabled"` drops direct Zalo inbound
+    webhooks before native session delivery and returns skip metadata.
+  - Evidence required: focused Zalo disabled-DM proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `ac0e17e3`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green disabled-DM proof (delivered
+    before implementation, then `1 passed`), adjacent Zalo provider proof
+    (`9 passed, 476 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] Zalo group allowlist policy.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/group-access.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: configured `groupPolicy="allowlist"` and `groupAllowFrom` drop
+    non-allowlisted group senders before native session delivery.
+  - Evidence required: focused Zalo group allowlist proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `d0d548e2`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green group allowlist proof
+    (delivered before implementation, then `1 passed`), adjacent Zalo
+    provider proof (`10 passed, 476 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] Zalo direct-DM pairing challenge.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/src/pairing/pairing-challenge.ts`,
+    `openclaw-main/src/pairing/pairing-store.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: `dmPolicy="pairing"` drops unknown direct senders from session
+    delivery after creating a scoped pairing request and challenge reply.
+  - Evidence required: focused Zalo direct-DM pairing proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `74ce8fbd`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green direct-DM pairing proof
+    (missing challenge-service wiring before implementation, then `1 passed`),
+    adjacent Zalo provider proof (`11 passed, 476 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] Zalo pairing allowFrom-store authorization.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/src/plugin-sdk/command-auth.ts`,
+    `openclaw-main/src/pairing/allow-from-store-file.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: direct `dmPolicy="pairing"` reads the account-scoped pairing
+    `allowFrom` store before challenging unknown senders.
+  - Evidence required: focused Zalo pairing-store proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `1b2d5009`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green pairing-store proof (issued a
+    new challenge before implementation, then `1 passed`), adjacent Zalo
+    provider proof (`12 passed, 476 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] Zalo pairing approval store mutation.
+  - Source: `openclaw-main/src/pairing/pairing-store.ts`,
+    `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/pairing/allow-from-store-file.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: approving a pending Zalo pairing code consumes the pending
+    request, prunes expired entries, adds the sender to the account-scoped
+    Zalo `allowFrom` store, and returns OpenClaw-shaped success or precise
+    storage/not-found error metadata.
+  - Evidence required: focused Zalo pairing approval proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `9409ad9b`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green pairing-approval proof
+    (missing approval method before implementation, then `1 passed`), adjacent
+    Zalo provider proof (`13 passed, 476 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] Zalo pairing request listing.
+  - Source: `openclaw-main/src/pairing/pairing-store.ts`,
+    `openclaw-main/src/pairing/pairing-store.test.ts`,
+    `openclaw-main/src/cli/pairing-cli.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: listing pending Zalo pairing requests prunes expired entries,
+    enforces the account pending cap, filters by account, returns public
+    request fields in `createdAt` order, and persists the pruned store.
+  - Evidence required: focused Zalo pairing-list proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `d1c79fea`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green pairing-list proof (missing
+    listing method before implementation, then `1 passed`), adjacent Zalo
+    provider proof (`14 passed, 476 deselected`), ruff, mypy, and focused
+    `git diff --check`.
 
 - [x] Gateway-status slash command diagnostics for `/gateway-status` and
   `/gwstatus`, keeping gateway diagnostics separate from session `/status` in
@@ -8930,6 +9230,320 @@ may lag behind this tracker.
     update selector (`7 passed, 571 deselected`), `ruff check
     src\openzues\cli.py tests\test_cli.py tests\test_ops_mesh.py`, `mypy
     src\openzues\cli.py`, and focused `git diff --check`.
+
+- [x] Package restart-health unhealthy snapshot diagnostics.
+  - Source: `openclaw-main/src/cli/daemon-cli/restart-health.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: package-shaped `openzues update` fails restart-health when the
+    restart snapshot itself is explicitly unhealthy, preserves
+    `restartHealth` runtime/port metadata, and renders OpenClaw-shaped service
+    runtime plus gateway port diagnostics.
+  - Evidence required: focused restart-health snapshot proof, adjacent
+    restart-health/package-update proof, ruff, mypy
+  - Status: checkpointed in `23f1e2b2`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_fails_when_restart_health_snapshot_is_unhealthy -q`
+    (`Update ok` before implementation, then `1 passed`), adjacent
+    restart-health/package-update proof
+    `python -m pytest tests\test_cli.py -q -k "restart_health or restarted_gateway or package_update"`
+    (`10 passed, 584 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] Gateway status deep CLI alias.
+  - Source: `openclaw-main/src/cli/daemon-cli/status.ts`,
+    `openclaw-main/src/cli/daemon-cli/register-service-commands.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues gateway status --deep --json` resolves as a native
+    gateway status command, preserves the requested probe/require-rpc/deep
+    posture, and emits the existing gateway capability/status payload in JSON
+    or human form.
+  - Evidence required: focused gateway status command proof, adjacent
+    gateway doctor/status proof, ruff, mypy
+  - Status: checkpointed in `005dc599`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_gateway_status_deep_json_aliases_gateway_doctor -q`
+    (Typer exit `2` before implementation, then `1 passed`), adjacent gateway
+    CLI proof
+    `python -m pytest tests\test_cli.py -q -k "gateway_doctor or gateway_status"`
+    (`4 passed, 591 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] Package restart-health follow-up diagnostics.
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/cli/daemon-cli/restart-health.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: failed package restart-health diagnostics include
+    `Restart log: ...` when the restart snapshot supplies a path and point the
+    operator to `openzues gateway status --deep` for follow-up diagnostics.
+  - Evidence required: focused restart-health follow-up proof, adjacent
+    restart-health/package-update/gateway-status proof, ruff, mypy
+  - Status: checkpointed in `8e989b2d`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_restart_health_diagnostics_include_restart_log_and_status_hint -q`
+    (restart log/status hint absent before implementation, then `1 passed`),
+    adjacent restart-health/package-update/gateway-status proof
+    `python -m pytest tests\test_cli.py -q -k "restart_health or restarted_gateway or package_update or gateway_status"`
+    (`12 passed, 584 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] Zalo Bot authenticated webhook ingress.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.webhook.ts`,
+    `openclaw-main/extensions/zalo/src/monitor.webhook.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`, `src/openzues/services/ops_mesh.py`,
+    `tests/test_zalo_webhook.py`
+  - Contract: `/zalo/webhook` accepts JSON `POST` updates with a valid
+    `x-bot-api-secret-token`, rejects missing/bad tokens before dispatch,
+    unwraps `{ ok, result }` bodies, and dispatches authenticated updates into
+    OpsMesh with account metadata.
+  - Evidence required: focused Zalo webhook route proof, adjacent Zalo/LINE
+    webhook and Zalo provider proof, ruff, mypy
+  - Status: checkpointed in `c0e8588e`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_zalo_webhook.py::test_zalo_webhook_validates_secret_token_and_dispatches_update -q`
+    (`404` before implementation, then focused file `2 passed`), adjacent
+    Zalo/LINE proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "zalo or line_webhook"`
+    (`23 passed, 458 deselected`), `ruff check src\openzues\app.py
+    src\openzues\services\ops_mesh.py tests\test_zalo_webhook.py`, `mypy
+    src\openzues\app.py src\openzues\services\ops_mesh.py`, and focused
+    `git diff --check`.
+
+- [x] Zalo text webhook session delivery and replay dedupe.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.webhook.ts`,
+    `openclaw-main/extensions/zalo/src/monitor.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: `message.text.received` dispatches into native session delivery
+    with Zalo target/reply/sender/timestamp metadata, and duplicate message-id
+    redeliveries return skip metadata without delivering again.
+  - Evidence required: focused Zalo session-delivery/replay proof, adjacent
+    Zalo webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `edcccea3`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_delivers_direct_text_message tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_deduplicates_text_redelivery_by_message_id -q`
+    (`2 failed` before implementation, then `2 passed`), adjacent Zalo
+    webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+    (`5 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Zalo image webhook media URL delivery.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/test-support/lifecycle-test-support.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: `message.image.received` dispatches into native session delivery
+    using caption text or `<media:image>` and surfaces `photo_url` as
+    `mediaUrls` / `photoUrl` delivery metadata.
+  - Evidence required: focused Zalo image webhook media proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `6c87d9e5`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_delivers_image_placeholder_with_media_url -q`
+    (session delivery absent before implementation, then `1 passed`),
+    adjacent Zalo webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+    (`6 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Fakeable Zalo inbound image media staging.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/test-support/lifecycle-test-support.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: fakeable Zalo media fetch requests include `url`, `source_url`,
+    filename, placeholder, max bytes, account id, and message id, then save
+    returned bytes into the inbound attachment store with `MediaPath`,
+    `MediaType`, `MediaUrls`, and `stagedMedia` projection.
+  - Evidence required: focused Zalo image staging proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `652f0938`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_stages_downloaded_image_media -q`
+    (`1 passed`), adjacent Zalo webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+    (`7 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Production Zalo inbound media fetch.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: native default fetcher activates when `canvas_state_dir` is
+    available, downloads `photo_url`, enforces max bytes, preserves response
+    content type/filename, and sends the bytes through the staging path.
+  - Evidence required: focused production Zalo fetch proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `00241ee2`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_downloads_image_media_with_default_fetcher -q`
+    (`0` fetches before implementation, then `1 passed`), adjacent Zalo
+    webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+    (`8 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Zalo direct-DM disabled policy.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/config-schema.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: account-level `dmPolicy="disabled"` skips direct Zalo webhook
+    session delivery with `zalo_dm_policy_disabled` metadata.
+  - Evidence required: focused Zalo disabled-DM proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `ac0e17e3`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_skips_disabled_direct_dm_policy -q`
+    (delivered before implementation, then `1 passed`), adjacent Zalo
+    webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+    (`9 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Zalo group allowlist policy.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/group-access.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: `groupPolicy="allowlist"` blocks group senders missing from
+    `groupAllowFrom` / `allowFrom`, returning
+    `zalo_group_sender_not_allowlisted` without session delivery.
+  - Evidence required: focused Zalo group allowlist proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `d0d548e2`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_skips_group_sender_not_allowlisted -q`
+    (delivered before implementation, then `1 passed`), adjacent Zalo
+    webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+    (`10 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Zalo direct-DM pairing challenge.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/src/pairing/pairing-challenge.ts`,
+    `openclaw-main/src/pairing/pairing-store.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: `dmPolicy="pairing"` blocks unknown direct senders, creates a
+    scoped Zalo pairing request, sends a pairing reply through route-backed
+    outbound delivery when available, and returns skip/pairing metadata.
+  - Evidence required: focused Zalo direct-DM pairing proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `74ce8fbd`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_issues_pairing_challenge_for_unknown_dm -q`
+    (missing challenge-service wiring before implementation, then `1 passed`),
+    adjacent Zalo webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+    (`11 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Zalo pairing allowFrom-store authorization.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/src/plugin-sdk/command-auth.ts`,
+    `openclaw-main/src/pairing/allow-from-store-file.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: `dmPolicy="pairing"` merges configured allowlist entries with
+    account-scoped Zalo pairing `allowFrom` files before deciding whether to
+    challenge or deliver a direct sender.
+  - Evidence required: focused Zalo pairing-store proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `1b2d5009`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_allows_pairing_store_sender -q`
+    (issued a new challenge before implementation, then `1 passed`), adjacent
+    Zalo webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+    (`12 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Zalo pairing approval store mutation.
+  - Source: `openclaw-main/src/pairing/pairing-store.ts`,
+    `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/pairing/allow-from-store-file.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: approving a pending Zalo pairing code removes the matching
+    request from the account-scoped pending store, prunes expired requests,
+    writes the sender into `zalo-<account>-allowFrom.json`, and returns
+    OpenClaw-shaped success/error metadata.
+  - Evidence required: focused Zalo pairing approval proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `9409ad9b`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_approve_zalo_pairing_code_moves_sender_to_allow_from_store -q`
+    (missing approval method before implementation, then `1 passed`), adjacent
+    Zalo webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo or approve_zalo_pairing"`
+    (`13 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Zalo pairing request listing.
+  - Source: `openclaw-main/src/pairing/pairing-store.ts`,
+    `openclaw-main/src/pairing/pairing-store.test.ts`,
+    `openclaw-main/src/cli/pairing-cli.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: listing pending Zalo pairing requests prunes expired entries,
+    enforces the per-account pending cap by oldest `lastSeenAt`, filters by
+    account, returns public request fields in `createdAt` order, and persists
+    the pruned store.
+  - Evidence required: focused Zalo pairing-list proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `d1c79fea`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_list_zalo_pairing_requests_filters_and_prunes_store -q`
+    (missing listing method before implementation, then `1 passed`), adjacent
+    Zalo webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo or approve_zalo_pairing or list_zalo_pairing"`
+    (`14 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 
 ## Update Rule
 

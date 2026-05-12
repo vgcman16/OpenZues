@@ -4,12 +4,12 @@
 
 - Updated: 2026-05-12.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- Estimated active gateway/session/tool-contract family parity: ~99.955% for the bounded local OpenZues path.
+- Estimated active gateway/session/tool-contract family parity: ~99.963% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.986% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
-- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.9%;
+- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.99987% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch restart-health failure, gateway health `serverVersion` projection, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, deeper installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated provider-native inbound/outbound breadth: ~99.9991% after Slack
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.99992% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, deeper installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated provider-native inbound/outbound breadth: ~99.99987% after Slack
   event/interactions/slash/signing coverage, command aliases/plugin command
   injection, WhatsApp reply fanout, Telegram media reply fanout/caption
   passthrough, Telegram stale-thread retry fallback for route-backed JSON and
@@ -18,7 +18,12 @@
   group mention gating, native LINE mention metadata handling, group
   pending-history replay, non-text group media mention-gate bypass, LINE
   inbound media staging, production credential-backed LINE media download, and
-  LINE webhook redelivery dedupe.
+  LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text
+  webhook session delivery/replay dedupe, Zalo image webhook media URL
+  delivery, fakeable Zalo inbound image media staging, production Zalo inbound
+  media fetch, Zalo direct DM disabled-policy gating, Zalo group allowlist
+  policy gating, Zalo direct DM pairing challenges, and Zalo pairing
+  allowFrom-store authorization.
 - Runtime helper addendum: imported `agent-runtime` core helper coverage is
   now verified in `a8e871a3` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `agent-runtime` model-selection helper
@@ -203,7 +208,7 @@
   helper slices above.
 - Runtime helper addendum: imported LINE root/core SDK barrel coverage is now
   verified in `696e61f2` and counted with the plugin helper slices above.
-- Estimated CLI/operator control-plane parity: ~99.9996% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, gateway-status slash command diagnostics, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
+- Estimated CLI/operator control-plane parity: ~99.99992% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, gateway-status slash command diagnostics, `gateway status --deep` command alias coverage, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/missing-version/unhealthy-snapshot restart-health diagnostics with restart-log/status follow-up lines, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -23038,6 +23043,178 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy
   src\openzues\services\gateway_browser_runtime.py`, and focused
   `git diff --check`. Source/test checkpointed in `886c86f3`.
+- `browser.request` local-control status/doctor route breadth now maps
+  upstream `GET /` and `GET /doctor` from
+  `extensions/browser/src/browser/routes/basic.ts` onto a native
+  `agent-browser` posture report built from current session, session list, and
+  profile inventory, with optional live/deep doctor snapshot checks. This
+  closes `OZ-CANVAS-001O`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.956%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.92%.
+  Remaining browser depth is profile mutation, permissions, locale/timezone,
+  response body, dialog hook, and any remaining label-action route breadth.
+- Verified the `browser.request` local status/doctor route seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_status_and_doctor_routes -q`
+  (`browser local request unsupported: GET /` before implementation, then
+  `1 passed`), adjacent browser request/status/doctor/session/profile proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_status or browser_doctor or browser_session or browser_profiles"`
+  (`20 passed, 1234 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `4b1f8028`.
+- `browser.request` local-control snapshot artifact route breadth now maps
+  upstream `POST /navigate` and `POST /pdf` from
+  `extensions/browser/src/browser/routes/agent.snapshot.ts` onto native
+  `agent-browser open` navigation and controlled PDF artifact export. This
+  closes `OZ-CANVAS-001P`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.957%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.94%.
+  Remaining browser depth is profile mutation, permissions, locale/timezone,
+  response body, dialog hook, and any remaining label-action route breadth.
+- Verified the `browser.request` local snapshot artifact route seam with
+  focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_snapshot_artifact_routes -q`
+  (`browser local request unsupported: POST /navigate` before implementation,
+  then `1 passed`), adjacent browser request/snapshot/pdf/navigation proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_snapshot or browser_pdf or browser_open or browser_status or browser_screenshot"`
+  (`18 passed, 1237 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `2ecdba40`.
+- `browser.request` local-control response body route breadth now maps
+  upstream `POST /response/body` from
+  `extensions/browser/src/browser/routes/agent.act.ts` onto the native
+  `agent-browser network requests` plus `network request <id>` path, returning
+  an OpenClaw-shaped `response` object with status, headers, body, request id,
+  URL, and max-char truncation metadata. This closes `OZ-CANVAS-001Q`;
+  repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.958%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.95%.
+  Remaining browser depth is profile mutation, permissions, locale/timezone,
+  dialog hook, and any remaining label-action route breadth.
+- Verified the `browser.request` local response body route seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_response_body_route -q`
+  (`browser local request unsupported: POST /response/body` before
+  implementation, then `1 passed`), adjacent browser request/network/snapshot
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_network or response_body or browser_snapshot"`
+  (`22 passed, 1234 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e7084f1f`.
+- `browser.request` local-control dialog hook route breadth now maps upstream
+  `POST /hooks/dialog` from
+  `extensions/browser/src/browser/routes/agent.act.hooks.ts` onto native
+  `agent-browser eval --stdin` execution. The hook installs temporary
+  alert/confirm/prompt handlers, restores the original handlers after the next
+  dialog, and returns OpenClaw-shaped accept/prompt metadata. This closes
+  `OZ-CANVAS-001R`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.959%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.96%.
+  Remaining browser depth is profile mutation, permissions, locale/timezone,
+  and any remaining label-action route breadth.
+- Verified the `browser.request` local dialog hook route seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_dialog_hook_route -q`
+  (`browser local request unsupported: POST /hooks/dialog` before
+  implementation, then `1 passed`), adjacent browser request/dialog/upload/act
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or dialog_hook or browser_upload or browser_act"`
+  (`22 passed, 1235 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `4be4d540`.
+- `browser.request` local-control locale/timezone route breadth now maps
+  upstream `POST /set/timezone` and `POST /set/locale` from
+  `extensions/browser/src/browser/routes/agent.storage.ts` onto native
+  `agent-browser eval --stdin` page emulation. The native adapter persists the
+  requested timezone and locale in page state, projects them through
+  `Intl.DateTimeFormat.prototype.resolvedOptions`, and patches navigator
+  language fields for locale emulation. This closes `OZ-CANVAS-001S`;
+  repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.960%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.97%.
+  Remaining browser depth is profile mutation, permissions, and any remaining
+  label-action route breadth.
+- Verified the `browser.request` local locale/timezone route seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_locale_timezone_routes -q`
+  (`browser local request unsupported: POST /set/timezone` before
+  implementation, then `1 passed`), adjacent browser request/settings/storage
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_set or locale_timezone or browser_setting or browser_storage or browser_debug"`
+  (`27 passed, 1231 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `003b0d5a`.
+- `browser.request` local-control tab label action route breadth now maps
+  upstream `/tabs/action` `label` from
+  `extensions/browser/src/browser/routes/tabs.ts` onto a native
+  session-local tab label store. Labeled tabs are projected back through
+  subsequent `GET /tabs` responses, and labels are cleaned up when a targeted
+  tab close succeeds. This closes `OZ-CANVAS-001T`; repo-wide parity remains
+  estimated at ~99.9%, active gateway/session/tool-contract parity moves to
+  ~99.961%, and browser/canvas/nodes/voice bounded-command parity moves to
+  ~99.98%. Remaining browser depth is persistent-profile mutation boundary
+  review and permissions.
+- Verified the `browser.request` local tab label action seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_tab_action_label_route -q`
+  (`browser local request unsupported: POST /tabs/action` before
+  implementation, then `1 passed`), adjacent browser request/tab/status proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_tab or tab_action or browser_status"`
+  (`23 passed, 1236 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `c6fb16d3`.
+- `browser.request` local-control permission grant route breadth now maps
+  upstream `POST /permissions/grant` from
+  `extensions/browser/src/browser/routes/permissions.ts` onto native
+  `agent-browser get cdp-url` plus CDP `Browser.grantPermissions` over
+  WebSocket. Required permissions are retried without unsupported optional
+  permissions, matching the upstream fallback behavior. This closes
+  `OZ-CANVAS-001U`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.962%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.99%.
+  Remaining browser depth is persistent-profile mutation boundary review.
+- Verified the `browser.request` local permission grant seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_permission_grant_route -q`
+  (`websocket_connect` adapter missing before implementation, then `1 passed`),
+  adjacent browser request/permission/settings/action/tab proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or permission_grant or browser_set or browser_act or browser_tab"`
+  (`28 passed, 1232 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `1a27af54`.
+- Reverified the persistent browser profile mutation guard against
+  `extensions/browser/src/browser/request-policy.ts`: `node.invoke
+  command=browser.proxy` and `browser.request` both reject OpenClaw's
+  persistent profile mutation routes before node wake/proxy dispatch. This
+  closes `OZ-CANVAS-001V`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.963%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.995%.
+  The browser local-request mini-queue has no remaining OpenClaw-backed route
+  head in the accepted native adapter scope.
+- Verified the persistent profile mutation boundary with focused
+  `python -m pytest tests\test_gateway_node_methods.py::test_node_invoke_rejects_persistent_browser_proxy_mutations_before_wake_attempt tests\test_gateway_node_methods.py::test_browser_request_rejects_persistent_profile_mutations_before_dispatch -q`
+  (`4 passed`), adjacent browser request/persistent guard proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "persistent_browser_proxy_mutations or persistent_profile_mutations or browser_request"`
+  (`23 passed, 1237 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`. Source/test code was already
+  checkpointed in earlier browser request guard slices; this entry is the
+  closeout verification checkpoint.
 - `agents_list` now carries the invoking session context into
   `agents.list toolProjection=sessions_spawn`, and the projection resolves
   requester-specific `gateway.agents.list[].subagents.allowAgents` /
@@ -23084,6 +23261,213 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 589 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `90e3d0a3`.
+- Package update restart-health checks now also fail when the restart snapshot
+  itself is explicitly unhealthy, even without plugin/channel/version detail
+  families. Native diagnostics preserve OpenClaw-shaped service runtime and
+  port status/error lines from the restart snapshot. This closes
+  `OZ-PKG-001CY`; repo-wide parity remains estimated at ~99.9%,
+  runtime/CLI/doctor native-bridge parity moves to ~99.99990%, and
+  CLI/operator control-plane parity moves to ~99.99990%.
+- Verified the unhealthy restart-health snapshot seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_fails_when_restart_health_snapshot_is_unhealthy -q`
+  (`Update ok` before implementation, then `1 passed`), adjacent
+  restart-health/package-update proof
+  `python -m pytest tests\test_cli.py -q -k "restart_health or restarted_gateway or package_update"`
+  (`10 passed, 584 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `23f1e2b2`.
+- The native CLI now exposes `openzues gateway status --deep --json` as an
+  OpenZues-native alias over the existing gateway capability/status view,
+  including OpenClaw-shaped `--probe/--no-probe` and `--require-rpc` argument
+  posture. This closes `OZ-CLI-001A`; repo-wide parity remains estimated at
+  ~99.9%, runtime/CLI/doctor native-bridge parity moves to ~99.99991%, and
+  CLI/operator control-plane parity moves to ~99.99991%.
+- Verified the gateway status command seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_gateway_status_deep_json_aliases_gateway_doctor -q`
+  (Typer exit `2` before implementation, then `1 passed`), adjacent gateway
+  CLI proof `python -m pytest tests\test_cli.py -q -k "gateway_doctor or gateway_status"`
+  (`4 passed, 591 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `005dc599`.
+- Package update restart-health diagnostics now include an optional
+  OpenClaw-shaped `Restart log: ...` line plus
+  `Run `openzues gateway status --deep` for details.` when restart-health
+  fails. This closes `OZ-PKG-001CZ`; repo-wide parity remains estimated at
+  ~99.9%, runtime/CLI/doctor native-bridge parity moves to ~99.99992%, and
+  CLI/operator control-plane parity moves to ~99.99992%.
+- Verified the restart-health follow-up diagnostics seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_restart_health_diagnostics_include_restart_log_and_status_hint -q`
+  (restart log/status hint absent before implementation, then `1 passed`),
+  adjacent restart-health/package-update/gateway-status proof
+  `python -m pytest tests\test_cli.py -q -k "restart_health or restarted_gateway or package_update or gateway_status"`
+  (`12 passed, 584 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `8e989b2d`.
+- Zalo Bot webhook ingress now exposes `/zalo/webhook`, validates
+  `x-bot-api-secret-token` against native channel config, enforces JSON update
+  payloads, unwraps OpenClaw-style `{ ok, result }` bodies, and dispatches the
+  authenticated update into OpsMesh. This closes `OZ-PROV-001FL`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth moves to ~99.9992%.
+- Verified the Zalo webhook ingress seam with focused red/green
+  `python -m pytest tests\test_zalo_webhook.py::test_zalo_webhook_validates_secret_token_and_dispatches_update -q`
+  (`404` before implementation, then included in `2 passed` for the focused
+  file), adjacent Zalo/LINE webhook and Zalo provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "zalo or line_webhook"`
+  (`23 passed, 458 deselected`), `ruff check src\openzues\app.py
+  src\openzues\services\ops_mesh.py tests\test_zalo_webhook.py`, `mypy
+  src\openzues\app.py src\openzues\services\ops_mesh.py`, and focused
+  `git diff --check`. Source/test checkpointed in `c0e8588e`.
+- Zalo Bot text webhook delivery now routes `message.text.received` updates into
+  the native session delivery path with Zalo conversation target, sender,
+  timestamp, reply metadata, and upstream-shaped message-id replay dedupe. This
+  closes `OZ-PROV-001FM`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.9993%.
+- Verified the Zalo webhook session delivery/replay seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_delivers_direct_text_message tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_deduplicates_text_redelivery_by_message_id -q`
+  (both failed before implementation, then `2 passed`), adjacent Zalo
+  webhook/provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+  (`5 passed, 476 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `edcccea3`.
+- Zalo Bot image webhook delivery now routes `message.image.received` updates
+  into native session delivery using caption text or `<media:image>` while
+  preserving `photo_url` as media metadata on the delivery result. This closes
+  `OZ-PROV-001FN`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.9994%.
+- Verified the Zalo image webhook media seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_delivers_image_placeholder_with_media_url -q`
+  (session delivery absent before implementation, then `1 passed`), adjacent
+  Zalo webhook/provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+  (`6 passed, 476 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `6c87d9e5`.
+- Zalo Bot inbound image media can now be staged through a fakeable native media
+  fetch adapter, preserving saved `MediaPath`/`MediaType`/`stagedMedia`
+  metadata alongside the original `photo_url`. This closes `OZ-PROV-001FO`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.9995%.
+- Verified the Zalo inbound image media staging seam with focused
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_stages_downloaded_image_media -q`
+  (`1 passed`), adjacent Zalo webhook/provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+  (`7 passed, 476 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `652f0938`.
+- Zalo Bot inbound image media now has a production default fetch path that
+  downloads `photo_url` when app state storage is configured, enforces the
+  5 MB cap, preserves content type, and stages the bytes through the shared
+  inbound attachment store. This closes `OZ-PROV-001FP`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.9996%.
+- Verified the production Zalo inbound media fetch seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_downloads_image_media_with_default_fetcher -q`
+  (`0` fetches before implementation, then `1 passed`), adjacent Zalo
+  webhook/provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+  (`8 passed, 476 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `00241ee2`.
+- Zalo direct inbound authorization now honors configured
+  `dmPolicy="disabled"` by skipping direct webhook delivery before session
+  dispatch and returning explicit skip metadata. This closes `OZ-PROV-001FQ`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.9997%.
+- Verified the Zalo direct DM disabled-policy seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_skips_disabled_direct_dm_policy -q`
+  (delivered before implementation, then `1 passed`), adjacent Zalo
+  webhook/provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+  (`9 passed, 476 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `ac0e17e3`.
+- Zalo group inbound authorization now honors configured
+  `groupPolicy="allowlist"` and `groupAllowFrom`, skipping non-allowlisted
+  group senders before session dispatch with explicit skip metadata. This
+  closes `OZ-PROV-001FR`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.9998%.
+- Verified the Zalo group allowlist-policy seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_skips_group_sender_not_allowlisted -q`
+  (delivered before implementation, then `1 passed`), adjacent Zalo
+  webhook/provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+  (`10 passed, 476 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `d0d548e2`.
+- Zalo direct inbound authorization now honors `dmPolicy="pairing"` for unknown
+  direct senders by issuing a fakeable/native pairing challenge, persisting
+  pending pairing state in the OpenClaw-shaped Zalo pairing store path, sending
+  the pairing reply through the existing route-backed outbound runtime when
+  available, and skipping session dispatch with explicit metadata. This closes
+  `OZ-PROV-001FS`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.99985%.
+- Verified the Zalo direct-DM pairing challenge seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_issues_pairing_challenge_for_unknown_dm -q`
+  (failed before implementation with missing challenge-service wiring, then `1
+  passed`), adjacent Zalo webhook/provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+  (`11 passed, 476 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `74ce8fbd`.
+- Zalo direct inbound authorization now honors the account-scoped pairing
+  `allowFrom` store for `dmPolicy="pairing"`, so already-approved senders in
+  `settings/oauth/zalo-<account>-allowFrom.json` or `oauth/...` are delivered
+  to native sessions instead of receiving another pairing challenge. This
+  closes `OZ-PROV-001FT`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.99987%.
+- Verified the Zalo pairing allowFrom-store seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_allows_pairing_store_sender -q`
+  (issued a new challenge before implementation, then `1 passed`), adjacent
+  Zalo webhook/provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+  (`12 passed, 476 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `1b2d5009`.
+- Zalo pairing approval now mutates the account-scoped `allowFrom` store:
+  valid pending pairing codes are consumed from the OpenClaw-shaped Zalo
+  pairing request store, the sender is added to
+  `settings/oauth/zalo-<account>-allowFrom.json`, expired requests are pruned,
+  and missing storage or unknown codes return precise native error metadata.
+  This closes `OZ-PROV-001FU`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.99989%.
+- Verified the Zalo pairing approval store-mutation seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_approve_zalo_pairing_code_moves_sender_to_allow_from_store -q`
+  (missing `approve_zalo_pairing_code` before implementation, then `1
+  passed`), adjacent Zalo webhook/provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo or approve_zalo_pairing"`
+  (`13 passed, 476 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `9409ad9b`.
+- Zalo pairing request listing now mirrors OpenClaw's
+  `listChannelPairingRequests` store lifecycle: pending requests are read from
+  the account-scoped Zalo pairing store, expired entries are pruned,
+  per-account pending limits drop the oldest `lastSeenAt` entries, results can
+  be account-filtered, and visible entries are returned in `createdAt` order.
+  This closes `OZ-PROV-001FV`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.99990%.
+- Verified the Zalo pairing request-list seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_list_zalo_pairing_requests_filters_and_prunes_store -q`
+  (missing `list_zalo_pairing_requests` before implementation, then `1
+  passed`), adjacent Zalo webhook/provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo or approve_zalo_pairing or list_zalo_pairing"`
+  (`14 passed, 476 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `d1c79fea`.
 
 ## References
 

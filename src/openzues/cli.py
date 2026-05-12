@@ -10410,18 +10410,148 @@ def _openclaw_update_restart_missing_gateway_version(
     )
 
 
+def _openclaw_update_restart_snapshot_unhealthy(
+    health_payload: Mapping[str, object],
+) -> bool:
+    healthy = health_payload.get("healthy")
+    if healthy is False:
+        return True
+    restart = health_payload.get("restart")
+    if isinstance(restart, Mapping) and restart.get("healthy") is False:
+        return True
+    status = _optional_cli_string(health_payload.get("status"))
+    if status is not None and status.lower() in {"error", "failed", "unhealthy"}:
+        return True
+    wait_outcome = _optional_cli_string(health_payload.get("waitOutcome"))
+    return wait_outcome in {
+        "plugin-errors",
+        "channel-errors",
+        "version-mismatch",
+        "stale-pids",
+        "stopped-free",
+        "timeout",
+    }
+
+
+def _openclaw_update_restart_scalar(value: object) -> str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    return _optional_cli_string(value)
+
+
+def _openclaw_update_restart_runtime_diagnostics(
+    health_payload: Mapping[str, object],
+) -> list[str]:
+    runtime = health_payload.get("runtime")
+    if not isinstance(runtime, Mapping):
+        restart = health_payload.get("restart")
+        runtime = restart.get("runtime") if isinstance(restart, Mapping) else None
+    if not isinstance(runtime, Mapping):
+        return []
+    parts: list[str] = []
+    for source_key, label in (
+        ("status", "status"),
+        ("state", "state"),
+        ("pid", "pid"),
+        ("lastExitStatus", "lastExit"),
+    ):
+        value = _openclaw_update_restart_scalar(runtime.get(source_key))
+        if value is not None:
+            parts.append(f"{label}={value}")
+    return [f"Service runtime: {', '.join(parts)}"] if parts else []
+
+
+def _openclaw_update_restart_port_diagnostics(
+    health_payload: Mapping[str, object],
+) -> list[str]:
+    port_usage = health_payload.get("portUsage")
+    if not isinstance(port_usage, Mapping):
+        restart = health_payload.get("restart")
+        port_usage = restart.get("portUsage") if isinstance(restart, Mapping) else None
+    if not isinstance(port_usage, Mapping):
+        return []
+    port = _openclaw_update_restart_scalar(port_usage.get("port")) or "unknown"
+    status = _optional_cli_string(port_usage.get("status")) or "unknown"
+    lines = [f"Gateway port {port} status: {status}."]
+    if status == "busy":
+        listeners = [
+            listener
+            for listener in _object_list(port_usage.get("listeners"))
+            if isinstance(listener, Mapping)
+        ]
+        if listeners:
+            lines.append("Port listeners:")
+            for listener in listeners:
+                listener_parts: list[str] = []
+                pid = _openclaw_update_restart_scalar(listener.get("pid"))
+                if pid is not None:
+                    listener_parts.append(f"pid={pid}")
+                ppid = _openclaw_update_restart_scalar(listener.get("ppid"))
+                if ppid is not None:
+                    listener_parts.append(f"ppid={ppid}")
+                command = _optional_cli_string(
+                    listener.get("commandLine")
+                ) or _optional_cli_string(listener.get("command"))
+                if command is not None:
+                    listener_parts.append(command)
+                lines.append(f"- {', '.join(listener_parts) or 'unknown listener'}")
+    errors = [
+        str(error)
+        for error in _object_list(port_usage.get("errors"))
+        if str(error).strip()
+    ]
+    if errors:
+        lines.append(f"Port diagnostics errors: {'; '.join(errors)}")
+    return lines
+
+
+def _openclaw_update_restart_snapshot_diagnostics(
+    health_payload: Mapping[str, object] | None,
+) -> list[str]:
+    if health_payload is None:
+        return []
+    return [
+        *_openclaw_update_restart_runtime_diagnostics(health_payload),
+        *_openclaw_update_restart_port_diagnostics(health_payload),
+    ]
+
+
+def _openclaw_update_restart_log_path(
+    health_payload: Mapping[str, object] | None,
+) -> str | None:
+    if health_payload is None:
+        return None
+    log_path = _optional_cli_string(health_payload.get("restartLogPath"))
+    if log_path is not None:
+        return log_path
+    log_path = _optional_cli_string(health_payload.get("restartLog"))
+    if log_path is not None:
+        return log_path
+    restart = health_payload.get("restart")
+    if isinstance(restart, Mapping):
+        return _optional_cli_string(restart.get("logPath")) or _optional_cli_string(
+            restart.get("restartLogPath")
+        )
+    return None
+
+
 def _openclaw_update_restart_health_diagnostics(
     version_mismatch: Mapping[str, object] | None,
     activated_plugin_errors: Sequence[Mapping[str, object]],
     channel_probe_errors: Sequence[Mapping[str, object]],
     *,
     missing_gateway_version: bool = False,
+    unhealthy_snapshot: bool = False,
+    health_payload: Mapping[str, object] | None = None,
 ) -> list[str]:
     if (
         version_mismatch is None
         and not activated_plugin_errors
         and not channel_probe_errors
         and not missing_gateway_version
+        and not unhealthy_snapshot
     ):
         return []
     lines = ["Gateway did not become healthy after restart."]
@@ -10444,6 +10574,11 @@ def _openclaw_update_restart_health_diagnostics(
             channel_id = _optional_cli_string(channel.get("id")) or "unknown"
             error = _optional_cli_string(channel.get("error")) or "probe failed"
             lines.append(f"- {channel_id}: {error}")
+    lines.extend(_openclaw_update_restart_snapshot_diagnostics(health_payload))
+    restart_log_path = _openclaw_update_restart_log_path(health_payload)
+    if restart_log_path is not None:
+        lines.append(f"Restart log: {restart_log_path}")
+    lines.append("Run `openzues gateway status --deep` for details.")
     return lines
 
 
@@ -10500,11 +10635,13 @@ async def _openclaw_update_attach_restart_health(
         payload,
         health_payload,
     )
+    unhealthy_snapshot = _openclaw_update_restart_snapshot_unhealthy(health_payload)
     restart_health: dict[str, object] = {
         "status": "error"
         if (
             version_mismatch is not None
             or missing_gateway_version
+            or unhealthy_snapshot
             or activated_plugin_errors
             or channel_probe_errors
         )
@@ -10512,6 +10649,18 @@ async def _openclaw_update_attach_restart_health(
         "activatedPluginErrors": activated_plugin_errors,
         "channelProbeErrors": channel_probe_errors,
     }
+    for key in (
+        "healthy",
+        "waitOutcome",
+        "elapsedMs",
+        "runtime",
+        "portUsage",
+        "staleGatewayPids",
+        "gatewayVersion",
+        "restartLogPath",
+    ):
+        if key in health_payload:
+            restart_health[key] = health_payload[key]
     if version_mismatch is not None:
         restart_health["versionMismatch"] = dict(version_mismatch)
     if missing_gateway_version:
@@ -10527,6 +10676,8 @@ async def _openclaw_update_attach_restart_health(
         activated_plugin_errors,
         channel_probe_errors,
         missing_gateway_version=missing_gateway_version,
+        unhealthy_snapshot=unhealthy_snapshot,
+        health_payload=health_payload,
     )
     if diagnostics:
         restart_health["diagnostics"] = diagnostics
@@ -10535,6 +10686,7 @@ async def _openclaw_update_attach_restart_health(
     if (
         version_mismatch is not None
         or missing_gateway_version
+        or unhealthy_snapshot
         or activated_plugin_errors
         or channel_probe_errors
     ):
@@ -107150,6 +107302,13 @@ def gateway_show(
     _emit_gateway_bootstrap(payload, json_output=json_output)
 
 
+async def _gateway_capability_status_payload(services: CliServices) -> dict[str, object]:
+    view = await _try_live_gateway_capability_view(services.settings)
+    if view is None:
+        view = await services.gateway_capability.get_view()
+    return view.model_dump(mode="json")
+
+
 @gateway_app.command("doctor")
 def gateway_doctor(
     json_output: bool = typer.Option(
@@ -107158,13 +107317,42 @@ def gateway_doctor(
         help="Emit the gateway capability summary as JSON.",
     ),
 ) -> None:
-    async def _action(services: CliServices) -> dict[str, object]:
-        view = await _try_live_gateway_capability_view(services.settings)
-        if view is None:
-            view = await services.gateway_capability.get_view()
-        return view.model_dump(mode="json")
+    payload = _run(_run_with_services(_gateway_capability_status_payload))
+    _emit_gateway_capability(payload, json_output=json_output)
 
-    payload = _run(_run_with_services(_action))
+
+@gateway_app.command("status")
+def gateway_status(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the gateway status summary as JSON.",
+    ),
+    deep: bool = typer.Option(
+        False,
+        "--deep",
+        help="Include deep local gateway diagnostics.",
+    ),
+    probe: bool = typer.Option(
+        True,
+        "--probe/--no-probe",
+        help="Probe the live gateway before falling back to the saved snapshot.",
+    ),
+    require_rpc: bool = typer.Option(
+        False,
+        "--require-rpc",
+        help="Fail when a live gateway status probe is required but unavailable.",
+    ),
+) -> None:
+    if require_rpc and not probe:
+        typer.echo("Gateway status failed: --require-rpc cannot be used with --no-probe.", err=True)
+        raise typer.Exit(code=1)
+    payload = _run(_run_with_services(_gateway_capability_status_payload))
+    payload["statusCommand"] = {
+        "probe": probe,
+        "requireRpc": require_rpc,
+        "deep": deep,
+    }
     _emit_gateway_capability(payload, json_output=json_output)
 
 

@@ -8,7 +8,9 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
+
+from websockets.sync.client import connect as websocket_connect
 
 DEFAULT_BROWSER_SESSION = "openzues-browser"
 _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
@@ -23,6 +25,7 @@ class GatewayBrowserRuntimeService:
     def __init__(self, *, command: str | None = None) -> None:
         self._command = command
         self._recording_paths: dict[str, Path] = {}
+        self._tab_labels: dict[tuple[str, str], str] = {}
 
     def _resolve_command(self) -> str:
         command = self._command or shutil.which("agent-browser.cmd") or shutil.which(
@@ -148,6 +151,19 @@ class GatewayBrowserRuntimeService:
             )
         if normalized_method == "GET" and normalized_path == "/snapshot":
             return self.snapshot(session=session)
+        if normalized_method == "POST" and normalized_path == "/navigate":
+            return self.navigate(
+                browser_required_string(request_body, "url", label="url"),
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/pdf":
+            return self.pdf(session=session)
+        if normalized_method == "POST" and normalized_path == "/response/body":
+            return self.response_body(
+                browser_required_string(request_body, "url", label="url"),
+                session=session,
+                max_chars=browser_request_int(request_body, "maxChars"),
+            )
         if normalized_method == "POST" and normalized_path == "/act":
             return self.act(dict(request_body), session=session)
         if normalized_method == "POST" and normalized_path == "/screenshot":
@@ -255,6 +271,22 @@ class GatewayBrowserRuntimeService:
                 ],
                 session=session,
             )
+        if normalized_method == "POST" and normalized_path == "/set/timezone":
+            return self.set_timezone(
+                browser_required_string(
+                    request_body,
+                    "timezoneId",
+                    label="timezoneId",
+                ),
+                session=session,
+                target_id=browser_request_string(request_body, "targetId") or None,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/locale":
+            return self.set_locale(
+                browser_required_string(request_body, "locale", label="locale"),
+                session=session,
+                target_id=browser_request_string(request_body, "targetId") or None,
+            )
         if normalized_method == "POST" and normalized_path == "/set/device":
             return self.set_setting(
                 "device",
@@ -280,6 +312,35 @@ class GatewayBrowserRuntimeService:
             return self.upload(
                 selector,
                 browser_request_string_list(request_body, "paths"),
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/hooks/dialog":
+            if "accept" not in request_body:
+                raise GatewayBrowserRuntimeError("accept is required")
+            return self.dialog_hook(
+                accept=browser_request_bool(request_body.get("accept")),
+                prompt_text=browser_request_string(request_body, "promptText") or None,
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/permissions/grant":
+            origin = browser_permission_origin(request_body.get("origin"))
+            if origin is None:
+                raise GatewayBrowserRuntimeError("origin must be an http(s) origin")
+            permissions = browser_permission_list(
+                request_body,
+                "permissions",
+                required=True,
+            )
+            optional_permissions = browser_permission_list(
+                request_body,
+                "optionalPermissions",
+            )
+            timeout_ms = max(browser_request_int(request_body, "timeoutMs") or 5000, 1000)
+            return self.grant_permissions(
+                origin=origin,
+                permissions=permissions,
+                optional_permissions=optional_permissions,
+                timeout_ms=timeout_ms,
                 session=session,
             )
         if normalized_method == "POST" and normalized_path == "/tabs/open":
@@ -318,6 +379,14 @@ class GatewayBrowserRuntimeService:
                     index,
                 )
                 return self.focus(target_id, session=session)
+            if action == "label":
+                target_id = browser_required_string(
+                    request_body,
+                    "targetId",
+                    label="targetId",
+                )
+                label = browser_required_string(request_body, "label", label="label")
+                return self.label_tab(target_id, label, session=session)
         if normalized_method == "GET" and normalized_path == "/cookies":
             return self.cookies_get(session=session)
         if normalized_method == "POST" and normalized_path == "/cookies/clear":
@@ -421,6 +490,50 @@ class GatewayBrowserRuntimeService:
         payload["values"] = payload_values
         payload["output"] = safe_output
         return payload
+
+    def set_timezone(
+        self,
+        timezone_id: str,
+        *,
+        session: str,
+        target_id: str | None = None,
+    ) -> dict[str, object]:
+        output = self._run(
+            ["eval", "--stdin"],
+            session=session,
+            timeout_seconds=5.0,
+            input_text=browser_page_emulation_script(timezone_id=timezone_id),
+        )
+        return browser_page_emulation_payload(
+            session=session,
+            feature="timezone",
+            field="timezoneId",
+            value=timezone_id,
+            target_id=target_id,
+            output=output,
+        )
+
+    def set_locale(
+        self,
+        locale: str,
+        *,
+        session: str,
+        target_id: str | None = None,
+    ) -> dict[str, object]:
+        output = self._run(
+            ["eval", "--stdin"],
+            session=session,
+            timeout_seconds=5.0,
+            input_text=browser_page_emulation_script(locale=locale),
+        )
+        return browser_page_emulation_payload(
+            session=session,
+            feature="locale",
+            field="locale",
+            value=locale,
+            target_id=target_id,
+            output=output,
+        )
 
     def batch(
         self,
@@ -566,6 +679,7 @@ class GatewayBrowserRuntimeService:
     ) -> dict[str, object]:
         if target_id:
             output = self._run(["tab", "close", target_id], session=session, timeout_seconds=6.0)
+            self._tab_labels.pop((session, target_id), None)
             return {
                 "ok": True,
                 "status": "ready",
@@ -820,6 +934,26 @@ class GatewayBrowserRuntimeService:
             session=session,
             request_id=request_id,
             output=output,
+        )
+
+    def response_body(
+        self,
+        url: str,
+        *,
+        session: str,
+        max_chars: int | None = None,
+    ) -> dict[str, object]:
+        requests = self.network_requests(session=session, filter_pattern=url)
+        request_id = browser_first_network_request_id(requests)
+        if not request_id:
+            raise GatewayBrowserRuntimeError("matching network request not found")
+        detail = self.network_request(request_id, session=session)
+        return browser_response_body_payload(
+            session=session,
+            url=url,
+            request_id=request_id,
+            detail=detail,
+            max_chars=max_chars,
         )
 
     def network_har_start(self, *, session: str) -> dict[str, object]:
@@ -1114,6 +1248,59 @@ class GatewayBrowserRuntimeService:
             output=output,
         )
 
+    def dialog_hook(
+        self,
+        *,
+        session: str,
+        accept: bool,
+        prompt_text: str | None = None,
+    ) -> dict[str, object]:
+        script = browser_dialog_hook_script(accept=accept, prompt_text=prompt_text)
+        output = self._run(
+            ["eval", "--stdin"],
+            session=session,
+            timeout_seconds=5.0,
+            input_text=script,
+        )
+        return browser_dialog_hook_payload(
+            session=session,
+            accept=accept,
+            prompt_text=prompt_text,
+            output=output,
+        )
+
+    def grant_permissions(
+        self,
+        *,
+        origin: str,
+        permissions: list[str],
+        optional_permissions: list[str],
+        timeout_ms: int,
+        session: str,
+    ) -> dict[str, object]:
+        cdp_url = strip_browser_value(
+            self._run(
+                ["get", "cdp-url"],
+                session=session,
+                timeout_seconds=max(timeout_ms / 1000, 1.0),
+            )
+        )
+        if not cdp_url.startswith(("ws://", "wss://")):
+            raise GatewayBrowserRuntimeError("browser CDP WebSocket unavailable")
+        granted_permissions, unsupported_permissions = browser_grant_permissions_via_cdp(
+            cdp_url=cdp_url,
+            origin=origin,
+            permissions=permissions,
+            optional_permissions=optional_permissions,
+            timeout_seconds=max(timeout_ms / 1000, 1.0),
+        )
+        return browser_permissions_payload(
+            session=session,
+            origin=origin,
+            granted_permissions=granted_permissions,
+            unsupported_permissions=unsupported_permissions,
+        )
+
     def trace_start(self, *, session: str) -> dict[str, object]:
         output = self._run(["trace", "start"], session=session, timeout_seconds=5.0)
         return browser_trace_start_payload(session=session, output=output)
@@ -1340,7 +1527,28 @@ class GatewayBrowserRuntimeService:
 
     def tabs(self, *, session: str) -> dict[str, object]:
         output = self._run(["tab", "list"], session=session, timeout_seconds=5.0)
-        return browser_tabs_payload(session=session, output=output)
+        return browser_tabs_payload(
+            session=session,
+            output=output,
+            labels=self._tab_labels,
+        )
+
+    def label_tab(self, target_id: str, label: str, *, session: str) -> dict[str, object]:
+        self._tab_labels[(session, target_id)] = label
+        tabs = self.tabs(session=session)
+        tab = browser_tab_from_payload(tabs, target_id)
+        if tab is None:
+            tab = {"targetId": target_id, "label": label}
+        return {
+            "ok": True,
+            "status": "ready",
+            "headline": "Browser tab labeled",
+            "summary": f"Labeled browser tab {target_id} as {label}.",
+            "session": session,
+            "targetId": target_id,
+            "label": label,
+            "tab": tab,
+        }
 
     def screenshot(self, *, session: str, full_page: bool = False) -> dict[str, object]:
         screenshot_path = browser_screenshot_target_path(session)
@@ -1495,7 +1703,12 @@ def browser_stream_payload(*, label: str, session: str, output: str) -> dict[str
     }
 
 
-def browser_tabs_payload(*, session: str, output: str) -> dict[str, object]:
+def browser_tabs_payload(
+    *,
+    session: str,
+    output: str,
+    labels: dict[tuple[str, str], str] | None = None,
+) -> dict[str, object]:
     tabs: list[object] = []
     try:
         parsed = json.loads(output) if output else None
@@ -1507,6 +1720,8 @@ def browser_tabs_payload(*, session: str, output: str) -> dict[str, object]:
             tabs = raw_tabs
     elif isinstance(parsed, list):
         tabs = parsed
+    if labels:
+        tabs = browser_tabs_with_labels(session=session, tabs=tabs, labels=labels)
     lines = browser_output_lines(output)
     tab_count = len(tabs) if tabs else len(lines)
     return {
@@ -1519,6 +1734,51 @@ def browser_tabs_payload(*, session: str, output: str) -> dict[str, object]:
         "tabs": tabs,
         "lines": lines,
     }
+
+
+def browser_tabs_with_labels(
+    *,
+    session: str,
+    tabs: list[object],
+    labels: dict[tuple[str, str], str],
+) -> list[object]:
+    labeled_tabs: list[object] = []
+    for tab in tabs:
+        if not isinstance(tab, dict):
+            labeled_tabs.append(tab)
+            continue
+        target_id = browser_tab_target_id_from_map(tab)
+        label = labels.get((session, target_id)) if target_id else None
+        if label is None:
+            labeled_tabs.append(tab)
+            continue
+        labeled = dict(tab)
+        labeled["label"] = label
+        labeled_tabs.append(labeled)
+    return labeled_tabs
+
+
+def browser_tab_from_payload(
+    payload: dict[str, object],
+    target_id: str,
+) -> dict[str, object] | None:
+    raw_tabs = payload.get("tabs")
+    if not isinstance(raw_tabs, list):
+        return None
+    for tab in raw_tabs:
+        if not isinstance(tab, dict):
+            continue
+        if browser_tab_target_id_from_map(tab) == target_id:
+            return {str(key): value for key, value in tab.items() if isinstance(key, str)}
+    return None
+
+
+def browser_tab_target_id_from_map(tab: dict[object, object]) -> str:
+    for key in ("targetId", "id", "tabId"):
+        value = tab.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def browser_profiles_payload(*, session: str, output: str) -> dict[str, object]:
@@ -1645,6 +1905,72 @@ def browser_network_request_payload(
         "detail": detail,
         "lines": lines,
     }
+
+
+def browser_first_network_request_id(requests_payload: dict[str, object]) -> str:
+    requests = requests_payload.get("requests")
+    if not isinstance(requests, list):
+        return ""
+    for entry in requests:
+        if not isinstance(entry, dict):
+            continue
+        for key in ("id", "requestId"):
+            value = entry.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def browser_response_body_payload(
+    *,
+    session: str,
+    url: str,
+    request_id: str,
+    detail: dict[str, object],
+    max_chars: int | None,
+) -> dict[str, object]:
+    raw_detail = detail.get("detail")
+    detail_map = raw_detail if isinstance(raw_detail, dict) else {}
+    raw_response = detail_map.get("response")
+    response_map = raw_response if isinstance(raw_response, dict) else {}
+    body = browser_response_body_text(response_map, detail_map)
+    truncated = False
+    if max_chars is not None and max_chars >= 0 and len(body) > max_chars:
+        body = body[:max_chars]
+        truncated = True
+    headers = response_map.get("headers")
+    response: dict[str, object] = {
+        "requestId": request_id,
+        "url": browser_response_string(detail_map.get("url")) or url,
+        "status": response_map.get("status") or detail_map.get("status"),
+        "headers": headers if isinstance(headers, dict) else {},
+        "body": body,
+        "truncated": truncated,
+    }
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser response body captured",
+        "summary": f"Captured response body for {url}.",
+        "session": session,
+        "response": response,
+    }
+
+
+def browser_response_body_text(
+    response: dict[str, object],
+    detail: dict[str, object],
+) -> str:
+    for source in (response, detail):
+        for key in ("body", "text", "content"):
+            value = source.get(key)
+            if isinstance(value, str):
+                return value
+    return ""
+
+
+def browser_response_string(value: object) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
 
 
 def browser_network_har_start_payload(*, session: str, output: str) -> dict[str, object]:
@@ -2055,6 +2381,220 @@ def browser_upload_payload(
         "lines": lines,
         "output": output,
     }
+
+
+def browser_dialog_hook_script(*, accept: bool, prompt_text: str | None) -> str:
+    confirm_value = "true" if accept else "false"
+    prompt_value = json.dumps(prompt_text or "") if accept else "null"
+    return f"""() => {{
+  const state = (window.__openclawDialogHook ??= {{}});
+  if (!state.originals) {{
+    state.originals = {{
+      alert: window.alert.bind(window),
+      confirm: window.confirm.bind(window),
+      prompt: window.prompt.bind(window),
+    }};
+  }}
+  const originals = state.originals;
+  const restore = () => {{
+    window.alert = originals.alert;
+    window.confirm = originals.confirm;
+    window.prompt = originals.prompt;
+    delete window.__openclawDialogHook;
+  }};
+  window.alert = (...args) => {{
+    try {{
+      return undefined;
+    }} finally {{
+      restore();
+    }}
+  }};
+  window.confirm = (...args) => {{
+    try {{
+      return {confirm_value};
+    }} finally {{
+      restore();
+    }}
+  }};
+  window.prompt = (...args) => {{
+    try {{
+      return {prompt_value};
+    }} finally {{
+      restore();
+    }}
+  }};
+  return true;
+}}"""
+
+
+def browser_dialog_hook_payload(
+    *,
+    session: str,
+    accept: bool,
+    prompt_text: str | None,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser dialog hook armed",
+        "summary": first_browser_output_line(output) or "Browser dialog hook armed.",
+        "session": session,
+        "accept": accept,
+        "promptText": prompt_text,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+
+
+def browser_grant_permissions_via_cdp(
+    *,
+    cdp_url: str,
+    origin: str,
+    permissions: list[str],
+    optional_permissions: list[str],
+    timeout_seconds: float,
+) -> tuple[list[str], list[str]]:
+    all_permissions = list(dict.fromkeys([*permissions, *optional_permissions]))
+    try:
+        with websocket_connect(cdp_url, open_timeout=timeout_seconds) as socket:
+            error = browser_cdp_send(
+                socket,
+                message_id=1,
+                method="Browser.grantPermissions",
+                params={"origin": origin, "permissions": all_permissions},
+            )
+            if error is None:
+                return all_permissions, []
+            if not optional_permissions:
+                raise GatewayBrowserRuntimeError(error)
+            retry_error = browser_cdp_send(
+                socket,
+                message_id=2,
+                method="Browser.grantPermissions",
+                params={"origin": origin, "permissions": permissions},
+            )
+            if retry_error is not None:
+                raise GatewayBrowserRuntimeError(retry_error)
+            return permissions, optional_permissions
+    except GatewayBrowserRuntimeError:
+        raise
+    except Exception as exc:
+        raise GatewayBrowserRuntimeError(f"browser permission grant failed: {exc}") from exc
+
+
+def browser_cdp_send(
+    socket: Any,
+    *,
+    message_id: int,
+    method: str,
+    params: dict[str, object],
+) -> str | None:
+    socket.send(json.dumps({"id": message_id, "method": method, "params": params}))
+    raw_response = socket.recv()
+    try:
+        response = json.loads(raw_response) if isinstance(raw_response, str) else {}
+    except json.JSONDecodeError as exc:
+        raise GatewayBrowserRuntimeError("browser CDP returned invalid JSON") from exc
+    if not isinstance(response, dict):
+        raise GatewayBrowserRuntimeError("browser CDP returned invalid response")
+    error = response.get("error")
+    if isinstance(error, dict):
+        message = error.get("message")
+        return str(message) if message else "browser CDP command failed"
+    if error:
+        return str(error)
+    return None
+
+
+def browser_permissions_payload(
+    *,
+    session: str,
+    origin: str,
+    granted_permissions: list[str],
+    unsupported_permissions: list[str],
+) -> dict[str, object]:
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser permissions granted",
+        "summary": f"Granted {len(granted_permissions)} browser permission(s).",
+        "session": session,
+        "origin": origin,
+        "grantedPermissions": granted_permissions,
+        "unsupportedPermissions": unsupported_permissions,
+    }
+
+
+def browser_page_emulation_script(
+    *,
+    timezone_id: str | None = None,
+    locale: str | None = None,
+) -> str:
+    timezone_line = (
+        f"  state.timezoneId = {json.dumps(timezone_id)};\n" if timezone_id else ""
+    )
+    locale_line = f"  state.locale = {json.dumps(locale)};\n" if locale else ""
+    return f"""() => {{
+  const state = (window.__openclawPageEmulation ??= {{}});
+{timezone_line}{locale_line}  if (!state.originalDateTimeResolvedOptions) {{
+    state.originalDateTimeResolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
+    Intl.DateTimeFormat.prototype.resolvedOptions = function(...args) {{
+      const result = state.originalDateTimeResolvedOptions.apply(this, args);
+      if (state.timezoneId) {{
+        result.timeZone = state.timezoneId;
+      }}
+      if (state.locale) {{
+        result.locale = state.locale;
+      }}
+      return result;
+    }};
+  }}
+  if (state.locale) {{
+    try {{
+      Object.defineProperty(window.navigator, "language", {{
+        configurable: true,
+        get: () => state.locale,
+      }});
+    }} catch (error) {{}}
+    try {{
+      Object.defineProperty(window.navigator, "languages", {{
+        configurable: true,
+        get: () => [state.locale],
+      }});
+    }} catch (error) {{}}
+  }}
+  return true;
+}}"""
+
+
+def browser_page_emulation_payload(
+    *,
+    session: str,
+    feature: str,
+    field: str,
+    value: str,
+    target_id: str | None,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    payload: dict[str, object] = {
+        "ok": True,
+        "status": "ready",
+        "headline": f"Browser {feature} emulation updated",
+        "summary": first_browser_output_line(output)
+        or f"Browser {feature} emulation updated.",
+        "session": session,
+        "feature": feature,
+        field: value,
+        "targetId": target_id,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+    return payload
 
 
 def browser_trace_start_payload(*, session: str, output: str) -> dict[str, object]:
@@ -2746,6 +3286,39 @@ def browser_request_number_text(request: dict[str, Any], key: str, *, label: str
     if isinstance(value, str) and value.strip():
         return value.strip()
     raise GatewayBrowserRuntimeError(f"{label} is required")
+
+
+def browser_permission_origin(value: object) -> str | None:
+    text = value.strip() if isinstance(value, str) else ""
+    if not text:
+        return None
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def browser_permission_list(
+    request: dict[str, Any],
+    key: str,
+    *,
+    required: bool = False,
+) -> list[str]:
+    raw = request.get(key)
+    if raw is None and not required:
+        return []
+    if not isinstance(raw, list):
+        raise GatewayBrowserRuntimeError(f"{key} must be a string array")
+    values: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, str) or not entry.strip():
+            raise GatewayBrowserRuntimeError(f"{key} must be a string array")
+        value = entry.strip()
+        if value not in values:
+            values.append(value)
+    if required and not values:
+        raise GatewayBrowserRuntimeError(f"{key} must be a non-empty string array")
+    return values
 
 
 def browser_required_selector(request: dict[str, Any], kind: str) -> str:

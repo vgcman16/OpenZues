@@ -65,6 +65,8 @@ from openzues.services.ops_mesh import (
     GatewayLineInboundMediaFetchRequest,
     GatewayMSTeamsFeedbackReflectionRequest,
     GatewayMSTeamsInboundMediaFetchRequest,
+    GatewayZaloInboundMediaFetchRequest,
+    GatewayZaloPairingChallengeRequest,
     OpsMeshService,
     _IrcRouteConfig,
     _saved_outbound_delivery_replay_message,
@@ -33978,6 +33980,888 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(
     assert delivery["route_scope"]["provider_result"]["mediaIds"] == [
         "zalo-photo-1",
         "zalo-photo-2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_delivers_direct_text_message(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "zalo-message-1",
+                "text": "Ship the Zalo inbound lane.",
+                "date": 1760000000,
+                "chat": {"id": "chat-123", "chat_type": "PRIVATE"},
+                "from": {"id": "zalo-user-1", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="zalo",
+        account_id="zalo-bot",
+        peer_kind="direct",
+        peer_id="zalo:chat-123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [
+        (expected_session_key, "Ship the Zalo inbound lane.")
+    ]
+    assert result == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "eventName": "message.text.received",
+        "eventCount": 1,
+        "deliveredCount": 1,
+        "deliveries": [
+            {
+                "eventName": "message.text.received",
+                "messageId": "zalo-session-message-1",
+                "inboundMessageId": "zalo-message-1",
+                "timestamp": 1760000000000,
+                "sessionKey": expected_session_key,
+                "text": "Ship the Zalo inbound lane.",
+                "senderId": "zalo-user-1",
+                "senderName": "Ada",
+                "conversationId": "chat-123",
+                "conversationType": "direct",
+                "conversationTarget": expected_target.model_dump(mode="json"),
+                "reply": {
+                    "to": "zalo:chat-123",
+                    "originatingTo": "zalo:chat-123",
+                },
+                "delivery": {"runtime": "session-backed"},
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_deduplicates_text_redelivery_by_message_id(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": f"zalo-session-message-{len(session_deliveries)}"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    original_payload = {
+        "event_name": "message.text.received",
+        "message": {
+            "message_id": "zalo-message-dedupe-1",
+            "text": "Deliver this Zalo update once.",
+            "date": 1760000000,
+            "chat": {"id": "chat-dedupe", "chat_type": "PRIVATE"},
+            "from": {"id": "zalo-user-dedupe", "display_name": "Ada"},
+        },
+    }
+
+    first = await service.handle_zalo_webhook(
+        original_payload,
+        account_id="zalo-bot",
+    )
+    redelivery = await service.handle_zalo_webhook(
+        original_payload,
+        account_id="zalo-bot",
+    )
+
+    assert first["deliveredCount"] == 1
+    assert len(session_deliveries) == 1
+    assert session_deliveries[0][1] == "Deliver this Zalo update once."
+    assert redelivery == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "eventName": "message.text.received",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skippedCount": 1,
+        "skips": [
+            {
+                "eventName": "message.text.received",
+                "reason": "zalo_webhook_replay_duplicate",
+                "inboundMessageId": "zalo-message-dedupe-1",
+                "replayId": "message:zalo-message-dedupe-1",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_delivers_image_placeholder_with_media_url(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-image-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.image.received",
+            "message": {
+                "message_id": "zalo-image-1",
+                "caption": "",
+                "photo_url": "https://example.com/zalo-image.jpg",
+                "date": 1760000000,
+                "chat": {"id": "chat-image", "chat_type": "PRIVATE"},
+                "from": {"id": "zalo-user-image", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="zalo",
+        account_id="zalo-bot",
+        peer_kind="direct",
+        peer_id="zalo:chat-image",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert result["deliveredCount"] == 1
+    delivery = result["deliveries"][0]
+    assert delivery["eventName"] == "message.image.received"
+    assert delivery["messageId"] == "zalo-image-session-1"
+    assert delivery["inboundMessageId"] == "zalo-image-1"
+    assert delivery["text"] == "<media:image>"
+    assert delivery["mediaUrls"] == ["https://example.com/zalo-image.jpg"]
+    assert delivery["photoUrl"] == "https://example.com/zalo-image.jpg"
+    assert delivery["delivery"] == {
+        "runtime": "session-backed",
+        "media": {"urls": 1},
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_stages_downloaded_image_media(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    fetch_requests: list[GatewayZaloInboundMediaFetchRequest] = []
+    jpeg_bytes = b"\xff\xd8\xff\xe0zalo-media"
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-staged-image-session-1"}
+
+    async def fetch_media(
+        request: GatewayZaloInboundMediaFetchRequest,
+    ) -> dict[str, object]:
+        fetch_requests.append(request)
+        return {
+            "bytes": jpeg_bytes,
+            "contentType": "image/jpeg",
+            "filename": "zalo-photo.jpg",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        zalo_inbound_media_fetch_service=fetch_media,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.image.received",
+            "message": {
+                "message_id": "zalo-staged-image-1",
+                "caption": "",
+                "photo_url": "https://example.com/zalo-staged-image.jpg",
+                "date": 1760000000,
+                "chat": {"id": "chat-staged-image", "chat_type": "PRIVATE"},
+                "from": {"id": "zalo-user-image", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="zalo",
+        account_id="zalo-bot",
+        peer_kind="direct",
+        peer_id="zalo:chat-staged-image",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert len(fetch_requests) == 1
+    fetch_request = fetch_requests[0]
+    assert fetch_request.url == "https://example.com/zalo-staged-image.jpg"
+    assert fetch_request.source_url == "https://example.com/zalo-staged-image.jpg"
+    assert fetch_request.filename == "zalo-staged-image.jpg"
+    assert fetch_request.placeholder == "<media:image>"
+    assert fetch_request.max_bytes == 5 * 1024 * 1024
+    assert fetch_request.account_id == "zalo-bot"
+    assert fetch_request.message_id == "zalo-staged-image-1"
+
+    delivery = result["deliveries"][0]
+    staged_paths = delivery["MediaPaths"]
+    assert isinstance(staged_paths, list)
+    assert len(staged_paths) == 1
+    assert delivery["MediaPath"] == staged_paths[0]
+    assert delivery["MediaUrl"] == staged_paths[0]
+    assert delivery["MediaType"] == "image/jpeg"
+    assert delivery["MediaTypes"] == ["image/jpeg"]
+    assert Path(str(staged_paths[0])).read_bytes() == jpeg_bytes
+    assert delivery["mediaUrls"] == ["https://example.com/zalo-staged-image.jpg"]
+    assert delivery["photoUrl"] == "https://example.com/zalo-staged-image.jpg"
+    assert delivery["delivery"] == {"runtime": "session-backed", "media": {"staged": 1}}
+    assert delivery["stagedMedia"][0]["sourceUrl"] == (
+        "https://example.com/zalo-staged-image.jpg"
+    )
+    assert delivery["stagedMedia"][0]["filename"] == "zalo-photo.jpg"
+    assert delivery["stagedMedia"][0]["contentType"] == "image/jpeg"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_downloads_image_media_with_default_fetcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    requests: list[Request] = []
+    jpeg_bytes = b"\xff\xd8\xff\xe0zalo-production-media"
+
+    class FakeZaloMediaResponse:
+        status = 200
+        headers = {"Content-Type": "image/jpeg"}
+
+        def __enter__(self) -> FakeZaloMediaResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            return jpeg_bytes
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeZaloMediaResponse:
+        requests.append(request)
+        return FakeZaloMediaResponse()
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-production-image-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        canvas_state_dir=tmp_path / "state",
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.image.received",
+            "message": {
+                "message_id": "zalo-production-image-1",
+                "caption": "",
+                "photo_url": "https://example.com/zalo-production-image.jpg",
+                "date": 1760000000,
+                "chat": {"id": "chat-production-image", "chat_type": "PRIVATE"},
+                "from": {"id": "zalo-user-image", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    assert len(requests) == 1
+    assert requests[0].full_url == "https://example.com/zalo-production-image.jpg"
+    assert session_deliveries[0][1] == "<media:image>"
+    delivery = result["deliveries"][0]
+    assert delivery["MediaType"] == "image/jpeg"
+    assert delivery["stagedMedia"][0]["filename"] == "zalo-production-image.jpg"
+    assert Path(str(delivery["MediaPath"])).read_bytes() == jpeg_bytes
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_skips_disabled_direct_dm_policy(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-disabled-session-1"}
+
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="zues",
+        server_version="test",
+        data_dir=tmp_path / "config",
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "zalo": {
+                    "accounts": {
+                        "zalo-bot": {
+                            "dmPolicy": "disabled",
+                            "allowFrom": ["zalo-user-allowed"],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "zalo-disabled-dm-1",
+                "text": "do not deliver this",
+                "date": 1760000000,
+                "chat": {"id": "chat-disabled", "chat_type": "PRIVATE"},
+                "from": {"id": "zalo-user-allowed", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    assert session_deliveries == []
+    assert result == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "eventName": "message.text.received",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skippedCount": 1,
+        "skips": [
+            {
+                "eventName": "message.text.received",
+                "reason": "zalo_dm_policy_disabled",
+                "inboundMessageId": "zalo-disabled-dm-1",
+                "senderId": "zalo-user-allowed",
+                "conversationId": "chat-disabled",
+                "conversationType": "direct",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_skips_group_sender_not_allowlisted(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-group-session-1"}
+
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="zues",
+        server_version="test",
+        data_dir=tmp_path / "config",
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "zalo": {
+                    "accounts": {
+                        "zalo-bot": {
+                            "groupPolicy": "allowlist",
+                            "groupAllowFrom": ["zl:allowed-user"],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "zalo-group-blocked-1",
+                "text": "do not deliver this group message",
+                "date": 1760000000,
+                "chat": {"id": "group-chat-1", "chat_type": "GROUP"},
+                "from": {"id": "blocked-user", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    assert session_deliveries == []
+    assert result["deliveredCount"] == 0
+    assert result["skips"] == [
+        {
+            "eventName": "message.text.received",
+            "reason": "zalo_group_sender_not_allowlisted",
+            "inboundMessageId": "zalo-group-blocked-1",
+            "senderId": "blocked-user",
+            "conversationId": "group-chat-1",
+            "conversationType": "group",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_issues_pairing_challenge_for_unknown_dm(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    pairing_requests: list[GatewayZaloPairingChallengeRequest] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-pairing-session-1"}
+
+    async def fake_pairing_challenge(
+        request: GatewayZaloPairingChallengeRequest,
+    ) -> dict[str, object]:
+        pairing_requests.append(request)
+        return {
+            "created": True,
+            "code": "PAIRCODE",
+            "messageId": "zalo-pairing-reply-1",
+        }
+
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="zues",
+        server_version="test",
+        data_dir=tmp_path / "config",
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "zalo": {
+                    "accounts": {
+                        "zalo-bot": {
+                            "dmPolicy": "pairing",
+                            "allowFrom": ["zl:trusted-user"],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+        zalo_pairing_challenge_service=fake_pairing_challenge,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "zalo-pairing-dm-1",
+                "text": "pair me",
+                "date": 1760000000,
+                "chat": {"id": "dm-pairing-1", "chat_type": "PRIVATE"},
+                "from": {"id": "unknown-user", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    assert session_deliveries == []
+    assert len(pairing_requests) == 1
+    pairing_request = pairing_requests[0]
+    assert pairing_request.account_id == "zalo-bot"
+    assert pairing_request.sender_id == "unknown-user"
+    assert pairing_request.sender_name == "Ada"
+    assert pairing_request.chat_id == "dm-pairing-1"
+    assert pairing_request.inbound_message_id == "zalo-pairing-dm-1"
+    assert pairing_request.sender_id_line == "Your Zalo user id: unknown-user"
+    assert result == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "eventName": "message.text.received",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skippedCount": 1,
+        "skips": [
+            {
+                "eventName": "message.text.received",
+                "reason": "zalo_dm_pairing_required",
+                "inboundMessageId": "zalo-pairing-dm-1",
+                "senderId": "unknown-user",
+                "conversationId": "dm-pairing-1",
+                "conversationType": "direct",
+                "pairing": {
+                    "created": True,
+                    "code": "PAIRCODE",
+                    "messageId": "zalo-pairing-reply-1",
+                },
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_allows_pairing_store_sender(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    pairing_requests: list[GatewayZaloPairingChallengeRequest] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-paired-session-1"}
+
+    async def fake_pairing_challenge(
+        request: GatewayZaloPairingChallengeRequest,
+    ) -> dict[str, object]:
+        pairing_requests.append(request)
+        return {"created": True, "code": "PAIRCODE"}
+
+    allow_from_dir = tmp_path / "settings" / "oauth"
+    allow_from_dir.mkdir(parents=True)
+    (allow_from_dir / "zalo-zalo-bot-allowFrom.json").write_text(
+        json.dumps({"version": 1, "allowFrom": ["zl:approved-user"]}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="zues",
+        server_version="test",
+        data_dir=tmp_path / "config",
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "zalo": {
+                    "accounts": {
+                        "zalo-bot": {
+                            "dmPolicy": "pairing",
+                            "allowFrom": [],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+        canvas_state_dir=tmp_path,
+        zalo_pairing_challenge_service=fake_pairing_challenge,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "zalo-paired-dm-1",
+                "text": "already approved",
+                "date": 1760000000,
+                "chat": {"id": "dm-paired-1", "chat_type": "PRIVATE"},
+                "from": {"id": "approved-user", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    assert pairing_requests == []
+    assert len(session_deliveries) == 1
+    assert session_deliveries[0][0].endswith(
+        "channel:zalo:account:zalo-bot:peer:direct:zalo:dm-paired-1"
+    )
+    assert session_deliveries[0][1] == "already approved"
+    assert result["deliveredCount"] == 1
+    assert "skips" not in result
+    delivery = result["deliveries"][0]
+    assert delivery["messageId"] == "zalo-paired-session-1"
+    assert delivery["senderId"] == "approved-user"
+    assert delivery["conversationId"] == "dm-paired-1"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_approve_zalo_pairing_code_moves_sender_to_allow_from_store(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    store_dir = tmp_path / "settings" / "oauth"
+    store_dir.mkdir(parents=True)
+    requested_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    (store_dir / "zalo-pairing.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "requests": [
+                    {
+                        "id": "pending-user",
+                        "code": "PAIRCODE",
+                        "createdAt": requested_at,
+                        "lastSeenAt": requested_at,
+                        "meta": {"accountId": "zalo-bot", "name": "Ada"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        canvas_state_dir=tmp_path,
+    )
+
+    result = await service.approve_zalo_pairing_code("paircode", account_id="zalo-bot")
+
+    assert result == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "senderId": "pending-user",
+        "code": "PAIRCODE",
+    }
+    pairing_store = json.loads((store_dir / "zalo-pairing.json").read_text(encoding="utf-8"))
+    assert pairing_store == {"version": 1, "requests": []}
+    allow_from_store = json.loads(
+        (store_dir / "zalo-zalo-bot-allowFrom.json").read_text(encoding="utf-8")
+    )
+    assert allow_from_store == {"version": 1, "allowFrom": ["pending-user"]}
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_list_zalo_pairing_requests_filters_and_prunes_store(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    store_dir = tmp_path / "settings" / "oauth"
+    store_dir.mkdir(parents=True)
+    now = datetime.now(UTC)
+
+    def iso(seconds_ago: int) -> str:
+        return (now - timedelta(seconds=seconds_ago)).isoformat().replace("+00:00", "Z")
+
+    (store_dir / "zalo-pairing.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "requests": [
+                    {
+                        "id": "drop-old-bot",
+                        "code": "DROPME01",
+                        "createdAt": iso(300),
+                        "lastSeenAt": iso(300),
+                        "meta": {"accountId": "zalo-bot"},
+                    },
+                    {
+                        "id": "keep-bot-1",
+                        "code": "KEEPBOT1",
+                        "createdAt": iso(240),
+                        "lastSeenAt": iso(180),
+                        "meta": {"accountId": "zalo-bot", "name": "Ada"},
+                    },
+                    {
+                        "id": "keep-bot-2",
+                        "code": "KEEPBOT2",
+                        "createdAt": iso(120),
+                        "lastSeenAt": iso(120),
+                        "meta": {"accountId": "zalo-bot"},
+                    },
+                    {
+                        "id": "keep-bot-3",
+                        "code": "KEEPBOT3",
+                        "createdAt": iso(60),
+                        "lastSeenAt": iso(60),
+                        "meta": {"accountId": "zalo-bot"},
+                    },
+                    {
+                        "id": "other-account",
+                        "code": "OTHER001",
+                        "createdAt": iso(90),
+                        "lastSeenAt": iso(90),
+                        "meta": {"accountId": "other-bot"},
+                    },
+                    {
+                        "id": "expired-bot",
+                        "code": "EXPIRED1",
+                        "createdAt": iso(7200),
+                        "lastSeenAt": iso(7200),
+                        "meta": {"accountId": "zalo-bot"},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        canvas_state_dir=tmp_path,
+    )
+
+    result = await service.list_zalo_pairing_requests(account_id="zalo-bot")
+
+    assert result["ok"] is True
+    assert result["channel"] == "zalo"
+    assert result["accountId"] == "zalo-bot"
+    assert [entry["id"] for entry in result["requests"]] == [
+        "keep-bot-1",
+        "keep-bot-2",
+        "keep-bot-3",
+    ]
+    assert result["requests"][0]["meta"] == {"accountId": "zalo-bot", "name": "Ada"}
+    pairing_store = json.loads((store_dir / "zalo-pairing.json").read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in pairing_store["requests"]] == [
+        "keep-bot-1",
+        "keep-bot-2",
+        "keep-bot-3",
+        "other-account",
     ]
 
 

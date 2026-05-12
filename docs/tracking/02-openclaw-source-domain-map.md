@@ -80,15 +80,92 @@ credentials, geolocation, media, and device settings with existing redaction.
 `extensions/browser/src/browser/routes/agent.act.ts` and adjacent hook/download
 files is checkpointed in `886c86f3`; it maps `POST /highlight`,
 `POST /download`, and `POST /hooks/file-chooser` onto native highlight,
-guarded download, and guarded upload methods.
-Remaining browser-request depth is richer local status, doctor, profile,
-permission, locale/timezone, response body, dialog hook, and label-action route
-breadth beyond the current native adapter.
+guarded download, and guarded upload methods. `OZ-CANVAS-001O`
+status/doctor route breadth from
+`extensions/browser/src/browser/routes/basic.ts` is checkpointed in
+`4b1f8028`; it maps `GET /` and `GET /doctor` onto native
+session/profile posture plus optional live snapshot checks. `OZ-CANVAS-001P`
+snapshot artifact route breadth from
+`extensions/browser/src/browser/routes/agent.snapshot.ts` is checkpointed in
+`2ecdba40`; it maps `POST /navigate` and `POST /pdf` onto native navigation
+and controlled PDF artifact export. `OZ-CANVAS-001Q` response-body route
+breadth from `extensions/browser/src/browser/routes/agent.act.ts` is
+checkpointed in `e7084f1f`; it maps `POST /response/body` onto native network
+request inventory/detail commands with response status/header/body/truncation
+projection. `OZ-CANVAS-001R` dialog-hook route breadth from
+`extensions/browser/src/browser/routes/agent.act.hooks.ts` is checkpointed in
+`4be4d540`; it maps `POST /hooks/dialog` onto native `agent-browser eval
+--stdin` execution with temporary alert/confirm/prompt handlers and
+accept/prompt metadata. `OZ-CANVAS-001S` locale/timezone route breadth from
+`extensions/browser/src/browser/routes/agent.storage.ts` is checkpointed in
+`003b0d5a`; it maps `POST /set/timezone` and `POST /set/locale` onto native
+page emulation through `agent-browser eval --stdin`. `OZ-CANVAS-001T` tab
+label action route breadth from `extensions/browser/src/browser/routes/tabs.ts`
+is checkpointed in `c6fb16d3`; it maps `/tabs/action` `label` onto native
+session-local tab label projection and targeted-close cleanup.
+`OZ-CANVAS-001U` permission grant route breadth from
+`extensions/browser/src/browser/routes/permissions.ts` is checkpointed in
+`1a27af54`; it maps `POST /permissions/grant` onto native CDP
+`Browser.grantPermissions` dispatch through `agent-browser get cdp-url`.
+`OZ-CANVAS-001V` reverified the persistent profile mutation boundary from
+`extensions/browser/src/browser/request-policy.ts`; browser local-request
+route breadth has no remaining OpenClaw-backed queue head in the accepted
+native adapter scope.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers
 message-id dedupe for message redeliveries plus account/type/source/event-id
 dedupe for postback and other non-message events.
+Zalo webhook addendum: `OZ-PROV-001FL` authenticated webhook ingress from
+`extensions/zalo/src/monitor.webhook.ts` is checkpointed in `c0e8588e`; it
+covers `/zalo/webhook`, `x-bot-api-secret-token` validation, JSON update
+validation, `{ ok, result }` unwrap, and OpsMesh dispatch. `OZ-PROV-001FM`
+text webhook session delivery/replay from
+`extensions/zalo/src/monitor.webhook.ts` and `extensions/zalo/src/monitor.ts`
+is checkpointed in `edcccea3`; it covers native session delivery target,
+sender/timestamp/reply metadata, and message-id replay dedupe for
+`message.text.received`. `OZ-PROV-001FN` image webhook media URL delivery from
+`extensions/zalo/src/monitor.ts` and
+`extensions/zalo/src/test-support/lifecycle-test-support.ts` is checkpointed in
+`6c87d9e5`; it covers caption/`<media:image>` session delivery plus `photo_url`
+media metadata for `message.image.received`. `OZ-PROV-001FO` fakeable inbound
+image media staging from the same upstream lifecycle path is checkpointed in
+`652f0938`; it covers native fetch adapter request metadata, inbound attachment
+storage, and `MediaPath`/`MediaType`/`stagedMedia` projection.
+`OZ-PROV-001FP` production Zalo inbound media fetch from
+`extensions/zalo/src/monitor.ts` and `extensions/zalo/src/api.ts` is
+checkpointed in `00241ee2`; it covers default `photo_url` download, 5 MB cap,
+content-type preservation, and shared inbound attachment storage when app state
+storage is configured. `OZ-PROV-001FQ` Zalo direct-DM disabled policy from
+`extensions/zalo/src/monitor.ts` and `extensions/zalo/src/config-schema.ts` is
+checkpointed in `ac0e17e3`; it covers configured direct-message disable
+skipping before native session delivery.
+`OZ-PROV-001FR` Zalo group allowlist policy from
+`extensions/zalo/src/monitor.ts` and `extensions/zalo/src/group-access.ts` is
+checkpointed in `d0d548e2`; it covers `groupPolicy="allowlist"` /
+`groupAllowFrom` blocking non-allowlisted group senders before native session
+delivery.
+`OZ-PROV-001FS` Zalo direct-DM pairing challenge from
+`extensions/zalo/src/monitor.ts`, `src/pairing/pairing-challenge.ts`, and
+`src/pairing/pairing-store.ts` is checkpointed in `74ce8fbd`; it covers
+`dmPolicy="pairing"` creating scoped pending pairing requests, emitting pairing
+replies through route-backed outbound delivery when available, and skipping
+unknown direct senders before native session delivery.
+`OZ-PROV-001FT` Zalo pairing allowFrom-store authorization from
+`extensions/zalo/src/monitor.ts`, `src/plugin-sdk/command-auth.ts`, and
+`src/pairing/allow-from-store-file.ts` is checkpointed in `1b2d5009`; it covers
+account-scoped `zalo-<account>-allowFrom.json` entries allowing already paired
+direct senders under `dmPolicy="pairing"`.
+`OZ-PROV-001FU` Zalo pairing approval store mutation from
+`src/pairing/pairing-store.ts`, `src/cli/pairing-cli.ts`, and
+`src/pairing/allow-from-store-file.ts` is checkpointed in `9409ad9b`; it covers
+consuming pending account-scoped pairing requests, pruning expired requests,
+and adding approved senders to the account-scoped Zalo `allowFrom` store.
+`OZ-PROV-001FV` Zalo pairing request listing from
+`src/pairing/pairing-store.ts`, `src/pairing/pairing-store.test.ts`, and
+`src/cli/pairing-cli.ts` is checkpointed in `d1c79fea`; it covers pending
+request listing, account filtering, expired request pruning, per-account cap
+pruning, and `createdAt` ordering.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
@@ -137,6 +214,21 @@ OpenClaw ` · ` separator for combined git/npm availability details.
 `src/cli/daemon-cli/restart-health.ts` is checkpointed in `90e3d0a3`; it covers
 generic restart-health failure when the restarted gateway omits its version
 without rendering a version-mismatch diagnostic.
+`OZ-PKG-001CY` unhealthy restart-health snapshot diagnostics from
+`src/cli/daemon-cli/restart-health.ts` and
+`src/cli/update-cli/update-command.ts` is checkpointed in `23f1e2b2`; it covers
+generic restart-health failure plus service runtime and gateway port
+diagnostics when the restart snapshot is explicitly unhealthy without
+plugin/channel/version detail families.
+`OZ-CLI-001A` gateway status command coverage from
+`src/cli/daemon-cli/status.ts` and
+`src/cli/daemon-cli/register-service-commands.ts` is checkpointed in
+`005dc599`; it covers `openzues gateway status --deep --json` as a native alias
+over the gateway capability/status view with probe/require-rpc/deep posture.
+`OZ-PKG-001CZ` restart-health follow-up diagnostics from
+`src/cli/update-cli/update-command.ts` is checkpointed in `8e989b2d`; it covers
+`Restart log: ...` plus `openzues gateway status --deep` operator follow-up
+lines after package restart verification fails.
 
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is

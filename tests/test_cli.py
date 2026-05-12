@@ -1119,6 +1119,24 @@ def test_gateway_doctor_prefers_live_gateway_view_when_available(tmp_path, monke
     assert payload["summary"] == "Live gateway summary"
 
 
+def test_gateway_status_deep_json_aliases_gateway_doctor(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["gateway", "status", "--deep", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["headline"]
+    assert payload["statusCommand"] == {
+        "probe": True,
+        "requireRpc": False,
+        "deep": True,
+    }
+    assert "connected_lane_health" in payload
+    assert "inventory" in payload
+    assert "approval_posture" in payload
+
+
 def test_doctor_json_includes_runtime_bridge_posture(monkeypatch) -> None:
     async def fake_executor(
         _tool: str,
@@ -28003,6 +28021,143 @@ def test_update_fails_when_restarted_gateway_omits_gateway_version(
     assert "reason: restart-health" in result.stdout
     assert "Gateway did not become healthy after restart." in result.stdout
     assert "Gateway version mismatch:" not in result.stdout
+
+
+def test_update_fails_when_restart_health_snapshot_is_unhealthy(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            del package_spec, timeout_ms
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_restart_health(*, timeout_seconds: float | None = None) -> dict[str, object]:
+        del timeout_seconds
+        return {
+            "healthy": False,
+            "waitOutcome": "stopped-free",
+            "runtime": {"status": "stopped", "lastExitStatus": 1},
+            "portUsage": {
+                "port": 18789,
+                "status": "free",
+                "listeners": [],
+                "errors": ["netstat denied"],
+            },
+        }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+                update_restart_health=fake_restart_health,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--yes", "--tag", "latest"])
+
+    assert result.exit_code == 1, result.stdout
+    assert "Update error" in result.stdout
+    assert "reason: restart-health" in result.stdout
+    assert "Gateway did not become healthy after restart." in result.stdout
+    assert "Service runtime: status=stopped, lastExit=1" in result.stdout
+    assert "Gateway port 18789 status: free." in result.stdout
+    assert "Port diagnostics errors: netstat denied" in result.stdout
+
+
+def test_update_restart_health_diagnostics_include_restart_log_and_status_hint(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            del package_spec, timeout_ms
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_restart_health(*, timeout_seconds: float | None = None) -> dict[str, object]:
+        del timeout_seconds
+        return {
+            "healthy": False,
+            "restartLogPath": str(tmp_path / "logs" / "gateway-restart.log"),
+            "runtime": {"status": "stopped"},
+            "portUsage": {"port": 18789, "status": "free", "listeners": []},
+        }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+                update_restart_health=fake_restart_health,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--yes", "--tag", "latest"])
+
+    assert result.exit_code == 1, result.stdout
+    assert f"Restart log: {tmp_path / 'logs' / 'gateway-restart.log'}" in result.stdout
+    assert "Run `openzues gateway status --deep` for details." in result.stdout
 
 
 def test_update_status_json_detects_package_manager_deps(

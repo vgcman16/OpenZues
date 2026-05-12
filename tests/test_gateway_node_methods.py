@@ -112156,6 +112156,49 @@ def test_browser_request_runtime_maps_tab_action_select_and_close(
     assert selected["targetId"] == "tab-1"
 
 
+def test_browser_request_runtime_maps_tab_action_label_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+        stdout = '{"tabs": [{"targetId": "tab-1", "url": "https://example.test"}]}'
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    label = service.request(
+        method="POST",
+        path="/tabs/action",
+        body={"action": "label", "targetId": "tab-1", "label": "docs"},
+        session="parity-browser",
+    )
+    tabs = service.request(method="GET", path="/tabs", session="parity-browser")
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "list"],
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "list"],
+    ]
+    assert label["ok"] is True
+    assert label["tab"] == {
+        "targetId": "tab-1",
+        "url": "https://example.test",
+        "label": "docs",
+    }
+    assert tabs["tabs"] == [
+        {"targetId": "tab-1", "url": "https://example.test", "label": "docs"}
+    ]
+
+
 def test_browser_request_runtime_maps_storage_routes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -112490,6 +112533,134 @@ def test_browser_request_runtime_maps_setting_routes(
     assert device["values"] == ["iPhone 12"]
 
 
+def test_browser_request_runtime_maps_locale_timezone_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "true"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **kwargs: object) -> Completed:
+        input_text = kwargs.get("input")
+        calls.append((invocation, input_text if isinstance(input_text, str) else None))
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    timezone = service.request(
+        method="POST",
+        path="/set/timezone",
+        body={"timezoneId": "America/Chicago", "targetId": "tab-1"},
+        session="parity-browser",
+    )
+    locale = service.request(
+        method="POST",
+        path="/set/locale",
+        body={"locale": "en-US", "targetId": "tab-1"},
+        session="parity-browser",
+    )
+
+    assert [call[0] for call in calls] == [
+        ["agent-browser.cmd", "--session", "parity-browser", "eval", "--stdin"],
+        ["agent-browser.cmd", "--session", "parity-browser", "eval", "--stdin"],
+    ]
+    assert "Intl.DateTimeFormat" in (calls[0][1] or "")
+    assert '"America/Chicago"' in (calls[0][1] or "")
+    assert "navigator" in (calls[1][1] or "")
+    assert '"en-US"' in (calls[1][1] or "")
+    assert timezone["ok"] is True
+    assert timezone["timezoneId"] == "America/Chicago"
+    assert timezone["targetId"] == "tab-1"
+    assert locale["ok"] is True
+    assert locale["locale"] == "en-US"
+    assert locale["targetId"] == "tab-1"
+
+
+def test_browser_request_runtime_maps_permission_grant_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+    sent_messages: list[dict[str, object]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = '"ws://127.0.0.1:9222/devtools/browser/abc"'
+        stderr = ""
+
+    class FakeSocket:
+        def __enter__(self) -> FakeSocket:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def send(self, message: str) -> None:
+            parsed = json.loads(message)
+            assert isinstance(parsed, dict)
+            sent_messages.append(parsed)
+
+        def recv(self) -> str:
+            if len(sent_messages) == 1:
+                return '{"id": 1, "error": {"message": "Unknown permission type"}}'
+            return '{"id": 2, "result": {}}'
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    def fake_connect(url: str, **kwargs: object) -> FakeSocket:
+        assert url == "ws://127.0.0.1:9222/devtools/browser/abc"
+        assert kwargs["open_timeout"] == 2.5
+        return FakeSocket()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.websocket_connect",
+        fake_connect,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.request(
+        method="POST",
+        path="/permissions/grant",
+        body={
+            "origin": "https://meet.google.com/abc-defg-hij",
+            "permissions": ["audioCapture", "videoCapture"],
+            "optionalPermissions": ["speakerSelection"],
+            "timeoutMs": 2500,
+        },
+        session="parity-browser",
+    )
+
+    assert calls == [["agent-browser.cmd", "--session", "parity-browser", "get", "cdp-url"]]
+    assert [message["method"] for message in sent_messages] == [
+        "Browser.grantPermissions",
+        "Browser.grantPermissions",
+    ]
+    assert sent_messages[0]["params"] == {
+        "origin": "https://meet.google.com",
+        "permissions": ["audioCapture", "videoCapture", "speakerSelection"],
+    }
+    assert sent_messages[1]["params"] == {
+        "origin": "https://meet.google.com",
+        "permissions": ["audioCapture", "videoCapture"],
+    }
+    assert payload["ok"] is True
+    assert payload["origin"] == "https://meet.google.com"
+    assert payload["grantedPermissions"] == ["audioCapture", "videoCapture"]
+    assert payload["unsupportedPermissions"] == ["speakerSelection"]
+
+
 def test_browser_request_runtime_maps_act_utility_routes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -112625,6 +112796,170 @@ def test_browser_request_runtime_maps_status_and_doctor_routes(
     assert doctor["ok"] is True
     assert doctor["status"]["running"] is True
     assert any(check["id"] == "live-snapshot" for check in doctor["checks"])
+
+
+def test_browser_request_runtime_maps_snapshot_artifact_routes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "ok") -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if "pdf" in invocation:
+            Path(invocation[-1]).write_bytes(b"%PDF")
+            return Completed("pdf complete")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    navigated = service.request(
+        method="POST",
+        path="/navigate",
+        body={"url": "https://example.test/docs"},
+        session="parity-browser",
+    )
+    pdf = service.request(
+        method="POST",
+        path="/pdf",
+        body={"targetId": "tab-1"},
+        session="parity-browser",
+    )
+
+    assert calls[0] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "open",
+        "https://example.test/docs",
+    ]
+    assert calls[1][:4] == ["agent-browser.cmd", "--session", "parity-browser", "pdf"]
+    assert navigated["url"] == "https://example.test/docs"
+    assert pdf["path"]
+    assert str(pdf["path"]).startswith(str(tmp_path))
+    assert str(pdf["path"]).endswith(".pdf")
+    assert pdf["sizeBytes"] == 4
+
+
+def test_browser_request_runtime_maps_response_body_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-4:] == [
+            "network",
+            "requests",
+            "--filter",
+            "https://example.test/api",
+        ]:
+            return Completed(
+                '{"requests": [{"id": "req-1", "url": "https://example.test/api"}]}'
+            )
+        if invocation[-3:] == ["network", "request", "req-1"]:
+            return Completed(
+                '{"id": "req-1", "url": "https://example.test/api", '
+                '"response": {"status": 200, "headers": {"content-type": '
+                '"application/json"}, "body": "{\\"ok\\":true}"}}'
+            )
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.request(
+        method="POST",
+        path="/response/body",
+        body={"url": "https://example.test/api", "maxChars": 20},
+        session="parity-browser",
+    )
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "network",
+            "requests",
+            "--filter",
+            "https://example.test/api",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "network", "request", "req-1"],
+    ]
+    assert payload["ok"] is True
+    assert payload["response"]["requestId"] == "req-1"
+    assert payload["response"]["status"] == 200
+    assert payload["response"]["body"] == '{"ok":true}'
+    assert payload["response"]["truncated"] is False
+
+
+def test_browser_request_runtime_maps_dialog_hook_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "true"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **kwargs: object) -> Completed:
+        input_text = kwargs.get("input")
+        calls.append((invocation, input_text if isinstance(input_text, str) else None))
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.request(
+        method="POST",
+        path="/hooks/dialog",
+        body={"accept": True, "promptText": "approved"},
+        session="parity-browser",
+    )
+
+    assert calls[0][0] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "eval",
+        "--stdin",
+    ]
+    assert "window.__openclawDialogHook" in (calls[0][1] or "")
+    assert "return true" in (calls[0][1] or "")
+    assert '"approved"' in (calls[0][1] or "")
+    assert payload["ok"] is True
+    assert payload["accept"] is True
+    assert payload["promptText"] == "approved"
 
 
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
