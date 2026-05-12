@@ -17,8 +17,8 @@ may lag behind this tracker.
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
-| Active gateway/session/tool-contract family | ~99.945% | High for bounded local path | Does not mean whole product parity |
-| Chat/session contract subfamily | ~99.985% | High for bounded local path | Current local session/chat contracts are near complete |
+| Active gateway/session/tool-contract family | ~99.946% | High for bounded local path | Does not mean whole product parity |
+| Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.4% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.9991% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99987% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
@@ -89,6 +89,24 @@ may lag behind this tracker.
   - Last verified: 2026-05-12, focused red/green configured-node test,
     adjacent browser/node proof (`8 passed, 1235 deselected`), ruff, mypy, and
     focused `git diff --check`.
+
+- [x] Requester-scoped `agents_list` spawn-target projection.
+  - Source: `openclaw-main/src/agents/tools/agents-list-tool.ts`,
+    `openclaw-main/src/agents/subagent-target-policy.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `tools.invoke tool=agents_list` forwards the caller
+    `sessionKey` as the requester context and resolves
+    `gateway.agents.list[].subagents.allowAgents` / `requireAgentId` before
+    default spawn-target policy.
+  - Evidence required: focused requester allowlist proof, adjacent agents/spawn
+    policy proof, ruff, mypy
+  - Status: checkpointed in `6b74d38e`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green requester allowlist test,
+    adjacent agents/spawn policy proof (`8 passed, 1236 deselected`), ruff,
+    mypy, and focused `git diff --check`.
 
 - [x] QR inferred-loopback setup-code preflight, rejecting default loopback URL
   inference before bootstrap token issue unless the loopback URL was explicitly

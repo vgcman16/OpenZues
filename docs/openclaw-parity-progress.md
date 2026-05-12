@@ -22840,6 +22840,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `6b31e0d7`.
+- `agents_list` now carries the invoking session context into
+  `agents.list toolProjection=sessions_spawn`, and the projection resolves
+  requester-specific `gateway.agents.list[].subagents.allowAgents` /
+  `requireAgentId` before falling back to defaults. This closes
+  `OZ-SESSION-001AA`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.946%, and chat/session
+  contract parity moves to ~99.986%.
+- Verified the requester-scoped `agents_list` allowlist seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_agents_list_uses_requester_agent_allowlist -q`
+  (`requester: main` with default `reviewer` before implementation, then
+  `1 passed`), adjacent agents/spawn policy proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "agents_list or sessions_spawn_rejects_agent_id_outside_configured_allowlist or sessions_spawn_requires_explicit_agent_id or sessions_spawn_thread_mode_uses_target_agent_bound_account"`
+  (`8 passed, 1236 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `6b74d38e`.
 
 ## References
 

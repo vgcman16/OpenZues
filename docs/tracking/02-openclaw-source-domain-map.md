@@ -51,6 +51,13 @@ LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 message-id dedupe for message redeliveries plus account/type/source/event-id
 dedupe for postback and other non-message events.
 
+Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
+spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
+`src/agents/subagent-target-policy.ts` is checkpointed in `6b74d38e`; it covers
+`tools.invoke` session context forwarding plus requester-specific
+`gateway.agents.list[].subagents.allowAgents` / `requireAgentId` policy before
+default subagent policy.
+
 Packaging row addendum: `OZ-PKG-001CA` release-channel git update coverage
 from `src/infra/update-runner.ts`, `src/infra/update-channels.ts`, and
 `src/infra/update-check.ts` is checkpointed in `1f45d307`; it covers stable

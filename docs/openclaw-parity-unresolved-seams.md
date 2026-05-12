@@ -6,14 +6,14 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.94% of the
+- The active gateway/session/tool-contract family is estimated at ~99.946% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~99.985% after the latest
+- The chat/session contract subfamily is estimated at ~99.986% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
   `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed
-  remote media staging, `tools.invoke`, and Tlon monitor lifecycle runtime
-  seams.
+  remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
+  Tlon monitor lifecycle runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.99987% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
   post-update completion-cache refresh, all-shell completion write-state,
@@ -139,8 +139,8 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.945% after the
-  latest `browser.request` configured-node selection slice.
+- The gateway session/tool-contract family is estimated at ~99.946% after the
+  latest requester-scoped `agents_list` spawn-target projection slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.9991%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
@@ -2795,7 +2795,8 @@ Current queue-head adjustment: `agents_list` is now an explicit tool posture,
 and `agents.list toolProjection=sessions_spawn` returns an OpenClaw-style
 `requester`, `allowAny`, and bounded `agents` list for spawn targeting while
 preserving the existing broad OpenZues agent inventory by default. Remaining
-agent-target parity is the richer OpenClaw subagent allowlist config model.
+agent-target parity is requester-specific OpenClaw subagent allowlist config
+model coverage.
 
 Current queue-head adjustment: `sessions.spawn` now materializes inline
 subagent attachments into `.openclaw/attachments/<id>` under the target
@@ -2862,6 +2863,14 @@ Current queue-head adjustment: `sessions.spawn` now honors persisted
 `allowAny`, and allowed target list instead of advertising every configured
 agent. Remaining spawn parity includes ACP harness spawning, thread-binding
 hooks, lifecycle cleanup, and native agent-tool executor wiring.
+
+Current queue-head adjustment: `tools.invoke tool=agents_list` now carries the
+caller `sessionKey` into `agents.list toolProjection=sessions_spawn`, and the
+projection resolves `gateway.agents.list[].subagents.allowAgents` /
+`requireAgentId` for the requester before falling back to defaults. This closes
+the requester-specific OpenClaw agent-target config seam. Remaining spawn parity
+includes ACP harness spawning, thread-binding hooks, lifecycle cleanup, and
+native agent-tool executor wiring.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now returns the
 upstream-shaped no-hook error before runtime dispatch because OpenZues has no
