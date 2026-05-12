@@ -26676,6 +26676,98 @@ def test_update_json_dispatches_package_update_service(
     assert "Warning: Low disk space near package root: 256 MiB available." in result.stderr
 
 
+def test_update_json_uses_stored_channel_for_package_update(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "update": {"channel": "beta"},
+            }
+        )
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+            raise AssertionError("package-shaped update should not use git updater")
+
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.update(
+                {
+                    "package_root": package_root,
+                    "package_manager": package_manager,
+                    "package_spec": package_spec,
+                    "timeout_ms": timeout_ms,
+                }
+            )
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    channels: list[str] = []
+
+    def fake_resolve(channel: str, timeout_seconds: float | None = None) -> dict[str, str | None]:
+        channels.append(channel)
+        return {"tag": "beta", "version": "2.0.0-beta.1"}
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_openclaw_update_resolve_npm_channel_tag", fake_resolve)
+
+    result = runner.invoke(app, ["update", "--json", "--yes"])
+
+    assert result.exit_code == 0, result.stdout
+    assert channels == ["beta"]
+    assert seen == {
+        "package_root": package_root,
+        "package_manager": "pnpm",
+        "package_spec": "openzues@beta",
+        "timeout_ms": None,
+    }
+
+
 def test_update_json_blocks_registry_downgrade_without_yes(
     tmp_path,
     monkeypatch,

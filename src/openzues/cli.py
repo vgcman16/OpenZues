@@ -106390,7 +106390,8 @@ def update_root(
                 err=True,
             )
             raise typer.Exit(code=1)
-        effective_channel = requested_channel or "stable"
+        stored_channel = _openclaw_update_read_stored_channel_for_preview()
+        effective_channel = requested_channel or stored_channel or "stable"
         explicit_tag = _openclaw_update_normalize_package_target(tag)
         target_tag = explicit_tag or _openclaw_update_channel_to_package_tag(effective_channel)
         current_version = _openclaw_update_read_package_version(root)
