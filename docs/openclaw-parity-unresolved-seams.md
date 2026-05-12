@@ -12054,3 +12054,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   moves to ~99.4%. Continue `browser.request` local control-service fallback,
   remaining provider-specific media/reply edges, deeper installed plugin
   activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` now falls back to the native
+  local browser runtime when no browser-capable node is selected, following the
+  upstream local control-service branch in
+  `extensions/browser/src/gateway/browser-request.ts` without importing the
+  TypeScript runtime. The gateway forwards method/path/query/body/timeout into
+  a fakeable local request adapter, preserves the precise disabled/runtime
+  unavailable shape, maps route-style status/body failures, and the production
+  adapter now covers native snapshot/action/screenshot/profile/tab request
+  routes. Source/test checkpointed in `45fd0ffd`; repo-wide parity remains
+  estimated at ~99.9%, active gateway/session/tool-contract parity moves to
+  ~99.947%, and browser/canvas/nodes/voice bounded-command parity moves to
+  ~99.5%. Continue richer local browser route breadth, remaining
+  provider-specific media/reply edges, deeper installed plugin activation,
+  companion breadth, or the next packaging edge.

@@ -43,8 +43,13 @@ configured browser-node selection from
 `extensions/browser/src/gateway/browser-request.ts` is checkpointed in
 `6b31e0d7`; it covers `gateway.nodes.browser` `auto`/`manual`/`off` policy
 plus configured node resolution by id, remote IP, normalized display name, or
-safe id prefix. Remaining browser-request depth is local control-service
-fallback.
+safe id prefix. `OZ-CANVAS-001F` local browser runtime fallback from
+`extensions/browser/src/gateway/browser-request.ts` is checkpointed in
+`45fd0ffd`; it covers the no-node local request branch, fakeable native
+runtime dispatch, route-style status/body mapping, and native
+snapshot/action/screenshot/profile/tab route adapters. Remaining
+browser-request depth is richer local route breadth beyond the current native
+adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers
