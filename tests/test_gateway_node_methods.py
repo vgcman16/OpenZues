@@ -92349,6 +92349,88 @@ async def test_logs_tail_redacts_sensitive_tokens_from_returned_lines(
 
 
 @pytest.mark.asyncio
+async def test_diagnostics_stability_returns_filtered_payload_free_snapshot() -> None:
+    from openzues.services.gateway_diagnostics import GatewayDiagnosticStabilityService
+
+    stability_service = GatewayDiagnosticStabilityService(
+        now=lambda: datetime(2026, 5, 12, 12, 0, tzinfo=UTC),
+    )
+    stability_service.record_event(
+        {
+            "type": "webhook.received",
+            "channel": "telegram",
+            "payload": {"secret": "do-not-leak"},
+        }
+    )
+    stability_service.record_event(
+        {
+            "type": "payload.large",
+            "surface": "gateway.http.json",
+            "action": "rejected",
+            "bytes": 1024,
+            "limitBytes": 512,
+            "reason": "payload.too_large",
+            "payload": {"secret": "do-not-leak"},
+        }
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        diagnostic_stability_service=stability_service,
+    )
+    payload = await service.call(
+        "diagnostics.stability",
+        {
+            "type": "payload.large",
+            "limit": 10,
+        },
+    )
+
+    assert payload["generatedAt"] == "2026-05-12T12:00:00Z"
+    assert payload["capacity"] == 1000
+    assert payload["count"] == 1
+    assert payload["dropped"] == 0
+    assert payload["firstSeq"] == 2
+    assert payload["lastSeq"] == 2
+    assert payload["events"] == [
+        {
+            "seq": 2,
+            "ts": payload["events"][0]["ts"],
+            "type": "payload.large",
+            "surface": "gateway.http.json",
+            "action": "rejected",
+            "reason": "payload.too_large",
+            "bytes": 1024,
+            "limitBytes": 512,
+        }
+    ]
+    assert "payload" not in payload["events"][0]
+    assert payload["summary"] == {
+        "byType": {"payload.large": 1},
+        "payloadLarge": {
+            "count": 1,
+            "rejected": 1,
+            "truncated": 0,
+            "chunked": 0,
+            "bySurface": {"gateway.http.json": 1},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_stability_rejects_invalid_limit() -> None:
+    from openzues.services.gateway_diagnostics import GatewayDiagnosticStabilityService
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        diagnostic_stability_service=GatewayDiagnosticStabilityService(),
+    )
+
+    with pytest.raises(ValueError, match="limit must be between 1 and 1000"):
+        await service.call("diagnostics.stability", {"limit": 0})
+
+
+@pytest.mark.asyncio
 async def test_update_run_returns_openclaw_envelope_sentinel_and_timeout_minimum(
     tmp_path,
 ) -> None:
@@ -92427,6 +92509,37 @@ async def test_update_run_returns_openclaw_envelope_sentinel_and_timeout_minimum
     }
     assert sentinel_payload["message"] == "Apply the runtime update."
     assert sentinel_payload["stats"]["mode"] == "openzues-runtime"
+
+
+@pytest.mark.asyncio
+async def test_update_status_returns_latest_openclaw_update_sentinel(tmp_path) -> None:
+    async def fake_update_runner(*, timeout_ms: int | None) -> dict[str, object]:
+        return {
+            "status": "ok",
+            "mode": "git",
+            "root": "C:/workspace/OpenZues",
+            "after": {"version": "2.0.0"},
+            "steps": [],
+            "durationMs": 12,
+            "timeoutMs": timeout_ms,
+        }
+
+    database = Database(tmp_path / "openzues.db")
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        runtime_update_runner=fake_update_runner,
+    )
+
+    run_payload = await service.call("update.run", {"note": "Apply update."})
+    status_payload = await service.call("update.status", {})
+
+    assert status_payload == {
+        "sentinel": run_payload["sentinel"]["payload"],
+    }
+    assert status_payload["sentinel"]["kind"] == "update"
+    assert status_payload["sentinel"]["status"] == "ok"
+    assert status_payload["sentinel"]["stats"]["after"] == {"version": "2.0.0"}
 
 
 @pytest.mark.asyncio
@@ -108387,6 +108500,82 @@ async def test_doctor_memory_family_mutates_workspace_dreaming_artifacts(
 
 
 @pytest.mark.asyncio
+async def test_doctor_memory_rem_harness_returns_preview_payload(
+    tmp_path: Path,
+) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True)
+    daily_path = memory_dir / "2026-05-12.md"
+    daily_path.write_text(
+        "# Daily Memory\n\n- durable fact\n- second candidate\n",
+        encoding="utf-8",
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        memory_doctor_workspace=tmp_path,
+    )
+
+    payload = await service.call(
+        "doctor.memory.remHarness",
+        {
+            "grounded": True,
+            "includePromoted": True,
+            "limit": 500,
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["agentId"] == "openzues"
+    assert payload["workspaceDir"] == str(tmp_path)
+    assert payload["remConfig"] == {
+        "enabled": True,
+        "lookbackDays": 7,
+        "limit": 25,
+        "minPatternStrength": 0.35,
+    }
+    assert payload["deepConfig"] == {
+        "minScore": 0.75,
+        "minRecallCount": 3,
+        "minUniqueQueries": 2,
+        "recencyHalfLifeDays": 14,
+        "maxAgeDays": None,
+    }
+    assert payload["rem"]["skipped"] is False
+    assert payload["rem"]["sourceEntryCount"] == 1
+    assert payload["rem"]["candidateTruths"][0] == {
+        "snippet": "durable fact",
+        "confidence": 0.5,
+    }
+    assert payload["rem"]["bodyLines"][:2] == ["## REM", "- durable fact"]
+    assert payload["grounded"] == {
+        "scannedFiles": 1,
+        "files": [
+            {
+                "path": "memory/2026-05-12.md",
+                "renderedMarkdown": "# Daily Memory\n\n- durable fact\n- second candidate\n",
+            }
+        ],
+    }
+    assert payload["deep"]["candidateLimit"] == 100
+    assert payload["deep"]["truncated"] is False
+    assert payload["deep"]["candidates"][0] == {
+        "key": "memory/2026-05-12.md:3:3",
+        "path": "memory/2026-05-12.md",
+        "startLine": 3,
+        "endLine": 3,
+        "snippet": "durable fact",
+        "recallCount": 1,
+        "uniqueQueries": 1,
+        "avgScore": 0.5,
+        "maxScore": 0.5,
+        "ageDays": 0,
+        "firstRecalledAt": None,
+        "lastRecalledAt": None,
+        "promoted": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_agent_identity_get_rejects_malformed_session_keys() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -109307,6 +109496,68 @@ async def test_sessions_get_returns_openclaw_shaped_control_chat_messages() -> N
                 "content": [{"type": "text", "text": "The bounded session transcript is ready."}],
             },
         ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_artifacts_methods_discover_and_download_inline_session_artifacts() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-artifacts-inline"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-artifacts-inline.db")
+    await database.initialize()
+    session_key = "openzues:thread:artifacts"
+    await database.append_control_chat_message(
+        role="assistant",
+        content=json.dumps(
+            [
+                {"type": "text", "text": "see attached"},
+                {
+                    "type": "image",
+                    "data": "aGVsbG8=",
+                    "mimeType": "image/png",
+                    "alt": "result.png",
+                },
+            ]
+        ),
+        session_key=session_key,
+        metadata={"runId": "run-artifact-1", "messageTaskId": "task-artifact-1"},
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    listed = await service.call("artifacts.list", {"sessionKey": session_key})
+
+    assert len(listed["artifacts"]) == 1
+    artifact = listed["artifacts"][0]
+    assert artifact["id"].startswith("artifact_")
+    assert artifact == {
+        "id": artifact["id"],
+        "type": "image",
+        "title": "result.png",
+        "mimeType": "image/png",
+        "sizeBytes": 5,
+        "sessionKey": session_key,
+        "runId": "run-artifact-1",
+        "taskId": "task-artifact-1",
+        "messageSeq": 1,
+        "source": "session-transcript",
+        "download": {"mode": "bytes"},
+    }
+
+    fetched = await service.call(
+        "artifacts.get",
+        {"sessionKey": session_key, "artifactId": artifact["id"]},
+    )
+    assert fetched == {"artifact": artifact}
+
+    downloaded = await service.call(
+        "artifacts.download",
+        {"sessionKey": session_key, "artifactId": artifact["id"]},
+    )
+    assert downloaded == {
+        "artifact": artifact,
+        "encoding": "base64",
+        "data": "aGVsbG8=",
     }
 
 

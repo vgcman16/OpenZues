@@ -30,6 +30,26 @@ repo-wide percentage.
 | [~] | Packaging, distribution, release | packageDistribution doctor JSON, dist inventory validation, exact missing-inventory diagnostics, missing/unexpected file drift warnings, legacy `.openclaw-install-stage*` debris warnings, mixed-case staging path proof, local build metadata/dependency omission, unsafe symlinked dist path warnings, externalized bundled extension dist omission, private QA dist omission, source-checkout package-root warnings, bundled runtime sidecar enforcement, and private-QA sidecar omission verified; source-install pnpm workspace warnings, update-status channel projection, registry/git availability, human update-available hints, git metadata envelope, config channel precedence, git branch channel labeling, loose/packed git-tag stable/beta channel labeling, update-status timeout, update status inherited parent options, update package-spec env override, explicit update install-spec preservation, root update runtime dispatch, package update runtime path, npm omit-optional fallback, package update version verification, package update failedStep projection, staged npm package swap, staged npm crash cleanup, npm shim rollback, git update control-ui clean-check exclusion, git update no-upstream guard, git preflight candidate/worktree/selection/rebase-abort/cleanup-repair/dev-target-ref/dev-branch-normalization guards, beta package latest fallback, post-update plugin sync, package update doctor repair, non-interactive update doctor, stale global rename-dir cleanup, low package-update disk warning, requested update-channel persistence, post-update package doctor env, stored update-channel dry-run preview, Corepack prompt suppression/preservation, Windows package install env, portable Git PATH prepending, owning/ambient npm command resolution, missing-version verifier wording, source-checkout package update verifier, package update missing dist-inventory gate, package update invalid dist-inventory rejection, package update dist inventory file drift, package update runtime staging-debris verifier, package update supplemental sidecar enforcement, package update inventory omission filters, package update unsafe dist path rejection, package update externalized extension omission, package update includeInCore inventory guard, package update private QA omission proof, package update malformed extension manifest rejection, doctor malformed extension manifest warning, package update legacy sidecar fallback, package update omitted-subtree safety ordering, and update dry-run package-spec preview verified; plugin packages, Docker/Podman, macOS DMG/Sparkle, CI release workflows, broader update channels remain | `src/flows/doctor-health.ts`, `src/commands/doctor-install.ts`, `src/infra/update-global.ts`, `src/infra/package-update-steps.ts`, `src/cli/update-cli/update-command.ts`, `src/cli/update-cli/status.ts`, `src/cli/update-cli.option-collisions.test.ts`, `src/infra/update-runner.ts`, `scripts/openclaw-npm-publish.sh`, `scripts/package-mac-dist.sh`, `Dockerfile`, `.github/workflows` |
 | [ ] | Observability, diagnostics, ops | logging, OpenTelemetry/Prometheus, health/status, proxy capture, runtime reports | `src/logging`, `extensions/diagnostics-otel`, `extensions/diagnostics-prometheus`, `docs/logging.md` |
 
+Gateway/session addendum: `OZ-RT-001BB` `artifacts.list`,
+`artifacts.get`, and `artifacts.download` from
+`src/gateway/server-methods/artifacts.ts` are checkpointed in `13eddac7`.
+OpenZues now discovers transcript image/audio/file content blocks, returns
+stable artifact summaries without raw bytes, and exposes bytes/url download
+payloads through native read-scope gateway methods.
+
+`OZ-RT-001BC` `update.status` from
+`src/gateway/server-methods/update.ts` is checkpointed in `59a36693`, returning
+the latest cached update restart sentinel through the native read-scoped
+gateway method.
+`OZ-RT-001BD` `diagnostics.stability` from
+`src/gateway/server-methods/diagnostics.ts` and
+`src/logging/diagnostic-stability.ts` is checkpointed in `0a4deddc`, returning
+payload-free native stability snapshots with OpenClaw-shaped filters and
+summaries.
+`OZ-RT-001BE` `doctor.memory.remHarness` from
+`src/gateway/server-methods/doctor.ts` is checkpointed in `5e6d43f6`, returning
+read-only native REM/deep/grounded memory preview payloads.
+
 Gateway/browser addendum: `OZ-CANVAS-001C` `browser.request` node-proxy
 dispatch from `extensions/browser/src/gateway/browser-request.ts` is
 checkpointed in `430e365b`; it covers native OpenZues validation,
@@ -166,6 +186,37 @@ and adding approved senders to the account-scoped Zalo `allowFrom` store.
 `src/cli/pairing-cli.ts` is checkpointed in `d1c79fea`; it covers pending
 request listing, account filtering, expired request pruning, per-account cap
 pruning, and `createdAt` ordering.
+`OZ-PROV-001FW` Zalo pairing CLI list/approve from
+`src/cli/pairing-cli.ts`, `src/cli/pairing-cli.test.ts`, and
+`src/pairing/pairing-store.ts` is checkpointed in `6de9e5a1`; it covers
+native `openzues pairing list`/`approve` JSON and human output, Zalo
+channel/account scoping, and CLI data-dir pairing-store wiring.
+`OZ-PROV-001FX` Zalo pairing approval notification CLI from
+`src/cli/pairing-cli.ts`, `src/channels/plugins/pairing.ts`, and
+`extensions/zalo/src/channel.runtime.ts` is checkpointed in `3a77ccf5`; it
+covers `openzues pairing approve --notify` sending the Zalo approved message
+through direct-channel delivery with idempotency metadata.
+`OZ-PROV-001FY` Zalo pairing command-owner bootstrap from
+`src/cli/pairing-cli.ts`, `src/commands/doctor-command-owner.ts`, and
+`src/config/config.ts` is checkpointed in `c105b1c5`; it covers writing
+`zalo:<sender>` to `commands.ownerAllowFrom` when approval succeeds and no
+command owner is configured.
+`OZ-PROV-001FZ` Zalo pairing list default from `src/cli/pairing-cli.ts` and
+`src/cli/pairing-cli.test.ts` is checkpointed in `0b791e74`; it covers
+defaulting `openzues pairing list` to the sole native pairing channel when no
+channel argument or `--channel` option is provided.
+`OZ-PROV-001GA` Zalo pairing command-owner explanation from
+`src/cli/pairing-cli.ts` and `src/cli/pairing-cli.test.ts` is checkpointed in
+`646fa3d0`; it covers human output explaining that
+`commands.ownerAllowFrom` was empty when command-owner bootstrap occurs.
+`OZ-PROV-001GB` Zalo pairing approval not-found text from
+`src/cli/pairing-cli.ts` and `src/cli/pairing-cli.test.ts` is checkpointed in
+`433368f1`; it covers projecting missing-code approvals as `No pending pairing
+request found for code: <code>` in human CLI output.
+`OZ-PROV-001GC` disabled channel capability actions from
+`extensions/zalo/src/actions.ts` and `extensions/zalo/src/actions.test.ts` is
+checkpointed in `0b5231cc`; it covers suppressing channel message actions
+when a selected channel account/route is disabled.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and

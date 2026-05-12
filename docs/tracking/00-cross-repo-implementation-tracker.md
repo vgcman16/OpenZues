@@ -21,12 +21,12 @@ Hermes or Warp integration.
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~99.963% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Chat/session contract subfamily | ~99.986% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Active gateway/session/tool-contract path | ~99.967% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.99990% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.99992% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.99992% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.99997% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.99999% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -48,6 +48,8 @@ Any follow-up changes should target the next queue head only:
 - `src/openzues/services/ops_mesh.py`
 - `src/openzues/services/runtime_updates.py`
 - `src/openzues/services/gateway_channels.py`
+- `src/openzues/services/gateway_node_methods.py`
+- `src/openzues/services/gateway_method_policy.py`
 - `src/openzues/cli.py`
 - `src/openzues/web/templates/index.html`
 - `src/openzues/web/static/app.js`
@@ -69,12 +71,12 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
+| OZ-RT-001 | Runtime-control hard gaps | Artifact transcript gateway methods checkpointed in `13eddac7`; `update.status` checkpointed in `59a36693`; `diagnostics.stability` checkpointed in `0a4deddc`; `doctor.memory.remHarness` checkpointed in `5e6d43f6`; base method sweep checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Continue native-hook and web-push method gaps |
 | OZ-PKG-001 | Packaging/distribution breadth | Git dev branch normalization checkpointed in `c77f60e0`; Git dev target ref checkout checkpointed in `8f305c47`; Git preflight cleanup repair checkpointed in `48ee7b20`; Git rebase abort cleanup checkpointed in `3a61f139`; Git preflight candidate selection checkpointed in `84a78474`; Git preflight worktree guard checkpointed in `438f3c33`; Git preflight candidate guard checkpointed in `254fcc9d`; Beta package latest fallback checkpointed in `93061087`; git update no-upstream guard checkpointed in `2603380f`; git update control-ui clean-check exclusion checkpointed in `5171f2f2`; npm shim rollback proof checkpointed in `03f1ee46`; doctor malformed extension manifest warning checkpointed in `df582190`; package update malformed extension manifest rejection checkpointed in `733c7b15`; package update staging debris verifier checkpointed in `d58b0879`; package update private QA omission proof checkpointed in `b663e3e0`; package update includeInCore inventory guard checkpointed in `c83c2a72`; package update staged crash cleanup proof checkpointed in `beadafaa`; package update omitted-subtree safety ordering checkpointed in `2830b5ef`; package update legacy sidecar enforcement checkpointed in `603cdb2a`; package update externalized extension omission checkpointed in `a06dd570`; package update unsafe dist path rejection checkpointed in `691fdabd`; package update inventory omission filters checkpointed in `e7d960e0`; package update supplemental sidecar enforcement checkpointed in `9ba6843f`; package update dist inventory file drift checkpointed in `1e373c7f`; package update invalid dist-inventory rejection checkpointed in `2f59d485`; package update missing dist-inventory gate checkpointed in `d7e87c9b`; source-checkout package update verifier checkpointed in `a330fecc`; missing-version verifier wording checkpointed in `ad9ba5a5`; ambient npm fallback proof checkpointed in `0826cfaa`; owning npm command checkpointed in `de046811`; owning npm root detection checkpointed in `76e2a21c`; owning pnpm/bun global-root detection checkpointed in `5d80e370`/`04472a9c`; portable Git PATH prepending checkpointed in `e692f8b6`; Windows package install env checkpointed in `80e49178`; Corepack prompt preservation checkpointed in `9fd00cad`; Corepack prompt suppression checkpointed in `0f2cb0c1`; stored-channel dry-run preview checkpointed in `c95b2810`; post-update doctor env checkpointed in `51b3bc19`; requested update-channel persistence checkpointed in `15161172`; low package-update disk warning checkpointed in `3083362b`; stale global rename-dir cleanup checkpointed in `5a31c97f`; non-interactive update doctor checkpointed in `837bbd30`; package update doctor repair checkpointed in `45009862`; post-update plugin sync checkpointed in `aa71bcbc`; staged npm package swap checkpointed in `954d74ea`; package update failedStep projection checkpointed in `98e4d5c9`; package update version verification checkpointed in `1db09c3b`; npm update omit-optional fallback checkpointed in `f3177330`; package update runtime path checkpointed in `1291d361`; inherited update status parent options checkpointed in `f088293f`; root update runtime dispatch checkpointed in `0c88812c`; explicit update install-spec preservation checkpointed in `3227786a`; update package-spec env override checkpointed in `949de445`; update-status timeout option checkpointed in `6418d7f3`; update dry-run preview package-spec mapping checkpointed in `08e8f76f`; private QA sidecar omission proof checkpointed in `ad248bf4`; bundled runtime sidecar enforcement checkpointed in `07b17ad0`; source-checkout package-root warning checkpointed in `912aee5e`; private QA dist omission checkpointed in `bde731a9`; externalized extension dist omission checkpointed in `06ba5480`; unsafe dist symlink detection checkpointed in `a9c7884f`; local build metadata omission checkpointed in `6e8bb491`; exact missing inventory warning checkpointed in `76cdb404`; mixed-case staging-debris proof checkpointed in `9422c6b7`; package dist staging-debris detection checkpointed in `b16db705`; package dist inventory drift checkpointed in `69b23cb9`; human git update hint proof checkpointed in `d5ea6096`; human update-available hint checkpointed in `20e9c885`; config channel precedence proof checkpointed in `d9150777`; git availability projection checkpointed in `de37e6f8`; registry availability projection checkpointed in `55a785a8`; update-status git metadata checkpointed in `b31d8f41`; packed git-tag update-status projection checkpointed in `71029a02`; update-status git-tag channel projection checkpointed in `dce24b5e`; source-install package doctor warnings checkpointed in `4c1d7a2a`; update status package-manager dependency posture checkpointed in `f1ac67da`; post-doctor control-UI asset repair checkpointed in `92aadaf9` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue broader distribution/startup update edges |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; active-registry session/UI contributions checkpointed in `2cc24e73`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77`; voicewake routing methods checkpointed in `a74cec21`; `browser.request` node-proxy path checkpointed in `430e365b`; `browser.request` proxy-file persistence checkpointed in `97c32bc8`; `browser.request` configured-node selection checkpointed in `6b31e0d7`; `browser.request` local runtime fallback checkpointed in `45fd0ffd`; lifecycle route breadth checkpointed in `d9b5e87d`; tab mutation route breadth checkpointed in `aa7298c6`; tab action close/select checkpointed in `904f2673`; tab label route breadth checkpointed in `c6fb16d3`; storage route breadth checkpointed in `483e4aff`; cookie route breadth checkpointed in `97602084`; debug route breadth checkpointed in `d7eb616d`; setting route breadth checkpointed in `97755215`; locale/timezone route breadth checkpointed in `003b0d5a`; act utility route breadth checkpointed in `886c86f3`; status/doctor route breadth checkpointed in `4b1f8028`; snapshot artifact route breadth checkpointed in `2ecdba40`; response-body route breadth checkpointed in `e7084f1f`; dialog-hook route breadth checkpointed in `4be4d540`; permission grant route breadth checkpointed in `1a27af54`; persistent profile mutation boundary reverified as `OZ-CANVAS-001V` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Browser local-request mini-queue closed; rotate to media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR approval guidance checkpointed in `d6052fda`; QR JSON setup-code contract checkpointed in `b79b87c3`; device pairing public-key persistence/projection checkpointed in `bef0652f`; QR public-cleartext URL rejection checkpointed in `24d89215`; QR remote saved URL/auth config checkpointed in `3d63d136`; QR Tailscale MagicDNS checkpointed in `beb67302`; QR remote env SecretRef diagnostics checkpointed in `e3b3031a`; QR unresolved remote SecretRef preflight checkpointed in `4057991c`; QR remote file SecretRefs checkpointed in `ddd1d811`; QR remote exec SecretRefs checkpointed in `6e1b84c4`; QR gateway-backed SecretRefs checkpointed in `93a57d8b`; QR inferred-loopback preflight checkpointed in `89ee261d` | Repo-wide +0.1%, companion/setup breadth +0.1% | QR setup-code safety queue expanded; continue provider-specific media/reply edges or next startup/update edge |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Zalo user `channels.logout` runtime checkpointed in `4d67d5a6`; QQBot `channels.logout` runtime checkpointed in `aac53b3b`; WhatsApp `channels.logout` runtime checkpointed in `3e99a587`; Nextcloud Talk `channels.logout` runtime checkpointed in `13de6593`; LINE `channels.logout` runtime checkpointed in `9674493d`; Telegram `channels.logout` runtime checkpointed in `2d26bdc4`; `channels.stop` native Tlon runtime checkpointed in `1365c028`; `channels.start` native Tlon runtime checkpointed in `810a6af0`; Tlon production SSE monitor lifecycle checkpointed in `726f03cb`; Tlon approval block/admin handling checkpointed in `800d2ab6`; Tlon approval response replay checkpointed in `265b0a10`; Tlon inbound authorization/pending approvals checkpointed in `d7bd3f7d`; Tlon inbound media staging checkpointed in `d7556229`; Tlon group/thread inbound session routing checkpointed in `b3b06972`; Tlon DM inbound session routing checkpointed in `51e6b618`; Tlon custom S3 media upload checkpointed in `dc999418`; Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5`; direct outbound reply policy metadata checkpointed in `e115e5f1`; direct outbound `channelData`-only payloads checkpointed in `fd244774`; Slack reaction event wakes checkpointed in `10dfaa17`; Slack member event wakes checkpointed in `9d07244d`; Slack channel event wakes checkpointed in `7474eb85`; Slack pin event wakes checkpointed in `0688d049`; Slack message subtype wakes checkpointed in `8c4e74ef`; Slack App Home publish checkpointed in `58bc6b72`; Slack channel ID migration checkpointed in `22b9bd10`; Slack block interactions checkpointed in `37a9d2dc`; Slack modal interactions checkpointed in `ecdfe207`; Slack slash ingress checkpointed in `7c538421`; Slack HTTP signatures checkpointed in `7ce8a169`; Slack signing env SecretRefs checkpointed in `47c1a605`; Slack signing file SecretRefs checkpointed in `adac6624`; Slack signing exec SecretRefs checkpointed in `a4b67444`; Slack command arg interactions checkpointed in `f6cad264`; Slack command arg options checkpointed in `151bb0e5`; Slack command arg hydrated options checkpointed in `54d18930`; Slack slash arg-menu rendering checkpointed in `27836d4c`; Slack large-choice external select proof checkpointed in `b1639b4b`; Slack `/agentstatus` native alias checkpointed in `bc4f90fe`; WhatsApp reusable reply fanout checkpointed in `a1d930ab`; Slack provider plugin-command injection checkpointed in `c798e879`; Telegram media reply fanout checkpointed in `2b177851`; Telegram media caption passthrough checkpointed in `c9cd47a1`; LINE webhook redelivery dedupe checkpointed in `9acc4cd6`; Zalo webhook ingress checkpointed in `c0e8588e`; Zalo text session delivery/replay checkpointed in `edcccea3`; Zalo image media URL delivery checkpointed in `6c87d9e5`; Zalo fakeable inbound image staging checkpointed in `652f0938`; production Zalo inbound media fetch checkpointed in `00241ee2`; Zalo direct-DM disabled policy checkpointed in `ac0e17e3`; Zalo group allowlist policy checkpointed in `d0d548e2`; Zalo direct-DM pairing challenge checkpointed in `74ce8fbd`; Zalo pairing allowFrom-store authorization checkpointed in `1b2d5009`; Zalo pairing approval store mutation checkpointed in `9409ad9b`; Zalo pairing request listing checkpointed in `d1c79fea` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue native pairing list/approve CLI/RPC surface, provider-specific media/reply edges, or packaging ownership detection |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Zalo user `channels.logout` runtime checkpointed in `4d67d5a6`; QQBot `channels.logout` runtime checkpointed in `aac53b3b`; WhatsApp `channels.logout` runtime checkpointed in `3e99a587`; Nextcloud Talk `channels.logout` runtime checkpointed in `13de6593`; LINE `channels.logout` runtime checkpointed in `9674493d`; Telegram `channels.logout` runtime checkpointed in `2d26bdc4`; `channels.stop` native Tlon runtime checkpointed in `1365c028`; `channels.start` native Tlon runtime checkpointed in `810a6af0`; Tlon production SSE monitor lifecycle checkpointed in `726f03cb`; Tlon approval block/admin handling checkpointed in `800d2ab6`; Tlon approval response replay checkpointed in `265b0a10`; Tlon inbound authorization/pending approvals checkpointed in `d7bd3f7d`; Tlon inbound media staging checkpointed in `d7556229`; Tlon group/thread inbound session routing checkpointed in `b3b06972`; Tlon DM inbound session routing checkpointed in `51e6b618`; Tlon custom S3 media upload checkpointed in `dc999418`; Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5`; direct outbound reply policy metadata checkpointed in `e115e5f1`; direct outbound `channelData`-only payloads checkpointed in `fd244774`; Slack reaction event wakes checkpointed in `10dfaa17`; Slack member event wakes checkpointed in `9d07244d`; Slack channel event wakes checkpointed in `7474eb85`; Slack pin event wakes checkpointed in `0688d049`; Slack message subtype wakes checkpointed in `8c4e74ef`; Slack App Home publish checkpointed in `58bc6b72`; Slack channel ID migration checkpointed in `22b9bd10`; Slack block interactions checkpointed in `37a9d2dc`; Slack modal interactions checkpointed in `ecdfe207`; Slack slash ingress checkpointed in `7c538421`; Slack HTTP signatures checkpointed in `7ce8a169`; Slack signing env SecretRefs checkpointed in `47c1a605`; Slack signing file SecretRefs checkpointed in `adac6624`; Slack signing exec SecretRefs checkpointed in `a4b67444`; Slack command arg interactions checkpointed in `f6cad264`; Slack command arg options checkpointed in `151bb0e5`; Slack command arg hydrated options checkpointed in `54d18930`; Slack slash arg-menu rendering checkpointed in `27836d4c`; Slack large-choice external select proof checkpointed in `b1639b4b`; Slack `/agentstatus` native alias checkpointed in `bc4f90fe`; WhatsApp reusable reply fanout checkpointed in `a1d930ab`; Slack provider plugin-command injection checkpointed in `c798e879`; Telegram media reply fanout checkpointed in `2b177851`; Telegram media caption passthrough checkpointed in `c9cd47a1`; LINE webhook redelivery dedupe checkpointed in `9acc4cd6`; Zalo webhook ingress checkpointed in `c0e8588e`; Zalo text session delivery/replay checkpointed in `edcccea3`; Zalo image media URL delivery checkpointed in `6c87d9e5`; Zalo fakeable inbound image staging checkpointed in `652f0938`; production Zalo inbound media fetch checkpointed in `00241ee2`; Zalo direct-DM disabled policy checkpointed in `ac0e17e3`; Zalo group allowlist policy checkpointed in `d0d548e2`; Zalo direct-DM pairing challenge checkpointed in `74ce8fbd`; Zalo pairing allowFrom-store authorization checkpointed in `1b2d5009`; Zalo pairing approval store mutation checkpointed in `9409ad9b`; Zalo pairing request listing checkpointed in `d1c79fea`; Zalo pairing CLI list/approve checkpointed in `6de9e5a1`; Zalo pairing approve notify checkpointed in `3a77ccf5`; Zalo pairing command-owner bootstrap checkpointed in `c105b1c5`; Zalo pairing list default checkpointed in `0b791e74`; Zalo pairing command-owner explanation checkpointed in `646fa3d0`; Zalo pairing approval not-found text checkpointed in `433368f1`; disabled channel capability actions checkpointed in `0b5231cc` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific media/reply edges, deeper installed plugin activation, or packaging ownership detection |
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped
 `agents_list` spawn-target projection is checkpointed in `6b74d38e`; it
@@ -592,6 +594,59 @@ checkpointed in `d1c79fea`; provider-native inbound/outbound breadth moves to
 ~99.99990%. Continue native pairing list/approve CLI/RPC surface,
 provider-specific media/reply edges, deeper installed plugin activation,
 companion breadth, or the next packaging edge.
+Provider/CLI addendum: `OZ-PROV-001FW` Zalo pairing CLI list/approve is
+source/test checkpointed in `6de9e5a1`; provider-native inbound/outbound
+breadth moves to ~99.99991%, and runtime/CLI/doctor plus CLI/operator parity
+move to ~99.99993%. Continue provider-specific media/reply edges, deeper
+installed plugin activation, companion breadth, or the next packaging edge.
+Provider/CLI addendum: `OZ-PROV-001FX` Zalo pairing approval notification CLI
+is source/test checkpointed in `3a77ccf5`; provider-native inbound/outbound
+breadth moves to ~99.99992%, and runtime/CLI/doctor plus CLI/operator parity
+move to ~99.99994%. Continue provider-specific media/reply edges, deeper
+installed plugin activation, companion breadth, or the next packaging edge.
+Provider/CLI addendum: `OZ-PROV-001FY` Zalo pairing command-owner bootstrap
+is source/test checkpointed in `c105b1c5`; provider-native inbound/outbound
+breadth moves to ~99.99993%, and runtime/CLI/doctor plus CLI/operator parity
+move to ~99.99995%. Continue provider-specific media/reply edges, deeper
+installed plugin activation, companion breadth, or the next packaging edge.
+Provider/CLI addendum: `OZ-PROV-001FZ` Zalo pairing list default is
+source/test checkpointed in `0b791e74`; provider-native inbound/outbound
+breadth moves to ~99.99994%, and runtime/CLI/doctor plus CLI/operator parity
+move to ~99.99996%. Continue provider-specific media/reply edges, deeper
+installed plugin activation, companion breadth, or the next packaging edge.
+Provider/CLI addendum: `OZ-PROV-001GA` Zalo pairing command-owner bootstrap
+explanation is source/test checkpointed in `646fa3d0`; provider-native
+inbound/outbound breadth moves to ~99.99995%, and runtime/CLI/doctor plus
+CLI/operator parity move to ~99.99997%. Continue provider-specific
+media/reply edges, deeper installed plugin activation, companion breadth, or
+the next packaging edge.
+Provider/CLI addendum: `OZ-PROV-001GB` Zalo pairing approval not-found text
+is source/test checkpointed in `433368f1`; provider-native inbound/outbound
+breadth moves to ~99.99996%, and runtime/CLI/doctor plus CLI/operator parity
+move to ~99.99998%. Continue provider-specific media/reply edges, deeper
+installed plugin activation, companion breadth, or the next packaging edge.
+Provider/CLI addendum: `OZ-PROV-001GC` disabled channel capability actions are
+source/test checkpointed in `0b5231cc`; provider-native inbound/outbound
+breadth moves to ~99.99997%, and runtime/CLI/doctor plus CLI/operator parity
+move to ~99.99999%. Continue provider-specific media/reply edges, deeper
+installed plugin activation, companion breadth, or the next packaging edge.
+Runtime/gateway addendum: `OZ-RT-001BB` transcript artifact gateway methods
+are source/test checkpointed in `13eddac7`; active gateway/session/tool-contract
+parity moves to ~99.964%, and chat/session contract parity moves to ~99.987%.
+
+Runtime/gateway addendum: `OZ-RT-001BC` `update.status` cached update sentinel
+is source/test checkpointed in `59a36693`; active gateway/session/tool-contract
+parity moves to ~99.965%. `diagnostics.stability` is the next gateway method
+head.
+Runtime/gateway addendum: `OZ-RT-001BD` `diagnostics.stability` payload-free
+snapshot is source/test checkpointed in `0a4deddc`; active
+gateway/session/tool-contract parity moves to ~99.966%. `doctor.memory.remHarness`
+is the next gateway method head.
+Runtime/gateway addendum: `OZ-RT-001BE` `doctor.memory.remHarness` read-only
+REM preview is source/test checkpointed in `5e6d43f6`; active
+gateway/session/tool-contract parity moves to ~99.967%. Continue native-hook,
+web-push helper methods, deeper installed plugin activation, companion breadth,
+or the next packaging edge.
 Packaging addendum: `OZ-PKG-001CV` package-update gateway-version restart
 health failure is source/test checkpointed in `fd5f8117`; runtime/CLI/doctor
 and CLI/operator parity move to ~99.99985%. Continue remaining package
@@ -624,6 +679,111 @@ provider-specific media/reply edges, deeper installed plugin activation, or
 companion breadth.
 
 ## Active Slice Detail
+
+- [x] `OZ-RT-001BB` Gateway transcript artifact methods
+  - Source: `openclaw-main/src/gateway/server-methods/artifacts.ts`,
+    `openclaw-main/src/gateway/server-methods/artifacts.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `artifacts.list`, `artifacts.get`, and `artifacts.download`
+    accept OpenClaw-shaped `sessionKey` / `runId` / `taskId` queries, discover
+    image/audio/file content blocks from session transcripts, expose stable
+    artifact summaries without raw bytes, and return base64/url download
+    payloads or typed artifact errors.
+  - Evidence required: focused artifact gateway test, adjacent sessions/artifact
+    gateway test, policy test, ruff, mypy
+  - Status: checkpointed in `13eddac7`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_artifacts_methods_discover_and_download_inline_session_artifacts -q`
+    (`unsupported method: artifacts.list` before implementation, then `1
+    passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "artifacts or sessions_get"`
+    (`9 passed, 1252 deselected`), policy proof
+    `python -m pytest tests\test_gateway_method_policy.py -q -k "artifacts or read_scope or method_scope"`
+    (`1 passed, 18 deselected`), `ruff check`, `mypy`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001BC` Gateway update-status cached sentinel
+  - Source: `openclaw-main/src/gateway/server-methods/update.ts`,
+    `openclaw-main/src/gateway/server-methods/update.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`,
+    `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_method_policy.py`
+  - Contract: `update.status` accepts no params and returns `{ sentinel }`
+    for the latest OpenClaw-shaped update restart sentinel, with `null` when
+    none exists and non-update restart sentinels filtered out.
+  - Evidence required: focused update-status gateway test, adjacent update
+    gateway tests, policy test, ruff, mypy
+  - Status: checkpointed in `59a36693`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_update_status_returns_latest_openclaw_update_sentinel -q`
+    (`unsupported method: update.status` before implementation, then `1
+    passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "update_status or update_run"`
+    (`5 passed, 1257 deselected`), policy proof
+    `python -m pytest tests\test_gateway_method_policy.py -q -k "update_status or method_scope or read_scope"`
+    (`1 passed, 18 deselected`), `ruff check`, `mypy`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001BD` Gateway diagnostics stability snapshot
+  - Source: `openclaw-main/src/gateway/server-methods/diagnostics.ts`,
+    `openclaw-main/src/gateway/server-methods/diagnostics.test.ts`,
+    `openclaw-main/src/logging/diagnostic-stability.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_diagnostics.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`,
+    `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_method_policy.py`
+  - Contract: `diagnostics.stability` returns a payload-free stability snapshot
+    with capacity, count/dropped/seq metadata, sanitized event records,
+    `limit` / `type` / `sinceSeq` filtering, and `byType` / `payload.large`
+    summaries while rejecting invalid limits.
+  - Evidence required: focused diagnostics-stability gateway tests, adjacent
+    logs/diagnostics gateway tests, policy test, ruff, mypy
+  - Status: checkpointed in `0a4deddc`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_diagnostics_stability_returns_filtered_payload_free_snapshot tests\test_gateway_node_methods.py::test_diagnostics_stability_rejects_invalid_limit -q`
+    (`ModuleNotFoundError` before implementation, then `2 passed`), adjacent
+    gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "diagnostics_stability or logs_tail"`
+    (`4 passed, 1260 deselected`), policy proof
+    `python -m pytest tests\test_gateway_method_policy.py -q -k "diagnostics or method_scope or read_scope"`
+    (`1 passed, 18 deselected`), `ruff check`, `mypy`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001BE` Gateway memory REM-harness preview
+  - Source: `openclaw-main/src/gateway/server-methods/doctor.ts`,
+    `openclaw-main/src/gateway/server-methods/doctor.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`,
+    `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_method_policy.py`
+  - Contract: `doctor.memory.remHarness` accepts `grounded`,
+    `includePromoted`, and clamped `limit`, scans workspace memory markdown,
+    and returns OpenClaw-shaped `remConfig`, `deepConfig`, `rem`, `grounded`,
+    and `deep` preview payloads without mutating memory files.
+  - Evidence required: focused REM-harness gateway test, adjacent memory-doctor
+    tests, policy test, ruff, mypy
+  - Status: checkpointed in `5e6d43f6`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_doctor_memory_rem_harness_returns_preview_payload -q`
+    (`unsupported method: doctor.memory.remHarness` before implementation,
+    then `1 passed`), adjacent memory-doctor proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "doctor_memory"`
+    (`4 passed, 1261 deselected`), policy proof
+    `python -m pytest tests\test_gateway_method_policy.py -q -k "doctor_memory or method_scope or read_scope"`
+    (`1 passed, 18 deselected`), `ruff check`, `mypy`, and focused
+    `git diff --check`.
 
 - [x] `OZ-PROV-001FM` Zalo text webhook session delivery and replay dedupe
   - Source: `openclaw-main/extensions/zalo/src/monitor.webhook.ts`,
@@ -853,6 +1013,153 @@ companion breadth.
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
     tests\test_zalo_webhook.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001FW` Zalo pairing CLI list/approve
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`,
+    `openclaw-main/src/pairing/pairing-store.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues pairing list` and `openzues pairing approve` expose
+    native Zalo pairing requests with positional/`--channel` Zalo,
+    `--account`, JSON output, human list/approval output, and CLI OpsMesh
+    data-dir pairing-store wiring.
+  - Evidence required: focused pairing CLI proof, adjacent devices/pairing CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `6de9e5a1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_list_json_calls_zalo_pairing_store tests\test_cli.py::test_pairing_approve_json_calls_zalo_pairing_store -q`
+    (unregistered command before implementation, then `2 passed`), adjacent
+    CLI proof `python -m pytest tests\test_cli.py -q -k "pairing or devices"`
+    (`8 passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] `OZ-PROV-001FX` Zalo pairing approval notification CLI
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/channels/plugins/pairing.ts`,
+    `openclaw-main/extensions/zalo/src/channel.runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues pairing approve --notify` sends the Zalo
+    pairing-approved message to the approved sender through direct-channel
+    delivery after successful approval and records notification/error metadata.
+  - Evidence required: focused notify CLI proof, adjacent devices/pairing CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `3a77ccf5`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_approve_notify_sends_zalo_approval_message -q`
+    (missing `--notify` before implementation, then `1 passed`), adjacent CLI
+    proof `python -m pytest tests\test_cli.py -q -k "pairing or devices"` (`9
+    passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] `OZ-PROV-001FY` Zalo pairing command-owner bootstrap
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/commands/doctor-command-owner.ts`,
+    `openclaw-main/src/config/config.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: after successful Zalo pairing approval, the CLI writes
+    `zalo:<sender>` into `commands.ownerAllowFrom` only when no command owners
+    are configured and reports bootstrap metadata.
+  - Evidence required: focused command-owner CLI proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `c105b1c5`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_approve_bootstraps_command_owner_when_empty -q`
+    (no config patch before implementation, then `1 passed`), adjacent CLI
+    proof `python -m pytest tests\test_cli.py -q -k "pairing or devices"`
+    (`10 passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] `OZ-PROV-001FZ` Zalo pairing list default
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues pairing list` uses Zalo as the sole native pairing
+    channel when no positional channel or `--channel` is provided, while
+    preserving explicit channel/account/JSON behavior.
+  - Evidence required: focused pairing-list default CLI proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `0b791e74`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_list_json_defaults_to_zalo_channel -q`
+    (channel-required CLI exit before implementation, then `1 passed`),
+    adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "pairing or devices"` (`11
+    passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] `OZ-PROV-001GA` Zalo pairing command-owner explanation
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: when `openzues pairing approve` bootstraps command ownership,
+    human output explains that `commands.ownerAllowFrom` was empty.
+  - Evidence required: focused command-owner human-output proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `646fa3d0`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_approve_human_output_explains_command_owner_bootstrap -q`
+    (human output omitted the empty-allowlist explanation before
+    implementation, then `1 passed`), adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "pairing or devices"` (`12
+    passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] `OZ-PROV-001GB` Zalo pairing approval not-found text
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: when `openzues pairing approve` cannot find a pending request
+    for a code, human output says `No pending pairing request found for code:
+    <code>` instead of exposing the native machine reason.
+  - Evidence required: focused approval-not-found CLI proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `433368f1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_approve_human_output_reports_not_found_code -q`
+    (raw `zalo_pairing_code_not_found` before implementation, then `1
+    passed`), adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "pairing or devices"` (`13
+    passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] `OZ-PROV-001GC` Disabled channel capability actions
+  - Source: `openclaw-main/extensions/zalo/src/actions.ts`,
+    `openclaw-main/extensions/zalo/src/actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: channel capability discovery does not advertise message actions
+    for disabled accounts/routes, matching Zalo `describeMessageTool` returning
+    `null` for disabled selected accounts.
+  - Evidence required: focused disabled Zalo capability proof, adjacent
+    channel capabilities CLI proof, ruff, mypy
+  - Status: checkpointed in `0b5231cc`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_channels_capabilities_json_hides_zalo_actions_for_disabled_account -q`
+    (disabled Zalo account still advertised `send`/`broadcast` before
+    implementation, then `1 passed`), adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "channels_capabilities"` (`6
+    passed, 598 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
 
 - [x] `OZ-PROV-001FJ` production credential-backed LINE media download
   - Source: `openclaw-main/extensions/line/src/bot-handlers.ts`,

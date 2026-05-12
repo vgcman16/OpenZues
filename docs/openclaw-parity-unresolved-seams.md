@@ -6,15 +6,16 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.963% of the
+- The active gateway/session/tool-contract family is estimated at ~99.967% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~99.986% after the latest
+- The chat/session contract subfamily is estimated at ~99.987% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
-  `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed
+  `sessions.spawn`, `artifacts.list` / `artifacts.get` /
+  `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99992% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
@@ -75,7 +76,10 @@ Current percentage rollup:
   installed plugin source SDK subpath alias runtime activation and execution,
   installed plugin disabled activation gate,
   active-registry executor projection, runtime activation doctor posture, and
-  speech facade helper,
+  speech facade helper, native Zalo pairing list/approve CLI, Zalo pairing
+  approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing
+  list default CLI, Zalo pairing command-owner explanation, Zalo pairing
+  not-found error text, disabled-account capability action gating,
   imported plugin SDK allow-from, access-groups, direct-DM access,
   direct-DM guard-policy, direct-DM, channel-send-result, channel-pairing,
   command-auth, channel-setup, allowlist-config-edit, group-access,
@@ -142,9 +146,9 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.963% after the
-  latest requester-scoped `agents_list` spawn-target projection slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.99990%
+- The gateway session/tool-contract family is estimated at ~99.967% after the
+  latest native `doctor.memory.remHarness` preview slice.
+- The provider-native inbound/outbound breadth family is estimated at ~99.99997%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
   delivery plus postback/media-placeholder/sticker/location delivery and group
@@ -156,8 +160,11 @@ Current percentage rollup:
   delivery, fakeable Zalo inbound image media staging, production Zalo inbound
   media fetch, Zalo direct DM disabled-policy gating, Zalo group allowlist
   policy gating, Zalo direct DM pairing challenges, and Zalo pairing
-  allowFrom-store authorization, approval-store mutation, and request listing.
-- The CLI/operator control-plane family is estimated at ~99.99992% after the bundle
+  allowFrom-store authorization, approval-store mutation, request listing, and
+  native pairing list/approve plus approval-notification CLI,
+  command-owner bootstrap, list default, bootstrap explanation, not-found
+  error text, and disabled-account capability action gating.
+- The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
   secrets reload CLI surface, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch restart-health failure, gateway health `serverVersion` projection, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
@@ -199,6 +206,9 @@ Current percentage rollup:
   installed plugin disabled activation gate,
   active-registry executor projection, and
   runtime activation doctor posture;
+  native Zalo pairing list/approve CLI, approval notification CLI, command-owner bootstrap,
+  list default, bootstrap explanation, not-found error text, and
+  disabled-account capability action gating;
   remaining CLI
   gaps are now dominated by real installed plugin module import/activation and
   packaging surfaces.
@@ -209,6 +219,18 @@ and the six-action `createDefaultMenuConfig()` default menu. Source/test
 checkpointed in `b80501c6`; repo-wide parity remains estimated at ~99.9%, and
 runtime/CLI/doctor plus CLI/operator parity move to ~99.99988%. Continue
 remaining package restart-health diagnostics, provider-specific media/reply
+edges, and gateway runtime method gaps.
+
+Current queue-head adjustment: `OZ-RT-001BB` `artifacts.list`, `artifacts.get`, and
+`artifacts.download` are now native read-scope gateway methods backed by
+OpenZues control-chat transcripts. They scan structured transcript content
+blocks for image/audio/file artifacts, project stable OpenClaw-shaped artifact
+summaries, and return base64/url download payloads without exposing raw bytes
+from list/get. Source/test checkpointed in `13eddac7`; active
+gateway/session/tool-contract parity moves to ~99.964% and chat/session parity
+moves to ~99.987%. The next method comparison queue heads are
+`update.status`, `diagnostics.stability`, `nativeHook.invoke`, web-push helper
+methods, and the memory rem-harness doctor helper.
 edges, deeper installed plugin activation, browser local fallback, or companion
 breadth.
 
@@ -350,6 +372,73 @@ Source/test checkpointed in `d1c79fea`; repo-wide parity remains estimated at
 ~99.9%, and provider-native inbound/outbound breadth moves to ~99.99990%.
 Continue native pairing list/approve CLI/RPC surface, provider-specific
 media/reply edges, deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: native `openzues pairing list` and
+`openzues pairing approve` now expose the Zalo pairing store operator
+lifecycle with positional/`--channel` Zalo, `--account`, JSON output, human
+listing/approval output, and CLI-built OpsMesh data-dir store wiring.
+Source/test checkpointed in `6de9e5a1`; repo-wide parity remains estimated at
+~99.9%, provider-native inbound/outbound breadth moves to ~99.99991%, and
+runtime/CLI/doctor plus CLI/operator parity move to ~99.99993%. Continue
+provider-specific media/reply edges, deeper installed plugin activation,
+companion breadth, or remaining packaging/distribution breadth.
+
+Current queue-head adjustment: native `openzues pairing approve --notify`
+now sends the Zalo pairing-approved message through the direct-channel runtime
+after successful approval, preserving idempotency and projecting notification
+or notification-error metadata. Source/test checkpointed in `3a77ccf5`;
+repo-wide parity remains estimated at ~99.9%, provider-native inbound/outbound
+breadth moves to ~99.99992%, and runtime/CLI/doctor plus CLI/operator parity
+move to ~99.99994%. Continue provider-specific media/reply edges, deeper
+installed plugin activation, companion breadth, or remaining
+packaging/distribution breadth.
+
+Current queue-head adjustment: native Zalo pairing approval now bootstraps
+`commands.ownerAllowFrom` with `zalo:<sender>` when the saved config has no
+command owners, preserving existing owner allowlists and projecting bootstrap
+metadata. Source/test checkpointed in `c105b1c5`; repo-wide parity remains
+estimated at ~99.9%, provider-native inbound/outbound breadth moves to
+~99.99993%, and runtime/CLI/doctor plus CLI/operator parity move to
+~99.99995%. Continue provider-specific media/reply edges, deeper installed
+plugin activation, companion breadth, or remaining packaging/distribution
+breadth.
+
+Current queue-head adjustment: native `openzues pairing list` now defaults to
+Zalo when no positional or `--channel` value is passed, matching OpenClaw's
+single-available-pairing-channel behavior. Source/test checkpointed in
+`0b791e74`; repo-wide parity remains estimated at ~99.9%, provider-native
+inbound/outbound breadth moves to ~99.99994%, and runtime/CLI/doctor plus
+CLI/operator parity move to ~99.99996%. Continue provider-specific media/reply
+edges, deeper installed plugin activation, companion breadth, or remaining
+packaging/distribution breadth.
+
+Current queue-head adjustment: native `openzues pairing approve` now includes
+the OpenClaw human-output explanation when command-owner bootstrap happens:
+`(commands.ownerAllowFrom was empty).` Source/test checkpointed in
+`646fa3d0`; repo-wide parity remains estimated at ~99.9%, provider-native
+inbound/outbound breadth moves to ~99.99995%, and runtime/CLI/doctor plus
+CLI/operator parity move to ~99.99997%. Continue provider-specific media/reply
+edges, deeper installed plugin activation, companion breadth, or remaining
+packaging/distribution breadth.
+
+Current queue-head adjustment: native `openzues pairing approve` now maps the
+Zalo pairing-code not-found machine reason to OpenClaw's human error text,
+`No pending pairing request found for code: <code>`. Source/test checkpointed
+in `433368f1`; repo-wide parity remains estimated at ~99.9%,
+provider-native inbound/outbound breadth moves to ~99.99996%, and
+runtime/CLI/doctor plus CLI/operator parity move to ~99.99998%. Continue
+provider-specific media/reply edges, deeper installed plugin activation,
+companion breadth, or remaining packaging/distribution breadth.
+
+Current queue-head adjustment: native `openzues channels capabilities` now
+suppresses message actions for disabled channel accounts/routes, matching the
+OpenClaw Zalo action discovery behavior where disabled selected accounts have
+no message tool. Source/test checkpointed in `0b5231cc`; repo-wide parity
+remains estimated at ~99.9%, provider-native inbound/outbound breadth moves to
+~99.99997%, and runtime/CLI/doctor plus CLI/operator parity move to
+~99.99999%. Continue provider-specific media/reply edges, deeper installed
+plugin activation, companion breadth, or remaining packaging/distribution
+breadth.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -12417,3 +12506,28 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9992%. Continue Zalo webhook session delivery/replay/media breadth,
   remaining provider-specific media/reply edges, deeper installed plugin
   activation, or companion breadth.
+- Current queue-head adjustment: native `update.status` now returns the latest
+  OpenClaw-shaped update restart sentinel from `runtime/restart-sentinel.json`,
+  matching `src/gateway/server-methods/update.ts`. Source/test checkpointed in
+  `59a36693`; repo-wide parity remains estimated at ~99.9%, and active
+  gateway/session/tool-contract parity moves to ~99.965%. Continue
+  `diagnostics.stability`, memory REM-harness doctor, native hook, web-push
+  helper methods, provider-specific media/reply edges, deeper installed plugin
+  activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: native `diagnostics.stability` now returns a
+  payload-free OpenClaw-shaped stability snapshot with ring-buffer capacity,
+  count/dropped/seq metadata, sanitized events, `limit` / `type` / `sinceSeq`
+  filtering, and `byType` / `payload.large` summaries. Source/test
+  checkpointed in `0a4deddc`; repo-wide parity remains estimated at ~99.9%,
+  and active gateway/session/tool-contract parity moves to ~99.966%. Continue
+  memory REM-harness doctor, native hook, web-push helper methods,
+  provider-specific media/reply edges, deeper installed plugin activation,
+  companion breadth, or the next packaging edge.
+- Current queue-head adjustment: native `doctor.memory.remHarness` now returns
+  OpenClaw-shaped REM/deep/grounded preview payloads from workspace memory
+  markdown, including clamped candidate limits and non-mutating grounded file
+  previews. Source/test checkpointed in `5e6d43f6`; repo-wide parity remains
+  estimated at ~99.9%, and active gateway/session/tool-contract parity moves
+  to ~99.967%. Continue native hook, web-push helper methods,
+  provider-specific media/reply edges, deeper installed plugin activation,
+  companion breadth, or the next packaging edge.

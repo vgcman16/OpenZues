@@ -832,6 +832,293 @@ def test_devices_approve_latest_json_previews_without_approving(monkeypatch) -> 
     assert payload["approveCommand"] == "openzues devices approve req-new --json"
 
 
+def test_pairing_list_json_calls_zalo_pairing_store(monkeypatch) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    class FakeOpsMesh:
+        async def list_zalo_pairing_requests(
+            self,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            calls.append(("list", account_id))
+            return {
+                "ok": True,
+                "channel": "zalo",
+                "accountId": account_id,
+                "requests": [{"id": "user-1", "code": "PAIRCODE"}],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["pairing", "list", "zalo", "--account", "zalo-bot", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("list", "zalo-bot")]
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "requests": [{"id": "user-1", "code": "PAIRCODE"}],
+    }
+
+
+def test_pairing_list_json_defaults_to_zalo_channel(monkeypatch) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    class FakeOpsMesh:
+        async def list_zalo_pairing_requests(
+            self,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            calls.append(("list", account_id))
+            return {
+                "ok": True,
+                "channel": "zalo",
+                "accountId": account_id,
+                "requests": [],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["pairing", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("list", None)]
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": None,
+        "requests": [],
+    }
+
+
+def test_pairing_approve_json_calls_zalo_pairing_store(monkeypatch) -> None:
+    calls: list[tuple[str, str, str | None]] = []
+
+    class FakeOpsMesh:
+        async def approve_zalo_pairing_code(
+            self,
+            code: str,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            calls.append(("approve", code, account_id))
+            return {
+                "ok": True,
+                "channel": "zalo",
+                "accountId": account_id,
+                "senderId": "user-1",
+                "code": code,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["pairing", "approve", "zalo", "PAIRCODE", "--account", "zalo-bot", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("approve", "PAIRCODE", "zalo-bot")]
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "senderId": "user-1",
+        "code": "PAIRCODE",
+    }
+
+
+def test_pairing_approve_notify_sends_zalo_approval_message(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeOpsMesh:
+        async def approve_zalo_pairing_code(
+            self,
+            code: str,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            calls.append(("approve", {"code": code, "accountId": account_id}))
+            return {
+                "ok": True,
+                "channel": "zalo",
+                "accountId": account_id,
+                "senderId": "user-1",
+                "code": code,
+            }
+
+        async def send_direct_channel_message(self, **kwargs: object) -> dict[str, object]:
+            calls.append(("notify", dict(kwargs)))
+            return {"ok": True, "messageId": "zalo-approved-1", "deliveryId": "delivery-1"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "pairing",
+            "approve",
+            "zalo",
+            "PAIRCODE",
+            "--account",
+            "zalo-bot",
+            "--notify",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        ("approve", {"code": "PAIRCODE", "accountId": "zalo-bot"}),
+        (
+            "notify",
+            {
+                "channel": "zalo",
+                "to": "user-1",
+                "message": "Your pairing request has been approved.",
+                "account_id": "zalo-bot",
+                "idempotency_key": "zalo-pairing-approved:zalo-bot:user-1:PAIRCODE",
+            },
+        ),
+    ]
+    payload = json.loads(result.stdout)
+    assert payload["notification"] == {
+        "ok": True,
+        "messageId": "zalo-approved-1",
+        "deliveryId": "delivery-1",
+    }
+
+
+def test_pairing_approve_bootstraps_command_owner_when_empty(monkeypatch) -> None:
+    patches: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def approve_zalo_pairing_code(
+            self,
+            code: str,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "channel": "zalo",
+                "accountId": account_id,
+                "senderId": "user-1",
+                "code": code,
+            }
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"commands": {"ownerAllowFrom": []}}
+
+        def patch_object(self, patch: dict[str, object]) -> dict[str, object]:
+            patches.append(patch)
+            return patch
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                ops_mesh=FakeOpsMesh(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["pairing", "approve", "zalo", "PAIRCODE", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert patches == [{"commands": {"ownerAllowFrom": ["zalo:user-1"]}}]
+    payload = json.loads(result.stdout)
+    assert payload["commandOwner"] == {
+        "ownerEntry": "zalo:user-1",
+        "bootstrapped": True,
+    }
+
+
+def test_pairing_approve_human_output_explains_command_owner_bootstrap(monkeypatch) -> None:
+    class FakeOpsMesh:
+        async def approve_zalo_pairing_code(
+            self,
+            code: str,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "channel": "zalo",
+                "accountId": account_id,
+                "senderId": "user-1",
+                "code": code,
+            }
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"commands": {"ownerAllowFrom": []}}
+
+        def patch_object(self, patch: dict[str, object]) -> dict[str, object]:
+            return patch
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                ops_mesh=FakeOpsMesh(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["pairing", "approve", "zalo", "PAIRCODE"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Command owner configured zalo:user-1 (commands.ownerAllowFrom was empty)." in (
+        result.stdout
+    )
+
+
+def test_pairing_approve_human_output_reports_not_found_code(monkeypatch) -> None:
+    class FakeOpsMesh:
+        async def approve_zalo_pairing_code(
+            self,
+            code: str,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "accountId": account_id,
+                "code": code,
+                "reason": "zalo_pairing_code_not_found",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["pairing", "approve", "zalo", "PAIRCODE"])
+
+    assert result.exit_code == 1
+    assert "No pending pairing request found for code: PAIRCODE" in result.stderr
+
+
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
     assert _is_root_value_token("work") is True
     assert _is_root_value_token("-1") is True
@@ -4395,6 +4682,59 @@ def test_channels_capabilities_json_reports_zalo_support(tmp_path, monkeypatch) 
     assert report["support"]["polls"] is False
     assert report["support"]["threads"] is False
     assert report["actions"] == ["send", "broadcast"]
+
+
+def test_channels_capabilities_json_hides_zalo_actions_for_disabled_account(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Disabled Zalo Capabilities")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Disabled Zalo Route",
+            kind="zalo",
+            target="https://bot-api.zaloplatforms.test",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "zalo",
+                "account_id": "default",
+                "peer_kind": "direct",
+                "peer_id": "direct:dm-chat-1",
+                "summary": "disabled default Zalo account",
+            },
+            enabled=False,
+            secret_header_name=None,
+            secret_token="zalo-access-token",
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "capabilities",
+            "--channel",
+            "zalo",
+            "--account",
+            "default",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert len(payload["channels"]) == 1
+    report = payload["channels"][0]
+    assert report["channel"] == "zalo"
+    assert report["accountId"] == "default"
+    assert report["configured"] is True
+    assert report["enabled"] is False
+    assert report["actions"] == []
 
 
 def test_channels_capabilities_json_reports_feishu_media_voice_support(

@@ -43,6 +43,7 @@ from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_config_schema import GatewayConfigSchemaService
 from openzues.services.gateway_cron import GatewayCronService, build_gateway_cron_task_blueprint
+from openzues.services.gateway_diagnostics import GatewayDiagnosticStabilityService
 from openzues.services.gateway_health import GatewayHealthService
 from openzues.services.gateway_identity import GatewayIdentityService
 from openzues.services.gateway_last_heartbeat import GatewayLastHeartbeatService
@@ -1749,6 +1750,10 @@ _MAX_NODE_NOTIFICATION_EVENT_TEXT_CHARS = 120
 _DREAM_DIARY_FILE_NAMES = ("DREAMS.md", "dreams.md")
 _DREAM_DIARY_BACKFILL_START = "<!-- openzues:dream-backfill:start -->"
 _DREAM_DIARY_BACKFILL_END = "<!-- openzues:dream-backfill:end -->"
+_REM_HARNESS_DEFAULT_CANDIDATE_LIMIT = 25
+_REM_HARNESS_MAX_CANDIDATE_LIMIT = 100
+_REM_HARNESS_MAX_GROUNDED_FILES = 10
+_REM_HARNESS_MAX_REM_PREVIEW_LIMIT = 50
 GatewaySandboxRemoteMediaFetchService = Callable[
     ...,
     Awaitable[bytes | bytearray | memoryview | None],
@@ -1785,6 +1790,7 @@ class GatewayNodeMethodService:
         gateway_identity_service: GatewayIdentityService | None = None,
         last_heartbeat_service: GatewayLastHeartbeatService | None = None,
         logs_service: GatewayLogsService | None = None,
+        diagnostic_stability_service: GatewayDiagnosticStabilityService | None = None,
         models_service: GatewayModelsService | None = None,
         sessions_service: GatewaySessionsService | None = None,
         session_compaction_service: GatewaySessionCompactionService | None = None,
@@ -1887,6 +1893,9 @@ class GatewayNodeMethodService:
                 registry=registry,
             )
         self._logs_service = logs_service or GatewayLogsService()
+        self._diagnostic_stability_service = (
+            diagnostic_stability_service or GatewayDiagnosticStabilityService()
+        )
         self._models_service = models_service or GatewayModelsService()
         self._tools_invoke_executors = dict(tools_invoke_executors or {})
         self._tools_invoke_owner_only = {
@@ -5097,6 +5106,14 @@ class GatewayNodeMethodService:
                 now_ms=_timestamp_ms(now_ms),
             )
 
+        if resolved_method == "update.status":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            return {
+                "sentinel": await _read_latest_update_restart_sentinel(
+                    self._database,
+                ),
+            }
+
         if resolved_method == "update.run":
             _validate_exact_keys(
                 resolved_method,
@@ -5304,6 +5321,9 @@ class GatewayNodeMethodService:
                     message=str(exc),
                     status_code=503,
                 ) from exc
+
+        if resolved_method == "diagnostics.stability":
+            return self._diagnostic_stability_service.snapshot(payload)
 
         if resolved_method == "models.list":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
@@ -5937,6 +5957,40 @@ class GatewayNodeMethodService:
                 session_key=session_key,
                 limit=limit,
                 cursor=cursor,
+            )
+
+        if resolved_method in {"artifacts.list", "artifacts.get", "artifacts.download"}:
+            allowed_artifact_keys = (
+                ("sessionKey", "runId", "taskId")
+                if resolved_method == "artifacts.list"
+                else ("sessionKey", "runId", "taskId", "artifactId")
+            )
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=allowed_artifact_keys,
+            )
+            if self._database is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=f"{resolved_method} is unavailable until transcript storage is wired",
+                    status_code=503,
+                )
+            return await _build_artifacts_payload(
+                self._database,
+                tracked_runs=self._gateway_tracked_chat_runs_by_id,
+                method=resolved_method,
+                session_key=_optional_non_empty_string(
+                    payload.get("sessionKey"),
+                    label="sessionKey",
+                ),
+                run_id=_optional_non_empty_string(payload.get("runId"), label="runId"),
+                task_id=_optional_non_empty_string(payload.get("taskId"), label="taskId"),
+                artifact_id=(
+                    _require_non_empty_string(payload.get("artifactId"), label="artifactId")
+                    if resolved_method != "artifacts.list"
+                    else None
+                ),
             )
 
         if resolved_method == "sessions.usage":
@@ -10660,6 +10714,17 @@ class GatewayNodeMethodService:
         if resolved_method == "doctor.memory.dreamDiary":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
             return _build_doctor_memory_dream_diary_payload(self._memory_doctor_workspace)
+
+        if resolved_method == "doctor.memory.remHarness":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("grounded", "includePromoted", "limit"),
+            )
+            return _build_doctor_memory_rem_harness_payload(
+                self._memory_doctor_workspace,
+                payload,
+            )
 
         if resolved_method in {
             "doctor.memory.backfillDreamDiary",
@@ -16609,6 +16674,373 @@ async def _build_sessions_get_payload(
     return payload
 
 
+async def _build_artifacts_payload(
+    database: Database,
+    *,
+    tracked_runs: Mapping[str, GatewayTrackedChatRun],
+    method: str,
+    session_key: str | None,
+    run_id: str | None,
+    task_id: str | None,
+    artifact_id: str | None,
+) -> dict[str, Any]:
+    if session_key is None and run_id is None and task_id is None:
+        raise _artifact_error(
+            "artifact_query_unsupported",
+            "artifacts require one of sessionKey, runId, or taskId",
+        )
+    resolved_session_key = await _resolve_artifact_query_session_key(
+        database,
+        tracked_runs=tracked_runs,
+        session_key=session_key,
+        run_id=run_id,
+        task_id=task_id,
+    )
+    if resolved_session_key is None:
+        if run_id is not None or task_id is not None:
+            raise _artifact_error(
+                "artifact_scope_not_found",
+                "no session found for artifact query",
+            )
+        return {"artifacts": []}
+    artifacts = await _collect_session_artifacts(
+        database,
+        session_key=resolved_session_key,
+        run_id=run_id,
+        task_id=task_id,
+    )
+    if method == "artifacts.list":
+        return {"artifacts": [_artifact_summary(artifact) for artifact in artifacts]}
+    artifact = next(
+        (candidate for candidate in artifacts if candidate.get("id") == artifact_id),
+        None,
+    )
+    if artifact is None:
+        raise _artifact_error(
+            "artifact_not_found",
+            "artifact not found",
+            artifactId=artifact_id,
+        )
+    summary = _artifact_summary(artifact)
+    if method == "artifacts.get":
+        return {"artifact": summary}
+    download = artifact.get("download")
+    mode = download.get("mode") if isinstance(download, Mapping) else None
+    if mode == "unsupported":
+        raise _artifact_error(
+            "artifact_download_unsupported",
+            "artifact download is unsupported",
+            artifactId=artifact.get("id"),
+        )
+    payload: dict[str, Any] = {"artifact": summary}
+    if mode == "bytes":
+        payload["encoding"] = "base64"
+        payload["data"] = artifact.get("data")
+    elif mode == "url":
+        payload["url"] = artifact.get("url")
+    return payload
+
+
+async def _resolve_artifact_query_session_key(
+    database: Database,
+    *,
+    tracked_runs: Mapping[str, GatewayTrackedChatRun],
+    session_key: str | None,
+    run_id: str | None,
+    task_id: str | None,
+) -> str | None:
+    if session_key is not None:
+        return _canonical_session_key(session_key)
+    if run_id is not None:
+        tracked = tracked_runs.get(run_id)
+        if tracked is not None:
+            return _canonical_session_key(tracked.session_key)
+    rows = await database.list_control_chat_messages(limit=5000)
+    for row in rows:
+        row_session_key = _string_or_none(row.get("session_key"))
+        if row_session_key is None:
+            continue
+        metadata = _chat_history_json_object(row.get("metadata_json")) or {}
+        row_run_id = _artifact_message_run_id(metadata)
+        row_task_id = _artifact_message_task_id(metadata)
+        if run_id is not None and row_run_id == run_id:
+            return _canonical_session_key(row_session_key)
+        if task_id is not None and row_task_id == task_id:
+            return _canonical_session_key(row_session_key)
+    return None
+
+
+async def _collect_session_artifacts(
+    database: Database,
+    *,
+    session_key: str,
+    run_id: str | None,
+    task_id: str | None,
+) -> list[dict[str, Any]]:
+    message_count = await database.count_control_chat_messages(session_key=session_key)
+    if message_count <= 0:
+        return []
+    rows = await database.list_control_chat_messages(
+        limit=max(1, message_count),
+        session_key=session_key,
+    )
+    rows = _freshest_session_alias_rows(rows)
+    artifacts: list[dict[str, Any]] = []
+    for fallback_seq, row in enumerate(rows, start=1):
+        metadata = _chat_history_json_object(row.get("metadata_json")) or {}
+        message_run_id = _artifact_message_run_id(metadata)
+        message_task_id = _artifact_message_task_id(metadata)
+        if run_id is not None and message_run_id != run_id:
+            continue
+        if task_id is not None and message_task_id != task_id:
+            continue
+        for content_index, block in enumerate(_artifact_content_blocks(row)):
+            if not _is_artifact_block(block):
+                continue
+            artifact_type = _normalize_artifact_type(
+                _string_or_none(block.get("type")) or "file"
+            )
+            title = _artifact_title(block, artifact_type, len(artifacts) + 1)
+            download = _artifact_download(block)
+            artifact: dict[str, Any] = {
+                "id": _artifact_id(
+                    session_key=session_key,
+                    message_seq=fallback_seq,
+                    content_index=content_index,
+                    artifact_type=artifact_type,
+                    title=title,
+                ),
+                "type": artifact_type,
+                "title": title,
+                "sessionKey": session_key,
+                "messageSeq": fallback_seq,
+                "source": "session-transcript",
+                "download": {"mode": download["mode"]},
+            }
+            if download.get("mimeType") is not None:
+                artifact["mimeType"] = download["mimeType"]
+            if download.get("sizeBytes") is not None:
+                artifact["sizeBytes"] = download["sizeBytes"]
+            if message_run_id is not None:
+                artifact["runId"] = message_run_id
+            if message_task_id is not None:
+                artifact["taskId"] = message_task_id
+            if download.get("data") is not None:
+                artifact["data"] = download["data"]
+            if download.get("url") is not None:
+                artifact["url"] = download["url"]
+            artifacts.append(artifact)
+    return artifacts
+
+
+def _artifact_error(
+    error_type: str,
+    message: str,
+    **details: object,
+) -> GatewayNodeMethodError:
+    return GatewayNodeMethodError(
+        code="INVALID_REQUEST",
+        message=message,
+        status_code=400,
+        details={"type": error_type, **details},
+    )
+
+
+def _artifact_summary(artifact: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in artifact.items()
+        if key not in {"data", "url"}
+    }
+
+
+def _artifact_content_blocks(row: Mapping[str, Any]) -> list[dict[str, Any]]:
+    raw_content = str(row.get("content") or "")
+    if not raw_content.lstrip().startswith("["):
+        return []
+    try:
+        parsed = json.loads(raw_content)
+    except ValueError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [dict(item) for item in parsed if isinstance(item, Mapping)]
+
+
+def _artifact_message_run_id(metadata: Mapping[str, Any]) -> str | None:
+    return _string_or_none(metadata.get("runId"))
+
+
+def _artifact_message_task_id(metadata: Mapping[str, Any]) -> str | None:
+    return (
+        _string_or_none(metadata.get("messageTaskId"))
+        or _string_or_none(metadata.get("taskId"))
+    )
+
+
+def _normalize_artifact_type(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"image", "input_image", "image_url"}:
+        return "image"
+    if normalized in {"audio", "input_audio"}:
+        return "audio"
+    if normalized in {"file", "input_file"}:
+        return "file"
+    return "file"
+
+
+def _artifact_title(block: Mapping[str, Any], artifact_type: str, index: int) -> str:
+    for key in ("title", "fileName", "filename", "alt"):
+        value = _string_or_none(block.get(key))
+        if value is not None:
+            return value
+    return f"{artifact_type} {index}"
+
+
+def _is_artifact_block(block: Mapping[str, Any]) -> bool:
+    block_type = str(block.get("type") or "").strip().lower()
+    if block_type in {
+        "image",
+        "audio",
+        "file",
+        "input_image",
+        "input_audio",
+        "input_file",
+        "image_url",
+    }:
+        return True
+    return any(
+        key in block
+        for key in ("url", "openUrl", "data", "source", "image_url", "audio_url")
+    )
+
+
+def _artifact_download(block: Mapping[str, Any]) -> dict[str, Any]:
+    data = _string_or_none(block.get("data"))
+    content = _string_or_none(block.get("content"))
+    url = _string_or_none(block.get("url")) or _string_or_none(block.get("openUrl"))
+    image_url = _artifact_media_url(block.get("image_url"))
+    audio_url = _string_or_none(block.get("audio_url"))
+    source = block.get("source")
+    source_record = source if isinstance(source, Mapping) else {}
+    source_data = _string_or_none(source_record.get("data"))
+    source_url = _string_or_none(source_record.get("url"))
+    data_url = next(
+        (
+            value
+            for value in (url, source_url, image_url, audio_url, data, content, source_data)
+            if value is not None and value.strip().lower().startswith("data:")
+        ),
+        None,
+    )
+    base64_from_data_url = _artifact_base64_from_data_url(data_url)
+    direct_base64 = next(
+        (
+            value
+            for value in (data, source_data, content)
+            if value is not None and not value.strip().lower().startswith("data:")
+        ),
+        None,
+    )
+    encoded_data = base64_from_data_url or direct_base64
+    remote_url = next(
+        (
+            value
+            for value in (url, source_url, image_url, audio_url)
+            if value is not None and _is_safe_artifact_download_url(value)
+        ),
+        None,
+    )
+    mime_type = (
+        _string_or_none(block.get("mimeType"))
+        or _string_or_none(block.get("media_type"))
+        or _string_or_none(source_record.get("media_type"))
+        or _string_or_none(source_record.get("mimeType"))
+        or _artifact_mime_from_data_url(data_url)
+    )
+    explicit_size = block.get("sizeBytes")
+    if explicit_size is None:
+        explicit_size = source_record.get("sizeBytes")
+    size_bytes = _artifact_size_bytes(explicit_size, encoded_data)
+    if encoded_data is not None:
+        return {
+            "mode": "bytes",
+            "data": encoded_data,
+            "mimeType": mime_type,
+            "sizeBytes": size_bytes,
+        }
+    if remote_url is not None:
+        return {
+            "mode": "url",
+            "url": remote_url,
+            "mimeType": mime_type,
+            "sizeBytes": size_bytes,
+        }
+    return {
+        "mode": "unsupported",
+        "mimeType": mime_type,
+        "sizeBytes": size_bytes,
+    }
+
+
+def _artifact_media_url(value: object) -> str | None:
+    if isinstance(value, str):
+        return _string_or_none(value)
+    if isinstance(value, Mapping):
+        return _string_or_none(value.get("url"))
+    return None
+
+
+def _artifact_mime_from_data_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    match = re.match(r"^data:([^;,]+)(?:;[^,]*)?,", value.strip(), re.IGNORECASE)
+    return match.group(1).lower() if match else None
+
+
+def _artifact_base64_from_data_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    match = re.match(r"^data:[^,]*;base64,(.*)$", value.strip(), re.IGNORECASE | re.DOTALL)
+    return re.sub(r"\s+", "", match.group(1)) if match else None
+
+
+def _artifact_size_bytes(value: object, encoded_data: str | None) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float) and math.isfinite(value) and value >= 0:
+        return math.floor(value)
+    if encoded_data is None:
+        return None
+    try:
+        return len(base64.b64decode(encoded_data, validate=False))
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _is_safe_artifact_download_url(value: str) -> bool:
+    trimmed = value.strip()
+    if not trimmed or trimmed.lower().startswith("data:"):
+        return False
+    if trimmed.startswith("/"):
+        return not trimmed.startswith("//") and trimmed.startswith("/api/")
+    parsed = urlsplit(trimmed)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _artifact_id(
+    *,
+    session_key: str,
+    message_seq: int,
+    content_index: int,
+    artifact_type: str,
+    title: str,
+) -> str:
+    seed = f"{session_key}\0{message_seq}\0{content_index}\0{artifact_type}\0{title}"
+    digest = base64.urlsafe_b64encode(hashlib.sha256(seed.encode("utf-8")).digest())
+    return f"artifact_{digest.decode('ascii').rstrip('=')[:18]}"
+
+
 async def _build_sessions_usage_payload(
     database: Database,
     *,
@@ -18834,6 +19266,27 @@ async def _write_restart_sentinel(
         return None
 
 
+async def _read_latest_update_restart_sentinel(
+    database: Database | None,
+) -> dict[str, object] | None:
+    if database is None:
+        return None
+    path = database.path.parent / "runtime" / "restart-sentinel.json"
+
+    def read_payload() -> dict[str, object] | None:
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        if not isinstance(parsed, Mapping):
+            return None
+        if parsed.get("kind") != "update":
+            return None
+        return dict(parsed)
+
+    return await asyncio.to_thread(read_payload)
+
+
 def _validate_optional_restart_delivery_context(value: object, *, label: str) -> None:
     if value is None:
         return
@@ -18931,6 +19384,178 @@ def _list_doctor_memory_source_files(workspace: Path) -> list[Path]:
         for path in memory_dir.rglob("*.md")
         if path.is_file() and path.name.lower() not in {"dreams.md", "dream_diary.md"}
     )
+
+
+def _build_doctor_memory_rem_harness_payload(
+    workspace: Path,
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    grounded = bool(payload.get("grounded"))
+    include_promoted = bool(payload.get("includePromoted"))
+    candidate_limit = _doctor_memory_rem_harness_candidate_limit(payload.get("limit"))
+    try:
+        return _build_doctor_memory_rem_harness_success_payload(
+            workspace,
+            grounded=grounded,
+            include_promoted=include_promoted,
+            candidate_limit=candidate_limit,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "agentId": "openzues",
+            "workspaceDir": str(workspace),
+            "error": f"gateway rem-harness probe failed: {exc}",
+        }
+
+
+def _doctor_memory_rem_harness_candidate_limit(value: object) -> int:
+    requested_limit = _REM_HARNESS_DEFAULT_CANDIDATE_LIMIT
+    if (
+        not isinstance(value, bool)
+        and isinstance(value, int | float)
+        and math.isfinite(float(value))
+    ):
+        requested_limit = math.floor(float(value))
+    return max(1, min(_REM_HARNESS_MAX_CANDIDATE_LIMIT, requested_limit))
+
+
+def _build_doctor_memory_rem_harness_success_payload(
+    workspace: Path,
+    *,
+    grounded: bool,
+    include_promoted: bool,
+    candidate_limit: int,
+) -> dict[str, object]:
+    source_files = _list_doctor_memory_source_files(workspace)
+    all_candidates = _doctor_memory_rem_harness_candidates(
+        workspace,
+        source_files,
+        include_promoted=include_promoted,
+    )
+    deep_candidates = all_candidates[:candidate_limit]
+    truth_candidates = deep_candidates[:_REM_HARNESS_DEFAULT_CANDIDATE_LIMIT]
+    body_snippets = [str(candidate["snippet"]) for candidate in deep_candidates]
+    body_lines = (
+        ["## REM", *[f"- {snippet}" for snippet in body_snippets]][
+            : _REM_HARNESS_MAX_REM_PREVIEW_LIMIT
+        ]
+        if body_snippets
+        else []
+    )
+    grounded_payload: dict[str, object] | None
+    if grounded:
+        grounded_payload = _build_doctor_memory_rem_harness_grounded_payload(
+            workspace,
+            source_files,
+        )
+    else:
+        grounded_payload = None
+    return {
+        "ok": True,
+        "agentId": "openzues",
+        "workspaceDir": str(workspace),
+        "remConfig": {
+            "enabled": True,
+            "lookbackDays": 7,
+            "limit": _REM_HARNESS_DEFAULT_CANDIDATE_LIMIT,
+            "minPatternStrength": 0.35,
+        },
+        "deepConfig": {
+            "minScore": 0.75,
+            "minRecallCount": 3,
+            "minUniqueQueries": 2,
+            "recencyHalfLifeDays": 14,
+            "maxAgeDays": None,
+        },
+        "rem": {
+            "skipped": False,
+            "sourceEntryCount": len(source_files),
+            "reflections": [],
+            "candidateTruths": [
+                {
+                    "snippet": candidate["snippet"],
+                    "confidence": candidate["avgScore"],
+                }
+                for candidate in truth_candidates
+            ],
+            "bodyLines": body_lines,
+        },
+        "grounded": grounded_payload,
+        "deep": {
+            "candidateLimit": candidate_limit,
+            "truncated": len(all_candidates) > candidate_limit,
+            "candidates": deep_candidates,
+        },
+    }
+
+
+def _doctor_memory_rem_harness_candidates(
+    workspace: Path,
+    source_files: Sequence[Path],
+    *,
+    include_promoted: bool,
+) -> list[dict[str, object]]:
+    candidates: list[dict[str, object]] = []
+    for source_file in source_files:
+        try:
+            lines = source_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        relative_path = source_file.relative_to(workspace).as_posix()
+        for index, line in enumerate(lines, start=1):
+            snippet = _doctor_memory_rem_harness_snippet(line)
+            if snippet is None:
+                continue
+            promoted = "[promoted]" in snippet.lower()
+            if promoted and not include_promoted:
+                continue
+            candidates.append(
+                {
+                    "key": f"{relative_path}:{index}:{index}",
+                    "path": relative_path,
+                    "startLine": index,
+                    "endLine": index,
+                    "snippet": snippet,
+                    "recallCount": 1,
+                    "uniqueQueries": 1,
+                    "avgScore": 0.5,
+                    "maxScore": 0.5,
+                    "ageDays": 0,
+                    "firstRecalledAt": None,
+                    "lastRecalledAt": None,
+                    "promoted": promoted,
+                }
+            )
+    return candidates
+
+
+def _doctor_memory_rem_harness_snippet(line: str) -> str | None:
+    snippet = line.strip()
+    if not snippet or snippet.startswith("#"):
+        return None
+    if snippet.startswith("- "):
+        snippet = snippet[2:].strip()
+    return snippet or None
+
+
+def _build_doctor_memory_rem_harness_grounded_payload(
+    workspace: Path,
+    source_files: Sequence[Path],
+) -> dict[str, object]:
+    files: list[dict[str, object]] = []
+    for source_file in source_files[:_REM_HARNESS_MAX_GROUNDED_FILES]:
+        try:
+            rendered_markdown = source_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        files.append(
+            {
+                "path": source_file.relative_to(workspace).as_posix(),
+                "renderedMarkdown": rendered_markdown,
+            }
+        )
+    return {"scannedFiles": len(files), "files": files}
 
 
 def _backfill_doctor_memory_dream_diary(workspace: Path) -> dict[str, object]:

@@ -136,6 +136,7 @@ _ATTENTION_QUEUE_IDLE_REPLY = (
 _DEFAULT_WATCH_TASK_NAME = "OpenClaw Total Parity Program"
 _DEFAULT_BROWSER_SESSION = "openzues-browser"
 _DEFAULT_BROWSER_WATCH_SESSION = "openzues-watch"
+_ZALO_PAIRING_APPROVED_MESSAGE = "Your pairing request has been approved."
 _BROWSER_RENDERED_SCREENSHOT_MIN_BYTES = 32_768
 _BROWSER_BLANK_SCREENSHOT_MAX_BYTES = 8_192
 _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
@@ -577,6 +578,7 @@ routes_app = typer.Typer(help="Inspect and test notification routes.")
 agents_app = typer.Typer(help="Inspect configured agent inventory.")
 channels_app = typer.Typer(help="Inspect notification route channels.")
 devices_app = typer.Typer(help="Device pairing and auth tokens.")
+pairing_app = typer.Typer(help="Secure channel DM pairing requests.")
 acp_app = typer.Typer(
     help="Run an ACP bridge backed by the Gateway.",
     invoke_without_command=True,
@@ -629,6 +631,7 @@ app.add_typer(routes_app, name="routes")
 app.add_typer(agents_app, name="agents")
 app.add_typer(channels_app, name="channels")
 app.add_typer(devices_app, name="devices")
+app.add_typer(pairing_app, name="pairing")
 app.add_typer(acp_app, name="acp")
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(sandbox_app, name="sandbox")
@@ -1123,6 +1126,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         playbooks=PlaybookService(),
         launch_routing=launch_routing,
         gateway_config_service=gateway_config,
+        canvas_state_dir=app_settings.data_dir,
     )
     gateway_bootstrap = GatewayBootstrapService(database, manager, access, launch_routing)
     gateway_agents = GatewayAgentsService(database=database)
@@ -98381,8 +98385,8 @@ def _build_channel_capabilities_report(
         and enabled_route_count > 0
     )
     support = dict(_CHANNEL_CAPABILITY_SUPPORT.get(channel_id, {"chatTypes": ["direct"]}))
-    actions = ["send", "broadcast"]
-    if support.get("polls") is True:
+    actions: list[str] = ["send", "broadcast"] if enabled else []
+    if enabled and support.get("polls") is True:
         actions.append("poll")
     probe = account_summary.get("probe") if account_summary is not None else None
     if not isinstance(probe, dict):
@@ -105466,6 +105470,198 @@ def devices_approve_command(
     device = result.get("device") if isinstance(result.get("device"), dict) else {}
     device_id = _optional_cli_string(device.get("deviceId")) if isinstance(device, dict) else None
     typer.echo(f"Approved {device_id or normalized_request_id}")
+
+
+def _resolve_pairing_channel(channel: object) -> str:
+    normalized = _optional_cli_string(channel)
+    if normalized is None:
+        raise typer.BadParameter("Channel required. Use `zalo` or --channel zalo.")
+    lowered = normalized.lower()
+    if lowered in {"zalo", "zalobot"}:
+        return "zalo"
+    raise typer.BadParameter("Only native Zalo pairing is available in OpenZues.")
+
+
+def _emit_pairing_list(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    channel = _optional_cli_string(payload.get("channel")) or "zalo"
+    requests_value = payload.get("requests")
+    requests: list[object] = requests_value if isinstance(requests_value, list) else []
+    if not requests:
+        typer.echo(f"No pending {channel} pairing requests.")
+        return
+    typer.echo(f"Pairing requests ({len(requests)})")
+    for item in requests:
+        if not isinstance(item, dict):
+            continue
+        code = _optional_cli_string(item.get("code")) or "<missing>"
+        sender_id = _optional_cli_string(item.get("id")) or "<unknown>"
+        created_at = _optional_cli_string(item.get("createdAt"))
+        suffix = f" requested {created_at}" if created_at is not None else ""
+        typer.echo(f"  {code} {sender_id}{suffix}")
+
+
+def _pairing_command_owner_entry(channel: str, sender_id: str) -> str | None:
+    normalized_channel = _optional_cli_string(channel)
+    normalized_sender = _optional_cli_string(sender_id)
+    if normalized_channel is None or normalized_sender is None:
+        return None
+    return f"{normalized_channel.lower()}:{normalized_sender}"
+
+
+def _bootstrap_pairing_command_owner(
+    services: CliServices,
+    *,
+    channel: str,
+    sender_id: str,
+) -> dict[str, object] | None:
+    owner_entry = _pairing_command_owner_entry(channel, sender_id)
+    if owner_entry is None:
+        return None
+    config_service = getattr(services, "gateway_config", None)
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    patch_object = getattr(config_service, "patch_object", None)
+    if not callable(build_snapshot) or not callable(patch_object):
+        return None
+    snapshot = build_snapshot()
+    if not isinstance(snapshot, Mapping):
+        return None
+    commands = snapshot.get("commands")
+    if isinstance(commands, Mapping) and _normalize_allowlist_entries(
+        commands.get("ownerAllowFrom")
+    ):
+        return {"ownerEntry": owner_entry, "bootstrapped": False}
+    patch_object({"commands": {"ownerAllowFrom": [owner_entry]}})
+    return {"ownerEntry": owner_entry, "bootstrapped": True}
+
+
+def _pairing_approval_failure_text(result: Mapping[str, object], *, code: str) -> str:
+    reason = _optional_cli_string(result.get("reason"))
+    if reason == "zalo_pairing_code_not_found":
+        result_code = _optional_cli_string(result.get("code")) or code
+        return f"No pending pairing request found for code: {result_code}"
+    return reason or "pairing approval failed"
+
+
+@pairing_app.command("list")
+def pairing_list_command(
+    channel_arg: str | None = typer.Argument(None, help="Pairing channel."),
+    channel_option: str | None = typer.Option(None, "--channel", help="Pairing channel."),
+    account_id: str | None = typer.Option(
+        None,
+        "--account",
+        "--account-id",
+        help="Provider account id.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    channel = _resolve_pairing_channel(channel_option or channel_arg or "zalo")
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        if channel == "zalo":
+            return await services.ops_mesh.list_zalo_pairing_requests(account_id=account_id)
+        raise typer.BadParameter("Unsupported pairing channel.")
+
+    result = _run(_run_with_services(_action))
+    _emit_pairing_list(result, json_output=json_output)
+
+
+@pairing_app.command("approve")
+def pairing_approve_command(
+    code_or_channel: str = typer.Argument(..., help="Pairing code or channel."),
+    code: str | None = typer.Argument(None, help="Pairing code when channel is positional."),
+    channel_option: str | None = typer.Option(None, "--channel", help="Pairing channel."),
+    account_id: str | None = typer.Option(
+        None,
+        "--account",
+        "--account-id",
+        help="Provider account id.",
+    ),
+    notify: bool = typer.Option(False, "--notify", help="Notify the requester on the channel."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    explicit_channel = _optional_cli_string(channel_option)
+    if explicit_channel is not None:
+        if code is not None:
+            raise typer.BadParameter(
+                "Too many arguments. Use `openzues pairing approve --channel zalo <code>`."
+            )
+        channel = _resolve_pairing_channel(explicit_channel)
+        resolved_code = code_or_channel
+    elif code is None:
+        channel = "zalo"
+        resolved_code = code_or_channel
+    else:
+        channel = _resolve_pairing_channel(code_or_channel)
+        resolved_code = code
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        if channel == "zalo":
+            result = await services.ops_mesh.approve_zalo_pairing_code(
+                resolved_code,
+                account_id=account_id,
+            )
+            if result.get("ok") is True:
+                sender_id = _optional_cli_string(result.get("senderId"))
+                if sender_id is not None:
+                    owner_result = _bootstrap_pairing_command_owner(
+                        services,
+                        channel=channel,
+                        sender_id=sender_id,
+                    )
+                    if owner_result is not None and owner_result.get("bootstrapped") is True:
+                        next_result = dict(result)
+                        next_result["commandOwner"] = owner_result
+                        result = next_result
+            if notify and result.get("ok") is True:
+                sender_id = _optional_cli_string(result.get("senderId"))
+                if sender_id is not None:
+                    notify_result = dict(result)
+                    notify_account_id = _optional_cli_string(account_id) or DEFAULT_ACCOUNT_ID
+                    try:
+                        notification = await services.ops_mesh.send_direct_channel_message(
+                            channel="zalo",
+                            to=sender_id,
+                            message=_ZALO_PAIRING_APPROVED_MESSAGE,
+                            account_id=account_id,
+                            idempotency_key=(
+                                "zalo-pairing-approved:"
+                                f"{notify_account_id}:{sender_id}:{resolved_code}"
+                            ),
+                        )
+                    except Exception as exc:
+                        notify_result["notificationError"] = str(exc)[:240]
+                    else:
+                        notify_result["notification"] = notification
+                    return notify_result
+            return result
+        raise typer.BadParameter("Unsupported pairing channel.")
+
+    result = _run(_run_with_services(_action))
+    if json_output:
+        typer.echo(json.dumps(result, indent=2))
+    elif result.get("ok") is True:
+        sender_id = _optional_cli_string(result.get("senderId")) or "<unknown>"
+        typer.echo(f"Approved {channel} sender {sender_id}.")
+        notification_error = _optional_cli_string(result.get("notificationError"))
+        if notification_error is not None:
+            typer.echo(f"Failed to notify requester: {notification_error}", err=True)
+        elif isinstance(result.get("notification"), dict):
+            typer.echo(f"Notified {channel} sender {sender_id}.")
+        command_owner = result.get("commandOwner")
+        if isinstance(command_owner, Mapping):
+            owner_entry = _optional_cli_string(command_owner.get("ownerEntry"))
+            if owner_entry is not None:
+                typer.echo(
+                    f"Command owner configured {owner_entry} "
+                    "(commands.ownerAllowFrom was empty)."
+                )
+    else:
+        typer.echo(_pairing_approval_failure_text(result, code=resolved_code), err=True)
+    if result.get("ok") is not True:
+        raise typer.Exit(code=1)
 
 
 @sessions_app.callback(invoke_without_command=True)

@@ -17,12 +17,12 @@ may lag behind this tracker.
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
-| Active gateway/session/tool-contract family | ~99.963% | High for bounded local path | Does not mean whole product parity |
-| Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
+| Active gateway/session/tool-contract family | ~99.967% | High for bounded local path | Does not mean whole product parity |
+| Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.99990% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.99992% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.99992% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Provider-native inbound/outbound breadth | ~99.99997% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Runtime/CLI/doctor native bridge | ~99.99999% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
@@ -706,6 +706,124 @@ may lag behind this tracker.
     listing method before implementation, then `1 passed`), adjacent Zalo
     provider proof (`14 passed, 476 deselected`), ruff, mypy, and focused
     `git diff --check`.
+
+- [x] Zalo pairing CLI list/approve.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`,
+    `openclaw-main/src/pairing/pairing-store.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues pairing list` and `openzues pairing approve` expose
+    native Zalo pairing requests with channel/account scoping, JSON output,
+    human output, and CLI data-dir pairing-store wiring.
+  - Evidence required: focused pairing CLI proof, adjacent devices/pairing CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `6de9e5a1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green pairing CLI proof
+    (unregistered command before implementation, then `2 passed`), adjacent
+    devices/pairing CLI proof (`8 passed, 590 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] Zalo pairing approval notification CLI.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/channels/plugins/pairing.ts`,
+    `openclaw-main/extensions/zalo/src/channel.runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues pairing approve --notify` sends the Zalo
+    pairing-approved message to the approved sender through direct-channel
+    delivery after successful approval.
+  - Evidence required: focused notify CLI proof, adjacent devices/pairing CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `3a77ccf5`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green notify proof (missing
+    `--notify` before implementation, then `1 passed`), adjacent
+    devices/pairing CLI proof (`9 passed, 590 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] Zalo pairing command-owner bootstrap.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/commands/doctor-command-owner.ts`,
+    `openclaw-main/src/config/config.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: successful Zalo pairing approval writes `zalo:<sender>` to
+    `commands.ownerAllowFrom` only when no command owners are configured.
+  - Evidence required: focused command-owner CLI proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `c105b1c5`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green command-owner proof (no
+    config patch before implementation, then `1 passed`), adjacent
+    devices/pairing CLI proof (`10 passed, 590 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] Zalo pairing list default.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues pairing list` defaults to native Zalo when no channel
+    is provided, matching OpenClaw's sole pairing-channel default.
+  - Evidence required: focused pairing-list default CLI proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `0b791e74`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green list-default proof
+    (channel-required CLI exit before implementation, then `1 passed`),
+    adjacent devices/pairing CLI proof (`11 passed, 590 deselected`), ruff,
+    mypy, and focused `git diff --check`.
+
+- [x] Zalo pairing command-owner explanation.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: when pairing approval bootstraps command ownership, human output
+    explains that `commands.ownerAllowFrom` was empty.
+  - Evidence required: focused command-owner human-output proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `646fa3d0`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green command-owner explanation
+    proof (human output omitted the note before implementation, then `1
+    passed`), adjacent devices/pairing CLI proof (`12 passed, 590
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] Zalo pairing approval not-found text.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: failed pairing approval prints the OpenClaw no-pending-request
+    text for the requested code instead of a native machine reason.
+  - Evidence required: focused approval-not-found CLI proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `433368f1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green approval-not-found proof
+    (raw `zalo_pairing_code_not_found` before implementation, then `1
+    passed`), adjacent devices/pairing CLI proof (`13 passed, 590
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] Disabled channel capability actions.
+  - Source: `openclaw-main/extensions/zalo/src/actions.ts`,
+    `openclaw-main/extensions/zalo/src/actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: channel capability discovery hides message actions for disabled
+    accounts/routes, matching Zalo `describeMessageTool` returning no tool for
+    disabled selected accounts.
+  - Evidence required: focused disabled Zalo capability proof, adjacent
+    channel capabilities CLI proof, ruff, mypy
+  - Status: checkpointed in `0b5231cc`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green disabled-capability proof
+    (disabled Zalo account still advertised `send`/`broadcast`, then `1
+    passed`), adjacent channel capabilities CLI proof (`6 passed, 598
+    deselected`), ruff, mypy, and focused `git diff --check`.
 
 - [x] Gateway-status slash command diagnostics for `/gateway-status` and
   `/gwstatus`, keeping gateway diagnostics separate from session `/status` in
@@ -3081,8 +3199,68 @@ may lag behind this tracker.
 - [ ] Runtime-control hard gaps.
   - Source: broader OpenClaw runtime/client integration and session runtime
     methods, especially `chat.*` and `sessions.*`.
-  - Status: open
+  - Status: open; transcript artifact methods checkpointed in `13eddac7`,
+    `update.status` checkpointed in `59a36693`, and
+    `diagnostics.stability` checkpointed in `0a4deddc`, and
+    `doctor.memory.remHarness` checkpointed in `5e6d43f6`
   - Weight: 3
+
+- [x] `OZ-RT-001BB` Gateway transcript artifact methods.
+  - Source: `openclaw-main/src/gateway/server-methods/artifacts.ts`,
+    `openclaw-main/src/gateway/server-methods/artifacts.test.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`,
+    `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `13eddac7`.
+  - Weight: 1
+  - Last verified: 2026-05-12, focused artifact gateway proof (`1 passed`),
+    adjacent `artifacts or sessions_get` proof (`9 passed, 1252 deselected`),
+    policy proof (`1 passed, 18 deselected`), `ruff check`, `mypy`, and
+    focused `git diff --check`.
+
+- [x] `OZ-RT-001BC` Gateway update-status cached sentinel.
+  - Source: `openclaw-main/src/gateway/server-methods/update.ts`,
+    `openclaw-main/src/gateway/server-methods/update.test.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`,
+    `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_method_policy.py`
+  - Status: checkpointed in `59a36693`.
+  - Weight: 1
+  - Last verified: 2026-05-12, focused update-status gateway proof (`1
+    passed`), adjacent `update_status or update_run` proof (`5 passed, 1257
+    deselected`), policy proof (`1 passed, 18 deselected`), `ruff check`,
+    `mypy`, and focused `git diff --check`.
+
+- [x] `OZ-RT-001BD` Gateway diagnostics stability snapshot.
+  - Source: `openclaw-main/src/gateway/server-methods/diagnostics.ts`,
+    `openclaw-main/src/gateway/server-methods/diagnostics.test.ts`,
+    `openclaw-main/src/logging/diagnostic-stability.ts`
+  - Target: `src/openzues/services/gateway_diagnostics.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`,
+    `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_method_policy.py`
+  - Status: checkpointed in `0a4deddc`.
+  - Weight: 1
+  - Last verified: 2026-05-12, focused diagnostics-stability gateway proofs
+    (`2 passed`), adjacent `diagnostics_stability or logs_tail` proof (`4
+    passed, 1260 deselected`), policy proof (`1 passed, 18 deselected`),
+    `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] `OZ-RT-001BE` Gateway memory REM-harness preview.
+  - Source: `openclaw-main/src/gateway/server-methods/doctor.ts`,
+    `openclaw-main/src/gateway/server-methods/doctor.test.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`,
+    `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_method_policy.py`
+  - Status: checkpointed in `5e6d43f6`.
+  - Weight: 1
+  - Last verified: 2026-05-12, focused REM-harness gateway proof (`1
+    passed`), adjacent `doctor_memory` proof (`4 passed, 1261 deselected`),
+    policy proof (`1 passed, 18 deselected`), `ruff check`, `mypy`, and
+    focused `git diff --check`.
 
 - [ ] Real installed plugin module import/activation.
   - Source: OpenClaw plugin lifecycle and activation runtime.
@@ -9544,6 +9722,151 @@ may lag behind this tracker.
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
     tests\test_zalo_webhook.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Zalo pairing CLI list/approve.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`,
+    `openclaw-main/src/pairing/pairing-store.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues pairing list` and `openzues pairing approve` expose
+    native Zalo pairing requests with positional/`--channel` Zalo,
+    `--account`, JSON output, human list/approval output, and CLI OpsMesh
+    data-dir pairing-store wiring.
+  - Evidence required: focused pairing CLI proof, adjacent devices/pairing CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `6de9e5a1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_list_json_calls_zalo_pairing_store tests\test_cli.py::test_pairing_approve_json_calls_zalo_pairing_store -q`
+    (unregistered command before implementation, then `2 passed`), adjacent
+    CLI proof `python -m pytest tests\test_cli.py -q -k "pairing or devices"`
+    (`8 passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] Zalo pairing approval notification CLI.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/channels/plugins/pairing.ts`,
+    `openclaw-main/extensions/zalo/src/channel.runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues pairing approve --notify` sends the Zalo
+    pairing-approved message to the approved sender through direct-channel
+    delivery after successful approval and records notification/error metadata.
+  - Evidence required: focused notify CLI proof, adjacent devices/pairing CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `3a77ccf5`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_approve_notify_sends_zalo_approval_message -q`
+    (missing `--notify` before implementation, then `1 passed`), adjacent CLI
+    proof `python -m pytest tests\test_cli.py -q -k "pairing or devices"` (`9
+    passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] Zalo pairing command-owner bootstrap.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/commands/doctor-command-owner.ts`,
+    `openclaw-main/src/config/config.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: successful Zalo pairing approval writes `zalo:<sender>` to
+    `commands.ownerAllowFrom` only when no command owners are configured and
+    reports bootstrap metadata.
+  - Evidence required: focused command-owner CLI proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `c105b1c5`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_approve_bootstraps_command_owner_when_empty -q`
+    (no config patch before implementation, then `1 passed`), adjacent CLI
+    proof `python -m pytest tests\test_cli.py -q -k "pairing or devices"`
+    (`10 passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] Zalo pairing list default.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues pairing list` defaults to native Zalo when no channel
+    is provided, matching OpenClaw's sole pairing-channel default.
+  - Evidence required: focused pairing-list default CLI proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `0b791e74`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_list_json_defaults_to_zalo_channel -q`
+    (channel-required CLI exit before implementation, then `1 passed`),
+    adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "pairing or devices"` (`11
+    passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] Zalo pairing command-owner explanation.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: when pairing approval bootstraps command ownership, human output
+    explains that `commands.ownerAllowFrom` was empty.
+  - Evidence required: focused command-owner human-output proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `646fa3d0`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_approve_human_output_explains_command_owner_bootstrap -q`
+    (human output omitted the empty-allowlist explanation before
+    implementation, then `1 passed`), adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "pairing or devices"` (`12
+    passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] Zalo pairing approval not-found text.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: failed pairing approval prints the OpenClaw no-pending-request
+    text for the requested code instead of a native machine reason.
+  - Evidence required: focused approval-not-found CLI proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `433368f1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_approve_human_output_reports_not_found_code -q`
+    (raw `zalo_pairing_code_not_found` before implementation, then `1
+    passed`), adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "pairing or devices"` (`13
+    passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] Disabled channel capability actions.
+  - Source: `openclaw-main/extensions/zalo/src/actions.ts`,
+    `openclaw-main/extensions/zalo/src/actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: channel capability discovery hides message actions for disabled
+    accounts/routes, matching Zalo `describeMessageTool` returning no tool for
+    disabled selected accounts.
+  - Evidence required: focused disabled Zalo capability proof, adjacent
+    channel capabilities CLI proof, ruff, mypy
+  - Status: checkpointed in `0b5231cc`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_channels_capabilities_json_hides_zalo_actions_for_disabled_account -q`
+    (disabled Zalo account still advertised `send`/`broadcast`, then `1
+    passed`), adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "channels_capabilities"` (`6
+    passed, 598 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
 
 ## Update Rule
 
