@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.945% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.985% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.4% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.999% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.9991% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99987% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99987% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
@@ -208,6 +208,23 @@ may lag behind this tracker.
 - [x] Production credential-backed LINE media download for inbound media
   staging.
   - Status: checkpointed in `adbf3f62`
+
+- [x] LINE webhook redelivery replay dedupe.
+  - Source: `openclaw-main/extensions/line/src/bot-handlers.ts`,
+    `openclaw-main/extensions/line/src/bot-handlers.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: message redeliveries dedupe by LINE message id even when
+    `webhookEventId` changes; postback/non-message redeliveries dedupe by
+    account, event type, source id, and `webhookEventId`; duplicates return
+    skip metadata and do not re-enter native session delivery.
+  - Evidence required: focused LINE redelivery proofs, adjacent LINE
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `9acc4cd6`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green LINE redelivery tests,
+    adjacent LINE/provider proof (`25 passed, 454 deselected`), ruff, mypy,
+    and focused `git diff --check`.
 
 - [x] Gateway-status slash command diagnostics for `/gateway-status` and
   `/gwstatus`, keeping gateway diagnostics separate from session `/status` in

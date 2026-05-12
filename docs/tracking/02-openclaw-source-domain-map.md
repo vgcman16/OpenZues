@@ -46,6 +46,11 @@ plus configured node resolution by id, remote IP, normalized display name, or
 safe id prefix. Remaining browser-request depth is local control-service
 fallback.
 
+LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
+`extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers
+message-id dedupe for message redeliveries plus account/type/source/event-id
+dedupe for postback and other non-message events.
+
 Packaging row addendum: `OZ-PKG-001CA` release-channel git update coverage
 from `src/infra/update-runner.ts`, `src/infra/update-channels.ts`, and
 `src/infra/update-check.ts` is checkpointed in `1f45d307`; it covers stable
