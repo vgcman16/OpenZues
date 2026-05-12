@@ -80,10 +80,14 @@ credentials, geolocation, media, and device settings with existing redaction.
 `extensions/browser/src/browser/routes/agent.act.ts` and adjacent hook/download
 files is checkpointed in `886c86f3`; it maps `POST /highlight`,
 `POST /download`, and `POST /hooks/file-chooser` onto native highlight,
-guarded download, and guarded upload methods.
-Remaining browser-request depth is richer local status, doctor, profile,
-permission, locale/timezone, response body, dialog hook, and label-action route
-breadth beyond the current native adapter.
+guarded download, and guarded upload methods. `OZ-CANVAS-001O`
+status/doctor route breadth from
+`extensions/browser/src/browser/routes/basic.ts` is checkpointed in
+`4b1f8028`; it maps `GET /` and `GET /doctor` onto native
+session/profile posture plus optional live snapshot checks.
+Remaining browser-request depth is profile mutation, permission,
+locale/timezone, response body, dialog hook, and label-action route breadth
+beyond the current native adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers

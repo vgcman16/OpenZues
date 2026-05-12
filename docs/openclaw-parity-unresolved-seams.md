@@ -12155,3 +12155,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   locale/timezone, response body/dialog-hook route breadth, remaining
   provider-specific media/reply edges, deeper installed plugin activation,
   companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control status/doctor
+  route breadth now maps upstream `GET /` and `GET /doctor` from
+  `extensions/browser/src/browser/routes/basic.ts` onto a native
+  `agent-browser` session/profile posture report with optional live/deep
+  snapshot checks. Source/test checkpointed in `4b1f8028`; repo-wide parity
+  remains estimated at ~99.9%, active gateway/session/tool-contract parity
+  moves to ~99.956%, and browser/canvas/nodes/voice bounded-command parity
+  moves to ~99.92%. Continue profile mutation, permissions, locale/timezone,
+  response body/dialog-hook route breadth, remaining provider-specific
+  media/reply edges, deeper installed plugin activation, companion breadth, or
+  the next packaging edge.
