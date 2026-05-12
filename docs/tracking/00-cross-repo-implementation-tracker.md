@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.985% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.965% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.9994% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.9994% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.9995% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.9995% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -377,8 +377,30 @@ Packaging addendum: `OZ-PKG-001CQ` package update downgrade confirmation is
 source/test checkpointed in `e39ead6e`; runtime/CLI/doctor and CLI/operator
 parity move to ~99.9994%. Continue provider-specific media/reply edges, deeper
 installed plugin activation, companion breadth, or the next packaging edge.
+Packaging addendum: `OZ-PKG-001CR` stored-channel package update dispatch is
+source/test checkpointed in `688b89c3`; runtime/CLI/doctor and CLI/operator
+parity move to ~99.9995%. Continue provider-specific media/reply edges, deeper
+installed plugin activation, companion breadth, or the next packaging edge.
 
 ## Active Slice Detail
+
+- [x] `OZ-PKG-001CR` stored-channel package update dispatch
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: real package updates use `requestedChannel ?? storedChannel ??
+    defaultChannel` when selecting the package tag, matching dry-run previews
+    and OpenClaw's update command.
+  - Evidence required: focused stored-channel package dispatch proof, adjacent
+    update CLI proof, ruff, mypy
+  - Status: checkpointed in `688b89c3`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_json_uses_stored_channel_for_package_update -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent update CLI
+    selector (`6 passed, 581 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
 
 - [x] `OZ-PKG-001CQ` package update downgrade confirmation
   - Source: `openclaw-main/src/cli/update-cli/shared.ts`,
