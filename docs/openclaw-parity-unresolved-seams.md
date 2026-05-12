@@ -136,6 +136,8 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
+- The provider-native inbound/outbound breadth family is estimated at ~99.95%
+  after route-backed Telegram stale-thread retry fallback.
 - The CLI/operator control-plane family is estimated at ~99.995% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -11770,3 +11772,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and runtime/CLI/doctor plus CLI/operator parity move to ~99.9991%.
   Continue remaining provider-specific media/reply edges, companion breadth,
   deeper installed plugin activation, or packaging edges.
+- Current queue-head adjustment: route-backed Telegram sends and polls now
+  match OpenClaw's stale-topic fallback path by retrying once without
+  `message_thread_id` when Telegram returns `message thread not found`, while
+  preserving reply, silent, text/media/document/keyboard/poll fields and
+  continuing to surface non-thread errors. Source/test checkpointed in
+  `f38aec97`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.95%. Continue
+  remaining provider-specific media/reply edges, companion breadth, deeper
+  installed plugin activation, or packaging edges.
