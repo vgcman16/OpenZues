@@ -121807,6 +121807,79 @@ async def test_browser_request_proxies_to_connected_browser_node_with_profile_se
 
 
 @pytest.mark.asyncio
+async def test_browser_request_persists_proxy_files_and_rewrites_result_paths(tmp_path) -> None:
+    class BrowserProxyFileNodeConnection(FakeNodeConnection):
+        def __init__(self, registry: GatewayNodeRegistry, conn_id: str) -> None:
+            super().__init__(conn_id)
+            self.registry = registry
+
+        def send_gateway_event(self, event: str, payload: object) -> None:
+            super().send_gateway_event(event, payload)
+            if event != "node.invoke.request" or not isinstance(payload, dict):
+                return
+            request_id = str(payload.get("id") or "")
+            node_id = str(payload.get("nodeId") or "")
+            source_path = "/tmp/browser-proxy-shot.png"
+            response = {
+                "result": {
+                    "ok": True,
+                    "path": source_path,
+                    "imagePath": source_path,
+                    "download": {"path": source_path},
+                },
+                "files": [
+                    {
+                        "path": source_path,
+                        "base64": base64.b64encode(b"browser proxy image").decode("ascii"),
+                        "mimeType": "image/png",
+                    }
+                ],
+            }
+            asyncio.get_running_loop().call_soon(
+                lambda: self.registry.handle_invoke_result(
+                    request_id=request_id,
+                    node_id=node_id,
+                    ok=True,
+                    payload=response,
+                    payload_json=json.dumps(response),
+                    error=None,
+                )
+            )
+
+    registry = GatewayNodeRegistry()
+    connection = BrowserProxyFileNodeConnection(registry, "conn-browser-node")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-browser-node",
+            device_id="browser-node",
+            platform="windows",
+            caps=("browser",),
+            commands=("browser.proxy",),
+        ),
+    )
+    media_dir = tmp_path / "browser-media"
+    service = GatewayNodeMethodService(
+        registry,
+        browser_proxy_media_dir=media_dir,
+    )
+
+    response = await service.call(
+        "browser.request",
+        {"method": "POST", "path": "/screenshot", "timeoutMs": 250},
+    )
+
+    rewritten_path = response["path"]
+    assert isinstance(rewritten_path, str)
+    assert rewritten_path != "/tmp/browser-proxy-shot.png"
+    assert response["imagePath"] == rewritten_path
+    assert response["download"] == {"path": rewritten_path}
+    saved_path = Path(rewritten_path)
+    assert saved_path.parent == media_dir
+    assert saved_path.read_bytes() == b"browser proxy image"
+
+
+@pytest.mark.asyncio
 async def test_node_invoke_rejects_invalid_canvas_a2ui_jsonl_before_dispatch() -> None:
     registry = GatewayNodeRegistry()
     connection = FakeNodeConnection("conn-canvas-a2ui-node")

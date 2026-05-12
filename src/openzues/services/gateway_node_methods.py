@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import inspect
 import json
@@ -193,7 +194,15 @@ _NODE_WAKE_NUDGE_THROTTLE_MS = 10 * 60_000
 _YYYY_MM_DD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _UTC_OFFSET_RE = re.compile(r"^UTC[+-]\d{1,2}(?::[0-5]\d)?$")
 _BROWSER_PROXY_PROFILE_DELETE_RE = re.compile(r"^/profiles/[^/]+$")
+_BROWSER_PROXY_MAX_FILE_BYTES = 5 * 1024 * 1024
 _BROWSER_REQUEST_ALLOWED_METHODS = {"GET", "POST", "DELETE"}
+_BROWSER_PROXY_MIME_EXTENSIONS = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "application/pdf": ".pdf",
+    "text/plain": ".txt",
+}
 _PLUGIN_APPROVAL_DEFAULT_TIMEOUT_MS = 120_000
 _PLUGIN_APPROVAL_MAX_TIMEOUT_MS = 600_000
 _PLUGIN_APPROVAL_DECISIONS = {"allow-once", "allow-always", "deny"}
@@ -840,11 +849,11 @@ def _is_browser_request_node(node: NodeSession) -> bool:
     return "browser" in node.caps or "browser.proxy" in node.commands
 
 
-def _browser_request_proxy_result(
+def _browser_request_proxy_payload(
     *,
     payload: object,
     payload_json: str | None,
-) -> Any:
+) -> dict[str, Any]:
     resolved_payload = payload
     if isinstance(payload_json, str) and payload_json.strip():
         try:
@@ -857,7 +866,76 @@ def _browser_request_proxy_result(
             message="browser proxy failed",
             status_code=503,
         )
-    return resolved_payload["result"]
+    return cast(dict[str, Any], resolved_payload)
+
+
+def _browser_proxy_file_extension(source_path: str, mime_type: str | None) -> str:
+    if mime_type is not None:
+        extension = _BROWSER_PROXY_MIME_EXTENSIONS.get(mime_type.strip().lower())
+        if extension is not None:
+            return extension
+    source_suffix = Path(source_path).suffix
+    if source_suffix and len(source_suffix) <= 12:
+        return source_suffix
+    return ".bin"
+
+
+def _persist_browser_proxy_files(
+    files: object,
+    *,
+    media_dir: Path,
+) -> dict[str, str]:
+    if not isinstance(files, list) or not files:
+        return {}
+    media_dir.mkdir(parents=True, exist_ok=True)
+    mapping: dict[str, str] = {}
+    for raw_file in files:
+        if not isinstance(raw_file, dict):
+            continue
+        source_path = raw_file.get("path")
+        encoded = raw_file.get("base64")
+        if not isinstance(source_path, str) or not source_path.strip():
+            continue
+        if not isinstance(encoded, str):
+            continue
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message="browser proxy file has invalid base64 content",
+                status_code=400,
+            ) from exc
+        if len(data) > _BROWSER_PROXY_MAX_FILE_BYTES:
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message="browser proxy file exceeds 5MB limit",
+                status_code=400,
+            )
+        mime_type = raw_file.get("mimeType")
+        mime = mime_type.strip() if isinstance(mime_type, str) and mime_type.strip() else None
+        digest = hashlib.sha256(data).hexdigest()[:24]
+        extension = _browser_proxy_file_extension(source_path, mime)
+        saved_path = media_dir / f"browser-{digest}{extension}"
+        saved_path.write_bytes(data)
+        mapping[source_path] = str(saved_path)
+    return mapping
+
+
+def _apply_browser_proxy_paths(result: object, mapping: Mapping[str, str]) -> None:
+    if not mapping or not isinstance(result, dict):
+        return
+    path = result.get("path")
+    if isinstance(path, str) and path in mapping:
+        result["path"] = mapping[path]
+    image_path = result.get("imagePath")
+    if isinstance(image_path, str) and image_path in mapping:
+        result["imagePath"] = mapping[image_path]
+    download = result.get("download")
+    if isinstance(download, dict):
+        download_path = download.get("path")
+        if isinstance(download_path, str) and download_path in mapping:
+            download["path"] = mapping[download_path]
 
 
 def _raise_tools_invoke_not_found(tool_name: str) -> NoReturn:
@@ -1697,6 +1775,7 @@ class GatewayNodeMethodService:
         node_allow_commands: Iterable[str] = (),
         node_deny_commands: Iterable[str] = (),
         browser_runtime_service: GatewayBrowserRuntimeService | None = None,
+        browser_proxy_media_dir: Path | None = None,
         acp_spawn_service: GatewayAcpSpawnService | None = None,
         exec_approvals_path: Path | None = None,
         tools_invoke_executors: (
@@ -1849,6 +1928,9 @@ class GatewayNodeMethodService:
         self._node_allow_commands = tuple(node_allow_commands)
         self._node_deny_commands = tuple(node_deny_commands)
         self._browser_runtime_service = browser_runtime_service or GatewayBrowserRuntimeService()
+        self._browser_proxy_media_dir = browser_proxy_media_dir or (
+            Path(tempfile.gettempdir()) / "openzues-browser-proxy-media"
+        )
         self._acp_spawn_service = acp_spawn_service
         self._exec_approvals_path = exec_approvals_path
         self._message_action_dispatcher = message_action_dispatcher
@@ -3098,13 +3180,17 @@ class GatewayNodeMethodService:
                 status_code=503,
             )
 
-        return cast(
-            dict[str, Any],
-            _browser_request_proxy_result(
-                payload=result.payload,
-                payload_json=result.payload_json,
-            ),
+        proxy_payload = _browser_request_proxy_payload(
+            payload=result.payload,
+            payload_json=result.payload_json,
         )
+        proxy_result = proxy_payload["result"]
+        file_mapping = _persist_browser_proxy_files(
+            proxy_payload.get("files"),
+            media_dir=self._browser_proxy_media_dir,
+        )
+        _apply_browser_proxy_paths(proxy_result, file_mapping)
+        return cast(dict[str, Any], proxy_result)
 
     async def call(
         self,
