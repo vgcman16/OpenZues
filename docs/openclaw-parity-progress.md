@@ -4,7 +4,7 @@
 
 - Updated: 2026-05-12.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- Estimated active gateway/session/tool-contract family parity: ~99.965% for the bounded local OpenZues path.
+- Estimated active gateway/session/tool-contract family parity: ~99.966% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
@@ -23623,6 +23623,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `mypy src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_method_policy.py`, and focused `git diff
   --check`. Source/test checkpointed in `59a36693`.
+- Native `diagnostics.stability` now covers OpenClaw's payload-free stability
+  snapshot method from `src/gateway/server-methods/diagnostics.ts` and
+  `src/logging/diagnostic-stability.ts`. The new
+  `GatewayDiagnosticStabilityService` keeps an in-memory ring buffer, sanitizes
+  events, supports `limit` / `type` / `sinceSeq`, summarizes `byType`,
+  memory, and `payload.large` records, and rejects OpenClaw-shaped invalid
+  limits. This closes `OZ-RT-001BD`; repo-wide parity remains estimated at
+  ~99.9%, and active gateway/session/tool-contract parity moves to ~99.966%.
+- Verified the gateway diagnostics-stability seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_diagnostics_stability_returns_filtered_payload_free_snapshot tests\test_gateway_node_methods.py::test_diagnostics_stability_rejects_invalid_limit -q`
+  (`ModuleNotFoundError: No module named 'openzues.services.gateway_diagnostics'`
+  before implementation, then `2 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "diagnostics_stability or logs_tail"`
+  (`4 passed, 1260 deselected`), policy proof
+  `python -m pytest tests\test_gateway_method_policy.py -q -k "diagnostics or method_scope or read_scope"`
+  (`1 passed, 18 deselected`), `ruff check
+  src\openzues\services\gateway_diagnostics.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`,
+  `mypy src\openzues\services\gateway_diagnostics.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`, and focused `git diff
+  --check`. Source/test checkpointed in `0a4deddc`.
 
 ## References
 

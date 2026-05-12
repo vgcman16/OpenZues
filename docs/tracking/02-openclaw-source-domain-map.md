@@ -41,6 +41,11 @@ payloads through native read-scope gateway methods.
 `src/gateway/server-methods/update.ts` is checkpointed in `59a36693`, returning
 the latest cached update restart sentinel through the native read-scoped
 gateway method.
+`OZ-RT-001BD` `diagnostics.stability` from
+`src/gateway/server-methods/diagnostics.ts` and
+`src/logging/diagnostic-stability.ts` is checkpointed in `0a4deddc`, returning
+payload-free native stability snapshots with OpenClaw-shaped filters and
+summaries.
 
 Gateway/browser addendum: `OZ-CANVAS-001C` `browser.request` node-proxy
 dispatch from `extensions/browser/src/gateway/browser-request.ts` is
