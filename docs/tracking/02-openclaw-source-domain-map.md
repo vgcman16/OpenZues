@@ -2,7 +2,7 @@
 
 Agent report source: Banach
 
-Last updated: 2026-05-08
+Last updated: 2026-05-12
 
 OpenClaw is the upstream source of truth for repo-wide parity. Each domain below
 should become one or more bounded OpenZues parity seams before it can affect the
@@ -29,6 +29,14 @@ repo-wide percentage.
 | [ ] | QA, tests, scenarios | unit/e2e/live/docker tests, QA Lab, scenario catalog, provider/channel regressions | `test/vitest`, `scripts/e2e`, `qa/scenarios`, `extensions/qa-lab` |
 | [~] | Packaging, distribution, release | packageDistribution doctor JSON, dist inventory validation, exact missing-inventory diagnostics, missing/unexpected file drift warnings, legacy `.openclaw-install-stage*` debris warnings, mixed-case staging path proof, local build metadata/dependency omission, unsafe symlinked dist path warnings, externalized bundled extension dist omission, private QA dist omission, source-checkout package-root warnings, bundled runtime sidecar enforcement, and private-QA sidecar omission verified; source-install pnpm workspace warnings, update-status channel projection, registry/git availability, human update-available hints, git metadata envelope, config channel precedence, git branch channel labeling, loose/packed git-tag stable/beta channel labeling, update-status timeout, update status inherited parent options, update package-spec env override, explicit update install-spec preservation, root update runtime dispatch, package update runtime path, npm omit-optional fallback, package update version verification, package update failedStep projection, staged npm package swap, staged npm crash cleanup, npm shim rollback, git update control-ui clean-check exclusion, git update no-upstream guard, git preflight candidate/worktree/selection/rebase-abort/cleanup-repair/dev-target-ref/dev-branch-normalization guards, beta package latest fallback, post-update plugin sync, package update doctor repair, non-interactive update doctor, stale global rename-dir cleanup, low package-update disk warning, requested update-channel persistence, post-update package doctor env, stored update-channel dry-run preview, Corepack prompt suppression/preservation, Windows package install env, portable Git PATH prepending, owning/ambient npm command resolution, missing-version verifier wording, source-checkout package update verifier, package update missing dist-inventory gate, package update invalid dist-inventory rejection, package update dist inventory file drift, package update runtime staging-debris verifier, package update supplemental sidecar enforcement, package update inventory omission filters, package update unsafe dist path rejection, package update externalized extension omission, package update includeInCore inventory guard, package update private QA omission proof, package update malformed extension manifest rejection, doctor malformed extension manifest warning, package update legacy sidecar fallback, package update omitted-subtree safety ordering, and update dry-run package-spec preview verified; plugin packages, Docker/Podman, macOS DMG/Sparkle, CI release workflows, broader update channels remain | `src/flows/doctor-health.ts`, `src/commands/doctor-install.ts`, `src/infra/update-global.ts`, `src/infra/package-update-steps.ts`, `src/cli/update-cli/update-command.ts`, `src/cli/update-cli/status.ts`, `src/cli/update-cli.option-collisions.test.ts`, `src/infra/update-runner.ts`, `scripts/openclaw-npm-publish.sh`, `scripts/package-mac-dist.sh`, `Dockerfile`, `.github/workflows` |
 | [ ] | Observability, diagnostics, ops | logging, OpenTelemetry/Prometheus, health/status, proxy capture, runtime reports | `src/logging`, `extensions/diagnostics-otel`, `extensions/diagnostics-prometheus`, `docs/logging.md` |
+
+Gateway/browser addendum: `OZ-CANVAS-001C` `browser.request` node-proxy
+dispatch from `extensions/browser/src/gateway/browser-request.ts` is
+checkpointed in `430e365b`; it covers native OpenZues validation,
+persistent-profile mutation rejection, connected browser-node `browser.proxy`
+dispatch, query/body/timeout/profile propagation, and upstream-shaped `result`
+projection. Remaining browser-request depth is local control-service fallback,
+node selection policy, and proxy file persistence/path rewriting.
 
 Packaging row addendum: `OZ-PKG-001CA` release-channel git update coverage
 from `src/infra/update-runner.ts`, `src/infra/update-channels.ts`, and

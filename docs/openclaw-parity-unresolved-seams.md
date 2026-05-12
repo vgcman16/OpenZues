@@ -6,7 +6,7 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.92% of the
+- The active gateway/session/tool-contract family is estimated at ~99.93% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.985% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -139,8 +139,8 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.92% after the
-  latest provider-gated plugin native command-spec slice.
+- The gateway session/tool-contract family is estimated at ~99.93% after the
+  latest `browser.request` node-proxy dispatch slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.999%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
@@ -11980,3 +11980,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   provider-native inbound/outbound breadth moves to ~99.999%. Continue
   remaining provider-specific media/reply edges, deeper installed plugin
   activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` now handles the connected
+  browser-node proxy path natively: required method/path validation,
+  GET/POST/DELETE enforcement, upstream persistent-profile mutation blocking,
+  browser-capable node resolution, `browser.proxy` dispatch, query/body/profile
+  propagation, timeout propagation, and upstream-shaped `result` projection.
+  Source/test checkpointed in `430e365b`; repo-wide parity remains estimated
+  at ~99.9%, active gateway/session/tool-contract parity moves to ~99.93%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.2%.
+  Continue `browser.request` local control-service fallback/proxy file
+  persistence, remaining provider-specific media/reply edges, deeper installed
+  plugin activation, companion breadth, or the next packaging edge.
