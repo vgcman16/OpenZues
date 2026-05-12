@@ -2373,6 +2373,102 @@ def test_doctor_json_includes_runtime_bridge_posture(monkeypatch) -> None:
     }
 
 
+def test_doctor_json_reports_startup_optimization_hints(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Startup optimization profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setenv("NODE_COMPILE_CACHE", "/tmp/openclaw-compile-cache")
+    monkeypatch.setenv("NODE_DISABLE_COMPILE_CACHE", "1")
+    monkeypatch.delenv("OPENCLAW_NO_RESPAWN", raising=False)
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_doctor_startup_platform", lambda: "linux")
+    monkeypatch.setattr(cli_module, "_doctor_startup_arch", lambda: "arm64")
+    monkeypatch.setattr(
+        cli_module,
+        "_doctor_startup_total_mem_bytes",
+        lambda: 4 * 1024**3,
+    )
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    startup = payload["startupOptimization"]
+    assert startup["status"] == "warning"
+    assert startup["openClawContribution"] == "doctor:startup-optimization"
+    assert startup["platform"] == "linux"
+    assert startup["arch"] == "arm64"
+    assert startup["warnings"] == [
+        (
+            "NODE_COMPILE_CACHE points to /tmp; use /var/tmp so cache survives "
+            "reboots and warms startup reliably."
+        ),
+        "NODE_DISABLE_COMPILE_CACHE is set; startup compile cache is disabled.",
+        (
+            "OPENCLAW_NO_RESPAWN is not set to 1; set it to avoid extra startup "
+            "overhead from self-respawn."
+        ),
+    ]
+    assert startup["suggestions"] == [
+        "export NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache",
+        "mkdir -p /var/tmp/openclaw-compile-cache",
+        "export OPENCLAW_NO_RESPAWN=1",
+        "unset NODE_DISABLE_COMPILE_CACHE",
+    ]
+    assert startup["note"] == {
+        "title": "Startup optimization",
+        "message": "\n".join(
+            [
+                (
+                    "- NODE_COMPILE_CACHE points to /tmp; use /var/tmp so cache "
+                    "survives reboots and warms startup reliably."
+                ),
+                (
+                    "- NODE_DISABLE_COMPILE_CACHE is set; startup compile cache is "
+                    "disabled."
+                ),
+                (
+                    "- OPENCLAW_NO_RESPAWN is not set to 1; set it to avoid extra "
+                    "startup overhead from self-respawn."
+                ),
+                "- Suggested env for low-power hosts:",
+                "  export NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache",
+                "  mkdir -p /var/tmp/openclaw-compile-cache",
+                "  export OPENCLAW_NO_RESPAWN=1",
+                "  unset NODE_DISABLE_COMPILE_CACHE",
+            ]
+        ),
+    }
+    assert all(warning in payload["warnings"] for warning in startup["warnings"])
+
+
 def test_doctor_json_includes_windows_package_distribution_diagnostics(
     tmp_path,
     monkeypatch,

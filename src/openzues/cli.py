@@ -9,6 +9,7 @@ import ipaddress
 import json
 import math
 import os
+import platform as platform_module
 import re
 import secrets
 import shutil
@@ -7538,6 +7539,145 @@ def _with_doctor_gateway_runtime_payload(
     warnings = [
         str(warning)
         for warning in _object_list(gateway_runtime.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
+def _doctor_startup_platform() -> str:
+    return sys.platform
+
+
+def _doctor_startup_arch() -> str:
+    arch = platform_module.machine().strip().lower()
+    if arch == "aarch64":
+        return "arm64"
+    return arch
+
+
+def _doctor_startup_total_mem_bytes() -> int:
+    if not hasattr(os, "sysconf"):
+        return 0
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (OSError, ValueError):
+        return 0
+    if not isinstance(pages, int) or not isinstance(page_size, int):
+        return 0
+    return max(0, pages * page_size)
+
+
+def _doctor_env_value(env: Mapping[str, str], key: str) -> str:
+    value = env.get(key, "")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _doctor_truthy_env_value(value: str) -> bool:
+    return bool(value.strip())
+
+
+def _doctor_tmp_compile_cache_path(cache_path: str) -> bool:
+    normalized = cache_path.strip().rstrip("/")
+    return (
+        normalized == "/tmp"
+        or normalized.startswith("/tmp/")
+        or normalized == "/private/tmp"
+        or normalized.startswith("/private/tmp/")
+    )
+
+
+def _build_doctor_startup_optimization_payload(
+    *,
+    env: Mapping[str, str] | None = None,
+    platform_name: str | None = None,
+    arch: str | None = None,
+    total_mem_bytes: int | None = None,
+) -> dict[str, object] | None:
+    resolved_platform = platform_name or _doctor_startup_platform()
+    if resolved_platform != "linux":
+        return None
+    resolved_arch = arch or _doctor_startup_arch()
+    resolved_total_mem_bytes = (
+        total_mem_bytes
+        if total_mem_bytes is not None
+        else _doctor_startup_total_mem_bytes()
+    )
+    is_arm_host = resolved_arch in {"arm", "arm64"}
+    is_low_memory_linux = (
+        resolved_total_mem_bytes > 0
+        and resolved_total_mem_bytes <= 8 * 1024**3
+    )
+    if not (is_arm_host or is_low_memory_linux):
+        return None
+
+    runtime_env = env or os.environ
+    compile_cache = _doctor_env_value(runtime_env, "NODE_COMPILE_CACHE")
+    disable_compile_cache = _doctor_env_value(runtime_env, "NODE_DISABLE_COMPILE_CACHE")
+    no_respawn = _doctor_env_value(runtime_env, "OPENCLAW_NO_RESPAWN")
+    warnings: list[str] = []
+    if not compile_cache:
+        warnings.append(
+            "NODE_COMPILE_CACHE is not set; repeated CLI runs can be slower on small "
+            "hosts (Pi/VM)."
+        )
+    elif _doctor_tmp_compile_cache_path(compile_cache):
+        warnings.append(
+            "NODE_COMPILE_CACHE points to /tmp; use /var/tmp so cache survives "
+            "reboots and warms startup reliably."
+        )
+    if _doctor_truthy_env_value(disable_compile_cache):
+        warnings.append(
+            "NODE_DISABLE_COMPILE_CACHE is set; startup compile cache is disabled."
+        )
+    if no_respawn != "1":
+        warnings.append(
+            "OPENCLAW_NO_RESPAWN is not set to 1; set it to avoid extra startup "
+            "overhead from self-respawn."
+        )
+    if not warnings:
+        return None
+
+    suggestions = [
+        "export NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache",
+        "mkdir -p /var/tmp/openclaw-compile-cache",
+        "export OPENCLAW_NO_RESPAWN=1",
+    ]
+    if _doctor_truthy_env_value(disable_compile_cache):
+        suggestions.append("unset NODE_DISABLE_COMPILE_CACHE")
+    note_lines = [
+        *(f"- {warning}" for warning in warnings),
+        "- Suggested env for low-power hosts:",
+        *(f"  {suggestion}" for suggestion in suggestions),
+    ]
+    return {
+        "status": "warning",
+        "summary": "Startup optimization hints are available for low-power Linux hosts.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:startup-optimization",
+        "platform": resolved_platform,
+        "arch": resolved_arch,
+        "totalMemBytes": resolved_total_mem_bytes,
+        "lowMemoryLinux": is_low_memory_linux,
+        "warnings": warnings,
+        "suggestions": suggestions,
+        "note": {
+            "title": "Startup optimization",
+            "message": "\n".join(note_lines),
+        },
+    }
+
+
+def _with_doctor_startup_optimization_payload(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    startup_optimization = _build_doctor_startup_optimization_payload()
+    if startup_optimization is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["startupOptimization"] = startup_optimization
+    warnings = [
+        str(warning)
+        for warning in _object_list(startup_optimization.get("warnings"))
     ]
     return _with_doctor_added_warnings(next_payload, warnings)
 
@@ -107791,6 +107931,7 @@ def doctor(
             payload,
             services.gateway_config,
         )
+        payload = _with_doctor_startup_optimization_payload(payload)
         payload = await _with_doctor_runtime_bridge_payload(payload, services)
         payload = _with_doctor_package_distribution_payload(payload)
         payload = _with_doctor_contribution_surfaces(payload)
