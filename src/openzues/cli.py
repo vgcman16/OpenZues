@@ -10347,13 +10347,63 @@ def _openclaw_update_channel_probe_errors(
     return errors
 
 
+def _openclaw_update_expected_gateway_version(
+    payload: Mapping[str, object],
+) -> str | None:
+    after = payload.get("after")
+    if not isinstance(after, Mapping):
+        return None
+    return _optional_cli_string(after.get("version"))
+
+
+def _openclaw_update_health_gateway_version(
+    health_payload: Mapping[str, object],
+) -> str | None:
+    for key in ("serverVersion", "gatewayVersion", "version"):
+        version = _optional_cli_string(health_payload.get(key))
+        if version is not None:
+            return version
+    server = health_payload.get("server")
+    if isinstance(server, Mapping):
+        return _optional_cli_string(server.get("version"))
+    raw_health = health_payload.get("health")
+    if isinstance(raw_health, Mapping):
+        return _openclaw_update_health_gateway_version(raw_health)
+    return None
+
+
+def _openclaw_update_restart_version_mismatch(
+    payload: Mapping[str, object],
+    health_payload: Mapping[str, object],
+) -> dict[str, object] | None:
+    expected = _openclaw_update_expected_gateway_version(payload)
+    if expected is None:
+        return None
+    actual = _openclaw_update_health_gateway_version(health_payload)
+    if actual == expected:
+        return None
+    return {"expected": expected, "actual": actual}
+
+
 def _openclaw_update_restart_health_diagnostics(
+    version_mismatch: Mapping[str, object] | None,
     activated_plugin_errors: Sequence[Mapping[str, object]],
     channel_probe_errors: Sequence[Mapping[str, object]],
 ) -> list[str]:
-    if not activated_plugin_errors and not channel_probe_errors:
+    if (
+        version_mismatch is None
+        and not activated_plugin_errors
+        and not channel_probe_errors
+    ):
         return []
     lines = ["Gateway did not become healthy after restart."]
+    if version_mismatch is not None:
+        expected = _optional_cli_string(version_mismatch.get("expected")) or "unknown"
+        actual = _optional_cli_string(version_mismatch.get("actual")) or "unavailable"
+        lines.append(
+            "Gateway version mismatch: "
+            f"expected {expected}, running gateway reported {actual}."
+        )
     if activated_plugin_errors:
         lines.append("Activated plugin load errors:")
         for plugin in activated_plugin_errors:
@@ -10414,15 +10464,24 @@ async def _openclaw_update_attach_restart_health(
         return payload
     activated_plugin_errors = _openclaw_update_activated_plugin_errors(health_payload)
     channel_probe_errors = _openclaw_update_channel_probe_errors(health_payload)
+    version_mismatch = _openclaw_update_restart_version_mismatch(
+        payload,
+        health_payload,
+    )
     restart_health: dict[str, object] = {
-        "status": "error" if activated_plugin_errors or channel_probe_errors else "ok",
+        "status": "error"
+        if version_mismatch is not None or activated_plugin_errors or channel_probe_errors
+        else "ok",
         "activatedPluginErrors": activated_plugin_errors,
         "channelProbeErrors": channel_probe_errors,
     }
+    if version_mismatch is not None:
+        restart_health["versionMismatch"] = dict(version_mismatch)
     health_status = _optional_cli_string(health_payload.get("status"))
     if health_status is not None:
         restart_health["gatewayStatus"] = health_status
     diagnostics = _openclaw_update_restart_health_diagnostics(
+        version_mismatch,
         activated_plugin_errors,
         channel_probe_errors,
     )
@@ -10430,7 +10489,7 @@ async def _openclaw_update_attach_restart_health(
         restart_health["diagnostics"] = diagnostics
     result = dict(payload)
     result["restartHealth"] = restart_health
-    if activated_plugin_errors or channel_probe_errors:
+    if version_mismatch is not None or activated_plugin_errors or channel_probe_errors:
         result["status"] = "error"
         result["reason"] = "restart-health"
     return result
