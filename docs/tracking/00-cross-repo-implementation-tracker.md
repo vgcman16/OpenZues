@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.985% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.965% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.9995% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.9995% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.9996% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.9996% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -381,8 +381,33 @@ Packaging addendum: `OZ-PKG-001CR` stored-channel package update dispatch is
 source/test checkpointed in `688b89c3`; runtime/CLI/doctor and CLI/operator
 parity move to ~99.9995%. Continue provider-specific media/reply edges, deeper
 installed plugin activation, companion breadth, or the next packaging edge.
+Packaging addendum: `OZ-PKG-001CS` package update Node engine preflight is
+source/test checkpointed in `6897eae6`; runtime/CLI/doctor and CLI/operator
+parity move to ~99.9996%. Continue provider-specific media/reply edges, deeper
+installed plugin activation, companion breadth, LINE webhook ingress, or the
+next packaging edge.
 
 ## Active Slice Detail
+
+- [x] `OZ-PKG-001CS` package update Node engine preflight
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/cli/update-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: package updates for registry-resolvable targets check the
+    target package's `engines.node` requirement against the current Node
+    runtime before package-manager dispatch; incompatible targets return the
+    OpenClaw silent-older-install warning and do not call the update service.
+  - Evidence required: focused Node engine preflight proof, adjacent package
+    update CLI proof, ruff, mypy
+  - Status: checkpointed in `6897eae6`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_json_blocks_package_update_when_target_requires_newer_node -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent update CLI
+    selector (`11 passed, 577 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
 
 - [x] `OZ-PKG-001CR` stored-channel package update dispatch
   - Source: `openclaw-main/src/cli/update-cli/update-command.ts`
