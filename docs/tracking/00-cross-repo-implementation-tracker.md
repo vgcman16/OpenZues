@@ -21,7 +21,7 @@ Hermes or Warp integration.
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~99.964% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Active gateway/session/tool-contract path | ~99.965% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.99997% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
@@ -48,6 +48,8 @@ Any follow-up changes should target the next queue head only:
 - `src/openzues/services/ops_mesh.py`
 - `src/openzues/services/runtime_updates.py`
 - `src/openzues/services/gateway_channels.py`
+- `src/openzues/services/gateway_node_methods.py`
+- `src/openzues/services/gateway_method_policy.py`
 - `src/openzues/cli.py`
 - `src/openzues/web/templates/index.html`
 - `src/openzues/web/static/app.js`
@@ -69,7 +71,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Artifact transcript gateway methods checkpointed in `13eddac7`; base method sweep checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Continue `update.status`, diagnostics, native-hook, web-push, and memory doctor method gaps |
+| OZ-RT-001 | Runtime-control hard gaps | Artifact transcript gateway methods checkpointed in `13eddac7`; `update.status` checkpointed in `59a36693`; base method sweep checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Continue `diagnostics.stability`, native-hook, web-push, and memory doctor method gaps |
 | OZ-PKG-001 | Packaging/distribution breadth | Git dev branch normalization checkpointed in `c77f60e0`; Git dev target ref checkout checkpointed in `8f305c47`; Git preflight cleanup repair checkpointed in `48ee7b20`; Git rebase abort cleanup checkpointed in `3a61f139`; Git preflight candidate selection checkpointed in `84a78474`; Git preflight worktree guard checkpointed in `438f3c33`; Git preflight candidate guard checkpointed in `254fcc9d`; Beta package latest fallback checkpointed in `93061087`; git update no-upstream guard checkpointed in `2603380f`; git update control-ui clean-check exclusion checkpointed in `5171f2f2`; npm shim rollback proof checkpointed in `03f1ee46`; doctor malformed extension manifest warning checkpointed in `df582190`; package update malformed extension manifest rejection checkpointed in `733c7b15`; package update staging debris verifier checkpointed in `d58b0879`; package update private QA omission proof checkpointed in `b663e3e0`; package update includeInCore inventory guard checkpointed in `c83c2a72`; package update staged crash cleanup proof checkpointed in `beadafaa`; package update omitted-subtree safety ordering checkpointed in `2830b5ef`; package update legacy sidecar enforcement checkpointed in `603cdb2a`; package update externalized extension omission checkpointed in `a06dd570`; package update unsafe dist path rejection checkpointed in `691fdabd`; package update inventory omission filters checkpointed in `e7d960e0`; package update supplemental sidecar enforcement checkpointed in `9ba6843f`; package update dist inventory file drift checkpointed in `1e373c7f`; package update invalid dist-inventory rejection checkpointed in `2f59d485`; package update missing dist-inventory gate checkpointed in `d7e87c9b`; source-checkout package update verifier checkpointed in `a330fecc`; missing-version verifier wording checkpointed in `ad9ba5a5`; ambient npm fallback proof checkpointed in `0826cfaa`; owning npm command checkpointed in `de046811`; owning npm root detection checkpointed in `76e2a21c`; owning pnpm/bun global-root detection checkpointed in `5d80e370`/`04472a9c`; portable Git PATH prepending checkpointed in `e692f8b6`; Windows package install env checkpointed in `80e49178`; Corepack prompt preservation checkpointed in `9fd00cad`; Corepack prompt suppression checkpointed in `0f2cb0c1`; stored-channel dry-run preview checkpointed in `c95b2810`; post-update doctor env checkpointed in `51b3bc19`; requested update-channel persistence checkpointed in `15161172`; low package-update disk warning checkpointed in `3083362b`; stale global rename-dir cleanup checkpointed in `5a31c97f`; non-interactive update doctor checkpointed in `837bbd30`; package update doctor repair checkpointed in `45009862`; post-update plugin sync checkpointed in `aa71bcbc`; staged npm package swap checkpointed in `954d74ea`; package update failedStep projection checkpointed in `98e4d5c9`; package update version verification checkpointed in `1db09c3b`; npm update omit-optional fallback checkpointed in `f3177330`; package update runtime path checkpointed in `1291d361`; inherited update status parent options checkpointed in `f088293f`; root update runtime dispatch checkpointed in `0c88812c`; explicit update install-spec preservation checkpointed in `3227786a`; update package-spec env override checkpointed in `949de445`; update-status timeout option checkpointed in `6418d7f3`; update dry-run preview package-spec mapping checkpointed in `08e8f76f`; private QA sidecar omission proof checkpointed in `ad248bf4`; bundled runtime sidecar enforcement checkpointed in `07b17ad0`; source-checkout package-root warning checkpointed in `912aee5e`; private QA dist omission checkpointed in `bde731a9`; externalized extension dist omission checkpointed in `06ba5480`; unsafe dist symlink detection checkpointed in `a9c7884f`; local build metadata omission checkpointed in `6e8bb491`; exact missing inventory warning checkpointed in `76cdb404`; mixed-case staging-debris proof checkpointed in `9422c6b7`; package dist staging-debris detection checkpointed in `b16db705`; package dist inventory drift checkpointed in `69b23cb9`; human git update hint proof checkpointed in `d5ea6096`; human update-available hint checkpointed in `20e9c885`; config channel precedence proof checkpointed in `d9150777`; git availability projection checkpointed in `de37e6f8`; registry availability projection checkpointed in `55a785a8`; update-status git metadata checkpointed in `b31d8f41`; packed git-tag update-status projection checkpointed in `71029a02`; update-status git-tag channel projection checkpointed in `dce24b5e`; source-install package doctor warnings checkpointed in `4c1d7a2a`; update status package-manager dependency posture checkpointed in `f1ac67da`; post-doctor control-UI asset repair checkpointed in `92aadaf9` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue broader distribution/startup update edges |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; active-registry session/UI contributions checkpointed in `2cc24e73`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77`; voicewake routing methods checkpointed in `a74cec21`; `browser.request` node-proxy path checkpointed in `430e365b`; `browser.request` proxy-file persistence checkpointed in `97c32bc8`; `browser.request` configured-node selection checkpointed in `6b31e0d7`; `browser.request` local runtime fallback checkpointed in `45fd0ffd`; lifecycle route breadth checkpointed in `d9b5e87d`; tab mutation route breadth checkpointed in `aa7298c6`; tab action close/select checkpointed in `904f2673`; tab label route breadth checkpointed in `c6fb16d3`; storage route breadth checkpointed in `483e4aff`; cookie route breadth checkpointed in `97602084`; debug route breadth checkpointed in `d7eb616d`; setting route breadth checkpointed in `97755215`; locale/timezone route breadth checkpointed in `003b0d5a`; act utility route breadth checkpointed in `886c86f3`; status/doctor route breadth checkpointed in `4b1f8028`; snapshot artifact route breadth checkpointed in `2ecdba40`; response-body route breadth checkpointed in `e7084f1f`; dialog-hook route breadth checkpointed in `4be4d540`; permission grant route breadth checkpointed in `1a27af54`; persistent profile mutation boundary reverified as `OZ-CANVAS-001V` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Browser local-request mini-queue closed; rotate to media/canvas/provider breadth |
@@ -631,9 +633,12 @@ installed plugin activation, companion breadth, or the next packaging edge.
 Runtime/gateway addendum: `OZ-RT-001BB` transcript artifact gateway methods
 are source/test checkpointed in `13eddac7`; active gateway/session/tool-contract
 parity moves to ~99.964%, and chat/session contract parity moves to ~99.987%.
-Continue `update.status`, diagnostics, native-hook, web-push helper methods,
-memory rem-harness doctor helper, deeper installed plugin activation,
-companion breadth, or the next packaging edge.
+
+Runtime/gateway addendum: `OZ-RT-001BC` `update.status` cached update sentinel
+is source/test checkpointed in `59a36693`; active gateway/session/tool-contract
+parity moves to ~99.965%. Continue `diagnostics.stability`, native-hook,
+web-push helper methods, memory rem-harness doctor helper, deeper installed
+plugin activation, companion breadth, or the next packaging edge.
 Packaging addendum: `OZ-PKG-001CV` package-update gateway-version restart
 health failure is source/test checkpointed in `fd5f8117`; runtime/CLI/doctor
 and CLI/operator parity move to ~99.99985%. Continue remaining package
@@ -690,6 +695,31 @@ companion breadth.
     `python -m pytest tests\test_gateway_node_methods.py -q -k "artifacts or sessions_get"`
     (`9 passed, 1252 deselected`), policy proof
     `python -m pytest tests\test_gateway_method_policy.py -q -k "artifacts or read_scope or method_scope"`
+    (`1 passed, 18 deselected`), `ruff check`, `mypy`, and focused
+    `git diff --check`.
+
+- [x] `OZ-RT-001BC` Gateway update-status cached sentinel
+  - Source: `openclaw-main/src/gateway/server-methods/update.ts`,
+    `openclaw-main/src/gateway/server-methods/update.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`,
+    `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_method_policy.py`
+  - Contract: `update.status` accepts no params and returns `{ sentinel }`
+    for the latest OpenClaw-shaped update restart sentinel, with `null` when
+    none exists and non-update restart sentinels filtered out.
+  - Evidence required: focused update-status gateway test, adjacent update
+    gateway tests, policy test, ruff, mypy
+  - Status: checkpointed in `59a36693`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_update_status_returns_latest_openclaw_update_sentinel -q`
+    (`unsupported method: update.status` before implementation, then `1
+    passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "update_status or update_run"`
+    (`5 passed, 1257 deselected`), policy proof
+    `python -m pytest tests\test_gateway_method_policy.py -q -k "update_status or method_scope or read_scope"`
     (`1 passed, 18 deselected`), `ruff check`, `mypy`, and focused
     `git diff --check`.
 

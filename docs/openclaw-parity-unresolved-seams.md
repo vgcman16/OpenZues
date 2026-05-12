@@ -6,7 +6,7 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.964% of the
+- The active gateway/session/tool-contract family is estimated at ~99.965% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.987% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -146,8 +146,8 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.963% after the
-  latest requester-scoped `agents_list` spawn-target projection slice.
+- The gateway session/tool-contract family is estimated at ~99.965% after the
+  latest native `update.status` cached sentinel slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.99997%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
@@ -12506,3 +12506,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9992%. Continue Zalo webhook session delivery/replay/media breadth,
   remaining provider-specific media/reply edges, deeper installed plugin
   activation, or companion breadth.
+- Current queue-head adjustment: native `update.status` now returns the latest
+  OpenClaw-shaped update restart sentinel from `runtime/restart-sentinel.json`,
+  matching `src/gateway/server-methods/update.ts`. Source/test checkpointed in
+  `59a36693`; repo-wide parity remains estimated at ~99.9%, and active
+  gateway/session/tool-contract parity moves to ~99.965%. Continue
+  `diagnostics.stability`, memory REM-harness doctor, native hook, web-push
+  helper methods, provider-specific media/reply edges, deeper installed plugin
+  activation, companion breadth, or the next packaging edge.

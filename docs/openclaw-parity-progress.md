@@ -4,7 +4,7 @@
 
 - Updated: 2026-05-12.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- Estimated active gateway/session/tool-contract family parity: ~99.964% for the bounded local OpenZues path.
+- Estimated active gateway/session/tool-contract family parity: ~99.965% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
@@ -23603,6 +23603,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_method_policy.py`, and focused `git diff
   --check`. Source/test checkpointed in `13eddac7`.
+- Native `update.status` now mirrors OpenClaw's cached update restart sentinel
+  method from `src/gateway/server-methods/update.ts`. The read-scoped gateway
+  method returns `{ sentinel }` from the latest native update sentinel, filters
+  non-update restart sentinels, and returns `null` when no update sentinel is
+  available. This closes `OZ-RT-001BC`; repo-wide parity remains estimated at
+  ~99.9%, and active gateway/session/tool-contract parity moves to ~99.965%.
+- Verified the gateway update-status seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_update_status_returns_latest_openclaw_update_sentinel -q`
+  (`unsupported method: update.status` before implementation, then `1
+  passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "update_status or update_run"`
+  (`5 passed, 1257 deselected`), policy proof
+  `python -m pytest tests\test_gateway_method_policy.py -q -k "update_status or method_scope or read_scope"`
+  (`1 passed, 18 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`,
+  `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`, and focused `git diff
+  --check`. Source/test checkpointed in `59a36693`.
 
 ## References
 

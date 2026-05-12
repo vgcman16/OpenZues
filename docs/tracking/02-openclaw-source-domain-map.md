@@ -37,6 +37,11 @@ OpenZues now discovers transcript image/audio/file content blocks, returns
 stable artifact summaries without raw bytes, and exposes bytes/url download
 payloads through native read-scope gateway methods.
 
+`OZ-RT-001BC` `update.status` from
+`src/gateway/server-methods/update.ts` is checkpointed in `59a36693`, returning
+the latest cached update restart sentinel through the native read-scoped
+gateway method.
+
 Gateway/browser addendum: `OZ-CANVAS-001C` `browser.request` node-proxy
 dispatch from `extensions/browser/src/gateway/browser-request.ts` is
 checkpointed in `430e365b`; it covers native OpenZues validation,
