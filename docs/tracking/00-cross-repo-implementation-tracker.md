@@ -24,7 +24,7 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.969% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.999985% | Near-complete bounded provider path; QQBot route-backed text sends are checkpointed and broader provider inventory still open | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.999986% | Near-complete bounded provider path; QQBot route-backed text/media sends are checkpointed and broader provider inventory still open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.999996% | Mostly landed; startup optimization, packaging, and installed plugin depth are advancing | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.9% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
@@ -204,7 +204,9 @@ to ~99.999984%. Continue remaining provider-specific media/reply edges, deeper
 installed plugin activation, packaging/distribution, or companion breadth.
 Provider addendum: `OZ-PROV-001GI` QQBot route-backed text sends are
 source/test checkpointed in `dd8aec4d`, moving provider-native inbound/outbound
-breadth to ~99.999985%. Continue remaining provider-specific media/reply edges,
+breadth to ~99.999985%. `OZ-PROV-001GJ` QQBot image media uploads are
+source/test checkpointed in `90b89a07`, moving provider-native inbound/outbound
+breadth to ~99.999986%. Continue QQBot structured media tags/chunked/local media,
 ACP bridge lifecycle depth, packaging/distribution, or companion breadth.
 Runtime addendum: `OZ-PKG-001DA` package-update post-core resume mode is
 source/test checkpointed in `4f874859`, moving runtime/CLI/doctor native-bridge

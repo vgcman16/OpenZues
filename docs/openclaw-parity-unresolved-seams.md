@@ -151,12 +151,12 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999985%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999986%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
   sends, Discord audio-as-voice direct media sends, Signal receive envelope
-  session routing with sync-message drops, QQBot route-backed text sends, LINE
-  signed webhook ingress, and
+  session routing with sync-message drops, QQBot route-backed text sends,
+  QQBot image media uploads, LINE signed webhook ingress, and
   LINE text webhook session delivery plus
   postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
@@ -12789,3 +12789,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and provider-native inbound/outbound breadth moves to ~99.999985%. Continue
   provider media/reply edges, ACP bridge lifecycle depth, packaging/distribution,
   or companion breadth.
+- Current queue-head adjustment: native QQBot media sends now upload C2C/group
+  route-backed image media through `/v2/users/{id}/files` or
+  `/v2/groups/{id}/files`, send the returned `file_info` with `msg_type: 7`,
+  preserve captions for image/video messages, and persist media/message delivery
+  metadata. Source/test checkpointed in `90b89a07`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999986%. Continue QQBot structured media tags/chunked/local media,
+  ACP bridge lifecycle depth, packaging/distribution, or companion breadth.
