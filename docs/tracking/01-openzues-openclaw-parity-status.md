@@ -21,7 +21,7 @@ may lag behind this tracker.
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.999984% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.999995% | High for bounded native bridge | Packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, and startup-optimization doctor notes are checkpointed; ACP bridge depth and deeper installed plugin activation remain |
+| Runtime/CLI/doctor native bridge | ~99.999996% | High for bounded native bridge | Packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; ACP bridge depth and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.9% | Low, broad parity still open | QR setup-code safety, SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, and approval-state preview metadata are landed; companion apps remain mostly open |
 
@@ -3500,9 +3500,37 @@ may lag behind this tracker.
     `14ff20a1`, text-chunking shim checkpointed in `20267310`,
     string-normalization shim checkpointed in `06cd452d`, dangerous-name shim
     checkpointed in `01473fb4`, channel-logging shim checkpointed in
-    `c42b0d77`, and time-runtime shim checkpointed in `eb944ee1`, but broader
+    `c42b0d77`, time-runtime shim checkpointed in `eb944ee1`, and installed
+    runtime session/control-UI contribution capture checkpointed in
+    `ee5cbe7a`, but broader
     plugin SDK helper/runtime surface breadth remains.
   - Weight: 5
+
+- [x] `OZ-PLUGIN-001ZZB` Installed runtime session/control-UI contributions.
+  - Source: `openclaw-main/src/plugins/api-builder.ts`,
+    `openclaw-main/src/plugins/captured-registration.ts`,
+    `openclaw-main/src/plugins/registry.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: runtime plugins calling `registerSessionExtension` and
+    `registerControlUiDescriptor` during installed-plugin activation are
+    serialized into the native activation registry and exposed through
+    `GatewayPluginRuntimeService` for `plugins.uiDescriptors` and
+    `sessions.pluginPatch`.
+  - Evidence required: focused installed runtime contribution proof, adjacent
+    UI/session proof, ruff, mypy
+  - Status: checkpointed in `ee5cbe7a`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_installed_runtime_activation_registers_session_extension_and_control_ui_descriptor -q`
+    (`1 failed` before implementation because the activation adapter lacked a
+    runtime-service contribution path, then `1 passed`), adjacent explicit
+    proof `python -m pytest tests\test_gateway_node_methods.py::test_installed_runtime_activation_registers_session_extension_and_control_ui_descriptor tests\test_gateway_node_methods.py::test_plugins_ui_descriptors_returns_registered_control_ui_descriptors tests\test_gateway_node_methods.py::test_sessions_plugin_patch_persists_registered_extension_state -q`
+    (`3 passed`), adjacent keyword proof `python -m pytest
+    tests\test_gateway_node_methods.py -q -k "runtime_activation_registers_session_extension or plugins_ui_descriptors or sessions_plugin_patch"`
+    (`3 passed, 1268 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
 
 - [x] Imported plugin SDK time-runtime shim.
   - Source: `openclaw-main/src/plugin-sdk/time-runtime.ts` and
