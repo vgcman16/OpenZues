@@ -849,6 +849,44 @@ def _is_browser_request_node(node: NodeSession) -> bool:
     return "browser" in node.caps or "browser.proxy" in node.commands
 
 
+def _normalize_browser_node_key(value: str) -> str:
+    normalized = value.strip().lower()
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
+def _resolve_browser_request_node(
+    nodes: Sequence[NodeSession],
+    query: str,
+) -> NodeSession | None:
+    requested = query.strip()
+    if not requested:
+        return None
+    requested_key = _normalize_browser_node_key(requested)
+    matches = [
+        node
+        for node in nodes
+        if node.node_id == requested
+        or (isinstance(node.remote_ip, str) and node.remote_ip == requested)
+        or (
+            isinstance(node.display_name, str)
+            and _normalize_browser_node_key(node.display_name) == requested_key
+        )
+        or (len(requested) >= 6 and node.node_id.startswith(requested))
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        return None
+    labels = ", ".join(
+        node.display_name or node.remote_ip or node.node_id for node in matches
+    )
+    raise GatewayNodeMethodError(
+        code="UNAVAILABLE",
+        message=f"ambiguous node: {requested} (matches: {labels})",
+        status_code=503,
+    )
+
+
 def _browser_request_proxy_payload(
     *,
     payload: object,
@@ -3078,15 +3116,54 @@ class GatewayNodeMethodService:
         browser_nodes = [
             node for node in self.registry.list_connected() if _is_browser_request_node(node)
         ]
+        browser_policy = self._browser_request_node_policy()
+        browser_mode = str(browser_policy.get("mode") or "auto").strip().lower()
+        if browser_mode == "off":
+            return None
         if not browser_nodes:
             return None
-        if len(browser_nodes) > 1:
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="multiple browser-capable nodes connected; configure a browser node",
-                status_code=503,
-            )
-        return browser_nodes[0]
+        requested_node = str(browser_policy.get("node") or "").strip()
+        if requested_node:
+            resolved = _resolve_browser_request_node(browser_nodes, requested_node)
+            if resolved is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=f"Configured browser node not connected: {requested_node}",
+                    status_code=503,
+                )
+            return resolved
+        if browser_mode == "manual":
+            return None
+        if len(browser_nodes) == 1:
+            return browser_nodes[0]
+        return None
+
+    def _browser_request_node_policy(self) -> dict[str, object]:
+        if self._config_service is None:
+            return {}
+        try:
+            snapshot = self._config_service.build_snapshot()
+        except Exception:
+            return {}
+        if not isinstance(snapshot, dict):
+            return {}
+        gateway = snapshot.get("gateway")
+        if not isinstance(gateway, dict):
+            return {}
+        nodes = gateway.get("nodes")
+        if not isinstance(nodes, dict):
+            return {}
+        browser = nodes.get("browser")
+        if not isinstance(browser, dict):
+            return {}
+        mode = str(browser.get("mode") or "auto").strip().lower()
+        if mode not in {"auto", "manual", "off"}:
+            mode = "auto"
+        policy: dict[str, object] = {"mode": mode}
+        node = browser.get("node")
+        if isinstance(node, str) and node.strip():
+            policy["node"] = node.strip()
+        return policy
 
     async def _handle_browser_request(self, payload: dict[str, Any]) -> dict[str, Any]:
         _validate_exact_keys(
