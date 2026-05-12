@@ -1169,6 +1169,7 @@ class RuntimeManager:
         reasoning_effort: str | None,
         collaboration_mode: str | None,
         sandbox_mode: str | None = None,
+        timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
         runtime = await self.get(instance_id)
         if runtime.client is None:
@@ -1191,6 +1192,7 @@ class RuntimeManager:
                     reasoning_effort=reasoning_effort,
                     collaboration_mode=collaboration_mode,
                     sandbox_mode=sandbox_mode,
+                    timeout_seconds=timeout_seconds,
                 )
                 break
             except TimeoutError as exc:
@@ -1254,6 +1256,7 @@ class RuntimeManager:
         reasoning_effort: str | None,
         collaboration_mode: str | None,
         sandbox_mode: str | None = None,
+        timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
         runtime = await self.get(instance_id)
         if runtime.client is None:
@@ -1271,6 +1274,7 @@ class RuntimeManager:
                     reasoning_effort=reasoning_effort,
                     collaboration_mode=collaboration_mode,
                     sandbox_mode=sandbox_mode,
+                    timeout_seconds=timeout_seconds,
                 )
                 break
             except TimeoutError as exc:

@@ -37,6 +37,7 @@ class FakeManager:
         cwd: str | None,
         reasoning_effort: str | None,
         collaboration_mode: str | None,
+        timeout_seconds: int | None = None,
     ) -> dict[str, object]:
         self.events.append("thread")
         self.start_thread_calls.append(
@@ -46,6 +47,7 @@ class FakeManager:
                 "cwd": cwd,
                 "reasoning_effort": reasoning_effort,
                 "collaboration_mode": collaboration_mode,
+                "timeout_seconds": timeout_seconds,
             }
         )
         return {"thread": {"id": "thread-acp-new"}}
@@ -60,6 +62,7 @@ class FakeManager:
         model: str | None,
         reasoning_effort: str | None,
         collaboration_mode: str | None,
+        timeout_seconds: int | None = None,
     ) -> dict[str, object]:
         self.events.append("turn")
         self.start_turn_calls.append(
@@ -71,6 +74,7 @@ class FakeManager:
                 "model": model,
                 "reasoning_effort": reasoning_effort,
                 "collaboration_mode": collaboration_mode,
+                "timeout_seconds": timeout_seconds,
             }
         )
         return {"turn": {"id": "turn-acp-new"}}
@@ -120,6 +124,7 @@ async def test_runtime_manager_acp_spawn_starts_thread_and_turn() -> None:
             "cwd": "C:/workspace",
             "reasoning_effort": None,
             "collaboration_mode": None,
+            "timeout_seconds": None,
         }
     ]
     assert manager.start_turn_calls == [
@@ -131,6 +136,7 @@ async def test_runtime_manager_acp_spawn_starts_thread_and_turn() -> None:
             "model": None,
             "reasoning_effort": None,
             "collaboration_mode": None,
+            "timeout_seconds": None,
         }
     ]
 
@@ -175,6 +181,25 @@ async def test_runtime_manager_acp_spawn_applies_model_and_thinking_overrides() 
     assert manager.start_thread_calls[0]["reasoning_effort"] == "high"
     assert manager.start_turn_calls[0]["model"] == "openai-codex/gpt-5.4"
     assert manager.start_turn_calls[0]["reasoning_effort"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_applies_run_timeout_to_runtime_dispatch() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate flaky tests.",
+            "agentId": "codex",
+            "runTimeoutSeconds": 45,
+        },
+        {},
+    )
+
+    assert payload["status"] == "accepted"
+    assert manager.start_thread_calls[0]["timeout_seconds"] == 45
+    assert manager.start_turn_calls[0]["timeout_seconds"] == 45
 
 
 @pytest.mark.asyncio
