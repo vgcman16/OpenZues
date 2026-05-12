@@ -1397,7 +1397,11 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
 
     created = await service.call(
         "node.pair.request",
-        {"nodeId": "device-token-node", "displayName": "Token Device"},
+        {
+            "nodeId": "device-token-node",
+            "displayName": "Token Device",
+            "role": "operator",
+        },
         now_ms=1_000,
     )
     request_id = created["request"]["requestId"]
@@ -1456,6 +1460,43 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_device_token_rotate_rejects_role_not_approved_by_pairing(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-operator-only",
+            "displayName": "Operator Device",
+            "role": "operator",
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call("device.pair.approve", {"requestId": request_id}, now_ms=2_000)
+
+    with pytest.raises(ValueError, match="device token rotation denied"):
+        await service.call(
+            "device.token.rotate",
+            {
+                "deviceId": "device-token-operator-only",
+                "role": "node",
+            },
+            now_ms=3_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["roles"] == ["operator"]
+    assert listed["paired"][0]["tokens"] == {}
+
+
+@pytest.mark.asyncio
 async def test_device_token_rotate_preserves_existing_scopes_when_omitted(
     tmp_path,
 ) -> None:
@@ -1469,7 +1510,11 @@ async def test_device_token_rotate_preserves_existing_scopes_when_omitted(
 
     created = await service.call(
         "node.pair.request",
-        {"nodeId": "device-token-scope-node", "displayName": "Scope Device"},
+        {
+            "nodeId": "device-token-scope-node",
+            "displayName": "Scope Device",
+            "role": "operator",
+        },
         now_ms=1_000,
     )
     request_id = created["request"]["requestId"]

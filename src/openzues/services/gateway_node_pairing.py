@@ -31,6 +31,8 @@ class GatewayNodePairingRequest:
     model_identifier: str | None = None
     caps: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
+    scopes: tuple[str, ...] = ()
     remote_ip: str | None = None
     silent: bool | None = None
     ts: int = 0
@@ -50,6 +52,8 @@ class GatewayPairedNode:
     model_identifier: str | None = None
     caps: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
+    scopes: tuple[str, ...] = ()
     bins: tuple[str, ...] = ()
     permissions: dict[str, bool] | None = None
     remote_ip: str | None = None
@@ -89,6 +93,9 @@ class GatewayNodePairingService:
         model_identifier: str | None,
         caps: list[str] | None,
         commands: list[str] | None,
+        role: str | None = None,
+        roles: list[str] | None = None,
+        scopes: list[str] | None = None,
         remote_ip: str | None,
         silent: bool | None,
         now_ms: int,
@@ -114,6 +121,8 @@ class GatewayNodePairingService:
             resolved_model_identifier = model_identifier
             resolved_caps = _string_list(caps)
             resolved_commands = _string_list(commands)
+            resolved_roles = _resolve_pairing_roles(role=role, roles=roles)
+            resolved_scopes = _string_list(scopes)
             resolved_remote_ip = remote_ip
         else:
             persisted_silent = bool(existing_request.silent) and bool(silent)
@@ -151,6 +160,14 @@ class GatewayNodePairingService:
                 if commands is not None
                 else list(existing_request.commands)
             )
+            resolved_roles = (
+                _resolve_pairing_roles(role=role, roles=roles)
+                if role is not None or roles is not None
+                else list(existing_request.roles)
+            )
+            resolved_scopes = (
+                _string_list(scopes) if scopes is not None else list(existing_request.scopes)
+            )
             resolved_remote_ip = (
                 remote_ip if remote_ip is not None else existing_request.remote_ip
             )
@@ -173,6 +190,8 @@ class GatewayNodePairingService:
             model_identifier=resolved_model_identifier,
             caps=resolved_caps,
             commands=resolved_commands,
+            roles=resolved_roles,
+            scopes=resolved_scopes,
             remote_ip=resolved_remote_ip,
             silent=persisted_silent,
             requested_at_ms=now_ms,
@@ -289,6 +308,8 @@ class GatewayNodePairingService:
             model_identifier=resolved_model_identifier,
             caps=resolved_caps,
             commands=resolved_commands,
+            roles=list(existing.roles),
+            scopes=list(existing.scopes),
             bins=resolved_bins,
             permissions=resolved_permissions,
             remote_ip=resolved_remote_ip,
@@ -350,6 +371,8 @@ class GatewayNodePairingService:
             model_identifier=request.model_identifier,
             caps=list(request.caps),
             commands=list(request.commands),
+            roles=list(request.roles),
+            scopes=list(request.scopes),
             bins=[],
             permissions=None,
             remote_ip=request.remote_ip,
@@ -415,6 +438,9 @@ class GatewayNodePairingService:
         paired_node = await self.database.get_gateway_node_paired_node(normalized_device_id)
         if paired_node is None:
             return None
+        paired = _paired_node_from_row(paired_node)
+        if normalized_role not in paired.roles:
+            return None
         existing_row = await self.database.get_gateway_node_device_token(
             normalized_device_id,
             normalized_role,
@@ -452,6 +478,9 @@ class GatewayNodePairingService:
             return None
         paired_node = await self.database.get_gateway_node_paired_node(normalized_device_id)
         if paired_node is None:
+            return None
+        paired = _paired_node_from_row(paired_node)
+        if normalized_role not in paired.roles:
             return None
         row = await self.database.revoke_gateway_node_device_token(
             device_id=normalized_device_id,
@@ -492,6 +521,8 @@ def _request_from_row(row: dict[str, object]) -> GatewayNodePairingRequest:
         model_identifier=_optional_string(row.get("model_identifier")),
         caps=tuple(_string_list(row.get("caps"))),
         commands=tuple(_string_list(row.get("commands"))),
+        roles=tuple(_string_list(row.get("roles"))),
+        scopes=tuple(_string_list(row.get("scopes"))),
         remote_ip=_optional_string(row.get("remote_ip")),
         silent=silent,
         ts=cast(int, row["requested_at_ms"]),
@@ -513,6 +544,8 @@ def _paired_node_from_row(row: dict[str, object]) -> GatewayPairedNode:
         model_identifier=_optional_string(row.get("model_identifier")),
         caps=tuple(_string_list(row.get("caps"))),
         commands=tuple(_string_list(row.get("commands"))),
+        roles=tuple(_string_list(row.get("roles"))),
+        scopes=tuple(_string_list(row.get("scopes"))),
         bins=tuple(_string_list(row.get("bins"))),
         permissions=permissions if isinstance(permissions, dict) else None,
         remote_ip=_optional_string(row.get("remote_ip")),
@@ -557,6 +590,10 @@ def _request_payload(request: GatewayNodePairingRequest) -> dict[str, object]:
         payload["silent"] = request.silent
     if request.public_key is not None:
         payload["publicKey"] = request.public_key
+    if request.roles:
+        payload["roles"] = list(request.roles)
+    if request.scopes:
+        payload["scopes"] = list(request.scopes)
     return payload
 
 
@@ -581,6 +618,10 @@ def _pending_payload(request: GatewayNodePairingRequest) -> dict[str, object]:
         payload["silent"] = request.silent
     if request.public_key is not None:
         payload["publicKey"] = request.public_key
+    if request.roles:
+        payload["roles"] = list(request.roles)
+    if request.scopes:
+        payload["scopes"] = list(request.scopes)
     return payload
 
 
@@ -611,6 +652,10 @@ def _paired_list_payload(node: GatewayPairedNode) -> dict[str, object]:
         payload["bins"] = list(node.bins)
     if node.public_key is not None:
         payload["publicKey"] = node.public_key
+    if node.roles:
+        payload["roles"] = list(node.roles)
+    if node.scopes:
+        payload["scopes"] = list(node.scopes)
     return payload
 
 
@@ -641,6 +686,10 @@ def _paired_detail_payload(node: GatewayPairedNode) -> dict[str, object]:
         payload["bins"] = list(node.bins)
     if node.public_key is not None:
         payload["publicKey"] = node.public_key
+    if node.roles:
+        payload["roles"] = list(node.roles)
+    if node.scopes:
+        payload["scopes"] = list(node.scopes)
     return payload
 
 
@@ -699,6 +748,24 @@ def _normalize_device_id(device_id: str) -> str | None:
 def _normalize_role(role: str) -> str | None:
     trimmed = role.strip()
     return trimmed or None
+
+
+def _resolve_pairing_roles(
+    *,
+    role: str | None,
+    roles: list[str] | None,
+) -> list[str]:
+    resolved: list[str] = []
+    candidates: list[str] = []
+    if roles is not None:
+        candidates.extend(roles)
+    if role is not None:
+        candidates.append(role)
+    for candidate in candidates:
+        normalized = _normalize_role(str(candidate))
+        if normalized is not None and normalized not in resolved:
+            resolved.append(normalized)
+    return resolved
 
 
 def _string_list(value: object) -> list[str]:

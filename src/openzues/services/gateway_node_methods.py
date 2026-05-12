@@ -2259,6 +2259,9 @@ class GatewayNodeMethodService:
         model_identifier: str | None,
         caps: list[str] | None,
         commands: list[str] | None,
+        role: str | None = None,
+        roles: list[str] | None = None,
+        scopes: list[str] | None = None,
         remote_ip: str | None,
         silent: bool | None,
         now_ms: int | None,
@@ -2281,6 +2284,9 @@ class GatewayNodeMethodService:
             model_identifier=model_identifier,
             caps=caps,
             commands=commands,
+            role=role,
+            roles=roles,
+            scopes=scopes,
             remote_ip=remote_ip,
             silent=silent,
             now_ms=_timestamp_ms(now_ms),
@@ -11561,6 +11567,9 @@ class GatewayNodeMethodService:
                     "deviceFamily",
                     "modelIdentifier",
                     "publicKey",
+                    "role",
+                    "roles",
+                    "scopes",
                     "caps",
                     "commands",
                     "remoteIp",
@@ -11616,6 +11625,21 @@ class GatewayNodeMethodService:
                     else None
                 ),
                 commands=commands,
+                role=(
+                    _optional_non_empty_string(payload.get("role"), label="role")
+                    if "role" in payload
+                    else None
+                ),
+                roles=(
+                    _optional_string_list(payload.get("roles"), label="roles")
+                    if "roles" in payload
+                    else None
+                ),
+                scopes=(
+                    _optional_string_list(payload.get("scopes"), label="scopes")
+                    if "scopes" in payload
+                    else None
+                ),
                 remote_ip=_optional_non_empty_string(payload.get("remoteIp"), label="remoteIp"),
                 silent=_optional_bool(payload.get("silent"), label="silent"),
                 now_ms=now_ms,
@@ -23389,6 +23413,8 @@ def _device_pair_pending_payload(payload: dict[str, object]) -> dict[str, object
         ("remoteIp", "remoteIp"),
         ("silent", "silent"),
         ("requiredApproveScopes", "requiredApproveScopes"),
+        ("roles", "roles"),
+        ("scopes", "scopes"),
     ):
         if source_key in payload and payload[source_key] is not None:
             device_payload[target_key] = payload[source_key]
@@ -23413,8 +23439,10 @@ def _device_pair_paired_payload(
         (node.platform, "platform"),
         (node.device_family, "deviceFamily"),
         (node.remote_ip, "remoteIp"),
+        (list(node.roles), "roles"),
+        (list(node.scopes), "scopes"),
     ):
-        if value is not None:
+        if value not in (None, []):
             device_payload[key] = value
     return device_payload
 
@@ -23435,6 +23463,8 @@ def _device_pair_paired_payload_from_node_payload(
         ("deviceFamily", "deviceFamily"),
         ("publicKey", "publicKey"),
         ("remoteIp", "remoteIp"),
+        ("roles", "roles"),
+        ("scopes", "scopes"),
     ):
         if source_key in payload and payload[source_key] is not None:
             device_payload[target_key] = payload[source_key]
