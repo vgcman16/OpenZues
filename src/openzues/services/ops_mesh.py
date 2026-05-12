@@ -4917,6 +4917,46 @@ def _zalo_inbound_optional_string(value: object) -> str | None:
     return normalized or None
 
 
+def _zalo_inbound_string_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _zalo_sender_allow_token(value: str) -> str:
+    normalized = value.strip().lower()
+    for prefix in ("zalo:", "zl:"):
+        if normalized.startswith(prefix):
+            return normalized[len(prefix) :].strip()
+    return normalized
+
+
+def _zalo_sender_allowed(sender_id: str, allow_from: Sequence[str]) -> bool:
+    normalized_sender = _zalo_sender_allow_token(sender_id)
+    for raw_entry in allow_from:
+        entry = _zalo_sender_allow_token(raw_entry)
+        if entry == "*" or entry == normalized_sender:
+            return True
+    return False
+
+
+def _zalo_channel_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> dict[str, Any]:
+    channels = _zalo_inbound_mapping(snapshot.get("channels"))
+    channel_config = _zalo_inbound_mapping(channels.get("zalo"))
+    merged: dict[str, Any] = dict(channel_config)
+    accounts = _zalo_inbound_mapping(channel_config.get("accounts"))
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    account_config = _zalo_inbound_mapping(accounts.get(normalized_account_id))
+    if not account_config and account_id is not None:
+        account_config = _zalo_inbound_mapping(accounts.get(str(account_id).strip()))
+    merged.update(account_config)
+    return merged
+
+
 def _zalo_inbound_message(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     return _zalo_inbound_mapping(payload.get("message"))
 
@@ -18566,6 +18606,49 @@ class OpsMeshService:
             del cache[oldest_key]
         return True
 
+    def _zalo_inbound_channel_config(self, *, account_id: str | None) -> dict[str, Any]:
+        if self.gateway_config_service is None:
+            return {}
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return {}
+        return _zalo_channel_config_from_snapshot(snapshot, account_id=account_id)
+
+    def _zalo_inbound_authorization_skip(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        context: _ZaloInboundSessionContext,
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        if context.conversation_type != "direct":
+            return None
+        channel_config = self._zalo_inbound_channel_config(account_id=account_id)
+        dm_policy = str(channel_config.get("dmPolicy") or "").strip().lower()
+        if dm_policy not in {"disabled", "allowlist"}:
+            return None
+        if dm_policy == "allowlist":
+            allow_from = _zalo_inbound_string_list(channel_config.get("allowFrom"))
+            if _zalo_sender_allowed(context.sender_id, allow_from):
+                return None
+        reason = (
+            "zalo_dm_policy_disabled"
+            if dm_policy == "disabled"
+            else "zalo_dm_sender_not_allowlisted"
+        )
+        skip: dict[str, object] = {
+            "eventName": str(payload.get("event_name") or "").strip() or "event",
+            "reason": reason,
+            "senderId": context.sender_id,
+            "conversationId": context.conversation_id,
+            "conversationType": context.conversation_type,
+        }
+        inbound_message_id = _zalo_inbound_message_id(payload)
+        if inbound_message_id is not None:
+            skip["inboundMessageId"] = inbound_message_id
+        return skip
+
     async def handle_line_webhook(
         self,
         payload: Mapping[str, Any],
@@ -18705,64 +18788,72 @@ class OpsMeshService:
             text = _zalo_webhook_event_text(payload)
             if text is not None:
                 context = _zalo_inbound_session_context(payload, account_id=account_id)
-                if self.session_delivery_service is None:
-                    raise GatewayOutboundRuntimeUnavailableError(
-                        "Zalo inbound session delivery is unavailable."
-                    )
-                staged_media = await self._stage_zalo_inbound_media(
+                authorization_skip = self._zalo_inbound_authorization_skip(
                     payload,
+                    context=context,
                     account_id=account_id,
                 )
-                delivery_result = await self.session_delivery_service(
-                    context.session_key,
-                    text,
-                )
-                delivery_message_id = _session_delivery_message_id(delivery_result)
-                message = _zalo_inbound_message(payload)
-                delivery: dict[str, object] = {
-                    "eventName": event_name or "event",
-                    "sessionKey": context.session_key,
-                    "text": text,
-                    "senderId": context.sender_id,
-                    "conversationId": context.conversation_id,
-                    "conversationType": context.conversation_type,
-                    "conversationTarget": context.conversation_target.model_dump(
-                        mode="json"
-                    ),
-                    "reply": {
-                        "to": context.reply_to,
-                        "originatingTo": context.reply_to,
-                    },
-                    "delivery": {"runtime": "session-backed"},
-                }
-                if delivery_message_id is not None:
-                    delivery["messageId"] = delivery_message_id
-                inbound_message_id = _zalo_inbound_message_id(payload)
-                if inbound_message_id is not None:
-                    delivery["inboundMessageId"] = inbound_message_id
-                timestamp = _zalo_message_timestamp_ms(message)
-                if timestamp is not None:
-                    delivery["timestamp"] = timestamp
-                if context.sender_name is not None:
-                    delivery["senderName"] = context.sender_name
-                media_urls = _zalo_webhook_media_urls(payload)
-                if media_urls:
-                    delivery["mediaUrls"] = media_urls
-                    delivery["photoUrl"] = media_urls[0]
-                    delivery["delivery"] = {
-                        "runtime": "session-backed",
-                        "media": {"urls": len(media_urls)},
-                    }
-                if staged_media:
-                    delivery["delivery"] = {
-                        "runtime": "session-backed",
-                        "media": {"staged": len(staged_media)},
-                    }
-                    delivery.update(_msteams_media_payload(staged_media))
-                    delivery["stagedMedia"] = _msteams_staged_media_metadata(
-                        staged_media
+                if authorization_skip is not None:
+                    skips.append(authorization_skip)
+                else:
+                    if self.session_delivery_service is None:
+                        raise GatewayOutboundRuntimeUnavailableError(
+                            "Zalo inbound session delivery is unavailable."
+                        )
+                    staged_media = await self._stage_zalo_inbound_media(
+                        payload,
+                        account_id=account_id,
                     )
-                deliveries.append(delivery)
+                    delivery_result = await self.session_delivery_service(
+                        context.session_key,
+                        text,
+                    )
+                    delivery_message_id = _session_delivery_message_id(delivery_result)
+                    message = _zalo_inbound_message(payload)
+                    delivery: dict[str, object] = {
+                        "eventName": event_name or "event",
+                        "sessionKey": context.session_key,
+                        "text": text,
+                        "senderId": context.sender_id,
+                        "conversationId": context.conversation_id,
+                        "conversationType": context.conversation_type,
+                        "conversationTarget": context.conversation_target.model_dump(
+                            mode="json"
+                        ),
+                        "reply": {
+                            "to": context.reply_to,
+                            "originatingTo": context.reply_to,
+                        },
+                        "delivery": {"runtime": "session-backed"},
+                    }
+                    if delivery_message_id is not None:
+                        delivery["messageId"] = delivery_message_id
+                    inbound_message_id = _zalo_inbound_message_id(payload)
+                    if inbound_message_id is not None:
+                        delivery["inboundMessageId"] = inbound_message_id
+                    timestamp = _zalo_message_timestamp_ms(message)
+                    if timestamp is not None:
+                        delivery["timestamp"] = timestamp
+                    if context.sender_name is not None:
+                        delivery["senderName"] = context.sender_name
+                    media_urls = _zalo_webhook_media_urls(payload)
+                    if media_urls:
+                        delivery["mediaUrls"] = media_urls
+                        delivery["photoUrl"] = media_urls[0]
+                        delivery["delivery"] = {
+                            "runtime": "session-backed",
+                            "media": {"urls": len(media_urls)},
+                        }
+                    if staged_media:
+                        delivery["delivery"] = {
+                            "runtime": "session-backed",
+                            "media": {"staged": len(staged_media)},
+                        }
+                        delivery.update(_msteams_media_payload(staged_media))
+                        delivery["stagedMedia"] = _msteams_staged_media_metadata(
+                            staged_media
+                        )
+                    deliveries.append(delivery)
         result: dict[str, object] = {
             "ok": bool(event_name),
             "channel": "zalo",

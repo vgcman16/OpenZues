@@ -34367,6 +34367,87 @@ async def test_ops_mesh_service_handle_zalo_webhook_downloads_image_media_with_d
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_skips_disabled_direct_dm_policy(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-disabled-session-1"}
+
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="zues",
+        server_version="test",
+        data_dir=tmp_path / "config",
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "zalo": {
+                    "accounts": {
+                        "zalo-bot": {
+                            "dmPolicy": "disabled",
+                            "allowFrom": ["zalo-user-allowed"],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "zalo-disabled-dm-1",
+                "text": "do not deliver this",
+                "date": 1760000000,
+                "chat": {"id": "chat-disabled", "chat_type": "PRIVATE"},
+                "from": {"id": "zalo-user-allowed", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    assert session_deliveries == []
+    assert result == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "eventName": "message.text.received",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skippedCount": 1,
+        "skips": [
+            {
+                "eventName": "message.text.received",
+                "reason": "zalo_dm_policy_disabled",
+                "inboundMessageId": "zalo-disabled-dm-1",
+                "senderId": "zalo-user-allowed",
+                "conversationId": "chat-disabled",
+                "conversationType": "direct",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message(
     tmp_path: Path,
 ) -> None:
