@@ -4,7 +4,7 @@
 
 - Updated: 2026-05-12.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- Estimated active gateway/session/tool-contract family parity: ~99.967% for the bounded local OpenZues path.
+- Estimated active gateway/session/tool-contract family parity: ~99.968% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
@@ -23669,6 +23669,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `mypy src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_method_policy.py`, and focused `git diff
   --check`. Source/test checkpointed in `5e6d43f6`.
+- Native `nativeHook.invoke` now covers OpenClaw's gateway native hook relay
+  method from `src/gateway/server-methods/native-hook-relay.ts`. The
+  `GatewayNativeHookRelayService` registers live codex relays, validates
+  provider/event/relay ids, rejects missing/expired/mismatched relays and
+  non-JSON payloads, records normalized hook invocations, and returns the
+  Codex no-op process response. This closes `OZ-RT-001BF`; repo-wide parity
+  remains estimated at ~99.9%, and active gateway/session/tool-contract parity
+  moves to ~99.968%.
+- Verified the gateway native-hook relay seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_native_hook_invoke_accepts_live_codex_relay tests\test_gateway_node_methods.py::test_native_hook_invoke_rejects_unknown_relay -q`
+  (`ModuleNotFoundError: No module named 'openzues.services.gateway_native_hook_relay'`
+  before implementation, then `2 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "native_hook or doctor_memory"`
+  (`6 passed, 1261 deselected`), policy proof
+  `python -m pytest tests\test_gateway_method_policy.py -q -k "nativeHook or method_scope or admin"`
+  (`2 passed, 17 deselected`), `ruff check
+  src\openzues\services\gateway_native_hook_relay.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`,
+  `mypy src\openzues\services\gateway_native_hook_relay.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`, and focused `git diff
+  --check`. Source/test checkpointed in `587c181b`.
 
 ## References
 

@@ -17,7 +17,7 @@ may lag behind this tracker.
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
-| Active gateway/session/tool-contract family | ~99.967% | High for bounded local path | Does not mean whole product parity |
+| Active gateway/session/tool-contract family | ~99.968% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.99997% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
@@ -3200,9 +3200,10 @@ may lag behind this tracker.
   - Source: broader OpenClaw runtime/client integration and session runtime
     methods, especially `chat.*` and `sessions.*`.
   - Status: open; transcript artifact methods checkpointed in `13eddac7`,
-    `update.status` checkpointed in `59a36693`, and
-    `diagnostics.stability` checkpointed in `0a4deddc`, and
-    `doctor.memory.remHarness` checkpointed in `5e6d43f6`
+    `update.status` checkpointed in `59a36693`,
+    `diagnostics.stability` checkpointed in `0a4deddc`,
+    `doctor.memory.remHarness` checkpointed in `5e6d43f6`, and
+    `nativeHook.invoke` checkpointed in `587c181b`
   - Weight: 3
 
 - [x] `OZ-RT-001BB` Gateway transcript artifact methods.
@@ -3261,6 +3262,22 @@ may lag behind this tracker.
     passed`), adjacent `doctor_memory` proof (`4 passed, 1261 deselected`),
     policy proof (`1 passed, 18 deselected`), `ruff check`, `mypy`, and
     focused `git diff --check`.
+
+- [x] `OZ-RT-001BF` Gateway native hook relay invocation.
+  - Source: `openclaw-main/src/gateway/server-methods/native-hook-relay.ts`,
+    `openclaw-main/src/gateway/server-methods/native-hook-relay.test.ts`,
+    `openclaw-main/src/agents/harness/native-hook-relay.ts`
+  - Target: `src/openzues/services/gateway_native_hook_relay.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`,
+    `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_method_policy.py`
+  - Status: checkpointed in `587c181b`.
+  - Weight: 1
+  - Last verified: 2026-05-12, focused native-hook gateway proofs (`2
+    passed`), adjacent `native_hook or doctor_memory` proof (`6 passed, 1261
+    deselected`), policy proof (`2 passed, 17 deselected`), `ruff check`,
+    `mypy`, and focused `git diff --check`.
 
 - [ ] Real installed plugin module import/activation.
   - Source: OpenClaw plugin lifecycle and activation runtime.

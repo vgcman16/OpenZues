@@ -49,6 +49,10 @@ summaries.
 `OZ-RT-001BE` `doctor.memory.remHarness` from
 `src/gateway/server-methods/doctor.ts` is checkpointed in `5e6d43f6`, returning
 read-only native REM/deep/grounded memory preview payloads.
+`OZ-RT-001BF` `nativeHook.invoke` from
+`src/gateway/server-methods/native-hook-relay.ts` is checkpointed in
+`587c181b`, registering and invoking native codex hook relays through the
+OpenZues gateway.
 
 Gateway/browser addendum: `OZ-CANVAS-001C` `browser.request` node-proxy
 dispatch from `extensions/browser/src/gateway/browser-request.ts` is
