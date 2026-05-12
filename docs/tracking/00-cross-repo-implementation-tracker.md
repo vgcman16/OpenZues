@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.986% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.9991% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.99987% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.99987% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.99988% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.99988% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -170,6 +170,8 @@ checkpointed in `09d036fd`. `OZ-PLUGIN-00362` googlechat is checkpointed in
 `OZ-PLUGIN-00375` mattermost is checkpointed in `5500bc77`.
 `OZ-PLUGIN-00376` zalo is checkpointed in `e789e816`.
 `OZ-PLUGIN-00377` bluebubbles is checkpointed in `f5b4121a`.
+`OZ-PLUGIN-00382` LINE rich-menu runtime helpers are checkpointed in
+`b80501c6`.
 The current exact SDK-root seam queue is complete. `OZ-RT-001AA`
 `chat.history` large-limit cap is checkpointed in `6a964896`, and
 `OZ-RT-001AB` `chat.history` base64-audio redaction is checkpointed in

@@ -14,7 +14,7 @@ Current percentage rollup:
   `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99987% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99988% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
@@ -59,7 +59,7 @@ Current percentage rollup:
   diagnostics section, plugin inspect human install section, plugin inspect
   human compatibility warnings section, plugin inspect typed/custom hook
   sections, plugin inspect human header/bundle-format labels, plugin list
-  verbose activation/import state, plugin list human enabled label, plugin list
+  verbose activation/import state, LINE rich-menu runtime helpers, plugin list human enabled label, plugin list
   human enabled count, manifest load-path activation-state projection,
   plugin public-surface/runtime-sidecar artifact metadata projection,
   configured-channel owner activation projection,
@@ -149,7 +149,7 @@ Current percentage rollup:
   pending-history replay, non-text group media mention-gate bypass, LINE
   inbound media staging, production credential-backed LINE media download, and
   LINE webhook redelivery dedupe.
-- The CLI/operator control-plane family is estimated at ~99.99987% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.99988% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
   secrets reload CLI surface, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch restart-health failure, gateway health `serverVersion` projection, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
@@ -175,7 +175,7 @@ Current percentage rollup:
   section, plugin inspect human install section, plugin inspect human
   compatibility warnings section, plugin inspect typed/custom hook sections,
   plugin inspect human header/bundle-format labels, plugin list verbose
-  activation/import state, plugin list human enabled label, plugin list human
+  activation/import state, LINE rich-menu runtime helpers, plugin list human enabled label, plugin list human
   enabled count, manifest load-path activation-state projection,
   plugin public-surface/runtime-sidecar artifact metadata projection,
   configured-channel owner activation projection,
@@ -191,6 +191,15 @@ Current percentage rollup:
   remaining CLI
   gaps are now dominated by real installed plugin module import/activation and
   packaging surfaces.
+
+Current queue-head adjustment: the native installed-plugin LINE runtime shim now
+exports OpenClaw-shaped rich-menu pure helpers, including `createGridLayout()`
+and the six-action `createDefaultMenuConfig()` default menu. Source/test
+checkpointed in `b80501c6`; repo-wide parity remains estimated at ~99.9%, and
+runtime/CLI/doctor plus CLI/operator parity move to ~99.99988%. Continue
+remaining package restart-health diagnostics, provider-specific media/reply
+edges, deeper installed plugin activation, browser local fallback, or companion
+breadth.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,

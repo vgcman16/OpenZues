@@ -22857,6 +22857,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `6b74d38e`.
+- The native installed-plugin LINE runtime shim now exports OpenClaw-shaped
+  rich-menu pure helpers: `createGridLayout()` builds the LINE 2500px two-row
+  grid, and `createDefaultMenuConfig()` returns the six-action default rich
+  menu. This closes `OZ-PLUGIN-00382`; repo-wide parity remains estimated at
+  ~99.9%, runtime/CLI/doctor native-bridge parity moves to ~99.99988%, and
+  CLI/operator control-plane parity moves to ~99.99988%.
+- Verified the LINE rich-menu runtime helper seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_line_surface_helpers -q`
+  (`createGridLayout` was `undefined` before implementation, then `1 passed`),
+  adjacent LINE plugin-runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "line_surface or line_root_core or line_runtime or runtime.line"`
+  (`2 passed, 1242 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `b80501c6`.
 
 ## References
 

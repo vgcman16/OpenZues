@@ -21,8 +21,8 @@ may lag behind this tracker.
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.4% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.9991% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.99987% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.99987% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.99988% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.99988% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
@@ -6644,6 +6644,22 @@ may lag behind this tracker.
     imports returned generic or wrong-shaped data before implementation, then
     `1 passed`), adjacent provider facade proof (`4 passed, 1162 deselected`),
     `ruff check`, `mypy`, and focused `git diff --check`.
+
+- [x] Imported plugin SDK line-runtime rich-menu helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/line-runtime.ts`,
+    `openclaw-main/extensions/line/src/rich-menu.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: `line-runtime` exposes OpenClaw-shaped `createGridLayout()`
+    bounds for the 2500px LINE rich-menu grid and `createDefaultMenuConfig()`
+    with six default message actions.
+  - Evidence required: focused LINE surface/runtime import test, adjacent LINE
+    runtime import proof, ruff, mypy
+  - Status: checkpointed in `b80501c6`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green rich-menu helper proof,
+    adjacent LINE runtime proof (`2 passed, 1242 deselected`), ruff, mypy, and
+    focused `git diff --check`.
 
 - [x] Imported plugin SDK line root/core barrel shim.
   - Source: `openclaw-main/src/plugin-sdk/line.ts`,
