@@ -34716,6 +34716,60 @@ async def test_ops_mesh_service_handle_zalo_webhook_allows_pairing_store_sender(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_approve_zalo_pairing_code_moves_sender_to_allow_from_store(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    store_dir = tmp_path / "settings" / "oauth"
+    store_dir.mkdir(parents=True)
+    requested_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    (store_dir / "zalo-pairing.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "requests": [
+                    {
+                        "id": "pending-user",
+                        "code": "PAIRCODE",
+                        "createdAt": requested_at,
+                        "lastSeenAt": requested_at,
+                        "meta": {"accountId": "zalo-bot", "name": "Ada"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        canvas_state_dir=tmp_path,
+    )
+
+    result = await service.approve_zalo_pairing_code("paircode", account_id="zalo-bot")
+
+    assert result == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "senderId": "pending-user",
+        "code": "PAIRCODE",
+    }
+    pairing_store = json.loads((store_dir / "zalo-pairing.json").read_text(encoding="utf-8"))
+    assert pairing_store == {"version": 1, "requests": []}
+    allow_from_store = json.loads(
+        (store_dir / "zalo-zalo-bot-allowFrom.json").read_text(encoding="utf-8")
+    )
+    assert allow_from_store == {"version": 1, "allowFrom": ["pending-user"]}
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message(
     tmp_path: Path,
 ) -> None:

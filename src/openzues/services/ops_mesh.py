@@ -5025,6 +5025,34 @@ def _zalo_pairing_read_allow_from_file(path: Path) -> list[str]:
     return entries
 
 
+def _zalo_pairing_write_allow_from_file(path: Path, allow_from: Sequence[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "allowFrom": list(allow_from),
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _zalo_pairing_add_allow_from_entry(path: Path, entry: str) -> list[str]:
+    normalized_entry = _zalo_sender_allow_token(entry)
+    current = _zalo_pairing_read_allow_from_file(path)
+    seen = {_zalo_sender_allow_token(item) for item in current}
+    if normalized_entry and normalized_entry not in seen:
+        current.append(normalized_entry)
+        _zalo_pairing_write_allow_from_file(path, current)
+        return current
+    if not path.exists():
+        _zalo_pairing_write_allow_from_file(path, current)
+    return current
+
+
 def _zalo_pairing_reply_text(*, code: str, sender_id_line: str) -> str:
     approve_command = f"openclaw pairing approve zalo {code}"
     return "\n".join(
@@ -18931,6 +18959,81 @@ class OpsMeshService:
         )
         _zalo_pairing_write_store(path, entries)
         return {"code": code, "created": True}
+
+    async def approve_zalo_pairing_code(
+        self,
+        code: str,
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        if self.canvas_state_dir is None:
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "reason": "zalo_pairing_storage_unavailable",
+            }
+        return await asyncio.to_thread(
+            self._approve_zalo_pairing_code,
+            code,
+            account_id=account_id,
+        )
+
+    def _approve_zalo_pairing_code(
+        self,
+        code: str,
+        *,
+        account_id: str | None,
+    ) -> dict[str, object]:
+        if self.canvas_state_dir is None:
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "reason": "zalo_pairing_storage_unavailable",
+            }
+        normalized_code = str(code or "").strip().upper()
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        path = _zalo_pairing_store_path(self.canvas_state_dir)
+        now_ts = datetime.now(UTC).timestamp()
+        entries = [
+            entry
+            for entry in _zalo_pairing_read_store(path)
+            if not _zalo_pairing_entry_is_expired(entry, now=now_ts)
+        ]
+        matched_entry: dict[str, object] | None = None
+        remaining: list[dict[str, object]] = []
+        for entry in entries:
+            entry_code = str(entry.get("code") or "").strip().upper()
+            if (
+                matched_entry is None
+                and entry_code == normalized_code
+                and _zalo_pairing_entry_matches_account(entry, normalized_account_id)
+            ):
+                matched_entry = entry
+                continue
+            remaining.append(entry)
+        if matched_entry is None:
+            _zalo_pairing_write_store(path, remaining)
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "accountId": normalized_account_id,
+                "code": normalized_code,
+                "reason": "zalo_pairing_code_not_found",
+            }
+        sender_id = str(matched_entry.get("id") or "").strip()
+        allow_from_path = _zalo_pairing_allow_from_paths(
+            self.canvas_state_dir,
+            account_id=normalized_account_id,
+        )[0]
+        _zalo_pairing_add_allow_from_entry(allow_from_path, sender_id)
+        _zalo_pairing_write_store(path, remaining)
+        return {
+            "ok": True,
+            "channel": "zalo",
+            "accountId": normalized_account_id,
+            "senderId": sender_id,
+            "code": normalized_code,
+        }
 
     async def _zalo_inbound_authorization_skip(
         self,
