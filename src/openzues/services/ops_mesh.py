@@ -10074,6 +10074,90 @@ def _line_chat_id_is_user(chat_id: str | None) -> bool:
     return str(chat_id or "").strip().upper().startswith("U")
 
 
+def _line_inbound_mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _line_inbound_optional_string(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _line_webhook_event_text(event: Mapping[str, Any]) -> str | None:
+    if str(event.get("type") or "").strip().lower() != "message":
+        return None
+    message = _line_inbound_mapping(event.get("message"))
+    if str(message.get("type") or "").strip().lower() != "text":
+        return None
+    text = _line_inbound_optional_string(message.get("text"))
+    return text
+
+
+@dataclass(frozen=True, slots=True)
+class _LineInboundSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    sender_id: str
+    conversation_id: str
+    conversation_type: str
+
+
+def _line_inbound_session_context(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _LineInboundSessionContext:
+    source = _line_inbound_mapping(event.get("source"))
+    source_type = (
+        _line_inbound_optional_string(source.get("type")) or "user"
+    ).lower()
+    user_id = _line_inbound_optional_string(source.get("userId"))
+    group_id = _line_inbound_optional_string(source.get("groupId"))
+    room_id = _line_inbound_optional_string(source.get("roomId"))
+    if source_type == "group" or group_id is not None:
+        conversation_type = "group"
+        conversation_id = group_id
+        peer_kind: ConversationTargetPeerKind = "group"
+        peer_id = f"line:group:{group_id}" if group_id is not None else None
+    elif source_type == "room" or room_id is not None:
+        conversation_type = "room"
+        conversation_id = room_id
+        peer_kind = "group"
+        peer_id = f"line:room:{room_id}" if room_id is not None else None
+    else:
+        conversation_type = "direct"
+        conversation_id = user_id
+        peer_kind = "direct"
+        peer_id = f"line:user:{user_id}" if user_id is not None else None
+    if peer_id is None or conversation_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "LINE inbound message is missing conversation source id."
+        )
+    sender_id = user_id or conversation_id
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="line",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    return _LineInboundSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        sender_id=sender_id,
+        conversation_id=conversation_id,
+        conversation_type=conversation_type,
+    )
+
+
 def _line_validate_media_url(media_url: str) -> None:
     parsed = urlparse(media_url)
     if parsed.scheme.lower() != "https" or not parsed.netloc:
@@ -17840,16 +17924,64 @@ class OpsMeshService:
         *,
         account_id: str | None = None,
     ) -> dict[str, object]:
-        events = payload.get("events")
-        event_count = len(events) if isinstance(events, list) else 0
+        events_value = payload.get("events")
+        event_count = len(events_value) if isinstance(events_value, list) else 0
+        events: list[Mapping[str, Any]] = []
+        if isinstance(events_value, list):
+            events = [
+                cast(Mapping[str, Any], event)
+                for event in events_value
+                if isinstance(event, Mapping)
+            ]
+        deliveries: list[dict[str, object]] = []
+        for event in events:
+            text = _line_webhook_event_text(event)
+            if text is None:
+                continue
+            if self.session_delivery_service is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "LINE inbound session delivery is unavailable."
+                )
+            context = _line_inbound_session_context(event, account_id=account_id)
+            delivery_result = await self.session_delivery_service(
+                context.session_key,
+                text,
+            )
+            delivery_message_id = _session_delivery_message_id(delivery_result)
+            message = _line_inbound_mapping(event.get("message"))
+            delivery: dict[str, object] = {
+                "eventType": str(event.get("type") or "").strip() or "message",
+                "sessionKey": context.session_key,
+                "text": text,
+                "senderId": context.sender_id,
+                "conversationId": context.conversation_id,
+                "conversationType": context.conversation_type,
+                "conversationTarget": context.conversation_target.model_dump(mode="json"),
+                "delivery": {"runtime": "session-backed"},
+            }
+            if delivery_message_id is not None:
+                delivery["messageId"] = delivery_message_id
+            inbound_message_id = _line_inbound_optional_string(message.get("id"))
+            if inbound_message_id is not None:
+                delivery["inboundMessageId"] = inbound_message_id
+            reply_token = _line_inbound_optional_string(event.get("replyToken"))
+            if reply_token is not None:
+                delivery["replyToken"] = "[redacted]"
+            timestamp = event.get("timestamp")
+            if isinstance(timestamp, int):
+                delivery["timestamp"] = timestamp
+            deliveries.append(delivery)
         result: dict[str, object] = {
             "ok": True,
             "channel": "line",
             "eventCount": event_count,
+            "deliveredCount": len(deliveries),
         }
         normalized_account_id = str(account_id or "").strip()
         if normalized_account_id:
             result["accountId"] = normalized_account_id
+        if deliveries:
+            result["deliveries"] = deliveries
         return result
 
     async def handle_msteams_inbound_activity(

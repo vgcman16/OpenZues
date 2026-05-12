@@ -33981,6 +33981,91 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "replyToken": "line-reply-token-1",
+                    "timestamp": 1760000000123,
+                    "source": {"type": "user", "userId": "U1234567890"},
+                    "message": {
+                        "id": "line-message-1",
+                        "type": "text",
+                        "text": "Ship the LINE parity lane.",
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="direct",
+        peer_id="line:user:U1234567890",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [
+        (expected_session_key, "Ship the LINE parity lane.")
+    ]
+    assert result == {
+        "ok": True,
+        "channel": "line",
+        "accountId": "line-bot",
+        "eventCount": 1,
+        "deliveredCount": 1,
+        "deliveries": [
+            {
+                "eventType": "message",
+                "messageId": "line-session-message-1",
+                "inboundMessageId": "line-message-1",
+                "replyToken": "[redacted]",
+                "timestamp": 1760000000123,
+                "sessionKey": expected_session_key,
+                "text": "Ship the LINE parity lane.",
+                "senderId": "U1234567890",
+                "conversationId": "U1234567890",
+                "conversationType": "direct",
+                "conversationTarget": expected_target.model_dump(mode="json"),
+                "delivery": {"runtime": "session-backed"},
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_line_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
