@@ -10446,6 +10446,27 @@ def _openclaw_update_restart_scalar(value: object) -> str | None:
     return _optional_cli_string(value)
 
 
+_OPENCLAW_UPDATE_EXIT_SIGNAL_BY_STATUS = {
+    129: "SIGHUP",
+    130: "SIGINT",
+    131: "SIGQUIT",
+    134: "SIGABRT/abort",
+    137: "SIGKILL",
+    143: "SIGTERM",
+}
+
+
+def _openclaw_update_restart_last_exit_status(value: object) -> str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        signal_name = _OPENCLAW_UPDATE_EXIT_SIGNAL_BY_STATUS.get(value)
+        if signal_name is not None:
+            return f"{value} ({signal_name})"
+        return str(value)
+    return _optional_cli_string(value)
+
+
 def _openclaw_update_restart_runtime_diagnostics(
     health_payload: Mapping[str, object],
 ) -> list[str]:
@@ -10462,7 +10483,11 @@ def _openclaw_update_restart_runtime_diagnostics(
         ("pid", "pid"),
         ("lastExitStatus", "lastExit"),
     ):
-        value = _openclaw_update_restart_scalar(runtime.get(source_key))
+        value = (
+            _openclaw_update_restart_last_exit_status(runtime.get(source_key))
+            if source_key == "lastExitStatus"
+            else _openclaw_update_restart_scalar(runtime.get(source_key))
+        )
         if value is not None:
             parts.append(f"{label}={value}")
     return [f"Service runtime: {', '.join(parts)}"] if parts else []
@@ -10767,6 +10792,128 @@ def _openclaw_update_write_post_core_plugin_result(
     path = Path(normalized_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(plugins), encoding="utf-8")
+
+
+def _openclaw_update_attach_post_core_plugin_result(
+    payload: dict[str, object],
+    plugin_update: object,
+) -> dict[str, object]:
+    if not isinstance(plugin_update, Mapping):
+        return payload
+    result = dict(payload)
+    post_update_value = result.get("postUpdate")
+    post_update = (
+        dict(post_update_value) if isinstance(post_update_value, Mapping) else {}
+    )
+    post_update["plugins"] = dict(plugin_update)
+    result["postUpdate"] = post_update
+    if plugin_update.get("status") == "error":
+        result["status"] = "error"
+        result["reason"] = "post-update-plugins"
+    return result
+
+
+def _openclaw_update_optional_result_mapping(value: object) -> Mapping[str, object] | None:
+    return value if isinstance(value, Mapping) else None
+
+
+def _openclaw_update_result_changed(left: object, right: object) -> bool:
+    left_value = _optional_cli_string(left)
+    right_value = _optional_cli_string(right)
+    return left_value is not None and right_value is not None and left_value != right_value
+
+
+def _openclaw_update_should_resume_post_core_in_fresh_process(
+    payload: Mapping[str, object],
+    *,
+    downgrade_risk: bool,
+) -> bool:
+    if downgrade_risk:
+        return False
+    mode = _optional_cli_string(payload.get("mode"))
+    if mode in _OPENCLAW_UPDATE_PACKAGE_MANAGERS:
+        return True
+    if mode != "git":
+        return False
+    before = _openclaw_update_optional_result_mapping(payload.get("before"))
+    after = _openclaw_update_optional_result_mapping(payload.get("after"))
+    if before is None or after is None:
+        return False
+    return _openclaw_update_result_changed(
+        before.get("sha"),
+        after.get("sha"),
+    ) or _openclaw_update_result_changed(before.get("version"), after.get("version"))
+
+
+def _openclaw_update_read_post_core_plugin_result_file(
+    result_path: Path | None,
+) -> dict[str, object] | None:
+    if result_path is None or not result_path.exists():
+        return None
+    try:
+        parsed = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return dict(parsed) if isinstance(parsed, Mapping) else None
+
+
+async def _openclaw_update_continue_post_core_in_fresh_process(
+    *,
+    root: Path,
+    channel: str,
+    requested_channel: str | None,
+    json_output: bool,
+    restart: bool,
+    yes: bool,
+    timeout: str | None,
+) -> dict[str, object]:
+    argv = [sys.executable, "-m", "openzues.cli", "update"]
+    if json_output:
+        argv.append("--json")
+    if not restart:
+        argv.append("--no-restart")
+    if yes:
+        argv.append("--yes")
+    if timeout is not None:
+        argv.extend(["--timeout", timeout])
+
+    result_dir: Path | None = (
+        Path(tempfile.mkdtemp(prefix="openzues-update-post-core-"))
+        if json_output
+        else None
+    )
+    result_path = result_dir / "plugins.json" if result_dir is not None else None
+    env = dict(os.environ)
+    env[_OPENCLAW_UPDATE_POST_CORE_ENV] = "1"
+    env[_OPENCLAW_UPDATE_POST_CORE_CHANNEL_ENV] = channel
+    if requested_channel is not None:
+        env[_OPENCLAW_UPDATE_POST_CORE_REQUESTED_CHANNEL_ENV] = requested_channel
+    else:
+        env.pop(_OPENCLAW_UPDATE_POST_CORE_REQUESTED_CHANNEL_ENV, None)
+    if result_path is not None:
+        env[_OPENCLAW_UPDATE_POST_CORE_RESULT_PATH_ENV] = str(result_path)
+    else:
+        env.pop(_OPENCLAW_UPDATE_POST_CORE_RESULT_PATH_ENV, None)
+
+    try:
+        completed = await asyncio.to_thread(
+            subprocess.run,
+            argv,
+            cwd=root,
+            env=env,
+            check=False,
+        )
+        plugin_update = _openclaw_update_read_post_core_plugin_result_file(result_path)
+        exit_code = int(getattr(completed, "returncode", 1))
+        if exit_code != 0 and plugin_update is None:
+            raise RuntimeError(f"post-update process exited with code {exit_code}")
+        result: dict[str, object] = {"resumed": True, "exitCode": exit_code}
+        if plugin_update is not None:
+            result["pluginUpdate"] = plugin_update
+        return result
+    finally:
+        if result_dir is not None:
+            shutil.rmtree(result_dir, ignore_errors=True)
 
 
 def _openclaw_update_read_stored_channel_for_preview() -> str | None:
@@ -65215,6 +65362,141 @@ function resolveRegistryPluginModuleLocationFromRecords(params = {}) {
   return null;
 }
 
+function facadeRuntimeRegistrySources() {
+  const sources = [];
+  if (Array.isArray(context.plugins)) {
+    sources.push(context.plugins);
+  }
+  const pluginContext =
+    context.plugin && typeof context.plugin === "object" ? context.plugin : {};
+  if (Array.isArray(pluginContext.manifestRegistry)) {
+    sources.push(pluginContext.manifestRegistry);
+  }
+  if (Array.isArray(pluginContext.plugins)) {
+    sources.push(pluginContext.plugins);
+  }
+  return sources;
+}
+
+function normalizeFacadeRuntimeRegistryRecord(plugin) {
+  if (!plugin || typeof plugin !== "object") {
+    return null;
+  }
+  const id = normalizeOptionalString(plugin.id || plugin.pluginId);
+  const rootDir = normalizeOptionalString(plugin.rootDir || plugin.root_dir);
+  if (!id || !rootDir) {
+    return null;
+  }
+  const channels = normalizeBrowserRuntimeStringList(
+    plugin.channels,
+    (entry) => normalizeOptionalString(entry) || "",
+  );
+  if (
+    plugin.channelCatalogMeta &&
+    typeof plugin.channelCatalogMeta === "object" &&
+    typeof plugin.channelCatalogMeta.id === "string"
+  ) {
+    const channelId = normalizeOptionalString(plugin.channelCatalogMeta.id);
+    if (channelId && !channels.includes(channelId)) {
+      channels.push(channelId);
+    }
+  }
+  return {
+    id,
+    rootDir,
+    channels,
+    origin: normalizeOptionalString(plugin.origin) || "workspace",
+    enabledByDefault: plugin.enabledByDefault === true,
+    status: normalizeOptionalString(plugin.status),
+  };
+}
+
+function facadeRuntimeManifestRegistry() {
+  const records = [];
+  const seen = new Set();
+  for (const source of facadeRuntimeRegistrySources()) {
+    for (const plugin of source) {
+      const record = normalizeFacadeRuntimeRegistryRecord(plugin);
+      if (!record) {
+        continue;
+      }
+      const key = `${record.id}::${path.resolve(record.rootDir)}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      records.push(record);
+    }
+  }
+  return records;
+}
+
+function facadeRuntimePathInsideRoot(rootDir, candidatePath) {
+  if (!rootDir || !candidatePath) {
+    return false;
+  }
+  const resolvedRoot = path.resolve(rootDir);
+  const resolvedCandidate = path.resolve(candidatePath);
+  return (
+    resolvedCandidate === resolvedRoot ||
+    resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`)
+  );
+}
+
+function resolveFacadeRuntimeManifestRecord(params = {}) {
+  const registry = Array.isArray(params.registry)
+    ? params.registry.map(normalizeFacadeRuntimeRegistryRecord).filter(Boolean)
+    : facadeRuntimeManifestRegistry();
+  const location = params.location || {};
+  const modulePath = normalizeOptionalString(location.modulePath);
+  if (modulePath) {
+    const matchedByLocation = registry.find((record) =>
+      facadeRuntimePathInsideRoot(record.rootDir, modulePath),
+    );
+    if (matchedByLocation) {
+      return matchedByLocation;
+    }
+  }
+  return (
+    registry.find((plugin) => plugin.id === params.dirName) ||
+    registry.find((plugin) => path.basename(String(plugin.rootDir || "")) === params.dirName) ||
+    registry.find(
+      (plugin) => Array.isArray(plugin.channels) && plugin.channels.includes(params.dirName),
+    ) ||
+    null
+  );
+}
+
+function facadeRuntimeRootConfig() {
+  if (context.config && typeof context.config === "object") {
+    return context.config;
+  }
+  const pluginContext =
+    context.plugin && typeof context.plugin === "object" ? context.plugin : {};
+  if (pluginContext.config && typeof pluginContext.config === "object") {
+    return pluginContext.config;
+  }
+  return {};
+}
+
+function resolveFacadeRuntimeManifestRecordAccess(manifestRecord) {
+  const rootConfig = facadeRuntimeRootConfig();
+  const state = resolveEffectiveEnableState({
+    id: manifestRecord.id,
+    origin: manifestRecord.origin || "workspace",
+    config: normalizePluginsConfig(rootConfig.plugins),
+    enabledByDefault: manifestRecord.enabledByDefault === true,
+  });
+  if (state.enabled) {
+    return { allowed: true, pluginId: manifestRecord.id };
+  }
+  return {
+    allowed: false,
+    pluginId: manifestRecord.id,
+    reason: state.reason || "plugin runtime is not activated",
+  };
+}
+
 const facadeLoaderRuntime = {
   createLazyFacadeArrayValue,
   createLazyFacadeObjectValue,
@@ -65271,13 +65553,17 @@ function resolveFacadeRuntimeModuleLocation(params = {}) {
   const env = params.env || process.env;
   const bundledPluginsDir = resolveFacadeRuntimeBundledPluginsDir(env);
   const packageRoot = resolveFacadeRuntimePackageRoot();
-  return resolveBundledFacadeModuleLocation({
+  const bundledLocation = resolveBundledFacadeModuleLocation({
     ...params,
     currentModulePath: typeof __filename === "string" ? __filename : "",
     packageRoot,
     bundledPluginsDir,
     env,
   });
+  if (bundledLocation) {
+    return bundledLocation;
+  }
+  return resolveRegistryPluginModuleLocationForFacadeRuntime(params);
 }
 
 function buildFacadeRuntimeActivationCheckParams(params = {}, location) {
@@ -65293,12 +65579,12 @@ function buildFacadeRuntimeActivationCheckParams(params = {}, location) {
 }
 
 function resolveTrackedFacadePluginId(params = {}) {
-  return String(params.dirName || "");
+  return resolveFacadeRuntimeManifestRecord(params)?.id || String(params.dirName || "");
 }
 
 function resolveRegistryPluginModuleLocationForFacadeRuntime(params = {}) {
   return resolveRegistryPluginModuleLocationFromRecords({
-    registry: Array.isArray(params.registry) ? params.registry : [],
+    registry: Array.isArray(params.registry) ? params.registry : facadeRuntimeManifestRegistry(),
     dirName: params.dirName,
     artifactBasename: params.artifactBasename,
   });
@@ -65326,6 +65612,10 @@ function resolveBundledPluginPublicSurfaceAccessForFacadeRuntime(params = {}) {
       allowed: true,
       pluginId: params.dirName,
     };
+  }
+  const manifestRecord = resolveFacadeRuntimeManifestRecord(params);
+  if (manifestRecord) {
+    return resolveFacadeRuntimeManifestRecordAccess(manifestRecord);
   }
   return {
     allowed: false,
@@ -93838,6 +94128,7 @@ async function activatePlugin(plugin) {
         context.rawConfig && typeof context.rawConfig === "object"
           ? context.rawConfig
           : undefined,
+      manifestRegistry: Array.isArray(context.plugins) ? context.plugins : undefined,
       activationSourceConfig:
         context.activationSourceConfig && typeof context.activationSourceConfig === "object"
           ? context.activationSourceConfig
@@ -94097,6 +94388,9 @@ def _native_plugin_runtime_specs_from_loader_payload(
         )
         config_payload = entry.get("config")
         raw_config_payload = entry.get("rawConfig", entry.get("raw_config"))
+        manifest_registry_payload = entry.get(
+            "manifestRegistry", entry.get("manifest_registry")
+        )
         plugin_sdk_alias_map_payload = entry.get(
             "pluginSdkAliasMap", entry.get("plugin_sdk_alias_map")
         )
@@ -94131,6 +94425,12 @@ def _native_plugin_runtime_specs_from_loader_payload(
                 plugin_context["config"] = dict(config_payload)
             if isinstance(raw_config_payload, Mapping):
                 plugin_context["rawConfig"] = dict(raw_config_payload)
+            if isinstance(manifest_registry_payload, list):
+                plugin_context["manifestRegistry"] = [
+                    dict(record)
+                    for record in manifest_registry_payload
+                    if isinstance(record, Mapping)
+                ]
             if isinstance(activation_source_config_payload, Mapping):
                 plugin_context["activationSourceConfig"] = dict(
                     activation_source_config_payload
@@ -107821,7 +108121,32 @@ def update_root(
                 payload,
                 requested_channel,
             )
-            payload = await _openclaw_update_attach_post_update_plugins(services, payload)
+            should_resume_post_core = _openclaw_update_should_resume_post_core_in_fresh_process(
+                payload,
+                downgrade_risk=bool(downgrade_risk),
+            )
+            plugins_updated_in_fresh_process = False
+            if should_resume_post_core:
+                fresh_process_result = (
+                    await _openclaw_update_continue_post_core_in_fresh_process(
+                        root=Path(str(payload.get("root") or root)),
+                        channel=effective_channel,
+                        requested_channel=requested_channel,
+                        json_output=json_output,
+                        restart=restart,
+                        yes=yes,
+                        timeout=timeout,
+                    )
+                )
+                plugins_updated_in_fresh_process = bool(
+                    fresh_process_result.get("resumed")
+                )
+                payload = _openclaw_update_attach_post_core_plugin_result(
+                    payload,
+                    fresh_process_result.get("pluginUpdate"),
+                )
+            if not plugins_updated_in_fresh_process:
+                payload = await _openclaw_update_attach_post_update_plugins(services, payload)
             return await _openclaw_update_attach_restart_health(
                 services,
                 payload,
@@ -107865,7 +108190,31 @@ def update_root(
             payload,
             requested_channel,
         )
-        return await _openclaw_update_attach_post_update_plugins(services, payload)
+        should_resume_post_core = _openclaw_update_should_resume_post_core_in_fresh_process(
+            payload,
+            downgrade_risk=False,
+        )
+        plugins_updated_in_fresh_process = False
+        if should_resume_post_core:
+            fresh_process_result = (
+                await _openclaw_update_continue_post_core_in_fresh_process(
+                    root=Path(str(payload.get("root") or root)),
+                    channel=effective_channel,
+                    requested_channel=requested_channel,
+                    json_output=json_output,
+                    restart=restart,
+                    yes=yes,
+                    timeout=timeout,
+                )
+            )
+            plugins_updated_in_fresh_process = bool(fresh_process_result.get("resumed"))
+            payload = _openclaw_update_attach_post_core_plugin_result(
+                payload,
+                fresh_process_result.get("pluginUpdate"),
+            )
+        if not plugins_updated_in_fresh_process:
+            payload = await _openclaw_update_attach_post_update_plugins(services, payload)
+        return payload
 
     payload = _run(
         _run_with_services(run_git_update_with_plugins)

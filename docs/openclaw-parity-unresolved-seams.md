@@ -15,10 +15,10 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.999991% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.999994% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
-  post-core resume mode, package post-update completion-cache refresh,
-  all-shell completion write-state,
+  post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, package
+  post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
   preflight, devices list/approve CLI, package-update downgrade confirmation,
@@ -149,10 +149,13 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.99998%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999984%
   after route-backed Telegram stale-thread retry fallback for JSON and
-  HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
-  delivery plus postback/media-placeholder/sticker/location delivery and group
+  HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
+  sends, Discord audio-as-voice direct media sends, Signal receive envelope
+  session routing with sync-message drops, LINE signed webhook ingress, and
+  LINE text webhook session delivery plus
+  postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
   pending-history replay, non-text group media mention-gate bypass, LINE
   inbound media staging, production credential-backed LINE media download, and
@@ -12690,3 +12693,68 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor native-bridge parity moves to ~99.999991%. Continue
   package-update fresh-process handoff, deeper installed plugin activation,
   ACP bridge lifecycle depth, provider media edges, or companion breadth.
+- Current queue-head adjustment: native `openzues update` now mirrors
+  OpenClaw's parent-side post-core fresh-process handoff after package/git core
+  updates. Package-manager modes and changed git results delegate plugin
+  post-update sync to a fresh `openzues update` process with
+  `OPENCLAW_UPDATE_POST_CORE` env, preserve returned plugin metadata in the
+  parent JSON envelope, and fall back to inline sync when no fresh process
+  resumes. Source/test checkpointed in `81f715ab`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999992%. Continue deeper installed plugin activation, ACP bridge
+  lifecycle depth, provider media edges, or companion breadth.
+- Current queue-head adjustment: native Feishu media sends now consume implicit
+  batched reply metadata once per media fanout, matching OpenClaw's
+  `replyToMode: "batched"` plan behavior. The first media item replies to the
+  parent message, later media items send top-level while preserving final
+  `messageId`, ordered `mediaIds`, `mediaUrls`, and provider result metadata.
+  Source/test checkpointed in `ae7e9ed1`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth moves to ~99.999981%.
+  Continue Discord audio-as-voice depth, remaining provider-specific
+  media/reply edges, deeper runtime/plugin activation, or companion breadth.
+- Current queue-head adjustment: native Discord `message.action send` now
+  supports the OpenClaw `asVoice` branch: media is required, text/components
+  are rejected, route-backed audio is loaded and converted to Ogg/Opus when
+  needed, the Discord attachment-upload protocol is used, and the final voice
+  message preserves `replyTo`, `silent`, `messageId`, and `channelId`
+  metadata. Source/test checkpointed in `6be0ca36`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999982%. Continue remaining provider-specific media/reply edges, deeper
+  runtime/plugin activation, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native Discord direct provider-route media
+  sends now consume `audioAsVoice=true` like OpenClaw's Discord outbound
+  payload adapter. The first media item routes through the voice-message
+  helper, text and remaining media become ordered follow-ups, `replyToMode`
+  controls reply fanout, and the provider result preserves final `messageId`,
+  ordered `messageIds`, `mediaUrls`, silent flags, and delivery metadata.
+  Source/test checkpointed in `b9331153`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth moves to ~99.999983%.
+  Continue remaining provider-specific media/reply edges, deeper
+  runtime/plugin activation, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native Signal receive routing now consumes
+  signal-cli `receive` envelopes through the OpsMesh handler and
+  `/api/channels/signal/receive`, drops `syncMessage` envelopes, maps
+  direct/group messages to OpenClaw-shaped `agent:main:signal:*` session keys,
+  and projects `BodyForAgent`, `CommandBody`, `MessageSid`, provider/surface,
+  reply target, and session-backed delivery metadata. Source/test checkpointed
+  in `25279aa3`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.999984%. Continue
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native update restart diagnostics now label
+  OpenClaw/launchd signal-shaped exit statuses. `lastExitStatus: 134` renders
+  as `lastExit=134 (SIGABRT/abort)` while non-signal statuses keep the scalar
+  form. Source/test checkpointed in `37af5b93`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999993%. Continue deeper installed plugin activation, ACP bridge
+  lifecycle depth, provider media edges, packaging/distribution, or companion
+  breadth.
+- Current queue-head adjustment: native facade-runtime shims now use the
+  installed plugin registry when bundled public surfaces are absent. Active
+  plugin rows are carried from activation into tool execution, channel/id/root
+  matches resolve installed artifacts, loaded facades track the manifest id,
+  and activated load/can/try calls honor config policy. Source/test
+  checkpointed in `19613f06`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.999994%. Continue
+  deeper installed plugin activation, ACP bridge lifecycle depth, provider
+  media edges, packaging/distribution, or companion breadth.

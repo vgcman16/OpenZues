@@ -136,6 +136,7 @@ from openzues.services.reflexes import build_reflex_deck
 from openzues.services.scope_enforcer import build_scope_assessment
 from openzues.services.session_keys import (
     DEFAULT_ACCOUNT_ID,
+    build_agent_session_key,
     build_launch_session_key,
     canonicalize_session_key,
     normalize_optional_account_id,
@@ -3712,6 +3713,26 @@ def _discord_media_is_likely_video(media_url: str) -> bool:
     )
 
 
+def _discord_is_native_voice_audio(filename: str, content_type: str | None) -> bool:
+    normalized_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    extension = Path(filename).suffix.lower()
+    return normalized_type in {"audio/ogg", "audio/opus"} or extension in {
+        ".ogg",
+        ".oga",
+        ".opus",
+    }
+
+
+def _discord_is_likely_audio(filename: str, content_type: str | None) -> bool:
+    normalized_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    extension = Path(filename).suffix.lower()
+    return normalized_type.startswith("audio/") or extension in FEISHU_TRANSCODABLE_AUDIO_EXTS
+
+
+def _discord_placeholder_waveform() -> str:
+    return base64.b64encode(bytes([0] * DISCORD_VOICE_WAVEFORM_SAMPLES)).decode("ascii")
+
+
 def _safe_slack_file_label(value: str | None, fallback: str) -> str:
     label = Path(str(value or "")).name.replace("\\", "_").replace("/", "_")
     label = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("._")
@@ -4119,6 +4140,13 @@ DISCORD_MAX_MESSAGE_MEDIA_BYTES = 100 * 1024 * 1024
 DISCORD_MAX_STICKER_BYTES = 512 * 1024
 DISCORD_POLL_LAYOUT_TYPE_DEFAULT = 1
 DISCORD_POLL_MAX_DURATION_HOURS = 32 * 24
+DISCORD_SUPPRESS_NOTIFICATIONS_FLAG = 1 << 12
+DISCORD_VOICE_MESSAGE_FLAG = 1 << 13
+DISCORD_VOICE_FILE_NAME = "voice-message.ogg"
+DISCORD_VOICE_WAVEFORM_SAMPLES = 256
+DISCORD_VOICE_SAMPLE_RATE_HZ = 48_000
+DISCORD_VOICE_BITRATE = "64k"
+DISCORD_FFMPEG_MAX_AUDIO_DURATION_SECONDS = 120
 DISCORD_EMOJI_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
 DISCORD_EVENT_COVER_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
 DISCORD_STICKER_CONTENT_TYPES = {"image/png", "image/apng", "application/json"}
@@ -8900,6 +8928,211 @@ def _signal_rpc_result_timestamp(result: object) -> int | None:
         timestamp = result.get("timestamp")
         return timestamp if isinstance(timestamp, int) else None
     return None
+
+
+def _signal_inbound_mapping(value: object) -> Mapping[str, Any]:
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _signal_inbound_optional_string(value: object) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _signal_inbound_payload(event: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    if isinstance(event.get("envelope"), Mapping):
+        return event
+    if _signal_inbound_optional_string(event.get("event")) != "receive":
+        return None
+    data = event.get("data")
+    if isinstance(data, Mapping):
+        return cast(Mapping[str, Any], data)
+    if not isinstance(data, str) or not data.strip():
+        return None
+    try:
+        parsed = json.loads(data)
+    except json.JSONDecodeError:
+        return None
+    return cast(Mapping[str, Any], parsed) if isinstance(parsed, Mapping) else None
+
+
+def _signal_inbound_data_message(
+    envelope: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    data_message = _signal_inbound_mapping(envelope.get("dataMessage"))
+    if data_message:
+        return data_message
+    edit_message = _signal_inbound_mapping(envelope.get("editMessage"))
+    return _signal_inbound_mapping(edit_message.get("dataMessage"))
+
+
+def _signal_inbound_message_id(
+    envelope: Mapping[str, Any],
+    data_message: Mapping[str, Any],
+) -> str | None:
+    for value in (envelope.get("timestamp"), data_message.get("timestamp")):
+        if value is None or isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return str(value)
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _signal_inbound_body_text(data_message: Mapping[str, Any]) -> str | None:
+    message = _signal_inbound_optional_string(data_message.get("message"))
+    if message is not None:
+        return message
+    attachments = data_message.get("attachments")
+    if not isinstance(attachments, list) or not attachments:
+        return None
+    if len(attachments) > 1:
+        return "<media:attachments>"
+    first = attachments[0]
+    content_type = ""
+    if isinstance(first, Mapping):
+        content_type = str(first.get("contentType") or "").strip().lower()
+    if content_type.startswith("image/"):
+        return "<media:image>"
+    if content_type.startswith("video/"):
+        return "<media:video>"
+    if content_type.startswith("audio/"):
+        return "<media:audio>"
+    return "<media:attachment>"
+
+
+def _signal_inbound_command_authorized(text: str) -> bool:
+    stripped = text.lstrip()
+    return stripped.startswith("/") or stripped.startswith("!")
+
+
+@dataclass(frozen=True, slots=True)
+class _SignalInboundSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    sender_id: str
+    sender_uuid: str | None
+    sender_name: str | None
+    conversation_id: str
+    conversation_type: str
+    reply_to: str
+    originating_to: str
+    group_name: str | None
+
+
+def _signal_inbound_session_context(
+    envelope: Mapping[str, Any],
+    data_message: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _SignalInboundSessionContext:
+    source_number = _signal_inbound_optional_string(envelope.get("sourceNumber"))
+    source_uuid = _signal_inbound_optional_string(envelope.get("sourceUuid"))
+    sender_id = source_number or source_uuid
+    if sender_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Signal inbound envelope is missing sender identity."
+        )
+    group_info = _signal_inbound_mapping(data_message.get("groupInfo"))
+    group_id = _signal_inbound_optional_string(group_info.get("groupId"))
+    group_name = _signal_inbound_optional_string(group_info.get("groupName"))
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    sender_name = _signal_inbound_optional_string(envelope.get("sourceName"))
+    if group_id is not None:
+        conversation_target = ConversationTargetView(
+            channel="signal",
+            account_id=normalized_account_id,
+            peer_kind="group",
+            peer_id=f"signal:group:{group_id}",
+        )
+        return _SignalInboundSessionContext(
+            conversation_target=conversation_target,
+            session_key=build_agent_session_key(
+                agent_id="main",
+                channel="signal",
+                account_id=normalized_account_id,
+                peer_kind="group",
+                peer_id=group_id,
+            ),
+            sender_id=sender_id,
+            sender_uuid=source_uuid,
+            sender_name=sender_name,
+            conversation_id=group_id,
+            conversation_type="group",
+            reply_to=f"signal:group:{group_id}",
+            originating_to=f"group:{group_id}",
+            group_name=group_name,
+        )
+    target_peer_id = (
+        f"signal:{source_number}" if source_number is not None else f"signal:uuid:{source_uuid}"
+    )
+    conversation_target = ConversationTargetView(
+        channel="signal",
+        account_id=normalized_account_id,
+        peer_kind="direct",
+        peer_id=target_peer_id,
+    )
+    return _SignalInboundSessionContext(
+        conversation_target=conversation_target,
+        session_key=build_agent_session_key(
+            agent_id="main",
+            channel="signal",
+            account_id=normalized_account_id,
+            peer_kind="direct",
+            peer_id=sender_id,
+            dm_scope="per-channel-peer",
+        ),
+        sender_id=sender_id,
+        sender_uuid=source_uuid,
+        sender_name=sender_name,
+        conversation_id=sender_id,
+        conversation_type="direct",
+        reply_to=target_peer_id,
+        originating_to=sender_id,
+        group_name=None,
+    )
+
+
+def _signal_inbound_context_payload(
+    context: _SignalInboundSessionContext,
+    *,
+    text: str,
+    inbound_message_id: str | None,
+    command_authorized: bool,
+) -> dict[str, object]:
+    label = context.sender_name or context.sender_id
+    if context.conversation_type == "group" and context.group_name:
+        label = f"{context.group_name} / {label}"
+    body = f"{label}: {text}" if label else text
+    payload: dict[str, object] = {
+        "Body": body,
+        "BodyForAgent": text,
+        "RawBody": text,
+        "CommandBody": text,
+        "BodyForCommands": text,
+        "From": context.originating_to,
+        "To": context.originating_to,
+        "SessionKey": context.session_key,
+        "AccountId": context.conversation_target.account_id or DEFAULT_ACCOUNT_ID,
+        "ChatType": context.conversation_type,
+        "ConversationLabel": label,
+        "SenderName": context.sender_name or context.sender_id,
+        "SenderId": context.sender_id,
+        "Provider": "signal",
+        "Surface": "signal",
+        "OriginatingChannel": "signal",
+        "OriginatingTo": context.originating_to,
+        "CommandAuthorized": command_authorized,
+    }
+    if inbound_message_id is not None:
+        payload["MessageSid"] = inbound_message_id
+    if context.group_name is not None:
+        payload["GroupSubject"] = context.group_name
+    return payload
 
 
 def _irc_wire_value(value: str | None, label: str) -> str:
@@ -19500,6 +19733,124 @@ class OpsMeshService:
                 result["inboundMessageId"] = inbound_message_id
         return result
 
+    async def handle_signal_receive_event(
+        self,
+        event: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        receive_payload = _signal_inbound_payload(event)
+        if receive_payload is None:
+            return {
+                "ok": False,
+                "channel": "signal",
+                "eventType": _signal_inbound_optional_string(event.get("event")),
+                "skipped": True,
+                "reason": "signal_receive_event_unsupported",
+            }
+        envelope = _signal_inbound_mapping(receive_payload.get("envelope"))
+        if not envelope:
+            return {
+                "ok": False,
+                "channel": "signal",
+                "eventType": "receive",
+                "eventCount": 1,
+                "deliveredCount": 0,
+                "skipped": True,
+                "reason": "signal_receive_missing_envelope",
+            }
+        if "syncMessage" in envelope:
+            return {
+                "ok": True,
+                "channel": "signal",
+                "eventType": "receive",
+                "eventCount": 1,
+                "deliveredCount": 0,
+                "skipped": True,
+                "reason": "signal_sync_message",
+            }
+        data_message = _signal_inbound_data_message(envelope)
+        if not data_message:
+            return {
+                "ok": True,
+                "channel": "signal",
+                "eventType": "receive",
+                "eventCount": 1,
+                "deliveredCount": 0,
+                "skipped": True,
+                "reason": "signal_receive_without_data_message",
+            }
+        text = _signal_inbound_body_text(data_message)
+        if text is None:
+            return {
+                "ok": True,
+                "channel": "signal",
+                "eventType": "receive",
+                "eventCount": 1,
+                "deliveredCount": 0,
+                "skipped": True,
+                "reason": "signal_receive_without_message_text",
+            }
+        context = _signal_inbound_session_context(
+            envelope,
+            data_message,
+            account_id=account_id,
+        )
+        if self.session_delivery_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Signal inbound session delivery is unavailable."
+            )
+        delivery_result = await self.session_delivery_service(context.session_key, text)
+        delivery_message_id = _session_delivery_message_id(delivery_result)
+        inbound_message_id = _signal_inbound_message_id(envelope, data_message)
+        command_authorized = _signal_inbound_command_authorized(text)
+        delivery: dict[str, object] = {
+            "eventType": "receive",
+            "sessionKey": context.session_key,
+            "text": text,
+            "senderId": context.sender_id,
+            "conversationId": context.conversation_id,
+            "conversationType": context.conversation_type,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "reply": {
+                "to": context.reply_to,
+                "originatingTo": context.originating_to,
+            },
+            "delivery": {"runtime": "session-backed"},
+            "inboundContext": _signal_inbound_context_payload(
+                context,
+                text=text,
+                inbound_message_id=inbound_message_id,
+                command_authorized=command_authorized,
+            ),
+            "commandAuthorized": command_authorized,
+        }
+        if delivery_message_id is not None:
+            delivery["messageId"] = delivery_message_id
+        if inbound_message_id is not None:
+            delivery["inboundMessageId"] = inbound_message_id
+            delivery["timestamp"] = int(inbound_message_id) if inbound_message_id.isdigit() else (
+                inbound_message_id
+            )
+        if context.sender_uuid is not None:
+            delivery["senderUuid"] = context.sender_uuid
+        if context.sender_name is not None:
+            delivery["senderName"] = context.sender_name
+        if context.group_name is not None:
+            delivery["groupName"] = context.group_name
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "signal",
+            "eventType": "receive",
+            "eventCount": 1,
+            "deliveredCount": 1,
+            "deliveries": [delivery],
+        }
+        normalized_account_id = normalize_optional_account_id(account_id)
+        if normalized_account_id is not None:
+            result["accountId"] = normalized_account_id
+        return result
+
     async def _stage_zalo_inbound_media(
         self,
         payload: Mapping[str, Any],
@@ -28397,19 +28748,70 @@ class OpsMeshService:
         secret_token: str | None,
     ) -> dict[str, object]:
         target = _message_action_param_string(request.params, "to", required=True)
-        message = (
-            _message_action_param_string(
+        message_param = _message_action_param_string(
+            request.params,
+            "message",
+            allow_empty=True,
+        )
+        if message_param is None:
+            message_param = _message_action_param_string(
                 request.params,
-                "message",
+                "content",
                 allow_empty=True,
             )
-            or ""
-        )
+        message = message_param or ""
+        as_voice = _message_action_param_bool(request.params, "asVoice") is True
         media_url = (
-            _message_action_param_raw_string(request.params, "media")
+            _message_action_param_raw_string(request.params, "mediaUrl")
+            or _message_action_param_raw_string(request.params, "media")
             or _message_action_param_raw_string(request.params, "path")
             or _message_action_param_raw_string(request.params, "filePath")
         )
+        reply_to = _message_action_param_string(request.params, "replyTo")
+        silent = _message_action_param_bool(request.params, "silent") is True
+        if as_voice:
+            if media_url is None:
+                raise RuntimeError(
+                    "Voice messages require a media file reference "
+                    "(mediaUrl, path, or filePath)."
+                )
+            if message.strip():
+                raise RuntimeError(
+                    "Voice messages cannot include text content "
+                    "(Discord limitation). Remove the content parameter."
+                )
+            if request.params.get("components") is not None:
+                raise RuntimeError("Discord components cannot be sent as voice messages.")
+            channel_id = _discord_action_channel_id(target)
+            if channel_id is None:
+                raise RuntimeError("Discord voice messages require a channel target.")
+            media_bytes, content_type = self._load_discord_media(
+                media_url,
+                max_bytes=DISCORD_MAX_MESSAGE_MEDIA_BYTES,
+            )
+            normalized_content_type = (
+                content_type.split(";", 1)[0].strip().lower() or "application/octet-stream"
+            )
+            voice_bytes = self._prepare_discord_voice_media(
+                media_bytes,
+                filename=_discord_media_filename(media_url, normalized_content_type),
+                content_type=normalized_content_type,
+            )
+            result = self._request_discord_voice_message_upload(
+                channel_id=channel_id,
+                media_bytes=voice_bytes,
+                reply_to=reply_to,
+                silent=silent,
+                secret_token=secret_token,
+            )
+            return {
+                "ok": True,
+                "result": {
+                    "messageId": str(result.get("id") or ""),
+                    "channelId": str(result.get("channel_id") or channel_id),
+                },
+                "voiceMessage": True,
+            }
         if not message and media_url is None:
             raise RuntimeError("Discord send requires message or media.")
         event: dict[str, Any] = {
@@ -28418,13 +28820,12 @@ class OpsMeshService:
         }
         if media_url is not None:
             event["mediaUrl"] = media_url
-        reply_to = _message_action_param_string(request.params, "replyTo")
         if reply_to is not None:
             event["replyToId"] = reply_to
         thread_id = _message_action_param_string(request.params, "threadId")
         if thread_id is not None:
             event["threadId"] = thread_id
-        if request.params.get("silent") is True:
+        if silent:
             event["silent"] = True
         result = self._post_discord_provider_event(
             route,
@@ -32901,6 +33302,220 @@ class OpsMeshService:
             raise RuntimeError("Discord API returned a non-JSON message response.")
         return parsed
 
+    def _transcode_discord_voice_media(
+        self,
+        media_bytes: bytes,
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> bytes:
+        del self, content_type
+        with tempfile.TemporaryDirectory(prefix="openzues-discord-voice-") as temp_dir:
+            temp_root = Path(temp_dir)
+            input_extension = Path(filename).suffix or ".bin"
+            input_path = temp_root / f"input{input_extension}"
+            output_path = temp_root / DISCORD_VOICE_FILE_NAME
+            input_path.write_bytes(media_bytes)
+            command = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(input_path),
+                "-vn",
+                "-sn",
+                "-dn",
+                "-t",
+                str(DISCORD_FFMPEG_MAX_AUDIO_DURATION_SECONDS),
+                "-ar",
+                str(DISCORD_VOICE_SAMPLE_RATE_HZ),
+                "-c:a",
+                "libopus",
+                "-b:a",
+                DISCORD_VOICE_BITRATE,
+                str(output_path),
+            ]
+            try:
+                subprocess.run(  # noqa: S603, S607
+                    command,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    timeout=180,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise RuntimeError(f"Discord voice message conversion failed: {exc}") from exc
+            if not output_path.is_file():
+                raise RuntimeError("Discord voice message conversion did not create voice.ogg")
+            return output_path.read_bytes()
+
+    def _prepare_discord_voice_media(
+        self,
+        media_bytes: bytes,
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> bytes:
+        if _discord_is_native_voice_audio(filename, content_type):
+            return media_bytes
+        if not _discord_is_likely_audio(filename, content_type):
+            raise RuntimeError("Discord voice messages require audio media.")
+        return self._transcode_discord_voice_media(
+            media_bytes,
+            filename=filename,
+            content_type=content_type,
+        )
+
+    def _discord_voice_duration_seconds(self, media_bytes: bytes) -> float:
+        del self
+        with tempfile.TemporaryDirectory(prefix="openzues-discord-voice-meta-") as temp_dir:
+            media_path = Path(temp_dir) / DISCORD_VOICE_FILE_NAME
+            media_path.write_bytes(media_bytes)
+            command = [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(media_path),
+            ]
+            try:
+                completed = subprocess.run(  # noqa: S603, S607
+                    command,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                duration = float(completed.stdout.strip())
+            except (OSError, ValueError, subprocess.SubprocessError):
+                return 1.0
+            return max(0.01, round(duration, 2))
+
+    def _request_discord_voice_message_upload(
+        self,
+        *,
+        channel_id: str,
+        media_bytes: bytes,
+        reply_to: str | None,
+        silent: bool,
+        secret_token: str | None,
+        duration_seconds: float | None = None,
+        waveform: str | None = None,
+        timeout_seconds: float = 30.0,
+    ) -> dict[str, object]:
+        if not media_bytes:
+            raise RuntimeError("Discord voice messages require audio media.")
+        request_body = json.dumps(
+            {
+                "files": [
+                    {
+                        "filename": DISCORD_VOICE_FILE_NAME,
+                        "file_size": len(media_bytes),
+                        "id": "0",
+                    }
+                ]
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        upload_url_request = Request(
+            _discord_api_endpoint(f"channels/{channel_id}/attachments"),
+            data=request_body,
+            headers={
+                "Authorization": _discord_bot_authorization(secret_token),
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(upload_url_request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(
+                        f"Discord upload URL request returned HTTP {response.status}"
+                    )
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            message = _http_error_message("Discord upload URL request returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Discord upload URL request failed: {exc.reason}") from exc
+        try:
+            upload_url_result = json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Discord upload URL request returned a non-JSON response.") from exc
+        if not isinstance(upload_url_result, dict):
+            raise RuntimeError("Discord upload URL request returned a non-object response.")
+        attachments = upload_url_result.get("attachments")
+        if not isinstance(attachments, list) or not attachments:
+            raise RuntimeError("Discord upload URL response did not include attachments.")
+        attachment = attachments[0]
+        if not isinstance(attachment, dict):
+            raise RuntimeError("Discord upload URL response did not include an attachment object.")
+        upload_url = str(attachment.get("upload_url") or "").strip()
+        upload_filename = str(attachment.get("upload_filename") or "").strip()
+        if not upload_url or not upload_filename:
+            raise RuntimeError("Discord upload URL response did not include upload metadata.")
+
+        upload_request = Request(
+            upload_url,
+            data=media_bytes,
+            headers={"Content-Type": "audio/ogg"},
+            method="PUT",
+        )
+        try:
+            with urlopen(upload_request, timeout=timeout_seconds) as upload_response:
+                if upload_response.status >= 400:
+                    raise RuntimeError(
+                        f"Discord voice attachment upload returned HTTP {upload_response.status}"
+                    )
+        except HTTPError as exc:
+            message = _http_error_message("Discord voice attachment upload returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Discord voice attachment upload failed: {exc.reason}") from exc
+
+        flags = DISCORD_VOICE_MESSAGE_FLAG
+        if silent:
+            flags |= DISCORD_SUPPRESS_NOTIFICATIONS_FLAG
+        metadata_duration = (
+            duration_seconds
+            if duration_seconds is not None and duration_seconds > 0
+            else self._discord_voice_duration_seconds(media_bytes)
+        )
+        payload: dict[str, object] = {
+            "flags": flags,
+            "attachments": [
+                {
+                    "id": "0",
+                    "filename": DISCORD_VOICE_FILE_NAME,
+                    "uploaded_filename": upload_filename,
+                    "duration_secs": metadata_duration,
+                    "waveform": waveform or _discord_placeholder_waveform(),
+                }
+            ],
+        }
+        if reply_to:
+            payload["message_reference"] = {
+                "message_id": reply_to,
+                "fail_if_not_exists": False,
+            }
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Discord API returned a non-JSON voice message response.")
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return result
+
     def _request_discord_sticker_upload(
         self,
         *,
@@ -33955,7 +34570,6 @@ class OpsMeshService:
         event: dict[str, Any],
         secret_token: str | None,
     ) -> dict[str, object]:
-        del secret_token
         conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
         fallback_channel = str(
             event.get("to") or (conversation_target or {}).get("peer_id") or ""
@@ -33963,6 +34577,8 @@ class OpsMeshService:
         thread_id = str(event.get("threadId") or "").strip()
         result_fallback_channel = thread_id or fallback_channel
         reply_to_id = str(event.get("replyToId") or "").strip()
+        reply_to_id_source = event.get("replyToIdSource")
+        reply_to_mode = event.get("replyToMode")
         silent = _optional_bool_payload_value(event, "silent")
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
@@ -33996,6 +34612,126 @@ class OpsMeshService:
             text = str(event.get("message") or "").strip()
             payload = {"content": text[:2000] if text else ""}
             if media_urls:
+                audio_as_voice = _optional_bool_payload_value(event, "audioAsVoice") is True
+                if audio_as_voice:
+                    channel_id = _discord_action_channel_id(thread_id or fallback_channel)
+                    if channel_id is None:
+                        raise RuntimeError("Discord voice messages require a channel target.")
+                    media_bytes, content_type = self._load_discord_media(
+                        media_urls[0],
+                        max_bytes=DISCORD_MAX_MESSAGE_MEDIA_BYTES,
+                    )
+                    normalized_content_type = (
+                        content_type.split(";", 1)[0].strip().lower()
+                        if isinstance(content_type, str)
+                        else ""
+                    ) or "application/octet-stream"
+                    voice_bytes = self._prepare_discord_voice_media(
+                        media_bytes,
+                        filename=_discord_media_filename(
+                            media_urls[0],
+                            normalized_content_type,
+                        ),
+                        content_type=normalized_content_type,
+                    )
+                    voice_reply_to = _reply_to_fanout_id(
+                        reply_to_id=reply_to_id,
+                        reply_to_id_source=reply_to_id_source,
+                        reply_to_mode=reply_to_mode,
+                        index=0,
+                    )
+                    voice_result = self._request_discord_voice_message_upload(
+                        channel_id=channel_id,
+                        media_bytes=voice_bytes,
+                        reply_to=voice_reply_to or None,
+                        silent=silent is True,
+                        secret_token=secret_token,
+                    )
+                    voice_message_id = str(
+                        voice_result.get("id") or voice_result.get("messageId") or ""
+                    ).strip()
+                    if not voice_message_id:
+                        raise RuntimeError("Discord voice response did not include a message id.")
+                    delivered_channel = str(
+                        voice_result.get("channel_id")
+                        or voice_result.get("channelId")
+                        or result_fallback_channel
+                    ).strip()
+                    audio_message_ids = [voice_message_id]
+                    followup_index = 1
+                    target_url = _discord_webhook_url(
+                        str(route.get("target") or ""),
+                        thread_id=thread_id,
+                    )
+
+                    def post_discord_followup(followup_payload: dict[str, Any]) -> None:
+                        nonlocal delivered_channel
+                        followup_result = self._post_json_webhook(
+                            target_url,
+                            followup_payload,
+                        )
+                        if not isinstance(followup_result, dict):
+                            raise RuntimeError("Discord webhook returned a non-JSON response.")
+                        followup_message_id = _discord_message_id(followup_result)
+                        if followup_message_id is None:
+                            raise RuntimeError(
+                                "Discord webhook response did not include a message id."
+                            )
+                        audio_message_ids.append(followup_message_id)
+                        delivered_channel = _discord_channel_id(
+                            followup_result,
+                            delivered_channel or result_fallback_channel,
+                        )
+
+                    if text:
+                        text_payload: dict[str, Any] = {"content": text[:2000]}
+                        if silent is True:
+                            text_payload["flags"] = int(text_payload.get("flags") or 0) | (
+                                1 << 12
+                            )
+                        fanout_reply_to_id = _reply_to_fanout_id(
+                            reply_to_id=reply_to_id,
+                            reply_to_id_source=reply_to_id_source,
+                            reply_to_mode=reply_to_mode,
+                            index=followup_index,
+                        )
+                        followup_index += 1
+                        if fanout_reply_to_id:
+                            text_payload["message_reference"] = {
+                                "message_id": fanout_reply_to_id,
+                                "fail_if_not_exists": False,
+                            }
+                        post_discord_followup(text_payload)
+                    for media_url in media_urls[1:]:
+                        audio_media_payload: dict[str, Any] = {
+                            "content": "",
+                            "embeds": [{"image": {"url": media_url}}],
+                        }
+                        if silent is True:
+                            audio_media_payload["flags"] = int(
+                                audio_media_payload.get("flags") or 0
+                            ) | (1 << 12)
+                        fanout_reply_to_id = _reply_to_fanout_id(
+                            reply_to_id=reply_to_id,
+                            reply_to_id_source=reply_to_id_source,
+                            reply_to_mode=reply_to_mode,
+                            index=followup_index,
+                        )
+                        followup_index += 1
+                        if fanout_reply_to_id:
+                            audio_media_payload["message_reference"] = {
+                                "message_id": fanout_reply_to_id,
+                                "fail_if_not_exists": False,
+                            }
+                        post_discord_followup(audio_media_payload)
+                    return {
+                        "runtime": "native-provider-backed",
+                        "messageId": audio_message_ids[-1],
+                        "chatId": delivered_channel or result_fallback_channel,
+                        "channelId": delivered_channel or result_fallback_channel,
+                        "messageIds": audio_message_ids,
+                        "mediaUrls": media_urls,
+                    }
                 if len(media_urls) > 1:
                     message_ids: list[str] = []
                     delivered_channel = result_fallback_channel
@@ -34554,15 +35290,30 @@ class OpsMeshService:
             media_event["to"] = str(
                 event.get("to") or (conversation_target or {}).get("peer_id") or ""
             )
-            media_results = [
-                self._post_feishu_media_provider_event(
-                    route,
-                    media_event,
-                    media_url,
-                    secret_token,
+            reply_to_id = str(event.get("replyToId") or "").strip()
+            reply_to_id_source = event.get("replyToIdSource")
+            reply_to_mode = event.get("replyToMode")
+            media_results = []
+            for index, media_url in enumerate(media_urls):
+                media_item_event = dict(media_event)
+                fanout_reply_to_id = _reply_to_fanout_id(
+                    reply_to_id=reply_to_id,
+                    reply_to_id_source=reply_to_id_source,
+                    reply_to_mode=reply_to_mode,
+                    index=index,
                 )
-                for media_url in media_urls
-            ]
+                if fanout_reply_to_id:
+                    media_item_event["replyToId"] = fanout_reply_to_id
+                else:
+                    media_item_event.pop("replyToId", None)
+                media_results.append(
+                    self._post_feishu_media_provider_event(
+                        route,
+                        media_item_event,
+                        media_url,
+                        secret_token,
+                    )
+                )
             native_result = dict(media_results[-1])
             message_ids = [
                 str(result.get("messageId")).strip()

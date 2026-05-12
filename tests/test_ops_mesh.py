@@ -15450,6 +15450,243 @@ async def test_ops_mesh_service_message_action_dispatches_discord_channel_list_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_voice_send_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-voice-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Voice Send Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    loaded_media: list[tuple[str, int]] = []
+    voice_uploads: list[dict[str, object]] = []
+
+    def fake_load_discord_media(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        max_bytes: int,
+    ) -> tuple[bytes, str]:
+        del self
+        loaded_media.append((media_url, max_bytes))
+        return b"ogg-opus-bytes", "audio/ogg"
+
+    def fake_request_discord_voice_message_upload(
+        self: OpsMeshService,
+        *,
+        channel_id: str,
+        media_bytes: bytes,
+        reply_to: str | None,
+        silent: bool,
+        secret_token: str | None,
+        duration_seconds: float | None = None,
+        waveform: str | None = None,
+    ) -> dict[str, object]:
+        del self, duration_seconds, waveform
+        voice_uploads.append(
+            {
+                "channel_id": channel_id,
+                "media_bytes": media_bytes,
+                "reply_to": reply_to,
+                "silent": silent,
+                "secret_token": secret_token,
+            }
+        )
+        return {"id": "voice-msg-1", "channel_id": "123456789"}
+
+    def fail_post_discord_provider_event(
+        self: OpsMeshService,
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del self, route, event_type, event, secret_token
+        raise AssertionError("Discord voice sends must not use the webhook send path.")
+
+    monkeypatch.setattr(OpsMeshService, "_load_discord_media", fake_load_discord_media)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_discord_voice_message_upload",
+        fake_request_discord_voice_message_upload,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_post_discord_provider_event",
+        fail_post_discord_provider_event,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="send",
+            params={
+                "to": "channel:123456789",
+                "path": "file:///tmp/voice.ogg",
+                "asVoice": True,
+                "replyTo": "reply-1",
+                "silent": True,
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:123456789",
+            idempotency_key="idem-discord-voice-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {"messageId": "voice-msg-1", "channelId": "123456789"},
+        "voiceMessage": True,
+    }
+    assert loaded_media == [("file:///tmp/voice.ogg", 100 * 1024 * 1024)]
+    assert voice_uploads == [
+        {
+            "channel_id": "123456789",
+            "media_bytes": b"ogg-opus-bytes",
+            "reply_to": "reply-1",
+            "silent": True,
+            "secret_token": "discord-bot-token",
+        }
+    ]
+
+
+def test_ops_mesh_service_discord_voice_upload_uses_attachment_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = object.__new__(OpsMeshService)
+    requests: list[Request] = []
+    final_posts: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    class FakeResponse:
+        def __init__(self, body: bytes, *, status: int = 200) -> None:
+            self._body = body
+            self.status = status
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del timeout
+        requests.append(request)
+        if request.full_url.endswith("/channels/123456789/attachments"):
+            return FakeResponse(
+                b'{"attachments":[{"id":0,"upload_url":"https://upload.discord.test/voice",'
+                b'"upload_filename":"uploaded/voice.ogg"}]}'
+            )
+        if request.full_url == "https://upload.discord.test/voice":
+            return FakeResponse(b"")
+        raise AssertionError(f"unexpected Discord voice request: {request.full_url}")
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        final_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "voice-msg-1", "channel_id": "123456789"}
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+
+    result = service._request_discord_voice_message_upload(
+        channel_id="123456789",
+        media_bytes=b"ogg-opus-bytes",
+        reply_to="reply-1",
+        silent=True,
+        secret_token="discord-bot-token",
+        duration_seconds=2.5,
+        waveform="waveform-base64",
+    )
+
+    assert result == {"id": "voice-msg-1", "channel_id": "123456789"}
+    assert len(requests) == 2
+    upload_url_request, attachment_upload_request = requests
+    assert upload_url_request.full_url == (
+        "https://discord.com/api/v10/channels/123456789/attachments"
+    )
+    assert upload_url_request.get_method() == "POST"
+    assert dict(upload_url_request.header_items()) == {
+        "Authorization": "Bot discord-bot-token",
+        "Content-type": "application/json",
+    }
+    assert json.loads((upload_url_request.data or b"").decode("utf-8")) == {
+        "files": [{"filename": "voice-message.ogg", "file_size": 14, "id": "0"}]
+    }
+    assert attachment_upload_request.full_url == "https://upload.discord.test/voice"
+    assert attachment_upload_request.get_method() == "PUT"
+    assert dict(attachment_upload_request.header_items()) == {"Content-type": "audio/ogg"}
+    assert attachment_upload_request.data == b"ogg-opus-bytes"
+    assert final_posts == [
+        (
+            "POST",
+            "https://discord.com/api/v10/channels/123456789/messages",
+            {
+                "flags": (1 << 13) | (1 << 12),
+                "attachments": [
+                    {
+                        "id": "0",
+                        "filename": "voice-message.ogg",
+                        "uploaded_filename": "uploaded/voice.ogg",
+                        "duration_secs": 2.5,
+                        "waveform": "waveform-base64",
+                    }
+                ],
+                "message_reference": {
+                    "message_id": "reply-1",
+                    "fail_if_not_exists": False,
+                },
+            },
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_discord_voice_status_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -19637,6 +19874,172 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_discord_video
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_discord_audio_as_voice_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-discord-audio-voice"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Audio Voice Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    loaded_media: list[tuple[str, int]] = []
+    voice_uploads: list[dict[str, object]] = []
+    discord_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_load_discord_media(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        max_bytes: int,
+    ) -> tuple[bytes, str]:
+        del self
+        loaded_media.append((media_url, max_bytes))
+        return b"voice-ogg-bytes", "audio/ogg"
+
+    def fake_request_discord_voice_message_upload(
+        self: OpsMeshService,
+        *,
+        channel_id: str,
+        media_bytes: bytes,
+        reply_to: str | None,
+        silent: bool,
+        secret_token: str | None,
+        duration_seconds: float | None = None,
+        waveform: str | None = None,
+    ) -> dict[str, object]:
+        del self, duration_seconds, waveform
+        voice_uploads.append(
+            {
+                "channel_id": channel_id,
+                "media_bytes": media_bytes,
+                "reply_to": reply_to,
+                "silent": silent,
+                "secret_token": secret_token,
+            }
+        )
+        return {"id": "discord-voice-1", "channel_id": "987654321"}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        discord_posts.append((target, payload))
+        return {
+            "id": f"discord-followup-{len(discord_posts)}",
+            "channel_id": "987654321",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_load_discord_media", fake_load_discord_media)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_discord_voice_message_upload",
+        fake_request_discord_voice_message_upload,
+        raising=False,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="discord",
+        to="channel:987654321",
+        message="voice note",
+        media_urls=[
+            "file:///tmp/voice.ogg",
+            "https://example.com/extra.png",
+        ],
+        audio_as_voice=True,
+        account_id="discord-bot",
+        reply_to_id="reply-1",
+        reply_to_id_source="implicit",
+        reply_to_mode="all",
+        silent=True,
+        idempotency_key="idem-native-discord-audio-voice",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "discord-followup-2"
+    assert result["messageIds"] == [
+        "discord-voice-1",
+        "discord-followup-1",
+        "discord-followup-2",
+    ]
+    assert result["mediaUrls"] == [
+        "file:///tmp/voice.ogg",
+        "https://example.com/extra.png",
+    ]
+    assert loaded_media == [("file:///tmp/voice.ogg", 100 * 1024 * 1024)]
+    assert voice_uploads == [
+        {
+            "channel_id": "987654321",
+            "media_bytes": b"voice-ogg-bytes",
+            "reply_to": "reply-1",
+            "silent": True,
+            "secret_token": "discord-bot-token",
+        }
+    ]
+    assert discord_posts == [
+        (
+            "https://discord.com/api/webhooks/webhook-id/webhook-token?wait=true",
+            {
+                "content": "voice note",
+                "flags": 1 << 12,
+                "message_reference": {
+                    "message_id": "reply-1",
+                    "fail_if_not_exists": False,
+                },
+            },
+        ),
+        (
+            "https://discord.com/api/webhooks/webhook-id/webhook-token?wait=true",
+            {
+                "content": "",
+                "embeds": [{"image": {"url": "https://example.com/extra.png"}}],
+                "flags": 1 << 12,
+                "message_reference": {
+                    "message_id": "reply-1",
+                    "fail_if_not_exists": False,
+                },
+            },
+        ),
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageIds"] == [
+        "discord-voice-1",
+        "discord-followup-1",
+        "discord-followup-2",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_discord_reply_and_silent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -20414,6 +20817,130 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_m
         "mediaIds": ["om_feishu_media_1"],
         "mediaUrls": [media_url],
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_reply_fanout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-feishu-fanout"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    feishu_target = "feishu:chat:oc_chat_1"
+    await database.create_notification_route(
+        name="Feishu Native Media Reply Fanout",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": feishu_target,
+        },
+    )
+    feishu_uploads: list[str] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, target, fields, file_field, filename, content, content_type
+        del secret_token, timeout_seconds
+        feishu_uploads.append(f"img_direct_{len(feishu_uploads) + 1}")
+        return {"code": 0, "msg": "ok", "data": {"image_key": feishu_uploads[-1]}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": f"om_feishu_media_{len(feishu_posts)}",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    media_urls = [
+        "data:image/png;base64,aW1hZ2Ux",
+        "data:image/png;base64,aW1hZ2Uy",
+    ]
+    result = await service.send_direct_channel_message(
+        channel="feishu",
+        to=feishu_target,
+        message="",
+        media_urls=media_urls,
+        account_id="feishu-bot",
+        reply_to_id="om_parent_1",
+        reply_to_id_source="implicit",
+        reply_to_mode="batched",
+        idempotency_key="idem-native-feishu-media-fanout",
+    )
+
+    assert result["messageId"] == "om_feishu_media_2"
+    assert result["mediaIds"] == ["om_feishu_media_1", "om_feishu_media_2"]
+    assert result["mediaUrls"] == media_urls
+    assert len(feishu_posts) == 2
+    first_target, first_payload, first_header_name, first_token = feishu_posts[0]
+    second_target, second_payload, second_header_name, second_token = feishu_posts[1]
+    assert (
+        first_target
+        == "https://open.feishu.cn/open-apis/im/v1/messages/om_parent_1/reply"
+    )
+    assert first_payload == {
+        "content": json.dumps({"image_key": "img_direct_1"}, separators=(",", ":")),
+        "msg_type": "image",
+    }
+    assert second_target == (
+        "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    )
+    assert second_payload == {
+        "receive_id": "oc_chat_1",
+        "content": json.dumps({"image_key": "img_direct_2"}, separators=(",", ":")),
+        "msg_type": "image",
+    }
+    assert first_header_name == second_header_name == "Authorization"
+    assert first_token == second_token == "Bearer tenant-access-token"
 
 
 @pytest.mark.asyncio
@@ -33554,6 +34081,206 @@ async def test_ops_mesh_service_message_action_dispatches_signal_react_current_m
         "targetAuthor": "sender-uuid",
         "recipients": ["sender-uuid"],
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_signal_receive_delivers_direct_context(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "signal-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_signal_receive_event(
+        {
+            "event": "receive",
+            "data": json.dumps(
+                {
+                    "envelope": {
+                        "sourceNumber": "+15550002222",
+                        "sourceUuid": "sender-uuid",
+                        "sourceName": "Bob",
+                        "timestamp": 1700000000000,
+                        "dataMessage": {
+                            "message": "/status please",
+                            "timestamp": 1700000000000,
+                            "attachments": [],
+                        },
+                    }
+                }
+            ),
+        },
+        account_id="signal-bot",
+    )
+
+    expected_session_key = "agent:main:signal:direct:+15550002222"
+    expected_target = ConversationTargetView(
+        channel="signal",
+        account_id="signal-bot",
+        peer_kind="direct",
+        peer_id="signal:+15550002222",
+    )
+    assert session_deliveries == [(expected_session_key, "/status please")]
+    assert result["ok"] is True
+    assert result["channel"] == "signal"
+    assert result["deliveredCount"] == 1
+    delivery = result["deliveries"][0]
+    assert delivery["sessionKey"] == expected_session_key
+    assert delivery["messageId"] == "signal-session-message-1"
+    assert delivery["inboundMessageId"] == "1700000000000"
+    assert delivery["senderId"] == "+15550002222"
+    assert delivery["senderUuid"] == "sender-uuid"
+    assert delivery["senderName"] == "Bob"
+    assert delivery["conversationType"] == "direct"
+    assert delivery["conversationTarget"] == expected_target.model_dump(mode="json")
+    assert delivery["reply"] == {
+        "to": "signal:+15550002222",
+        "originatingTo": "+15550002222",
+    }
+    assert delivery["delivery"] == {"runtime": "session-backed"}
+    assert delivery["inboundContext"] == {
+        "Body": "Bob: /status please",
+        "BodyForAgent": "/status please",
+        "RawBody": "/status please",
+        "CommandBody": "/status please",
+        "BodyForCommands": "/status please",
+        "From": "+15550002222",
+        "To": "+15550002222",
+        "SessionKey": expected_session_key,
+        "AccountId": "signal-bot",
+        "ChatType": "direct",
+        "ConversationLabel": "Bob",
+        "SenderName": "Bob",
+        "SenderId": "+15550002222",
+        "Provider": "signal",
+        "Surface": "signal",
+        "MessageSid": "1700000000000",
+        "OriginatingChannel": "signal",
+        "OriginatingTo": "+15550002222",
+        "CommandAuthorized": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_signal_receive_skips_sync_message(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "unexpected"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_signal_receive_event(
+        {
+            "event": "receive",
+            "data": json.dumps(
+                {
+                    "envelope": {
+                        "sourceNumber": "+15550002222",
+                        "syncMessage": None,
+                        "dataMessage": {"message": "do not replay"},
+                    }
+                }
+            ),
+        },
+        account_id="signal-bot",
+    )
+
+    assert session_deliveries == []
+    assert result == {
+        "ok": True,
+        "channel": "signal",
+        "eventType": "receive",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skipped": True,
+        "reason": "signal_sync_message",
+    }
+
+
+def test_signal_receive_route_dispatches_native_receive_event(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    delivered: list[tuple[str, str]] = []
+
+    async def fake_deliver(session_key: str, prompt: str) -> dict[str, object]:
+        delivered.append((session_key, prompt))
+        return {"messageId": "signal-route-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_deliver,
+    )
+
+    app = create_app(app_settings, database=database, ops_mesh_service=service)
+    with TestClient(app) as client:
+        app.state.ops_mesh_service.session_delivery_service = fake_deliver
+        response = client.post(
+            "/api/channels/signal/receive?accountId=signal-bot",
+            json={
+                "event": "receive",
+                "data": json.dumps(
+                    {
+                        "envelope": {
+                            "sourceNumber": "+15550003333",
+                            "sourceName": "Grace",
+                            "timestamp": 1700000000123,
+                            "dataMessage": {"message": "route this Signal event"},
+                        }
+                    }
+                ),
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["channel"] == "signal"
+    assert payload["deliveredCount"] == 1
+    assert payload["deliveries"][0]["messageId"] == "signal-route-session-message-1"
+    assert delivered == [
+        ("agent:main:signal:direct:+15550003333", "route this Signal event")
+    ]
 
 
 @pytest.mark.asyncio

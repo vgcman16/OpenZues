@@ -20,8 +20,8 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.969% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.99998% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.999991% | High for bounded native bridge | Packaging post-core resume mode, ACP bridge depth, and deeper installed plugin activation remain |
+| Provider-native inbound/outbound breadth | ~99.999984% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Runtime/CLI/doctor native bridge | ~99.999994% | High for bounded native bridge | Packaging post-core resume/fresh-process handoff and runtime exit-signal labels plus installed facade registry fallback are checkpointed; ACP bridge depth and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.9% | Low, broad parity still open | QR setup-code safety, SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, and approval-state preview metadata are landed; companion apps remain mostly open |
 
@@ -2641,6 +2641,11 @@ may lag behind this tracker.
   core update dispatch and only runs post-update plugin sync.
   - Status: checkpointed in `4f874859`
 
+- [x] Package update post-core fresh-process handoff, preserving OpenClaw's
+  parent process delegation of plugin post-update sync after package/git core
+  updates and fallback inline sync when no fresh process resumes.
+  - Status: checkpointed in `81f715ab`
+
 - [x] Inherited update-status parent options, preserving OpenClaw's parent
   `update --json/--timeout status` option behavior.
   - Status: checkpointed in `f088293f`
@@ -3099,6 +3104,10 @@ may lag behind this tracker.
   `mediaIds`/`mediaUrls`, and delivery provider metadata.
   - Status: checkpointed in `77149f94`
 
+- [x] Feishu/Lark media implicit reply fanout, preserving OpenClaw's
+  single-use batched reply policy across multi-media direct sends.
+  - Status: checkpointed in `ae7e9ed1`
+
 - [x] Feishu/Lark message-resource read hydration support, preserving
   OpenClaw `file_key` precedence, file-to-media retry behavior, inbound
   attachment storage, and read action media metadata projection.
@@ -3158,6 +3167,17 @@ may lag behind this tracker.
   caption text sent before the media-only video follow-up, preserving thread
   query placement, silent flags, provider `messageIds`, and delivery metadata.
   - Status: checkpointed in `90ceab78`
+
+- [x] Discord message-action voice sends with OpenClaw-shaped `asVoice`
+  handling, media requirement, text/component rejection, Ogg/Opus conversion,
+  attachment upload protocol, reply metadata, silent flags, and
+  `voiceMessage` result projection.
+  - Status: checkpointed in `6be0ca36`
+
+- [x] Discord direct audio-as-voice media sends with OpenClaw-shaped first
+  media voice delivery, text/media follow-ups, reply fanout, silent flags, and
+  ordered `messageIds` result metadata.
+  - Status: checkpointed in `b9331153`
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -6649,9 +6669,11 @@ may lag behind this tracker.
     channel capability discovery checkpointed in `326f471f`; Feishu/Lark
     direct provider-route media sends checkpointed in `77149f94`; Feishu/Lark
     read-media resource hydration checkpointed in `65da0455`; Feishu/Lark
-    post-media resource hydration checkpointed in `ed3aedb5`; Signal native
-    reaction action checkpointed in `c9b45ffb`; direct outbound reply policy
-    metadata checkpointed in `e115e5f1`
+    post-media resource hydration checkpointed in `ed3aedb5`; Discord voice
+    message sends checkpointed in `6be0ca36`; Discord direct audio-as-voice
+    sends checkpointed in `b9331153`; Signal receive routing checkpointed in
+    `25279aa3`; Signal native reaction action checkpointed in `c9b45ffb`;
+    direct outbound reply policy metadata checkpointed in `e115e5f1`
   - Weight: 3
 
 - [x] Feishu/Lark native outbound route.
@@ -9468,6 +9490,161 @@ may lag behind this tracker.
     tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
     focused `git diff --check`.
 
+- [x] Feishu/Lark multi-media implicit reply fanout.
+  - Source: `openclaw-main/src/infra/outbound/reply-policy.ts`,
+    `openclaw-main/src/infra/outbound/message-plan.ts`,
+    `openclaw-main/src/infra/outbound/message-plan.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: route-backed Feishu/Lark multi-media sends consume implicit
+    `replyToMode: "batched"` reply targets only on the first media payload,
+    while later media payloads send top-level and preserve ordered media
+    result metadata.
+  - Evidence required: focused Feishu reply fanout proof, adjacent Feishu
+    native media proof, adjacent Telegram reply fanout proof, ruff, mypy
+  - Status: checkpointed in `ae7e9ed1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_feishu_reply_fanout -q`
+    (`1 failed` before implementation because both media sends used the reply
+    endpoint, then `1 passed`), adjacent provider proof
+    `python -m pytest tests\test_ops_mesh.py -q -k "feishu_native_media or feishu_reply_fanout or feishu_send_route or telegram_reply_fanout"`
+    (`4 passed, 486 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Discord message-action voice sends.
+  - Source: `openclaw-main/extensions/discord/src/actions/runtime.messaging.send.ts`,
+    `openclaw-main/extensions/discord/src/send.voice.ts`,
+    `openclaw-main/extensions/discord/src/voice-message.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: `message.action send` with `asVoice=true` requires media,
+    rejects text/components, preserves `replyTo` and `silent`, loads and
+    converts audio to Ogg/Opus when needed, requests a Discord attachment
+    upload URL, uploads the voice bytes, posts the final Discord voice message
+    with flags/metadata, and returns OpenClaw-shaped `voiceMessage` result
+    metadata.
+  - Evidence required: focused Discord voice dispatch proof, protocol helper
+    proof, adjacent Discord native/media proof, ruff, mypy
+  - Status: checkpointed in `6be0ca36`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_discord_voice_send_route -q`
+    (`1 failed` before implementation because the webhook send path was used,
+    then `1 passed`), protocol helper proof
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_discord_voice_send_route tests\test_ops_mesh.py::test_ops_mesh_service_discord_voice_upload_uses_attachment_protocol -q`
+    (`2 passed`), adjacent provider proof
+    `python -m pytest tests\test_ops_mesh.py -q -k "discord_voice_send or discord_voice_upload or discord_voice_status or discord_native or discord_media or discord_video or discord_reply or discord_thread_query"`
+    (`9 passed, 483 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Discord direct audio-as-voice media sends.
+  - Source: `openclaw-main/extensions/discord/src/outbound-adapter.ts`,
+    `openclaw-main/extensions/discord/src/outbound-payload.ts`,
+    `openclaw-main/extensions/discord/src/outbound-adapter.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: direct provider-route sends with `audioAsVoice=true` route the
+    first media item through Discord voice delivery, send text and remaining
+    media as ordered follow-ups, preserve `silent`, honor `replyToMode` and
+    `replyToIdSource` fanout rules, and project final/ordered provider result
+    metadata.
+  - Evidence required: focused Discord direct audio-as-voice proof, adjacent
+    Discord native/media proof, ruff, mypy
+  - Status: checkpointed in `b9331153`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_discord_audio_as_voice_payload -q`
+    (`1 failed` before implementation because only webhook media sends were
+    produced, then `1 passed`), adjacent provider proof
+    `python -m pytest tests\test_ops_mesh.py -q -k "discord_audio_as_voice or discord_voice_send or discord_voice_upload or discord_voice_status or discord_native or discord_media or discord_video or discord_reply or discord_thread_query"`
+    (`10 passed, 483 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Signal receive envelope session routing.
+  - Source: `openclaw-main/extensions/signal/src/monitor/event-handler.ts`,
+    `openclaw-main/extensions/signal/src/monitor/event-handler.inbound-context.test.ts`,
+    `openclaw-main/test/helpers/channels/inbound-contract.signal.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `src/openzues/app.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: signal-cli `receive` envelopes are decoded from JSON, sync
+    messages are dropped without delivery, direct/group messages route to
+    OpenClaw-shaped `agent:main:signal:*` session keys, session delivery keeps
+    raw chat text in `BodyForAgent` / `CommandBody`, and result metadata
+    preserves provider/surface, `MessageSid`, reply target, session key,
+    conversation target, and delivery message id.
+  - Evidence required: focused Signal receive proof, sync-drop proof, route
+    proof, adjacent Signal provider proof, ruff, mypy
+  - Status: checkpointed in `25279aa3`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_signal_receive_delivers_direct_context -q`
+    (`1 failed` before implementation because the receive handler was missing,
+    then `1 passed`), route red/green
+    `python -m pytest tests\test_ops_mesh.py::test_signal_receive_route_dispatches_native_receive_event -q`
+    (`1 failed` before the HTTP adapter existed, then `1 passed`), focused
+    receive trio
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_signal_receive_delivers_direct_context tests\test_ops_mesh.py::test_ops_mesh_service_handle_signal_receive_skips_sync_message tests\test_ops_mesh.py::test_signal_receive_route_dispatches_native_receive_event -q`
+    (`3 passed`), adjacent provider proof
+    `python -m pytest tests\test_ops_mesh.py -q -k "signal_receive or signal_native or signal_react"`
+    (`7 passed, 489 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py src\openzues\app.py
+    tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+    src\openzues\app.py`, and focused `git diff --check`.
+
+- [x] Runtime restart diagnostics exit-signal labels.
+  - Source: `openclaw-main/src/daemon/runtime-format.ts`,
+    `openclaw-main/src/daemon/runtime-format.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: signal-shaped launchd/runtime exit statuses
+    `129`/`130`/`131`/`134`/`137`/`143` render with signal labels in
+    restart-health diagnostics, while non-signal statuses preserve scalar
+    output.
+  - Evidence required: focused formatter proof, adjacent restart-health proof,
+    ruff, mypy
+  - Status: checkpointed in `37af5b93`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_restart_runtime_diagnostics_label_abort_exit_status -q`
+    (`1 failed` before implementation because the diagnostic rendered bare
+    `lastExit=134`, then `1 passed`), adjacent restart-health proof
+    `python -m pytest tests\test_cli.py -q -k "restart_runtime_diagnostics or restart_health"`
+    (`3 passed, 620 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] Installed plugin facade-runtime registry fallback.
+  - Source: `openclaw-main/src/plugin-sdk/facade-runtime.ts`,
+    `openclaw-main/src/plugin-sdk/facade-activation-check.runtime.ts`,
+    `openclaw-main/src/plugins/contracts/runtime-seams.contract.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native plugin tool executions carry installed plugin registry
+    rows from activation, resolve `loadBundledPluginPublicSurfaceModuleSync`
+    requests against id/root/channel matches when bundled surfaces are absent,
+    track loaded facades by installed manifest id, and honor config policy for
+    activated load/can/try calls.
+  - Evidence required: focused installed facade proof, adjacent facade-runtime
+    proof, adjacent activation-check proof, ruff, mypy
+  - Status: checkpointed in `19613f06`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_openclaw_facade_runtime_loads_installed_registry_surface -q`
+    (`1 failed` before implementation with `Unable to open bundled plugin
+    public surface demo-channel/runtime-api.js`, then `1 passed`), adjacent
+    facade proof
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_facade_runtime_helpers tests\test_gateway_node_methods.py::test_tools_invoke_openclaw_facade_runtime_loads_installed_registry_surface tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_facade_activation_check_runtime -q`
+    (`3 passed`), adjacent keyword proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "facade_runtime or facade_activation_check or installed_registry_surface"`
+    (`3 passed, 1267 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
+
 - [x] Telegram media caption passthrough.
   - Source: `openclaw-main/extensions/telegram/src/send.ts`,
     `openclaw-main/extensions/telegram/src/outbound-adapter.ts`,
@@ -9550,6 +9727,30 @@ may lag behind this tracker.
     then `1 passed`), adjacent package-update proof
     `python -m pytest tests\test_cli.py -q -k "update_post_core or post_update_plugin_sync or package_update"`
     (`7 passed, 614 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
+
+- [x] Package update post-core fresh-process handoff.
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/cli/update-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: package-manager core updates and changed git core updates try a
+    fresh `openzues update` process with `OPENCLAW_UPDATE_POST_CORE` env for
+    plugin post-update sync, preserve result-file plugin metadata in the
+    parent update envelope, and fall back to inline sync when the fresh process
+    does not resume.
+  - Evidence required: focused fresh-process handoff proof, focused post-core
+    pair proof, adjacent package-update proof, ruff, mypy
+  - Status: checkpointed in `81f715ab`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_json_uses_fresh_process_for_package_post_update_plugins -q`
+    (`1 failed` before implementation because the parent ran inline plugin
+    update, then `1 passed`), focused post-core pair proof (`2 passed`),
+    adjacent package-update proof
+    `python -m pytest tests\test_cli.py -q -k "update_post_core or fresh_process or post_update_plugin_sync or package_update"`
+    (`8 passed, 614 deselected`), `ruff check src\openzues\cli.py
     tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
     `git diff --check`.
 
