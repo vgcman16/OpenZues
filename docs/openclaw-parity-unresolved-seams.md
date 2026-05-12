@@ -139,9 +139,9 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.92% after the
   latest provider-gated plugin native command-spec slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.965%
+- The provider-native inbound/outbound breadth family is estimated at ~99.97%
   after route-backed Telegram stale-thread retry fallback for JSON and
-  HTTP-error paths.
+  HTTP-error paths and LINE signed webhook ingress.
 - The CLI/operator control-plane family is estimated at ~99.9996% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -11846,3 +11846,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9996%. Continue remaining provider-specific media/reply edges, deeper
   installed plugin activation, companion breadth, LINE webhook ingress, or the
   next packaging edge.
+- Current queue-head adjustment: LINE signed webhook ingress now exposes
+  `/line/webhook`, validates `X-Line-Signature` over the raw body using
+  `channels.line.channelSecret`, enforces the 64 KiB raw-body cap, and dispatches
+  valid callback bodies through the native OpsMesh LINE handler before returning
+  `{ "status": "ok" }`. Source/test checkpointed in `c3279e34`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth moves to ~99.97%. Continue remaining provider-specific media/reply
+  edges, deeper installed plugin activation, companion breadth, or the next
+  packaging edge.

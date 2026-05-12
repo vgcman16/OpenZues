@@ -24,7 +24,7 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.92% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.985% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.965% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.97% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9996% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.9996% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
@@ -386,8 +386,35 @@ source/test checkpointed in `6897eae6`; runtime/CLI/doctor and CLI/operator
 parity move to ~99.9996%. Continue provider-specific media/reply edges, deeper
 installed plugin activation, companion breadth, LINE webhook ingress, or the
 next packaging edge.
+Provider addendum: `OZ-PROV-001EY` LINE signed webhook ingress is source/test
+checkpointed in `c3279e34`; provider-native inbound/outbound breadth moves to
+~99.97%. Continue provider-specific media/reply edges, deeper installed plugin
+activation, companion breadth, or the next packaging edge.
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001EY` LINE signed webhook ingress
+  - Source: `openclaw-main/extensions/line/src/webhook.ts`,
+    `openclaw-main/extensions/line/src/signature.ts`,
+    `openclaw-main/extensions/line/src/bot.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`, `src/openzues/services/ops_mesh.py`,
+    `tests/test_line_webhook.py`
+  - Contract: `/line/webhook` requires `X-Line-Signature`, validates
+    HMAC-SHA256 base64 over the raw request body against
+    `channels.line.channelSecret`, rejects oversized/invalid bodies before
+    dispatch, and hands valid LINE callback events to native OpsMesh handling
+    before returning `{ "status": "ok" }`.
+  - Evidence required: focused LINE webhook route proof, adjacent LINE/app
+    proof, ruff, mypy
+  - Status: checkpointed in `c3279e34`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_line_webhook.py -q` (`2 failed` before
+    implementation, then `2 passed`), adjacent LINE/app proof (`3 passed`),
+    `ruff check src\openzues\app.py src\openzues\services\ops_mesh.py
+    tests\test_line_webhook.py`, `mypy src\openzues\app.py
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 
 - [x] `OZ-PKG-001CS` package update Node engine preflight
   - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
