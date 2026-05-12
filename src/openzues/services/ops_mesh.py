@@ -6047,6 +6047,21 @@ def _googlechat_messages_endpoint(
     return endpoint
 
 
+def _googlechat_resource_endpoint(
+    target: str | None,
+    resource_name: str,
+    *,
+    query: dict[str, str] | None = None,
+) -> str:
+    endpoint = f"{_googlechat_api_base(target).rstrip('/')}/{resource_name.strip('/')}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Google Chat route target must be an http(s) Chat API base URL.")
+    if query:
+        separator = "&" if "?" in endpoint else "?"
+        endpoint = f"{endpoint}{separator}{urlencode(query)}"
+    return endpoint
+
+
 def _googlechat_direct_message_endpoint(target: str | None, *, user_name: str) -> str:
     endpoint = f"{_googlechat_api_base(target).rstrip('/')}/spaces:findDirectMessage"
     separator = "&" if "?" in endpoint else "?"
@@ -24469,7 +24484,12 @@ class OpsMeshService:
             )
         if channel == "zalo" and action == "send":
             return await self._dispatch_zalo_send_message_action(request)
-        if channel == "googlechat" and action in {"send", "upload-file"}:
+        if channel == "googlechat" and action in {
+            "react",
+            "reactions",
+            "send",
+            "upload-file",
+        }:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
@@ -24479,6 +24499,13 @@ class OpsMeshService:
                     f"No native Google Chat route is configured for message.action {action}."
                 )
             secret_token = await self._notification_route_secret_token(route)
+            if action in {"react", "reactions"}:
+                return await asyncio.to_thread(
+                    self._dispatch_googlechat_reaction_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
             return await asyncio.to_thread(
                 self._dispatch_googlechat_send_message_action,
                 route,
@@ -36609,6 +36636,139 @@ class OpsMeshService:
         if thread:
             action_result["threadId"] = thread
         return {"ok": True, "result": action_result}
+
+    def _googlechat_list_reactions(
+        self,
+        route: dict[str, Any],
+        *,
+        message_name: str,
+        limit: int | None = None,
+        secret_token: str | None,
+    ) -> list[dict[str, object]]:
+        query = {"pageSize": str(limit)} if limit is not None and limit > 0 else None
+        result = self._request_json_provider_url(
+            _googlechat_resource_endpoint(
+                str(route.get("target") or ""),
+                f"{message_name}/reactions",
+                query=query,
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Google Chat reactions API returned a non-JSON response.")
+        raw_reactions = result.get("reactions")
+        if not isinstance(raw_reactions, list):
+            return []
+        return [dict(reaction) for reaction in raw_reactions if isinstance(reaction, dict)]
+
+    def _googlechat_delete_reaction(
+        self,
+        route: dict[str, Any],
+        *,
+        reaction_name: str,
+        secret_token: str | None,
+    ) -> None:
+        self._request_json_provider_url(
+            _googlechat_resource_endpoint(str(route.get("target") or ""), reaction_name),
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+        )
+
+    def _googlechat_app_user_names(self, route: dict[str, Any]) -> set[str]:
+        app_users = {"users/app"}
+        conversation_target = route.get("conversation_target")
+        if isinstance(conversation_target, Mapping):
+            for key in ("botUser", "bot_user", "appUser", "app_user"):
+                value = conversation_target.get(key)
+                if value is None:
+                    continue
+                normalized = str(value).strip()
+                if normalized:
+                    app_users.add(normalized)
+        return app_users
+
+    def _dispatch_googlechat_reaction_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        action = request.action.strip()
+        message_name = (
+            _message_action_param_string(request.params, "messageId", required=True) or ""
+        )
+        if action == "reactions":
+            limit = _message_action_param_integer(request.params, "limit")
+            return {
+                "ok": True,
+                "reactions": self._googlechat_list_reactions(
+                    route,
+                    message_name=message_name,
+                    limit=limit,
+                    secret_token=secret_token,
+                ),
+            }
+
+        emoji = _message_action_param_string(
+            request.params,
+            "emoji",
+            required=True,
+            allow_empty=True,
+        )
+        remove = request.params.get("remove") is True
+        if remove and not emoji:
+            raise RuntimeError("Emoji is required to remove a Google Chat reaction.")
+        if remove or not emoji:
+            app_users = self._googlechat_app_user_names(route)
+            removed = 0
+            for reaction in self._googlechat_list_reactions(
+                route,
+                message_name=message_name,
+                secret_token=secret_token,
+            ):
+                user = reaction.get("user")
+                user_name = (
+                    str(user.get("name") or "").strip()
+                    if isinstance(user, Mapping)
+                    else ""
+                )
+                if user_name not in app_users:
+                    continue
+                raw_emoji = reaction.get("emoji")
+                reaction_unicode = (
+                    str(raw_emoji.get("unicode") or "").strip()
+                    if isinstance(raw_emoji, Mapping)
+                    else ""
+                )
+                if emoji and reaction_unicode != emoji:
+                    continue
+                reaction_name = str(reaction.get("name") or "").strip()
+                if not reaction_name:
+                    continue
+                self._googlechat_delete_reaction(
+                    route,
+                    reaction_name=reaction_name,
+                    secret_token=secret_token,
+                )
+                removed += 1
+            return {"ok": True, "removed": removed}
+
+        result = self._request_json_provider_url(
+            _googlechat_resource_endpoint(
+                str(route.get("target") or ""),
+                f"{message_name}/reactions",
+            ),
+            method="POST",
+            payload={"emoji": {"unicode": emoji}},
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Google Chat add reaction returned a non-JSON response.")
+        return {"ok": True, "reaction": result}
 
     def _post_nextcloud_talk_provider_event(
         self,

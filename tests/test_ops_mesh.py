@@ -25785,6 +25785,133 @@ async def test_ops_mesh_dispatch_googlechat_upload_file_message_action_uses_atta
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_dispatch_googlechat_react_remove_only_deletes_bot_reactions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-googlechat-react-remove"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Google Chat Native Reactions Provider",
+        kind="googlechat",
+        target="https://chat.googleapis.com/v1",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="google-chat-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "googlechat",
+            "account_id": "workspace",
+            "peer_kind": "channel",
+            "peer_id": "spaces/AAAAAAA",
+            "botUser": "users/app-bot",
+        },
+    )
+    googlechat_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, extra_headers, timeout_seconds
+        googlechat_requests.append(
+            (target, method, payload, secret_header_name, secret_token)
+        )
+        if method == "GET":
+            return {
+                "reactions": [
+                    {
+                        "name": "spaces/AAAAAAA/messages/msg-1/reactions/one",
+                        "emoji": {"unicode": "\U0001f44d"},
+                        "user": {"name": "users/app"},
+                    },
+                    {
+                        "name": "spaces/AAAAAAA/messages/msg-1/reactions/two",
+                        "emoji": {"unicode": "\U0001f44d"},
+                        "user": {"name": "users/app-bot"},
+                    },
+                    {
+                        "name": "spaces/AAAAAAA/messages/msg-1/reactions/three",
+                        "emoji": {"unicode": "\U0001f44d"},
+                        "user": {"name": "users/other"},
+                    },
+                ]
+            }
+        return {}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="googlechat",
+            action="react",
+            params={
+                "messageId": "spaces/AAAAAAA/messages/msg-1",
+                "emoji": "\U0001f44d",
+                "remove": True,
+            },
+            account_id="workspace",
+            requester_sender_id="users/alice",
+            sender_is_owner=True,
+            session_key="agent:main:googlechat:channel:spaces/AAAAAAA",
+            idempotency_key="idem-googlechat-react-remove-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": 2}
+    assert googlechat_requests == [
+        (
+            "https://chat.googleapis.com/v1/spaces/AAAAAAA/messages/msg-1/reactions",
+            "GET",
+            None,
+            "Authorization",
+            "Bearer google-chat-access-token",
+        ),
+        (
+            "https://chat.googleapis.com/v1/spaces/AAAAAAA/messages/msg-1/reactions/one",
+            "DELETE",
+            None,
+            "Authorization",
+            "Bearer google-chat-access-token",
+        ),
+        (
+            "https://chat.googleapis.com/v1/spaces/AAAAAAA/messages/msg-1/reactions/two",
+            "DELETE",
+            None,
+            "Authorization",
+            "Bearer google-chat-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_resolves_googlechat_dm_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
