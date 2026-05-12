@@ -4,7 +4,7 @@
 
 - Updated: 2026-05-12.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- Estimated active gateway/session/tool-contract family parity: ~99.968% for the bounded local OpenZues path.
+- Estimated active gateway/session/tool-contract family parity: ~99.969% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
@@ -23693,6 +23693,33 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_method_policy.py`, and focused `git diff
   --check`. Source/test checkpointed in `587c181b`.
+- Native web-push gateway methods now cover OpenClaw's
+  `push.web.vapidPublicKey`, `push.web.subscribe`, `push.web.unsubscribe`,
+  and `push.web.test` cluster from `src/gateway/server-methods/push.ts` and
+  `src/infra/push-web.ts`. The native service resolves env-first/persisted
+  VAPID keys, persists endpoint-hashed subscriptions, updates repeated
+  endpoint registrations in place, broadcasts test notifications through a
+  fakeable sender, removes expired endpoint registrations, and preserves the
+  no-subscriptions invalid request. This closes `OZ-RT-001BG`; repo-wide
+  parity remains estimated at ~99.9%, and active
+  gateway/session/tool-contract parity moves to ~99.969%.
+- Verified the gateway web-push seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_push_web_subscribe_test_and_unsubscribe_round_trip tests\test_gateway_node_methods.py::test_push_web_rejects_invalid_params -q`
+  (`ModuleNotFoundError: No module named 'openzues.services.gateway_web_push'`
+  before implementation, then `2 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "push_web or push_test"`
+  (`6 passed, 1263 deselected`), policy proof
+  `python -m pytest tests\test_gateway_method_policy.py -q -k "push_web or method_scope or runtime_handlers"`
+  (`2 passed, 17 deselected`), handler-string sweep with no missing
+  OpenClaw `server-methods/*.ts` methods, `ruff check
+  src\openzues\services\gateway_web_push.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`,
+  `mypy src\openzues\services\gateway_web_push.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`, and focused `git diff
+  --check`. Source/test checkpointed in `af0fc977`.
 
 ## References
 
