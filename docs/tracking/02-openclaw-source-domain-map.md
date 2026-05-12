@@ -35,8 +35,12 @@ dispatch from `extensions/browser/src/gateway/browser-request.ts` is
 checkpointed in `430e365b`; it covers native OpenZues validation,
 persistent-profile mutation rejection, connected browser-node `browser.proxy`
 dispatch, query/body/timeout/profile propagation, and upstream-shaped `result`
-projection. Remaining browser-request depth is local control-service fallback,
-node selection policy, and proxy file persistence/path rewriting.
+projection. `OZ-CANVAS-001D` proxy-file persistence/path rewriting from
+`extensions/browser/src/browser/proxy-files.ts` is checkpointed in `97c32bc8`;
+it covers `files[]` base64 decoding, native browser proxy media persistence,
+and `path` / `imagePath` / `download.path` rewrites. Remaining
+browser-request depth is local control-service fallback and node selection
+policy.
 
 Packaging row addendum: `OZ-PKG-001CA` release-channel git update coverage
 from `src/infra/update-runner.ts`, `src/infra/update-channels.ts`, and

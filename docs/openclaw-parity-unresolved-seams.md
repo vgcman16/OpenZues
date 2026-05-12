@@ -6,7 +6,7 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.93% of the
+- The active gateway/session/tool-contract family is estimated at ~99.94% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.985% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -139,8 +139,8 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.93% after the
-  latest `browser.request` node-proxy dispatch slice.
+- The gateway session/tool-contract family is estimated at ~99.94% after the
+  latest `browser.request` proxy-file persistence slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.999%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
@@ -11988,6 +11988,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Source/test checkpointed in `430e365b`; repo-wide parity remains estimated
   at ~99.9%, active gateway/session/tool-contract parity moves to ~99.93%,
   and browser/canvas/nodes/voice bounded-command parity moves to ~99.2%.
-  Continue `browser.request` local control-service fallback/proxy file
-  persistence, remaining provider-specific media/reply edges, deeper installed
+  Continue `browser.request` proxy file persistence, local control-service
+  fallback, remaining provider-specific media/reply edges, deeper installed
   plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` now persists browser proxy
+  `files[]` payloads into a native browser proxy media directory and rewrites
+  `result.path`, `result.imagePath`, and `result.download.path` to the stored
+  artifact path, matching OpenClaw's `persistBrowserProxyFiles` /
+  `applyBrowserProxyPaths` contract. Source/test checkpointed in `97c32bc8`;
+  repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.94%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.3%. Continue
+  `browser.request` local control-service fallback/node selection policy,
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, companion breadth, or the next packaging edge.
