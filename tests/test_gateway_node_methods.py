@@ -112566,6 +112566,67 @@ def test_browser_request_runtime_maps_act_utility_routes(
     assert upload["files"] == [str(upload_file)]
 
 
+def test_browser_request_runtime_maps_status_and_doctor_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-1] == "session":
+            return Completed("parity-browser")
+        if invocation[-2:] == ["session", "list"]:
+            return Completed('["parity-browser"]')
+        if invocation[-1] == "profiles":
+            return Completed('{"profiles": [{"name": "Default", "status": "ready"}]}')
+        if invocation[-2:] == ["snapshot", "-i"]:
+            return Completed("button Launch")
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    status = service.request(
+        method="GET",
+        path="/",
+        session="parity-browser",
+    )
+    doctor = service.request(
+        method="GET",
+        path="/doctor",
+        query={"live": "true"},
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "session"],
+        ["agent-browser.cmd", "--session", "parity-browser", "session", "list"],
+        ["agent-browser.cmd", "--session", "parity-browser", "profiles"],
+        ["agent-browser.cmd", "--session", "parity-browser", "session"],
+        ["agent-browser.cmd", "--session", "parity-browser", "session", "list"],
+        ["agent-browser.cmd", "--session", "parity-browser", "profiles"],
+        ["agent-browser.cmd", "--session", "parity-browser", "snapshot", "-i"],
+    ]
+    assert status["enabled"] is True
+    assert status["profile"] == "parity-browser"
+    assert status["transport"] == "agent-browser"
+    assert status["running"] is True
+    assert status["profiles"] == [{"name": "Default", "status": "ready"}]
+    assert doctor["ok"] is True
+    assert doctor["status"]["running"] is True
+    assert any(check["id"] == "live-snapshot" for check in doctor["checks"])
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

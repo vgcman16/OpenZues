@@ -138,6 +138,14 @@ class GatewayBrowserRuntimeService:
         request_body = body if isinstance(body, dict) else {}
         request_query = query or {}
 
+        if normalized_method == "GET" and normalized_path == "/":
+            return self.status(session=session)
+        if normalized_method == "GET" and normalized_path == "/doctor":
+            return self.doctor(
+                session=session,
+                deep=browser_request_bool(request_query.get("deep")),
+                live=browser_request_bool(request_query.get("live")),
+            )
         if normalized_method == "GET" and normalized_path == "/snapshot":
             return self.snapshot(session=session)
         if normalized_method == "POST" and normalized_path == "/act":
@@ -659,6 +667,60 @@ class GatewayBrowserRuntimeService:
     def profiles(self, *, session: str) -> dict[str, object]:
         output = self._run(["profiles"], session=session, timeout_seconds=5.0)
         return browser_profiles_payload(session=session, output=output)
+
+    def status(self, *, session: str) -> dict[str, object]:
+        current = self.session_current(session=session)
+        sessions = self.session_list(session=session)
+        profiles = self.profiles(session=session)
+        running = browser_session_list_contains(sessions.get("sessions"), session)
+        return browser_status_payload(
+            session=session,
+            current=current,
+            sessions=sessions,
+            profiles=profiles,
+            running=running,
+        )
+
+    def doctor(
+        self,
+        *,
+        session: str,
+        deep: bool = False,
+        live: bool = False,
+    ) -> dict[str, object]:
+        status = self.status(session=session)
+        checks = browser_doctor_checks(status)
+        if deep or live:
+            try:
+                snapshot = self.snapshot(session=session)
+            except GatewayBrowserRuntimeError as exc:
+                checks.append(
+                    {
+                        "id": "live-snapshot",
+                        "label": "Live snapshot",
+                        "status": "fail",
+                        "summary": str(exc),
+                    }
+                )
+            else:
+                checks.append(
+                    {
+                        "id": "live-snapshot",
+                        "label": "Live snapshot",
+                        "status": "pass",
+                        "summary": snapshot.get("snapshotSummary")
+                        or "Native agent-browser snapshot succeeded.",
+                    }
+                )
+        ok = all(check.get("status") != "fail" for check in checks)
+        return {
+            "ok": ok,
+            "status": status,
+            "checks": checks,
+            "summary": "Browser doctor checks passed."
+            if ok
+            else "Browser doctor checks failed.",
+        }
 
     def get(
         self,
@@ -1792,6 +1854,65 @@ def browser_session_list_payload(*, session: str, output: str) -> dict[str, obje
         "sessions": sessions,
         "lines": lines,
     }
+
+
+def browser_session_list_contains(raw_sessions: object, session: str) -> bool:
+    if not isinstance(raw_sessions, list):
+        return False
+    expected = session.strip()
+    for entry in raw_sessions:
+        if isinstance(entry, str) and entry.strip() == expected:
+            return True
+        if isinstance(entry, dict):
+            for key in ("session", "name", "id", "currentSession"):
+                value = entry.get(key)
+                if isinstance(value, str) and value.strip() == expected:
+                    return True
+    return False
+
+
+def browser_status_payload(
+    *,
+    session: str,
+    current: dict[str, object],
+    sessions: dict[str, object],
+    profiles: dict[str, object],
+    running: bool,
+) -> dict[str, object]:
+    return {
+        "ok": True,
+        "enabled": True,
+        "profile": session,
+        "driver": "agent-browser",
+        "transport": "agent-browser",
+        "running": running,
+        "cdpReady": running,
+        "cdpHttp": None,
+        "session": session,
+        "currentSession": current.get("currentSession") or session,
+        "sessions": sessions.get("sessions") if isinstance(sessions.get("sessions"), list) else [],
+        "profiles": profiles.get("profiles") if isinstance(profiles.get("profiles"), list) else [],
+    }
+
+
+def browser_doctor_checks(status: dict[str, object]) -> list[dict[str, object]]:
+    running = status.get("running") is True
+    return [
+        {
+            "id": "native-runtime",
+            "label": "Native agent-browser runtime",
+            "status": "pass",
+            "summary": "Native agent-browser command runtime is available.",
+        },
+        {
+            "id": "session",
+            "label": "Browser session",
+            "status": "pass" if running else "warn",
+            "summary": "Browser session is active."
+            if running
+            else "Browser session is not listed as active.",
+        },
+    ]
 
 
 def browser_diff_snapshot_payload(
