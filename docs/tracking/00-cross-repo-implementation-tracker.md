@@ -24,7 +24,7 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.92% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.985% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.97% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.975% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9996% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.9996% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
@@ -390,8 +390,38 @@ Provider addendum: `OZ-PROV-001EY` LINE signed webhook ingress is source/test
 checkpointed in `c3279e34`; provider-native inbound/outbound breadth moves to
 ~99.97%. Continue provider-specific media/reply edges, deeper installed plugin
 activation, companion breadth, or the next packaging edge.
+Provider addendum: `OZ-PROV-001EZ` LINE text webhook session delivery is
+source/test checkpointed in `906a7147`; provider-native inbound/outbound
+breadth moves to ~99.975%. Continue LINE postback webhook delivery,
+provider-specific media/reply edges, deeper installed plugin activation,
+companion breadth, or the next packaging edge.
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001EZ` LINE text webhook session delivery
+  - Source: `openclaw-main/extensions/line/src/bot.ts`,
+    `openclaw-main/extensions/line/src/bot-handlers.ts`,
+    `openclaw-main/extensions/line/src/bot-message-context.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: signed LINE text `message` webhook events resolve direct user
+    sources into OpenClaw-shaped LINE conversation targets, derive
+    workspace-affinity session keys, deliver text through native session
+    delivery, redact reply tokens in result metadata, and expose sender,
+    conversation, session, inbound-message, and delivery metadata.
+  - Evidence required: focused LINE text delivery proof, adjacent LINE webhook
+    and provider proof, ruff, mypy
+  - Status: checkpointed in `906a7147`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent LINE
+    webhook/provider proof
+    `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+    (`13 passed, 454 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_line_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 
 - [x] `OZ-PROV-001EY` LINE signed webhook ingress
   - Source: `openclaw-main/extensions/line/src/webhook.ts`,
