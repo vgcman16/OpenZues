@@ -185,6 +185,7 @@ SLACK_MAX_BLOCKS = 50
 SLACK_COMMAND_ARG_CHROME_BLOCKS = 3
 SLACK_COMMAND_ARG_ACTION_BLOCKS_MAX = SLACK_MAX_BLOCKS - SLACK_COMMAND_ARG_CHROME_BLOCKS
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
+QQBOT_API_BASE_URL = "https://api.sgroup.qq.com"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 ZALO_WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60
 ZALO_WEBHOOK_REPLAY_MAX_ENTRIES = 5000
@@ -409,6 +410,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "telegram",
     "discord",
     "whatsapp",
+    "qqbot",
     "zalo",
     "feishu",
     "googlechat",
@@ -433,6 +435,7 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "slack",
     "telegram",
     "whatsapp",
+    "qqbot",
     "zalo",
     "msteams",
     "twitch",
@@ -3442,6 +3445,8 @@ def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPee
             "matrix:@",
             "msteams:user:",
             "teams:user:",
+            "qqbot:c2c:",
+            "c2c:",
             "@",
         )
     ):
@@ -3449,7 +3454,7 @@ def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPee
     tlon_target = _tlon_parse_target(normalized)
     if tlon_target is not None:
         return "direct" if tlon_target.kind == "dm" else "group"
-    if normalized.startswith("group:"):
+    if normalized.startswith(("group:", "qqbot:group:")):
         return "group"
     return "channel"
 
@@ -4907,6 +4912,63 @@ def _whatsapp_text_chunks(text: str, *, limit: int = 4000) -> list[str]:
 
 def _zalo_text_chunks(text: str, *, limit: int = 2000) -> list[str]:
     return _fixed_text_chunks(text, limit=limit)
+
+
+def _qqbot_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("QQBot route is missing an access token secret.")
+    return f"Bearer {token}"
+
+
+def _qqbot_target(raw_target: str | None) -> tuple[str, str] | None:
+    normalized = str(raw_target or "").strip()
+    if not normalized:
+        return None
+    if normalized.lower().startswith("qqbot:"):
+        normalized = normalized.split(":", 1)[1].strip()
+    for target_type, prefix in (
+        ("c2c", "c2c:"),
+        ("group", "group:"),
+        ("channel", "channel:"),
+    ):
+        if normalized.lower().startswith(prefix):
+            target_id = normalized[len(prefix) :].strip()
+            return (target_type, target_id) if target_id else None
+    return ("c2c", normalized)
+
+
+def _qqbot_canonical_target(target_type: str, target_id: str) -> str:
+    return f"qqbot:{target_type}:{target_id}"
+
+
+def _qqbot_message_endpoint(target: str | None, target_type: str, target_id: str) -> str:
+    base_url = str(target or "").strip() or QQBOT_API_BASE_URL
+    if target_type == "c2c":
+        path = f"/v2/users/{quote(target_id, safe='')}/messages"
+    elif target_type == "group":
+        path = f"/v2/groups/{quote(target_id, safe='')}/messages"
+    elif target_type == "channel":
+        path = f"/channels/{quote(target_id, safe='')}/messages"
+    else:
+        raise RuntimeError(f"Unsupported QQBot target type: {target_type}")
+    endpoint = f"{base_url.rstrip('/')}{path}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("QQBot route target must be an http(s) API base URL.")
+    return endpoint
+
+
+def _qqbot_message_id(result: object) -> str | None:
+    if not isinstance(result, Mapping):
+        return None
+    for key in ("id", "message_id", "messageId", "msg_id", "msgId"):
+        value = result.get(key)
+        if value not in (None, ""):
+            return str(value).strip() or None
+    payload = result.get("result")
+    if isinstance(payload, Mapping):
+        return _qqbot_message_id(payload)
+    return None
 
 
 def _zalo_bot_token(secret_token: str | None) -> str:
@@ -13219,6 +13281,14 @@ def _conversation_target_peer_id_matches(
         except RuntimeError:
             return False
         return bool(route_msteams_target and route_msteams_target == event_msteams_target)
+    if channel == "qqbot":
+        route_qqbot_target = _qqbot_target(route_peer_id)
+        event_qqbot_target = _qqbot_target(event_peer_id)
+        return bool(
+            route_qqbot_target
+            and event_qqbot_target
+            and route_qqbot_target == event_qqbot_target
+        )
     return False
 
 
@@ -23795,6 +23865,8 @@ class OpsMeshService:
             return self._post_discord_provider_event
         if route_kind == "whatsapp":
             return self._post_whatsapp_provider_event
+        if route_kind == "qqbot":
+            return self._post_qqbot_provider_event
         if route_kind == "zalo":
             return self._post_zalo_provider_event
         if route_kind == "feishu":
@@ -35173,6 +35245,57 @@ class OpsMeshService:
                         detail = str(error)
                     raise RuntimeError(f"WhatsApp API returned {detail}.")
         return native_result
+
+    def _post_qqbot_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("QQBot native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        parsed_target = _qqbot_target(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if parsed_target is None:
+            raise RuntimeError("QQBot route is missing a message target.")
+        target_type, target_id = parsed_target
+        canonical_target = _qqbot_canonical_target(target_type, target_id)
+        text = str(event.get("message") or "").strip()
+        if not text:
+            raise RuntimeError("QQBot native provider route requires text.")
+        payload: dict[str, object] = {"content": text, "msg_type": 0}
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if reply_to_id:
+            payload["msg_id"] = reply_to_id
+        result = self._post_json_webhook(
+            _qqbot_message_endpoint(str(route.get("target") or ""), target_type, target_id),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_qqbot_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("QQBot API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(
+                result.get("message")
+                or result.get("description")
+                or result.get("error")
+                or "unknown"
+            )
+            raise RuntimeError(f"QQBot API returned {error}.")
+        message_id = _qqbot_message_id(result)
+        if message_id is None:
+            raise RuntimeError("QQBot API response did not include a message id.")
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": canonical_target,
+            "channelId": canonical_target,
+            "meta": {"targetId": target_id, "targetType": target_type},
+        }
 
     def _post_zalo_provider_event(
         self,
