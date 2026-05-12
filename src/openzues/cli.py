@@ -65362,6 +65362,141 @@ function resolveRegistryPluginModuleLocationFromRecords(params = {}) {
   return null;
 }
 
+function facadeRuntimeRegistrySources() {
+  const sources = [];
+  if (Array.isArray(context.plugins)) {
+    sources.push(context.plugins);
+  }
+  const pluginContext =
+    context.plugin && typeof context.plugin === "object" ? context.plugin : {};
+  if (Array.isArray(pluginContext.manifestRegistry)) {
+    sources.push(pluginContext.manifestRegistry);
+  }
+  if (Array.isArray(pluginContext.plugins)) {
+    sources.push(pluginContext.plugins);
+  }
+  return sources;
+}
+
+function normalizeFacadeRuntimeRegistryRecord(plugin) {
+  if (!plugin || typeof plugin !== "object") {
+    return null;
+  }
+  const id = normalizeOptionalString(plugin.id || plugin.pluginId);
+  const rootDir = normalizeOptionalString(plugin.rootDir || plugin.root_dir);
+  if (!id || !rootDir) {
+    return null;
+  }
+  const channels = normalizeBrowserRuntimeStringList(
+    plugin.channels,
+    (entry) => normalizeOptionalString(entry) || "",
+  );
+  if (
+    plugin.channelCatalogMeta &&
+    typeof plugin.channelCatalogMeta === "object" &&
+    typeof plugin.channelCatalogMeta.id === "string"
+  ) {
+    const channelId = normalizeOptionalString(plugin.channelCatalogMeta.id);
+    if (channelId && !channels.includes(channelId)) {
+      channels.push(channelId);
+    }
+  }
+  return {
+    id,
+    rootDir,
+    channels,
+    origin: normalizeOptionalString(plugin.origin) || "workspace",
+    enabledByDefault: plugin.enabledByDefault === true,
+    status: normalizeOptionalString(plugin.status),
+  };
+}
+
+function facadeRuntimeManifestRegistry() {
+  const records = [];
+  const seen = new Set();
+  for (const source of facadeRuntimeRegistrySources()) {
+    for (const plugin of source) {
+      const record = normalizeFacadeRuntimeRegistryRecord(plugin);
+      if (!record) {
+        continue;
+      }
+      const key = `${record.id}::${path.resolve(record.rootDir)}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      records.push(record);
+    }
+  }
+  return records;
+}
+
+function facadeRuntimePathInsideRoot(rootDir, candidatePath) {
+  if (!rootDir || !candidatePath) {
+    return false;
+  }
+  const resolvedRoot = path.resolve(rootDir);
+  const resolvedCandidate = path.resolve(candidatePath);
+  return (
+    resolvedCandidate === resolvedRoot ||
+    resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`)
+  );
+}
+
+function resolveFacadeRuntimeManifestRecord(params = {}) {
+  const registry = Array.isArray(params.registry)
+    ? params.registry.map(normalizeFacadeRuntimeRegistryRecord).filter(Boolean)
+    : facadeRuntimeManifestRegistry();
+  const location = params.location || {};
+  const modulePath = normalizeOptionalString(location.modulePath);
+  if (modulePath) {
+    const matchedByLocation = registry.find((record) =>
+      facadeRuntimePathInsideRoot(record.rootDir, modulePath),
+    );
+    if (matchedByLocation) {
+      return matchedByLocation;
+    }
+  }
+  return (
+    registry.find((plugin) => plugin.id === params.dirName) ||
+    registry.find((plugin) => path.basename(String(plugin.rootDir || "")) === params.dirName) ||
+    registry.find(
+      (plugin) => Array.isArray(plugin.channels) && plugin.channels.includes(params.dirName),
+    ) ||
+    null
+  );
+}
+
+function facadeRuntimeRootConfig() {
+  if (context.config && typeof context.config === "object") {
+    return context.config;
+  }
+  const pluginContext =
+    context.plugin && typeof context.plugin === "object" ? context.plugin : {};
+  if (pluginContext.config && typeof pluginContext.config === "object") {
+    return pluginContext.config;
+  }
+  return {};
+}
+
+function resolveFacadeRuntimeManifestRecordAccess(manifestRecord) {
+  const rootConfig = facadeRuntimeRootConfig();
+  const state = resolveEffectiveEnableState({
+    id: manifestRecord.id,
+    origin: manifestRecord.origin || "workspace",
+    config: normalizePluginsConfig(rootConfig.plugins),
+    enabledByDefault: manifestRecord.enabledByDefault === true,
+  });
+  if (state.enabled) {
+    return { allowed: true, pluginId: manifestRecord.id };
+  }
+  return {
+    allowed: false,
+    pluginId: manifestRecord.id,
+    reason: state.reason || "plugin runtime is not activated",
+  };
+}
+
 const facadeLoaderRuntime = {
   createLazyFacadeArrayValue,
   createLazyFacadeObjectValue,
@@ -65418,13 +65553,17 @@ function resolveFacadeRuntimeModuleLocation(params = {}) {
   const env = params.env || process.env;
   const bundledPluginsDir = resolveFacadeRuntimeBundledPluginsDir(env);
   const packageRoot = resolveFacadeRuntimePackageRoot();
-  return resolveBundledFacadeModuleLocation({
+  const bundledLocation = resolveBundledFacadeModuleLocation({
     ...params,
     currentModulePath: typeof __filename === "string" ? __filename : "",
     packageRoot,
     bundledPluginsDir,
     env,
   });
+  if (bundledLocation) {
+    return bundledLocation;
+  }
+  return resolveRegistryPluginModuleLocationForFacadeRuntime(params);
 }
 
 function buildFacadeRuntimeActivationCheckParams(params = {}, location) {
@@ -65440,12 +65579,12 @@ function buildFacadeRuntimeActivationCheckParams(params = {}, location) {
 }
 
 function resolveTrackedFacadePluginId(params = {}) {
-  return String(params.dirName || "");
+  return resolveFacadeRuntimeManifestRecord(params)?.id || String(params.dirName || "");
 }
 
 function resolveRegistryPluginModuleLocationForFacadeRuntime(params = {}) {
   return resolveRegistryPluginModuleLocationFromRecords({
-    registry: Array.isArray(params.registry) ? params.registry : [],
+    registry: Array.isArray(params.registry) ? params.registry : facadeRuntimeManifestRegistry(),
     dirName: params.dirName,
     artifactBasename: params.artifactBasename,
   });
@@ -65473,6 +65612,10 @@ function resolveBundledPluginPublicSurfaceAccessForFacadeRuntime(params = {}) {
       allowed: true,
       pluginId: params.dirName,
     };
+  }
+  const manifestRecord = resolveFacadeRuntimeManifestRecord(params);
+  if (manifestRecord) {
+    return resolveFacadeRuntimeManifestRecordAccess(manifestRecord);
   }
   return {
     allowed: false,
@@ -93985,6 +94128,7 @@ async function activatePlugin(plugin) {
         context.rawConfig && typeof context.rawConfig === "object"
           ? context.rawConfig
           : undefined,
+      manifestRegistry: Array.isArray(context.plugins) ? context.plugins : undefined,
       activationSourceConfig:
         context.activationSourceConfig && typeof context.activationSourceConfig === "object"
           ? context.activationSourceConfig
@@ -94244,6 +94388,9 @@ def _native_plugin_runtime_specs_from_loader_payload(
         )
         config_payload = entry.get("config")
         raw_config_payload = entry.get("rawConfig", entry.get("raw_config"))
+        manifest_registry_payload = entry.get(
+            "manifestRegistry", entry.get("manifest_registry")
+        )
         plugin_sdk_alias_map_payload = entry.get(
             "pluginSdkAliasMap", entry.get("plugin_sdk_alias_map")
         )
@@ -94278,6 +94425,12 @@ def _native_plugin_runtime_specs_from_loader_payload(
                 plugin_context["config"] = dict(config_payload)
             if isinstance(raw_config_payload, Mapping):
                 plugin_context["rawConfig"] = dict(raw_config_payload)
+            if isinstance(manifest_registry_payload, list):
+                plugin_context["manifestRegistry"] = [
+                    dict(record)
+                    for record in manifest_registry_payload
+                    if isinstance(record, Mapping)
+                ]
             if isinstance(activation_source_config_payload, Mapping):
                 plugin_context["activationSourceConfig"] = dict(
                     activation_source_config_payload

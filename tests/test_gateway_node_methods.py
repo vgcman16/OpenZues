@@ -77604,6 +77604,139 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_openclaw_facade_runtime_loads_installed_registry_surface(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    installed_root = tmp_path / "registry" / "installed-demo"
+    installed_root.mkdir(parents=True)
+    (installed_root / "runtime-api.js").write_text(
+        'module.exports = { marker: "installed-ok" };\n',
+        encoding="utf-8",
+    )
+    runtime_entry = tmp_path / "runtime-plugin-installed-facade-runtime.cjs"
+    runtime_entry.write_text(
+        f"""
+const path = require("path");
+const runtime = require("openclaw/plugin-sdk/facade-runtime");
+
+const root = {json.dumps(str(tmp_path))};
+function rel(filePath) {{
+  return filePath ? path.relative(root, filePath).replace(/\\\\/g, "/") : null;
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.installed_facade_runtime",
+      description: "Load installed plugin runtime facade surface",
+      parameters: {{ type: "object" }},
+      execute() {{
+        runtime.resetFacadeRuntimeStateForTest();
+        const params = {{
+          dirName: "demo-channel",
+          artifactBasename: "runtime-api.js"
+        }};
+        const location = runtime.__testing.resolveFacadeModuleLocation(params);
+        const loaded = runtime.loadBundledPluginPublicSurfaceModuleSync(params);
+        const access = runtime.__testing.resolveBundledPluginPublicSurfaceAccess(params);
+        return {{
+          location: {{
+            modulePath: rel(location && location.modulePath),
+            boundaryRoot: rel(location && location.boundaryRoot)
+          }},
+          marker: loaded.marker,
+          importedIds: runtime.listImportedBundledPluginFacadeIds(),
+          access,
+          canActivated: runtime.canLoadActivatedBundledPluginPublicSurface(params),
+          activatedMarker:
+            runtime.loadActivatedBundledPluginPublicSurfaceModuleSync(params).marker,
+          tryActivatedMarker:
+            runtime.tryLoadActivatedBundledPluginPublicSurfaceModuleSync(params).marker
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "config": {
+                "plugins": {"entries": {"installed-demo": {"enabled": True}}}
+            },
+            "plugins": [
+                {
+                    "id": "installed-demo",
+                    "name": "Installed Demo",
+                    "status": "loaded",
+                    "origin": "config",
+                    "rootDir": str(installed_root),
+                    "channels": ["demo-channel"],
+                },
+                {
+                    "id": "runtime-installed-facade-plugin",
+                    "name": "Runtime Installed Facade Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                },
+            ],
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-installed-facade-runtime-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.installed_facade_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.installed_facade_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "location": {
+            "modulePath": "registry/installed-demo/runtime-api.js",
+            "boundaryRoot": "registry/installed-demo",
+        },
+        "marker": "installed-ok",
+        "importedIds": ["installed-demo"],
+        "access": {"allowed": True, "pluginId": "installed-demo"},
+        "canActivated": True,
+        "activatedMarker": "installed-ok",
+        "tryActivatedMarker": "installed-ok",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_facade_activation_check_runtime(
     tmp_path,
 ) -> None:
