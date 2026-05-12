@@ -164,8 +164,9 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~5.3% after QR
-  setup-code safety/SecretRef slices and device pairing CLI list/approve plus
+- The packaging/companion app breadth family is estimated at ~5.4% after QR
+  setup-code safety/SecretRef slices, device pairing CLI list/approve,
+  approve-preview gateway/auth flag preservation, and
   remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
@@ -12105,6 +12106,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   repo-wide parity remains estimated at ~99.9%, and packaging/companion app
   breadth moves to ~5.3%. Continue remote device CLI fallback/auth ergonomics,
   packaging/distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: `openzues devices approve --latest` now
+  preserves OpenClaw-style remote gateway preview flags: `--url` and
+  `--timeout` are echoed into the generated rerun command, while `--token` and
+  `--password` are exposed only as `requiresAuthFlags` booleans so secret
+  values never leak. Source/test checkpointed in `204bcdd2`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion app breadth moves to
+  ~5.4%. Continue actual remote device CLI fallback/auth dispatch,
+  packaging/distribution, provider/runtime, or companion app breadth.
 - Current queue-head adjustment: package-shaped updates now resolve registry
   target versions for dry-run downgrade previews, set `downgradeRisk` for
   explicit semver/dist-tag package targets, and refuse JSON/non-interactive
@@ -12577,3 +12586,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, and packaging/companion app breadth moves to ~5.3%. Continue
   remote device CLI fallback/auth ergonomics, packaging/distribution,
   provider/runtime, or companion app breadth.
+- Current queue-head adjustment: native `openzues devices approve --latest`
+  now carries OpenClaw-style remote gateway preview flags into the safe rerun
+  command while redacting secret material. `--url` and `--timeout` survive in
+  `approveCommand`; `--token` and `--password` only set
+  `requiresAuthFlags`. Source/test checkpointed in `204bcdd2`; repo-wide
+  parity remains estimated at ~99.9%, and packaging/companion app breadth
+  moves to ~5.4%. Continue actual remote device CLI fallback/auth dispatch,
+  packaging/distribution, provider/runtime, or companion app breadth.
