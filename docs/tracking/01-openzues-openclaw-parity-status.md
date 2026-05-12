@@ -21,7 +21,7 @@ may lag behind this tracker.
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.999984% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.999992% | High for bounded native bridge | Packaging post-core resume/fresh-process handoff, ACP bridge depth, and deeper installed plugin activation remain |
+| Runtime/CLI/doctor native bridge | ~99.999993% | High for bounded native bridge | Packaging post-core resume/fresh-process handoff and runtime exit-signal labels are checkpointed; ACP bridge depth and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.9% | Low, broad parity still open | QR setup-code safety, SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, and approval-state preview metadata are landed; companion apps remain mostly open |
 
@@ -9595,6 +9595,28 @@ may lag behind this tracker.
     src\openzues\services\ops_mesh.py src\openzues\app.py
     tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
     src\openzues\app.py`, and focused `git diff --check`.
+
+- [x] Runtime restart diagnostics exit-signal labels.
+  - Source: `openclaw-main/src/daemon/runtime-format.ts`,
+    `openclaw-main/src/daemon/runtime-format.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: signal-shaped launchd/runtime exit statuses
+    `129`/`130`/`131`/`134`/`137`/`143` render with signal labels in
+    restart-health diagnostics, while non-signal statuses preserve scalar
+    output.
+  - Evidence required: focused formatter proof, adjacent restart-health proof,
+    ruff, mypy
+  - Status: checkpointed in `37af5b93`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_restart_runtime_diagnostics_label_abort_exit_status -q`
+    (`1 failed` before implementation because the diagnostic rendered bare
+    `lastExit=134`, then `1 passed`), adjacent restart-health proof
+    `python -m pytest tests\test_cli.py -q -k "restart_runtime_diagnostics or restart_health"`
+    (`3 passed, 620 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
 
 - [x] Telegram media caption passthrough.
   - Source: `openclaw-main/extensions/telegram/src/send.ts`,
