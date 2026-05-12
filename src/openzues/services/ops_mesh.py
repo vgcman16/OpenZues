@@ -10084,13 +10084,25 @@ def _line_inbound_optional_string(value: object) -> str | None:
 
 
 def _line_webhook_event_text(event: Mapping[str, Any]) -> str | None:
-    if str(event.get("type") or "").strip().lower() != "message":
+    event_type = str(event.get("type") or "").strip().lower()
+    if event_type == "message":
+        message = _line_inbound_mapping(event.get("message"))
+        if str(message.get("type") or "").strip().lower() != "text":
+            return None
+        text = _line_inbound_optional_string(message.get("text"))
+        return text
+    if event_type != "postback":
         return None
-    message = _line_inbound_mapping(event.get("message"))
-    if str(message.get("type") or "").strip().lower() != "text":
+    postback = _line_inbound_mapping(event.get("postback"))
+    raw_data = _line_inbound_optional_string(postback.get("data"))
+    if raw_data is None:
         return None
-    text = _line_inbound_optional_string(message.get("text"))
-    return text
+    if "line.action=" not in raw_data:
+        return raw_data
+    params = dict(parse_qsl(raw_data, keep_blank_values=True))
+    action = str(params.get("line.action") or "").strip()
+    device = str(params.get("line.device") or "").strip()
+    return f"line action {action} device {device}" if device else f"line action {action}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -17962,6 +17974,10 @@ class OpsMeshService:
             if delivery_message_id is not None:
                 delivery["messageId"] = delivery_message_id
             inbound_message_id = _line_inbound_optional_string(message.get("id"))
+            if inbound_message_id is None:
+                inbound_message_id = _line_inbound_optional_string(
+                    event.get("webhookEventId")
+                )
             if inbound_message_id is not None:
                 delivery["inboundMessageId"] = inbound_message_id
             reply_token = _line_inbound_optional_string(event.get("replyToken"))
