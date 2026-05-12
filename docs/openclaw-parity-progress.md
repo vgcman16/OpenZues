@@ -24641,6 +24641,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `1b08e340`.
 
+- Native Google Chat `message.action react` / `reactions` now route through
+  provider-backed Chat API reaction endpoints. The remove path matches
+  OpenClaw's app-owned cleanup contract by listing reactions, deleting only
+  `users/app` or configured bot-user matches, filtering by emoji when
+  provided, and leaving user-owned reactions intact. This closes
+  `OZ-PROV-001GY`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.9999992%.
+- Verified the Google Chat reaction action seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_dispatch_googlechat_react_remove_only_deletes_bot_reactions -q`
+  (`1 failed` before implementation because `dispatch_message_action`
+  returned `None`, then `1 passed`), adjacent Google Chat provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "googlechat"` (`6 passed,
+  504 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `5dc2fce1`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

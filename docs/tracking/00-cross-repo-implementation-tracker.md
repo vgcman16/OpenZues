@@ -31,8 +31,8 @@ Hermes or Warp integration.
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
 
-Latest verified adjustment: `OZ-PROV-001GX` Google Chat upload-file message
-action moves provider-native inbound/outbound breadth to ~99.9999991%;
+Latest verified adjustment: `OZ-PROV-001GY` Google Chat reaction message
+actions move provider-native inbound/outbound breadth to ~99.9999992%;
 repo-wide OpenClaw parity remains estimated at ~99.9%.
 
 ## Current Worktree Boundary
@@ -17468,6 +17468,29 @@ companion breadth.
     returned `None`, then `1 passed`), adjacent
     `python -m pytest tests\test_ops_mesh.py -q -k "googlechat and (message_action or direct_channel_message)"`
     (`4 passed, 505 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001GY` Google Chat reaction message actions
+  - Source: `openclaw-main/extensions/googlechat/src/actions.ts`,
+    `openclaw-main/extensions/googlechat/src/actions.test.ts`,
+    `openclaw-main/extensions/googlechat/src/api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Google Chat `message.action react` / `reactions` resolves the
+    native route/account, uses provider-backed reaction list/create/delete
+    endpoints, removes only `users/app` or configured-bot reactions, filters
+    removal by emoji when provided, and preserves user-owned reactions.
+  - Evidence required: focused Google Chat reaction action proof, adjacent
+    Google Chat provider proof, ruff, mypy
+  - Status: checkpointed in `5dc2fce1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_dispatch_googlechat_react_remove_only_deletes_bot_reactions -q`
+    (`1 failed` before implementation because `dispatch_message_action`
+    returned `None`, then `1 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "googlechat"` (`6 passed,
+    504 deselected`), `ruff check
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 

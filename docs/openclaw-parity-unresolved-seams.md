@@ -13054,3 +13054,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound/outbound breadth moves to ~99.9999991%. Continue provider action
   breadth, packaging/distribution, device-token authz depth, ACP lifecycle, or
   companion app breadth.
+- Current queue-head adjustment: native Google Chat `message.action react` /
+  `reactions` now uses the provider-backed reactions endpoints, including
+  OpenClaw's remove path that deletes only app-owned/configured-bot reactions
+  matching the requested emoji and leaves user reactions intact. Source/test
+  checkpointed in `5dc2fce1`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.9999992%.
+  Continue provider action breadth, packaging/distribution, device-token authz
+  depth, ACP lifecycle, or companion app breadth.
