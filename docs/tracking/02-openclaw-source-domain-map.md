@@ -176,6 +176,11 @@ channel/account scoping, and CLI data-dir pairing-store wiring.
 `extensions/zalo/src/channel.runtime.ts` is checkpointed in `3a77ccf5`; it
 covers `openzues pairing approve --notify` sending the Zalo approved message
 through direct-channel delivery with idempotency metadata.
+`OZ-PROV-001FY` Zalo pairing command-owner bootstrap from
+`src/cli/pairing-cli.ts`, `src/commands/doctor-command-owner.ts`, and
+`src/config/config.ts` is checkpointed in `c105b1c5`; it covers writing
+`zalo:<sender>` to `commands.ownerAllowFrom` when approval succeeds and no
+command owner is configured.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
