@@ -145,6 +145,12 @@ skipping before native session delivery.
 checkpointed in `d0d548e2`; it covers `groupPolicy="allowlist"` /
 `groupAllowFrom` blocking non-allowlisted group senders before native session
 delivery.
+`OZ-PROV-001FS` Zalo direct-DM pairing challenge from
+`extensions/zalo/src/monitor.ts`, `src/pairing/pairing-challenge.ts`, and
+`src/pairing/pairing-store.ts` is checkpointed in `74ce8fbd`; it covers
+`dmPolicy="pairing"` creating scoped pending pairing requests, emitting pairing
+replies through route-backed outbound delivery when available, and skipping
+unknown direct senders before native session delivery.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and

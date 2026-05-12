@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.963% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.9998% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.99985% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99992% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99992% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
@@ -635,6 +635,23 @@ may lag behind this tracker.
     (delivered before implementation, then `1 passed`), adjacent Zalo
     provider proof (`10 passed, 476 deselected`), ruff, mypy, and focused
     `git diff --check`.
+
+- [x] Zalo direct-DM pairing challenge.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/src/pairing/pairing-challenge.ts`,
+    `openclaw-main/src/pairing/pairing-store.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: `dmPolicy="pairing"` drops unknown direct senders from session
+    delivery after creating a scoped pairing request and challenge reply.
+  - Evidence required: focused Zalo direct-DM pairing proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `74ce8fbd`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green direct-DM pairing proof
+    (missing challenge-service wiring before implementation, then `1 passed`),
+    adjacent Zalo provider proof (`11 passed, 476 deselected`), ruff, mypy, and
+    focused `git diff --check`.
 
 - [x] Gateway-status slash command diagnostics for `/gateway-status` and
   `/gwstatus`, keeping gateway diagnostics separate from session `/status` in
@@ -9376,6 +9393,29 @@ may lag behind this tracker.
     webhook/provider proof
     `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
     (`10 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Zalo direct-DM pairing challenge.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/src/pairing/pairing-challenge.ts`,
+    `openclaw-main/src/pairing/pairing-store.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: `dmPolicy="pairing"` blocks unknown direct senders, creates a
+    scoped Zalo pairing request, sends a pairing reply through route-backed
+    outbound delivery when available, and returns skip/pairing metadata.
+  - Evidence required: focused Zalo direct-DM pairing proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `74ce8fbd`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_issues_pairing_challenge_for_unknown_dm -q`
+    (missing challenge-service wiring before implementation, then `1 passed`),
+    adjacent Zalo webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+    (`11 passed, 476 deselected`), `ruff check
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
     tests\test_zalo_webhook.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
