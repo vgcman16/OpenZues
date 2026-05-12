@@ -112490,6 +112490,82 @@ def test_browser_request_runtime_maps_setting_routes(
     assert device["values"] == ["iPhone 12"]
 
 
+def test_browser_request_runtime_maps_act_utility_routes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    upload_file = tmp_path / "openzues-browser-upload-seed.txt"
+    upload_file.write_text("seed", encoding="utf-8")
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "ok") -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if "download" in invocation:
+            Path(invocation[-1]).write_bytes(b"download")
+            return Completed("download complete")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    highlight = service.request(
+        method="POST",
+        path="/highlight",
+        body={"ref": "@e2"},
+        session="parity-browser",
+    )
+    download = service.request(
+        method="POST",
+        path="/download",
+        body={"ref": "@download", "path": "reports/result.csv"},
+        session="parity-browser",
+    )
+    upload = service.request(
+        method="POST",
+        path="/hooks/file-chooser",
+        body={"inputRef": "@file", "paths": [str(upload_file)]},
+        session="parity-browser",
+    )
+
+    assert calls[0] == ["agent-browser.cmd", "--session", "parity-browser", "highlight", "@e2"]
+    assert calls[1][:5] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "download",
+        "@download",
+    ]
+    assert calls[2] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "upload",
+        "@file",
+        str(upload_file),
+    ]
+    assert highlight["selector"] == "@e2"
+    assert download["selector"] == "@download"
+    assert str(download["path"]).startswith(str(tmp_path))
+    assert str(download["path"]).endswith("result.csv")
+    assert download["sizeBytes"] == 8
+    assert upload["selector"] == "@file"
+    assert upload["files"] == [str(upload_file)]
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

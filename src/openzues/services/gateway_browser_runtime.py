@@ -253,6 +253,27 @@ class GatewayBrowserRuntimeService:
                 [browser_required_string(request_body, "name", label="name")],
                 session=session,
             )
+        if normalized_method == "POST" and normalized_path == "/highlight":
+            return self.highlight(
+                browser_required_string(request_body, "ref", label="ref"),
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/download":
+            requested_path = browser_required_string(request_body, "path", label="path")
+            return self.download(
+                browser_required_string(request_body, "ref", label="ref"),
+                session=session,
+                filename_hint=Path(requested_path).name,
+            )
+        if normalized_method == "POST" and normalized_path == "/hooks/file-chooser":
+            selector = browser_request_string(request_body, "inputRef", "ref", "element")
+            if not selector:
+                raise GatewayBrowserRuntimeError("inputRef, ref, or element is required")
+            return self.upload(
+                selector,
+                browser_request_string_list(request_body, "paths"),
+                session=session,
+            )
         if normalized_method == "POST" and normalized_path == "/tabs/open":
             target = request_body.get("url")
             if not isinstance(target, str) or not target.strip():
