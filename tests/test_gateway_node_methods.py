@@ -112217,6 +112217,76 @@ def test_browser_request_runtime_maps_storage_routes(
     assert clear_result["operation"] == "clear"
 
 
+def test_browser_request_runtime_maps_cookie_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-2:] == ["cookies", "get"]:
+            return Completed('{"cookies": [{"name": "theme", "value": "dark"}]}')
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    cookies = service.request(
+        method="GET",
+        path="/cookies",
+        session="parity-browser",
+    )
+    set_result = service.request(
+        method="POST",
+        path="/cookies/set",
+        body={
+            "cookie": {
+                "name": "theme",
+                "value": "dark",
+                "url": "https://example.test",
+                "httpOnly": True,
+            }
+        },
+        session="parity-browser",
+    )
+    clear_result = service.request(
+        method="POST",
+        path="/cookies/clear",
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "cookies", "get"],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "cookies",
+            "set",
+            "theme",
+            "dark",
+            "--url",
+            "https://example.test",
+            "--httpOnly",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "cookies", "clear"],
+    ]
+    assert cookies["cookies"] == [{"name": "theme", "value": "dark"}]
+    assert set_result["operation"] == "set"
+    assert set_result["name"] == "theme"
+    assert clear_result["operation"] == "clear"
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

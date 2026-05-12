@@ -202,6 +202,27 @@ class GatewayBrowserRuntimeService:
                     index,
                 )
                 return self.focus(target_id, session=session)
+        if normalized_method == "GET" and normalized_path == "/cookies":
+            return self.cookies_get(session=session)
+        if normalized_method == "POST" and normalized_path == "/cookies/clear":
+            return self.cookies_clear(session=session)
+        if normalized_method == "POST" and normalized_path == "/cookies/set":
+            raw_cookie = request_body.get("cookie")
+            if not isinstance(raw_cookie, dict):
+                raise GatewayBrowserRuntimeError("cookie is required")
+            cookie = {key: value for key, value in raw_cookie.items() if isinstance(key, str)}
+            return self.cookies_set(
+                browser_request_string(cookie, "name"),
+                browser_request_string(cookie, "value"),
+                session=session,
+                url=browser_request_string(cookie, "url") or None,
+                domain=browser_request_string(cookie, "domain") or None,
+                path=browser_request_string(cookie, "path") or None,
+                http_only=browser_json_bool(cookie, "httpOnly"),
+                secure=browser_json_bool(cookie, "secure"),
+                same_site=browser_request_string(cookie, "sameSite") or None,
+                expires=browser_request_int(cookie, "expires"),
+            )
         storage_parts = normalized_path.strip("/").split("/")
         if len(storage_parts) >= 2 and storage_parts[0] == "storage":
             storage_kind = unquote(storage_parts[1])
