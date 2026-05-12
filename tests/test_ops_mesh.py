@@ -15450,6 +15450,243 @@ async def test_ops_mesh_service_message_action_dispatches_discord_channel_list_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_voice_send_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-voice-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Voice Send Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    loaded_media: list[tuple[str, int]] = []
+    voice_uploads: list[dict[str, object]] = []
+
+    def fake_load_discord_media(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        max_bytes: int,
+    ) -> tuple[bytes, str]:
+        del self
+        loaded_media.append((media_url, max_bytes))
+        return b"ogg-opus-bytes", "audio/ogg"
+
+    def fake_request_discord_voice_message_upload(
+        self: OpsMeshService,
+        *,
+        channel_id: str,
+        media_bytes: bytes,
+        reply_to: str | None,
+        silent: bool,
+        secret_token: str | None,
+        duration_seconds: float | None = None,
+        waveform: str | None = None,
+    ) -> dict[str, object]:
+        del self, duration_seconds, waveform
+        voice_uploads.append(
+            {
+                "channel_id": channel_id,
+                "media_bytes": media_bytes,
+                "reply_to": reply_to,
+                "silent": silent,
+                "secret_token": secret_token,
+            }
+        )
+        return {"id": "voice-msg-1", "channel_id": "123456789"}
+
+    def fail_post_discord_provider_event(
+        self: OpsMeshService,
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del self, route, event_type, event, secret_token
+        raise AssertionError("Discord voice sends must not use the webhook send path.")
+
+    monkeypatch.setattr(OpsMeshService, "_load_discord_media", fake_load_discord_media)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_discord_voice_message_upload",
+        fake_request_discord_voice_message_upload,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_post_discord_provider_event",
+        fail_post_discord_provider_event,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="send",
+            params={
+                "to": "channel:123456789",
+                "path": "file:///tmp/voice.ogg",
+                "asVoice": True,
+                "replyTo": "reply-1",
+                "silent": True,
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:123456789",
+            idempotency_key="idem-discord-voice-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {"messageId": "voice-msg-1", "channelId": "123456789"},
+        "voiceMessage": True,
+    }
+    assert loaded_media == [("file:///tmp/voice.ogg", 100 * 1024 * 1024)]
+    assert voice_uploads == [
+        {
+            "channel_id": "123456789",
+            "media_bytes": b"ogg-opus-bytes",
+            "reply_to": "reply-1",
+            "silent": True,
+            "secret_token": "discord-bot-token",
+        }
+    ]
+
+
+def test_ops_mesh_service_discord_voice_upload_uses_attachment_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = object.__new__(OpsMeshService)
+    requests: list[Request] = []
+    final_posts: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    class FakeResponse:
+        def __init__(self, body: bytes, *, status: int = 200) -> None:
+            self._body = body
+            self.status = status
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del timeout
+        requests.append(request)
+        if request.full_url.endswith("/channels/123456789/attachments"):
+            return FakeResponse(
+                b'{"attachments":[{"id":0,"upload_url":"https://upload.discord.test/voice",'
+                b'"upload_filename":"uploaded/voice.ogg"}]}'
+            )
+        if request.full_url == "https://upload.discord.test/voice":
+            return FakeResponse(b"")
+        raise AssertionError(f"unexpected Discord voice request: {request.full_url}")
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        final_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "voice-msg-1", "channel_id": "123456789"}
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+
+    result = service._request_discord_voice_message_upload(
+        channel_id="123456789",
+        media_bytes=b"ogg-opus-bytes",
+        reply_to="reply-1",
+        silent=True,
+        secret_token="discord-bot-token",
+        duration_seconds=2.5,
+        waveform="waveform-base64",
+    )
+
+    assert result == {"id": "voice-msg-1", "channel_id": "123456789"}
+    assert len(requests) == 2
+    upload_url_request, attachment_upload_request = requests
+    assert upload_url_request.full_url == (
+        "https://discord.com/api/v10/channels/123456789/attachments"
+    )
+    assert upload_url_request.get_method() == "POST"
+    assert dict(upload_url_request.header_items()) == {
+        "Authorization": "Bot discord-bot-token",
+        "Content-type": "application/json",
+    }
+    assert json.loads((upload_url_request.data or b"").decode("utf-8")) == {
+        "files": [{"filename": "voice-message.ogg", "file_size": 14, "id": "0"}]
+    }
+    assert attachment_upload_request.full_url == "https://upload.discord.test/voice"
+    assert attachment_upload_request.get_method() == "PUT"
+    assert dict(attachment_upload_request.header_items()) == {"Content-type": "audio/ogg"}
+    assert attachment_upload_request.data == b"ogg-opus-bytes"
+    assert final_posts == [
+        (
+            "POST",
+            "https://discord.com/api/v10/channels/123456789/messages",
+            {
+                "flags": (1 << 13) | (1 << 12),
+                "attachments": [
+                    {
+                        "id": "0",
+                        "filename": "voice-message.ogg",
+                        "uploaded_filename": "uploaded/voice.ogg",
+                        "duration_secs": 2.5,
+                        "waveform": "waveform-base64",
+                    }
+                ],
+                "message_reference": {
+                    "message_id": "reply-1",
+                    "fail_if_not_exists": False,
+                },
+            },
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_discord_voice_status_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

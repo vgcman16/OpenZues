@@ -3712,6 +3712,26 @@ def _discord_media_is_likely_video(media_url: str) -> bool:
     )
 
 
+def _discord_is_native_voice_audio(filename: str, content_type: str | None) -> bool:
+    normalized_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    extension = Path(filename).suffix.lower()
+    return normalized_type in {"audio/ogg", "audio/opus"} or extension in {
+        ".ogg",
+        ".oga",
+        ".opus",
+    }
+
+
+def _discord_is_likely_audio(filename: str, content_type: str | None) -> bool:
+    normalized_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    extension = Path(filename).suffix.lower()
+    return normalized_type.startswith("audio/") or extension in FEISHU_TRANSCODABLE_AUDIO_EXTS
+
+
+def _discord_placeholder_waveform() -> str:
+    return base64.b64encode(bytes([0] * DISCORD_VOICE_WAVEFORM_SAMPLES)).decode("ascii")
+
+
 def _safe_slack_file_label(value: str | None, fallback: str) -> str:
     label = Path(str(value or "")).name.replace("\\", "_").replace("/", "_")
     label = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("._")
@@ -4119,6 +4139,13 @@ DISCORD_MAX_MESSAGE_MEDIA_BYTES = 100 * 1024 * 1024
 DISCORD_MAX_STICKER_BYTES = 512 * 1024
 DISCORD_POLL_LAYOUT_TYPE_DEFAULT = 1
 DISCORD_POLL_MAX_DURATION_HOURS = 32 * 24
+DISCORD_SUPPRESS_NOTIFICATIONS_FLAG = 1 << 12
+DISCORD_VOICE_MESSAGE_FLAG = 1 << 13
+DISCORD_VOICE_FILE_NAME = "voice-message.ogg"
+DISCORD_VOICE_WAVEFORM_SAMPLES = 256
+DISCORD_VOICE_SAMPLE_RATE_HZ = 48_000
+DISCORD_VOICE_BITRATE = "64k"
+DISCORD_FFMPEG_MAX_AUDIO_DURATION_SECONDS = 120
 DISCORD_EMOJI_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
 DISCORD_EVENT_COVER_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
 DISCORD_STICKER_CONTENT_TYPES = {"image/png", "image/apng", "application/json"}
@@ -28397,19 +28424,70 @@ class OpsMeshService:
         secret_token: str | None,
     ) -> dict[str, object]:
         target = _message_action_param_string(request.params, "to", required=True)
-        message = (
-            _message_action_param_string(
+        message_param = _message_action_param_string(
+            request.params,
+            "message",
+            allow_empty=True,
+        )
+        if message_param is None:
+            message_param = _message_action_param_string(
                 request.params,
-                "message",
+                "content",
                 allow_empty=True,
             )
-            or ""
-        )
+        message = message_param or ""
+        as_voice = _message_action_param_bool(request.params, "asVoice") is True
         media_url = (
-            _message_action_param_raw_string(request.params, "media")
+            _message_action_param_raw_string(request.params, "mediaUrl")
+            or _message_action_param_raw_string(request.params, "media")
             or _message_action_param_raw_string(request.params, "path")
             or _message_action_param_raw_string(request.params, "filePath")
         )
+        reply_to = _message_action_param_string(request.params, "replyTo")
+        silent = _message_action_param_bool(request.params, "silent") is True
+        if as_voice:
+            if media_url is None:
+                raise RuntimeError(
+                    "Voice messages require a media file reference "
+                    "(mediaUrl, path, or filePath)."
+                )
+            if message.strip():
+                raise RuntimeError(
+                    "Voice messages cannot include text content "
+                    "(Discord limitation). Remove the content parameter."
+                )
+            if request.params.get("components") is not None:
+                raise RuntimeError("Discord components cannot be sent as voice messages.")
+            channel_id = _discord_action_channel_id(target)
+            if channel_id is None:
+                raise RuntimeError("Discord voice messages require a channel target.")
+            media_bytes, content_type = self._load_discord_media(
+                media_url,
+                max_bytes=DISCORD_MAX_MESSAGE_MEDIA_BYTES,
+            )
+            normalized_content_type = (
+                content_type.split(";", 1)[0].strip().lower() or "application/octet-stream"
+            )
+            voice_bytes = self._prepare_discord_voice_media(
+                media_bytes,
+                filename=_discord_media_filename(media_url, normalized_content_type),
+                content_type=normalized_content_type,
+            )
+            result = self._request_discord_voice_message_upload(
+                channel_id=channel_id,
+                media_bytes=voice_bytes,
+                reply_to=reply_to,
+                silent=silent,
+                secret_token=secret_token,
+            )
+            return {
+                "ok": True,
+                "result": {
+                    "messageId": str(result.get("id") or ""),
+                    "channelId": str(result.get("channel_id") or channel_id),
+                },
+                "voiceMessage": True,
+            }
         if not message and media_url is None:
             raise RuntimeError("Discord send requires message or media.")
         event: dict[str, Any] = {
@@ -28418,13 +28496,12 @@ class OpsMeshService:
         }
         if media_url is not None:
             event["mediaUrl"] = media_url
-        reply_to = _message_action_param_string(request.params, "replyTo")
         if reply_to is not None:
             event["replyToId"] = reply_to
         thread_id = _message_action_param_string(request.params, "threadId")
         if thread_id is not None:
             event["threadId"] = thread_id
-        if request.params.get("silent") is True:
+        if silent:
             event["silent"] = True
         result = self._post_discord_provider_event(
             route,
@@ -32900,6 +32977,220 @@ class OpsMeshService:
         if not isinstance(parsed, dict):
             raise RuntimeError("Discord API returned a non-JSON message response.")
         return parsed
+
+    def _transcode_discord_voice_media(
+        self,
+        media_bytes: bytes,
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> bytes:
+        del self, content_type
+        with tempfile.TemporaryDirectory(prefix="openzues-discord-voice-") as temp_dir:
+            temp_root = Path(temp_dir)
+            input_extension = Path(filename).suffix or ".bin"
+            input_path = temp_root / f"input{input_extension}"
+            output_path = temp_root / DISCORD_VOICE_FILE_NAME
+            input_path.write_bytes(media_bytes)
+            command = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(input_path),
+                "-vn",
+                "-sn",
+                "-dn",
+                "-t",
+                str(DISCORD_FFMPEG_MAX_AUDIO_DURATION_SECONDS),
+                "-ar",
+                str(DISCORD_VOICE_SAMPLE_RATE_HZ),
+                "-c:a",
+                "libopus",
+                "-b:a",
+                DISCORD_VOICE_BITRATE,
+                str(output_path),
+            ]
+            try:
+                subprocess.run(  # noqa: S603, S607
+                    command,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    timeout=180,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise RuntimeError(f"Discord voice message conversion failed: {exc}") from exc
+            if not output_path.is_file():
+                raise RuntimeError("Discord voice message conversion did not create voice.ogg")
+            return output_path.read_bytes()
+
+    def _prepare_discord_voice_media(
+        self,
+        media_bytes: bytes,
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> bytes:
+        if _discord_is_native_voice_audio(filename, content_type):
+            return media_bytes
+        if not _discord_is_likely_audio(filename, content_type):
+            raise RuntimeError("Discord voice messages require audio media.")
+        return self._transcode_discord_voice_media(
+            media_bytes,
+            filename=filename,
+            content_type=content_type,
+        )
+
+    def _discord_voice_duration_seconds(self, media_bytes: bytes) -> float:
+        del self
+        with tempfile.TemporaryDirectory(prefix="openzues-discord-voice-meta-") as temp_dir:
+            media_path = Path(temp_dir) / DISCORD_VOICE_FILE_NAME
+            media_path.write_bytes(media_bytes)
+            command = [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(media_path),
+            ]
+            try:
+                completed = subprocess.run(  # noqa: S603, S607
+                    command,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                duration = float(completed.stdout.strip())
+            except (OSError, ValueError, subprocess.SubprocessError):
+                return 1.0
+            return max(0.01, round(duration, 2))
+
+    def _request_discord_voice_message_upload(
+        self,
+        *,
+        channel_id: str,
+        media_bytes: bytes,
+        reply_to: str | None,
+        silent: bool,
+        secret_token: str | None,
+        duration_seconds: float | None = None,
+        waveform: str | None = None,
+        timeout_seconds: float = 30.0,
+    ) -> dict[str, object]:
+        if not media_bytes:
+            raise RuntimeError("Discord voice messages require audio media.")
+        request_body = json.dumps(
+            {
+                "files": [
+                    {
+                        "filename": DISCORD_VOICE_FILE_NAME,
+                        "file_size": len(media_bytes),
+                        "id": "0",
+                    }
+                ]
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        upload_url_request = Request(
+            _discord_api_endpoint(f"channels/{channel_id}/attachments"),
+            data=request_body,
+            headers={
+                "Authorization": _discord_bot_authorization(secret_token),
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(upload_url_request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(
+                        f"Discord upload URL request returned HTTP {response.status}"
+                    )
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            message = _http_error_message("Discord upload URL request returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Discord upload URL request failed: {exc.reason}") from exc
+        try:
+            upload_url_result = json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Discord upload URL request returned a non-JSON response.") from exc
+        if not isinstance(upload_url_result, dict):
+            raise RuntimeError("Discord upload URL request returned a non-object response.")
+        attachments = upload_url_result.get("attachments")
+        if not isinstance(attachments, list) or not attachments:
+            raise RuntimeError("Discord upload URL response did not include attachments.")
+        attachment = attachments[0]
+        if not isinstance(attachment, dict):
+            raise RuntimeError("Discord upload URL response did not include an attachment object.")
+        upload_url = str(attachment.get("upload_url") or "").strip()
+        upload_filename = str(attachment.get("upload_filename") or "").strip()
+        if not upload_url or not upload_filename:
+            raise RuntimeError("Discord upload URL response did not include upload metadata.")
+
+        upload_request = Request(
+            upload_url,
+            data=media_bytes,
+            headers={"Content-Type": "audio/ogg"},
+            method="PUT",
+        )
+        try:
+            with urlopen(upload_request, timeout=timeout_seconds) as upload_response:
+                if upload_response.status >= 400:
+                    raise RuntimeError(
+                        f"Discord voice attachment upload returned HTTP {upload_response.status}"
+                    )
+        except HTTPError as exc:
+            message = _http_error_message("Discord voice attachment upload returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Discord voice attachment upload failed: {exc.reason}") from exc
+
+        flags = DISCORD_VOICE_MESSAGE_FLAG
+        if silent:
+            flags |= DISCORD_SUPPRESS_NOTIFICATIONS_FLAG
+        metadata_duration = (
+            duration_seconds
+            if duration_seconds is not None and duration_seconds > 0
+            else self._discord_voice_duration_seconds(media_bytes)
+        )
+        payload: dict[str, object] = {
+            "flags": flags,
+            "attachments": [
+                {
+                    "id": "0",
+                    "filename": DISCORD_VOICE_FILE_NAME,
+                    "uploaded_filename": upload_filename,
+                    "duration_secs": metadata_duration,
+                    "waveform": waveform or _discord_placeholder_waveform(),
+                }
+            ],
+        }
+        if reply_to:
+            payload["message_reference"] = {
+                "message_id": reply_to,
+                "fail_if_not_exists": False,
+            }
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Discord API returned a non-JSON voice message response.")
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return result
 
     def _request_discord_sticker_upload(
         self,
