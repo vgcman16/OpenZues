@@ -3704,6 +3704,14 @@ def _discord_media_filename(media_url: str, content_type: str) -> str:
     return f"upload{extension or ''}"
 
 
+def _discord_media_is_likely_video(media_url: str) -> bool:
+    parsed_path = unquote(urlparse(str(media_url)).path).lower()
+    content_type = str(mimetypes.guess_type(parsed_path)[0] or "").split(";", 1)[0].lower()
+    return content_type.startswith("video/") or parsed_path.endswith(
+        (".mp4", ".mov", ".m4v", ".webm", ".mkv")
+    )
+
+
 def _safe_slack_file_label(value: str | None, fallback: str) -> str:
     label = Path(str(value or "")).name.replace("\\", "_").replace("/", "_")
     label = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("._")
@@ -34032,6 +34040,59 @@ class OpsMeshService:
                         "chatId": delivered_channel,
                         "channelId": delivered_channel,
                         "messageIds": message_ids,
+                        "mediaUrls": media_urls,
+                    }
+                if text and _discord_media_is_likely_video(media_urls[0]):
+                    caption_payload: dict[str, Any] = {"content": text[:2000]}
+                    if silent is True:
+                        caption_payload["flags"] = int(caption_payload.get("flags") or 0) | (
+                            1 << 12
+                        )
+                    if reply_to_id:
+                        caption_payload["message_reference"] = {
+                            "message_id": reply_to_id,
+                            "fail_if_not_exists": False,
+                        }
+                    target_url = _discord_webhook_url(
+                        str(route.get("target") or ""),
+                        thread_id=thread_id,
+                    )
+                    caption_result = self._post_json_webhook(target_url, caption_payload)
+                    if not isinstance(caption_result, dict):
+                        raise RuntimeError("Discord webhook returned a non-JSON response.")
+                    caption_message_id = _discord_message_id(caption_result)
+                    if caption_message_id is None:
+                        raise RuntimeError(
+                            "Discord webhook response did not include a message id."
+                        )
+                    delivered_channel = _discord_channel_id(
+                        caption_result,
+                        result_fallback_channel,
+                    )
+                    video_payload: dict[str, Any] = {
+                        "content": "",
+                        "embeds": [{"image": {"url": media_urls[0]}}],
+                    }
+                    if silent is True:
+                        video_payload["flags"] = int(video_payload.get("flags") or 0) | (
+                            1 << 12
+                        )
+                    media_result = self._post_json_webhook(target_url, video_payload)
+                    if not isinstance(media_result, dict):
+                        raise RuntimeError("Discord webhook returned a non-JSON response.")
+                    media_message_id = _discord_message_id(media_result)
+                    if media_message_id is None:
+                        raise RuntimeError(
+                            "Discord webhook response did not include a message id."
+                        )
+                    delivered_channel = _discord_channel_id(media_result, delivered_channel)
+                    return {
+                        "runtime": "native-provider-backed",
+                        "messageId": media_message_id,
+                        "primaryMessageId": caption_message_id,
+                        "chatId": delivered_channel,
+                        "channelId": delivered_channel,
+                        "messageIds": [caption_message_id, media_message_id],
                         "mediaUrls": media_urls,
                     }
                 payload["embeds"] = [{"image": {"url": media_urls[0]}}]
