@@ -438,6 +438,7 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "qqbot",
     "zalo",
     "msteams",
+    "irc",
     "twitch",
     "tlon",
 }
@@ -39442,8 +39443,8 @@ class OpsMeshService:
             ),
         )
         message_parts = [str(event.get("message") or "").strip()]
-        message_parts.extend(media_urls)
-        message = "\n".join(part for part in message_parts if part).strip()
+        message_parts.extend(f"Attachment: {media_url}" for media_url in media_urls)
+        message = "\n\n".join(part for part in message_parts if part).strip()
         if not message:
             raise RuntimeError("Message must be non-empty for IRC sends.")
         reply_to_id = str(event.get("replyToId") or "").strip()

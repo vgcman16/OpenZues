@@ -35540,6 +35540,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_irc_native_rout
         channel="irc",
         to="irc:channel:ops-room",
         message="IRC **native** parity.",
+        media_urls=["https://cdn.example.com/chart.png"],
         reply_to_id="abc123",
         account_id="default",
         idempotency_key="idem-native-irc-send",
@@ -35558,7 +35559,11 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_irc_native_rout
             "realname": "OpenZues",
             "password": "irc-server-password",
             "target": "#ops-room",
-            "message": "IRC **native** parity.\n\n[reply:abc123]",
+            "message": (
+                "IRC **native** parity.\n\n"
+                "Attachment: https://cdn.example.com/chart.png\n\n"
+                "[reply:abc123]"
+            ),
         }
     ]
 
