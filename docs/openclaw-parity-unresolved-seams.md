@@ -151,11 +151,12 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999984%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999985%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
   sends, Discord audio-as-voice direct media sends, Signal receive envelope
-  session routing with sync-message drops, LINE signed webhook ingress, and
+  session routing with sync-message drops, QQBot route-backed text sends, LINE
+  signed webhook ingress, and
   LINE text webhook session delivery plus
   postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
@@ -12778,3 +12779,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity moves to ~99.999996%. Continue deeper installed plugin activation,
   ACP bridge lifecycle depth, QQBot/provider route breadth,
   packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native QQBot provider routes now accept the
+  OpenClaw `qqbot` route kind and route-backed text sends for C2C, group, and
+  channel targets. Direct sends parse `qqbot:c2c:*` / `qqbot:group:*` /
+  `qqbot:channel:*`, dispatch to `/v2/users/{id}/messages`,
+  `/v2/groups/{id}/messages`, or `/channels/{id}/messages` with bearer-token
+  auth, and persist native provider delivery metadata. Source/test
+  checkpointed in `dd8aec4d`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.999985%. Continue
+  provider media/reply edges, ACP bridge lifecycle depth, packaging/distribution,
+  or companion breadth.
