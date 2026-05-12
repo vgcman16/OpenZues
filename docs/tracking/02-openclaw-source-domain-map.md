@@ -185,6 +185,10 @@ command owner is configured.
 `src/cli/pairing-cli.test.ts` is checkpointed in `0b791e74`; it covers
 defaulting `openzues pairing list` to the sole native pairing channel when no
 channel argument or `--channel` option is provided.
+`OZ-PROV-001GA` Zalo pairing command-owner explanation from
+`src/cli/pairing-cli.ts` and `src/cli/pairing-cli.test.ts` is checkpointed in
+`646fa3d0`; it covers human output explaining that
+`commands.ownerAllowFrom` was empty when command-owner bootstrap occurs.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
