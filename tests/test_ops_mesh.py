@@ -65,6 +65,7 @@ from openzues.services.ops_mesh import (
     GatewayLineInboundMediaFetchRequest,
     GatewayMSTeamsFeedbackReflectionRequest,
     GatewayMSTeamsInboundMediaFetchRequest,
+    GatewayZaloInboundMediaFetchRequest,
     OpsMeshService,
     _IrcRouteConfig,
     _saved_outbound_delivery_replay_message,
@@ -34197,6 +34198,102 @@ async def test_ops_mesh_service_handle_zalo_webhook_delivers_image_placeholder_w
         "runtime": "session-backed",
         "media": {"urls": 1},
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_stages_downloaded_image_media(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    fetch_requests: list[GatewayZaloInboundMediaFetchRequest] = []
+    jpeg_bytes = b"\xff\xd8\xff\xe0zalo-media"
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-staged-image-session-1"}
+
+    async def fetch_media(
+        request: GatewayZaloInboundMediaFetchRequest,
+    ) -> dict[str, object]:
+        fetch_requests.append(request)
+        return {
+            "bytes": jpeg_bytes,
+            "contentType": "image/jpeg",
+            "filename": "zalo-photo.jpg",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        zalo_inbound_media_fetch_service=fetch_media,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.image.received",
+            "message": {
+                "message_id": "zalo-staged-image-1",
+                "caption": "",
+                "photo_url": "https://example.com/zalo-staged-image.jpg",
+                "date": 1760000000,
+                "chat": {"id": "chat-staged-image", "chat_type": "PRIVATE"},
+                "from": {"id": "zalo-user-image", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="zalo",
+        account_id="zalo-bot",
+        peer_kind="direct",
+        peer_id="zalo:chat-staged-image",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert len(fetch_requests) == 1
+    fetch_request = fetch_requests[0]
+    assert fetch_request.url == "https://example.com/zalo-staged-image.jpg"
+    assert fetch_request.source_url == "https://example.com/zalo-staged-image.jpg"
+    assert fetch_request.filename == "zalo-staged-image.jpg"
+    assert fetch_request.placeholder == "<media:image>"
+    assert fetch_request.max_bytes == 5 * 1024 * 1024
+    assert fetch_request.account_id == "zalo-bot"
+    assert fetch_request.message_id == "zalo-staged-image-1"
+
+    delivery = result["deliveries"][0]
+    staged_paths = delivery["MediaPaths"]
+    assert isinstance(staged_paths, list)
+    assert len(staged_paths) == 1
+    assert delivery["MediaPath"] == staged_paths[0]
+    assert delivery["MediaUrl"] == staged_paths[0]
+    assert delivery["MediaType"] == "image/jpeg"
+    assert delivery["MediaTypes"] == ["image/jpeg"]
+    assert Path(str(staged_paths[0])).read_bytes() == jpeg_bytes
+    assert delivery["mediaUrls"] == ["https://example.com/zalo-staged-image.jpg"]
+    assert delivery["photoUrl"] == "https://example.com/zalo-staged-image.jpg"
+    assert delivery["delivery"] == {"runtime": "session-backed", "media": {"staged": 1}}
+    assert delivery["stagedMedia"][0]["sourceUrl"] == (
+        "https://example.com/zalo-staged-image.jpg"
+    )
+    assert delivery["stagedMedia"][0]["filename"] == "zalo-photo.jpg"
+    assert delivery["stagedMedia"][0]["contentType"] == "image/jpeg"
 
 
 @pytest.mark.asyncio

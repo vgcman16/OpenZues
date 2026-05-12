@@ -196,6 +196,7 @@ LINE_WEBHOOK_REPLAY_WINDOW_SECONDS = 10 * 60
 LINE_WEBHOOK_REPLAY_MAX_ENTRIES = 4096
 LINE_DEFAULT_MEDIA_MAX_BYTES = 10 * 1024 * 1024
 LINE_MEDIA_CONTENT_ENDPOINT = "https://api-data.line.me/v2/bot/message/{message_id}/content"
+ZALO_DEFAULT_MEDIA_MAX_BYTES = 5 * 1024 * 1024
 LINE_AUDIO_FTYP_BRANDS = frozenset(
     {
         "m4a ",
@@ -618,6 +619,24 @@ class GatewayLineInboundMediaFetchRequest:
 
 GatewayLineInboundMediaFetchService = Callable[
     [GatewayLineInboundMediaFetchRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayZaloInboundMediaFetchRequest:
+    url: str
+    source_url: str
+    filename: str | None
+    content_type: str | None
+    placeholder: str
+    max_bytes: int
+    account_id: str | None
+    message_id: str | None
+
+
+GatewayZaloInboundMediaFetchService = Callable[
+    [GatewayZaloInboundMediaFetchRequest],
     Awaitable[object],
 ]
 
@@ -14656,6 +14675,7 @@ class OpsMeshService:
     msteams_inbound_media_fetch_service: GatewayMSTeamsInboundMediaFetchService | None = None
     tlon_inbound_media_fetch_service: GatewayTlonInboundMediaFetchService | None = None
     line_inbound_media_fetch_service: GatewayLineInboundMediaFetchService | None = None
+    zalo_inbound_media_fetch_service: GatewayZaloInboundMediaFetchService | None = None
     tlon_approval_queue_service: GatewayTlonApprovalQueueService | None = None
     tlon_monitor_runtime_service: GatewayTlonMonitorRuntimeService | None = None
     msteams_feedback_reflection_service: GatewayMSTeamsFeedbackReflectionService | None = None
@@ -18689,6 +18709,10 @@ class OpsMeshService:
                     raise GatewayOutboundRuntimeUnavailableError(
                         "Zalo inbound session delivery is unavailable."
                     )
+                staged_media = await self._stage_zalo_inbound_media(
+                    payload,
+                    account_id=account_id,
+                )
                 delivery_result = await self.session_delivery_service(
                     context.session_key,
                     text,
@@ -18729,6 +18753,15 @@ class OpsMeshService:
                         "runtime": "session-backed",
                         "media": {"urls": len(media_urls)},
                     }
+                if staged_media:
+                    delivery["delivery"] = {
+                        "runtime": "session-backed",
+                        "media": {"staged": len(staged_media)},
+                    }
+                    delivery.update(_msteams_media_payload(staged_media))
+                    delivery["stagedMedia"] = _msteams_staged_media_metadata(
+                        staged_media
+                    )
                 deliveries.append(delivery)
         result: dict[str, object] = {
             "ok": bool(event_name),
@@ -18750,6 +18783,58 @@ class OpsMeshService:
             if inbound_message_id is not None:
                 result["inboundMessageId"] = inbound_message_id
         return result
+
+    async def _stage_zalo_inbound_media(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None,
+    ) -> list[_MSTeamsStagedInboundMedia]:
+        if str(payload.get("event_name") or "").strip() != "message.image.received":
+            return []
+        fetcher = self.zalo_inbound_media_fetch_service
+        if fetcher is None:
+            return []
+        message = _zalo_inbound_message(payload)
+        photo_url = _zalo_inbound_optional_string(message.get("photo_url"))
+        if photo_url is None:
+            return []
+        message_id = _zalo_inbound_message_id(payload)
+        parsed_path = Path(unquote(urlparse(photo_url).path))
+        file_hint = parsed_path.name.strip() or (
+            f"zalo-image-{message_id}" if message_id else "zalo-image"
+        )
+        candidate = _MSTeamsInboundMediaCandidate(
+            url=photo_url,
+            source_url=photo_url,
+            file_hint=file_hint,
+            content_type_hint=None,
+            placeholder="<media:image>",
+        )
+        request = GatewayZaloInboundMediaFetchRequest(
+            url=photo_url,
+            source_url=photo_url,
+            filename=file_hint,
+            content_type=None,
+            placeholder="<media:image>",
+            max_bytes=ZALO_DEFAULT_MEDIA_MAX_BYTES,
+            account_id=account_id,
+            message_id=message_id,
+        )
+        try:
+            response = await fetcher(request)
+        except Exception:
+            return []
+        media_bytes = _msteams_fetch_response_bytes(response)
+        if media_bytes is None or len(media_bytes) > ZALO_DEFAULT_MEDIA_MAX_BYTES:
+            return []
+        staged = self._save_msteams_inbound_media(
+            candidate=candidate,
+            response=response,
+            media_bytes=media_bytes,
+            index=1,
+        )
+        return [staged] if staged is not None else []
 
     async def _stage_line_inbound_media(
         self,
