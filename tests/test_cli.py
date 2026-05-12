@@ -27697,6 +27697,88 @@ def test_update_json_fails_when_post_update_plugin_sync_fails(
         }
     ]
 
+
+def test_update_fails_when_restarted_gateway_reports_activated_plugin_load_errors(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    health_calls: list[float | None] = []
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            del package_spec, timeout_ms
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_restart_health(*, timeout_seconds: float | None = None) -> dict[str, object]:
+        health_calls.append(timeout_seconds)
+        return {
+            "status": "ok",
+            "plugins": {
+                "errors": [
+                    {
+                        "id": "telegram",
+                        "origin": "bundled",
+                        "activated": True,
+                        "error": "failed to load plugin dependency: ENOSPC",
+                    },
+                    {
+                        "id": "qa-lab",
+                        "activated": False,
+                        "error": "disabled plugin should not fail restart health",
+                    },
+                ]
+            },
+        }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+                update_restart_health=fake_restart_health,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--yes", "--tag", "latest"])
+
+    assert result.exit_code == 1, result.stdout
+    assert health_calls == [None]
+    assert "Update error" in result.stdout
+    assert "reason: restart-health" in result.stdout
+    assert "Activated plugin load errors:" in result.stdout
+    assert "- telegram: failed to load plugin dependency: ENOSPC" in result.stdout
+    assert "disabled plugin should not fail restart health" not in result.stdout
+
+
 def test_update_status_json_detects_package_manager_deps(
     tmp_path,
     monkeypatch,

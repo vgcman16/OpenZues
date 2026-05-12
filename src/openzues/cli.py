@@ -10195,9 +10195,19 @@ def _emit_update_run_result(payload: dict[str, object], *, json_output: bool) ->
         for warning in _object_list(payload.get("warnings"))
         if str(warning).strip()
     ]
+    restart_health = payload.get("restartHealth")
+    restart_diagnostics: list[str] = []
+    if isinstance(restart_health, Mapping):
+        restart_diagnostics = [
+            str(line)
+            for line in _object_list(restart_health.get("diagnostics"))
+            if str(line).strip()
+        ]
     if json_output:
         for warning in warnings:
             typer.echo(f"Warning: {warning}", err=True)
+        for line in restart_diagnostics:
+            typer.echo(line, err=True)
         _emit_payload(payload, json_output=True)
         return
     status = str(payload.get("status") or "unknown")
@@ -10217,6 +10227,10 @@ def _emit_update_run_result(payload: dict[str, object], *, json_output: bool) ->
         typer.echo("warnings:")
         for warning in warnings:
             typer.echo(f"  - {warning}")
+    if restart_diagnostics:
+        typer.echo("diagnostics:")
+        for line in restart_diagnostics:
+            typer.echo(f"  {line}")
 
 
 def _openclaw_post_update_plugins_payload(
@@ -10268,6 +10282,120 @@ async def _openclaw_update_attach_post_update_plugins(
     if projected_plugins.get("status") == "error":
         result["status"] = "error"
         result["reason"] = "post-update-plugins"
+    return result
+
+
+def _openclaw_update_activated_plugin_errors(
+    health_payload: Mapping[str, object],
+) -> list[dict[str, object]]:
+    raw_plugins = health_payload.get("plugins")
+    if not isinstance(raw_plugins, Mapping):
+        raw_health = health_payload.get("health")
+        raw_plugins = raw_health.get("plugins") if isinstance(raw_health, Mapping) else None
+    if not isinstance(raw_plugins, Mapping):
+        return []
+    raw_errors = raw_plugins.get("errors")
+    if not isinstance(raw_errors, list):
+        return []
+    errors: list[dict[str, object]] = []
+    for entry in raw_errors:
+        if not isinstance(entry, Mapping):
+            continue
+        plugin_id = _optional_cli_string(entry.get("id"))
+        error = _optional_cli_string(entry.get("error"))
+        if entry.get("activated") is not True or plugin_id is None or error is None:
+            continue
+        projected: dict[str, object] = {
+            "id": plugin_id,
+            "origin": _optional_cli_string(entry.get("origin")) or "unknown",
+            "activated": True,
+            "error": error,
+        }
+        for key in ("activationSource", "activationReason", "failurePhase"):
+            value = _optional_cli_string(entry.get(key))
+            if value is not None:
+                projected[key] = value
+        errors.append(projected)
+    return errors
+
+
+def _openclaw_update_restart_health_diagnostics(
+    activated_plugin_errors: Sequence[Mapping[str, object]],
+) -> list[str]:
+    if not activated_plugin_errors:
+        return []
+    lines = [
+        "Gateway did not become healthy after restart.",
+        "Activated plugin load errors:",
+    ]
+    for plugin in activated_plugin_errors:
+        plugin_id = _optional_cli_string(plugin.get("id")) or "unknown"
+        error = _optional_cli_string(plugin.get("error")) or "plugin load failed"
+        lines.append(f"- {plugin_id}: {error}")
+    return lines
+
+
+async def _openclaw_update_fetch_restart_health_payload(
+    services: object,
+    *,
+    timeout_seconds: float | None,
+) -> dict[str, object] | None:
+    fakeable_probe = getattr(services, "update_restart_health", None)
+    if callable(fakeable_probe):
+        result = fakeable_probe(timeout_seconds=timeout_seconds)
+        if inspect.isawaitable(result):
+            result = await result
+        return dict(result) if isinstance(result, Mapping) else None
+    app_settings = getattr(services, "settings", None)
+    if not isinstance(app_settings, Settings):
+        return None
+    timeout = timeout_seconds if timeout_seconds is not None else 3.0
+    base_url = _control_plane_base_url(app_settings)
+    try:
+        health = await asyncio.to_thread(
+            _watch_api_json,
+            base_url,
+            "/api/health",
+            timeout_seconds=timeout,
+        )
+    except RuntimeError:
+        return None
+    return dict(health) if isinstance(health, Mapping) else None
+
+
+async def _openclaw_update_attach_restart_health(
+    services: object,
+    payload: dict[str, object],
+    *,
+    restart: bool,
+    timeout_seconds: float | None,
+) -> dict[str, object]:
+    if not restart or payload.get("status") != "ok":
+        return payload
+    health_payload = await _openclaw_update_fetch_restart_health_payload(
+        services,
+        timeout_seconds=timeout_seconds,
+    )
+    if health_payload is None:
+        return payload
+    activated_plugin_errors = _openclaw_update_activated_plugin_errors(health_payload)
+    restart_health: dict[str, object] = {
+        "status": "error" if activated_plugin_errors else "ok",
+        "activatedPluginErrors": activated_plugin_errors,
+    }
+    health_status = _optional_cli_string(health_payload.get("status"))
+    if health_status is not None:
+        restart_health["gatewayStatus"] = health_status
+    diagnostics = _openclaw_update_restart_health_diagnostics(
+        activated_plugin_errors,
+    )
+    if diagnostics:
+        restart_health["diagnostics"] = diagnostics
+    result = dict(payload)
+    result["restartHealth"] = restart_health
+    if activated_plugin_errors:
+        result["status"] = "error"
+        result["reason"] = "restart-health"
     return result
 
 
@@ -106575,7 +106703,13 @@ def update_root(
                 payload,
                 requested_channel,
             )
-            return await _openclaw_update_attach_post_update_plugins(services, payload)
+            payload = await _openclaw_update_attach_post_update_plugins(services, payload)
+            return await _openclaw_update_attach_restart_health(
+                services,
+                payload,
+                restart=restart,
+                timeout_seconds=timeout_seconds,
+            )
 
         payload = _run(
             _run_with_services(run_package_update_with_plugins)
