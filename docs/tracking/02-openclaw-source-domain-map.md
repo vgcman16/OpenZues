@@ -161,6 +161,11 @@ direct senders under `dmPolicy="pairing"`.
 `src/pairing/allow-from-store-file.ts` is checkpointed in `9409ad9b`; it covers
 consuming pending account-scoped pairing requests, pruning expired requests,
 and adding approved senders to the account-scoped Zalo `allowFrom` store.
+`OZ-PROV-001FV` Zalo pairing request listing from
+`src/pairing/pairing-store.ts`, `src/pairing/pairing-store.test.ts`, and
+`src/cli/pairing-cli.ts` is checkpointed in `d1c79fea`; it covers pending
+request listing, account filtering, expired request pruning, per-account cap
+pruning, and `createdAt` ordering.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and

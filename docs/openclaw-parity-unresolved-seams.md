@@ -144,7 +144,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.963% after the
   latest requester-scoped `agents_list` spawn-target projection slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.99989%
+- The provider-native inbound/outbound breadth family is estimated at ~99.99990%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
   delivery plus postback/media-placeholder/sticker/location delivery and group
@@ -156,7 +156,7 @@ Current percentage rollup:
   delivery, fakeable Zalo inbound image media staging, production Zalo inbound
   media fetch, Zalo direct DM disabled-policy gating, Zalo group allowlist
   policy gating, Zalo direct DM pairing challenges, and Zalo pairing
-  allowFrom-store authorization plus approval-store mutation.
+  allowFrom-store authorization, approval-store mutation, and request listing.
 - The CLI/operator control-plane family is estimated at ~99.99992% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -341,6 +341,15 @@ OpenClaw-shaped success/error metadata. Source/test checkpointed in
 provider-native inbound/outbound breadth moves to ~99.99989%. Continue native
 pairing list/approve CLI/RPC surface, provider-specific media/reply edges,
 deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo pairing request listing now reads pending
+requests from the native Zalo pairing store, prunes expired entries, enforces
+the OpenClaw per-account pending cap by dropping oldest `lastSeenAt` entries,
+filters by account, and returns visible requests ordered by `createdAt`.
+Source/test checkpointed in `d1c79fea`; repo-wide parity remains estimated at
+~99.9%, and provider-native inbound/outbound breadth moves to ~99.99990%.
+Continue native pairing list/approve CLI/RPC surface, provider-specific
+media/reply edges, deeper installed plugin activation, or companion breadth.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
