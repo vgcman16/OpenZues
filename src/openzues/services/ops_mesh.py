@@ -3810,9 +3810,12 @@ def _telegram_terminal_result_payload(result: object) -> dict[str, Any]:
 def _telegram_result_is_thread_not_found(result: object) -> bool:
     if not isinstance(result, Mapping) or result.get("ok") is not False:
         return False
-    description = str(
-        result.get("description") or result.get("error") or result.get("error_code") or ""
+    return _telegram_error_text_is_thread_not_found(
+        str(result.get("description") or result.get("error") or result.get("error_code") or "")
     )
+
+
+def _telegram_error_text_is_thread_not_found(description: str) -> bool:
     return "message thread not found" in description.lower()
 
 
@@ -31833,7 +31836,17 @@ class OpsMeshService:
 
         def post_telegram_json(method: str, payload: dict[str, Any]) -> object:
             endpoint = _telegram_api_endpoint(str(route.get("target") or ""), token, method)
-            result = self._post_json_webhook(endpoint, payload)
+            try:
+                result = self._post_json_webhook(endpoint, payload)
+            except RuntimeError as exc:
+                if (
+                    "message_thread_id" in payload
+                    and _telegram_error_text_is_thread_not_found(str(exc))
+                ):
+                    threadless_payload = dict(payload)
+                    threadless_payload.pop("message_thread_id", None)
+                    return self._post_json_webhook(endpoint, threadless_payload)
+                raise
             if (
                 "message_thread_id" in payload
                 and _telegram_result_is_thread_not_found(result)
