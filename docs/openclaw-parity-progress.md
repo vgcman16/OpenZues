@@ -4,9 +4,9 @@
 
 - Updated: 2026-05-12.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- Estimated active gateway/session/tool-contract family parity: ~99.958% for the bounded local OpenZues path.
+- Estimated active gateway/session/tool-contract family parity: ~99.959% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.986% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
-- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.95%;
+- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.96%;
   it is no longer the active queue head.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.99987% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch restart-health failure, gateway health `serverVersion` projection, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, deeper installed plugin module import/activation, and broader runtime command ergonomics.
 - Estimated provider-native inbound/outbound breadth: ~99.9991% after Slack
@@ -23102,6 +23102,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy
   src\openzues\services\gateway_browser_runtime.py`, and focused
   `git diff --check`. Source/test checkpointed in `e7084f1f`.
+- `browser.request` local-control dialog hook route breadth now maps upstream
+  `POST /hooks/dialog` from
+  `extensions/browser/src/browser/routes/agent.act.hooks.ts` onto native
+  `agent-browser eval --stdin` execution. The hook installs temporary
+  alert/confirm/prompt handlers, restores the original handlers after the next
+  dialog, and returns OpenClaw-shaped accept/prompt metadata. This closes
+  `OZ-CANVAS-001R`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.959%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.96%.
+  Remaining browser depth is profile mutation, permissions, locale/timezone,
+  and any remaining label-action route breadth.
+- Verified the `browser.request` local dialog hook route seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_dialog_hook_route -q`
+  (`browser local request unsupported: POST /hooks/dialog` before
+  implementation, then `1 passed`), adjacent browser request/dialog/upload/act
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or dialog_hook or browser_upload or browser_act"`
+  (`22 passed, 1235 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `4be4d540`.
 - `agents_list` now carries the invoking session context into
   `agents.list toolProjection=sessions_spawn`, and the projection resolves
   requester-specific `gateway.agents.list[].subagents.allowAgents` /

@@ -92,10 +92,14 @@ and controlled PDF artifact export. `OZ-CANVAS-001Q` response-body route
 breadth from `extensions/browser/src/browser/routes/agent.act.ts` is
 checkpointed in `e7084f1f`; it maps `POST /response/body` onto native network
 request inventory/detail commands with response status/header/body/truncation
-projection.
+projection. `OZ-CANVAS-001R` dialog-hook route breadth from
+`extensions/browser/src/browser/routes/agent.act.hooks.ts` is checkpointed in
+`4be4d540`; it maps `POST /hooks/dialog` onto native `agent-browser eval
+--stdin` execution with temporary alert/confirm/prompt handlers and
+accept/prompt metadata.
 Remaining browser-request depth is profile mutation, permission,
-locale/timezone, dialog hook, and label-action route breadth beyond the
-current native adapter.
+locale/timezone, and label-action route breadth beyond the current native
+adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers

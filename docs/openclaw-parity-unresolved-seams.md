@@ -6,7 +6,7 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.946% of the
+- The active gateway/session/tool-contract family is estimated at ~99.959% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.986% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -140,7 +140,7 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.946% after the
+- The gateway session/tool-contract family is estimated at ~99.959% after the
   latest requester-scoped `agents_list` spawn-target projection slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.9991%
   after route-backed Telegram stale-thread retry fallback for JSON and
@@ -12185,5 +12185,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, active gateway/session/tool-contract parity moves to ~99.958%,
   and browser/canvas/nodes/voice bounded-command parity moves to ~99.95%.
   Continue profile mutation, permissions, locale/timezone, dialog-hook route
+  breadth, remaining provider-specific media/reply edges, deeper installed
+  plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control dialog hook
+  route breadth now maps upstream `POST /hooks/dialog` from
+  `extensions/browser/src/browser/routes/agent.act.hooks.ts` onto native
+  `agent-browser eval --stdin` execution, with temporary alert/confirm/prompt
+  handlers and OpenClaw-shaped accept/prompt metadata. Source/test
+  checkpointed in `4be4d540`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.959%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.96%.
+  Continue profile mutation, permissions, locale/timezone, label-action route
   breadth, remaining provider-specific media/reply edges, deeper installed
   plugin activation, companion breadth, or the next packaging edge.
