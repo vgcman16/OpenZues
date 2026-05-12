@@ -193,6 +193,10 @@ channel argument or `--channel` option is provided.
 `src/cli/pairing-cli.ts` and `src/cli/pairing-cli.test.ts` is checkpointed in
 `433368f1`; it covers projecting missing-code approvals as `No pending pairing
 request found for code: <code>` in human CLI output.
+`OZ-PROV-001GC` disabled channel capability actions from
+`extensions/zalo/src/actions.ts` and `extensions/zalo/src/actions.test.ts` is
+checkpointed in `0b5231cc`; it covers suppressing channel message actions
+when a selected channel account/route is disabled.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and

@@ -20,9 +20,9 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.963% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.99996% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.99998% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.99998% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Provider-native inbound/outbound breadth | ~99.99997% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Runtime/CLI/doctor native bridge | ~99.99999% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
@@ -806,6 +806,23 @@ may lag behind this tracker.
   - Last verified: 2026-05-12, focused red/green approval-not-found proof
     (raw `zalo_pairing_code_not_found` before implementation, then `1
     passed`), adjacent devices/pairing CLI proof (`13 passed, 590
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] Disabled channel capability actions.
+  - Source: `openclaw-main/extensions/zalo/src/actions.ts`,
+    `openclaw-main/extensions/zalo/src/actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: channel capability discovery hides message actions for disabled
+    accounts/routes, matching Zalo `describeMessageTool` returning no tool for
+    disabled selected accounts.
+  - Evidence required: focused disabled Zalo capability proof, adjacent
+    channel capabilities CLI proof, ruff, mypy
+  - Status: checkpointed in `0b5231cc`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green disabled-capability proof
+    (disabled Zalo account still advertised `send`/`broadcast`, then `1
+    passed`), adjacent channel capabilities CLI proof (`6 passed, 598
     deselected`), ruff, mypy, and focused `git diff --check`.
 
 - [x] Gateway-status slash command diagnostics for `/gateway-status` and
@@ -9767,6 +9784,27 @@ may lag behind this tracker.
     passed`), adjacent CLI proof
     `python -m pytest tests\test_cli.py -q -k "pairing or devices"` (`13
     passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] Disabled channel capability actions.
+  - Source: `openclaw-main/extensions/zalo/src/actions.ts`,
+    `openclaw-main/extensions/zalo/src/actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: channel capability discovery hides message actions for disabled
+    accounts/routes, matching Zalo `describeMessageTool` returning no tool for
+    disabled selected accounts.
+  - Evidence required: focused disabled Zalo capability proof, adjacent
+    channel capabilities CLI proof, ruff, mypy
+  - Status: checkpointed in `0b5231cc`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_channels_capabilities_json_hides_zalo_actions_for_disabled_account -q`
+    (disabled Zalo account still advertised `send`/`broadcast`, then `1
+    passed`), adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "channels_capabilities"` (`6
+    passed, 598 deselected`), `ruff check src\openzues\cli.py
     tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
     --check`.
 
