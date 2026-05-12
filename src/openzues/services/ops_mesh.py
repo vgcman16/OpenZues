@@ -35733,6 +35733,7 @@ class OpsMeshService:
         reply_to_id = str(event.get("replyToId") or "").strip()
         if media_urls:
             first_file_type, first_media_type = _qqbot_media_file_type(media_urls[0], media_kind)
+            result_media_type = first_media_type
             message_ids: list[str] = []
             media_ids: list[str] = []
             bearer_token = _qqbot_bearer_token(secret_token)
@@ -35784,6 +35785,25 @@ class OpsMeshService:
                         account_id=account_id,
                         bearer_token=bearer_token,
                     )
+                    if (
+                        isinstance(upload_result, Mapping)
+                        and upload_result.get("ok") is False
+                        and file_type == 3
+                    ):
+                        upload_result = self._request_qqbot_media_upload(
+                            base_target=base_target,
+                            target_type=target_type,
+                            target_id=target_id,
+                            media_url=media_url,
+                            file_type=4,
+                            local_roots=local_roots,
+                            account_id=account_id,
+                            bearer_token=bearer_token,
+                        )
+                        file_type = 4
+                        media_type = "file"
+                        if index == 0:
+                            result_media_type = media_type
                     if not isinstance(upload_result, dict):
                         raise RuntimeError("QQBot API returned a non-JSON upload response.")
                     if upload_result.get("ok") is False:
@@ -35835,7 +35855,7 @@ class OpsMeshService:
                 "meta": {
                     "targetId": target_id,
                     "targetType": target_type,
-                    "mediaType": first_media_type,
+                    "mediaType": result_media_type,
                 },
             }
             if media_ids:
