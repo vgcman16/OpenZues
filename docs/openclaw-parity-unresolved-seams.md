@@ -6,12 +6,13 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.963% of the
+- The active gateway/session/tool-contract family is estimated at ~99.964% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~99.986% after the latest
+- The chat/session contract subfamily is estimated at ~99.987% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
-  `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed
+  `sessions.spawn`, `artifacts.list` / `artifacts.get` /
+  `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.99999% after the
@@ -218,6 +219,18 @@ and the six-action `createDefaultMenuConfig()` default menu. Source/test
 checkpointed in `b80501c6`; repo-wide parity remains estimated at ~99.9%, and
 runtime/CLI/doctor plus CLI/operator parity move to ~99.99988%. Continue
 remaining package restart-health diagnostics, provider-specific media/reply
+edges, and gateway runtime method gaps.
+
+Current queue-head adjustment: `OZ-RT-001BB` `artifacts.list`, `artifacts.get`, and
+`artifacts.download` are now native read-scope gateway methods backed by
+OpenZues control-chat transcripts. They scan structured transcript content
+blocks for image/audio/file artifacts, project stable OpenClaw-shaped artifact
+summaries, and return base64/url download payloads without exposing raw bytes
+from list/get. Source/test checkpointed in `13eddac7`; active
+gateway/session/tool-contract parity moves to ~99.964% and chat/session parity
+moves to ~99.987%. The next method comparison queue heads are
+`update.status`, `diagnostics.stability`, `nativeHook.invoke`, web-push helper
+methods, and the memory rem-harness doctor helper.
 edges, deeper installed plugin activation, browser local fallback, or companion
 breadth.
 
