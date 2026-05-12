@@ -20,9 +20,9 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.963% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.99993% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.99995% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.99995% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Provider-native inbound/outbound breadth | ~99.99994% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Runtime/CLI/doctor native bridge | ~99.99996% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.99996% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
@@ -759,6 +759,22 @@ may lag behind this tracker.
     config patch before implementation, then `1 passed`), adjacent
     devices/pairing CLI proof (`10 passed, 590 deselected`), ruff, mypy, and
     focused `git diff --check`.
+
+- [x] Zalo pairing list default.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues pairing list` defaults to native Zalo when no channel
+    is provided, matching OpenClaw's sole pairing-channel default.
+  - Evidence required: focused pairing-list default CLI proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `0b791e74`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green list-default proof
+    (channel-required CLI exit before implementation, then `1 passed`),
+    adjacent devices/pairing CLI proof (`11 passed, 590 deselected`), ruff,
+    mypy, and focused `git diff --check`.
 
 - [x] Gateway-status slash command diagnostics for `/gateway-status` and
   `/gwstatus`, keeping gateway diagnostics separate from session `/status` in
@@ -9659,6 +9675,26 @@ may lag behind this tracker.
     (no config patch before implementation, then `1 passed`), adjacent CLI
     proof `python -m pytest tests\test_cli.py -q -k "pairing or devices"`
     (`10 passed, 590 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
+
+- [x] Zalo pairing list default.
+  - Source: `openclaw-main/src/cli/pairing-cli.ts`,
+    `openclaw-main/src/cli/pairing-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues pairing list` defaults to native Zalo when no channel
+    is provided, matching OpenClaw's sole pairing-channel default.
+  - Evidence required: focused pairing-list default CLI proof, adjacent
+    devices/pairing CLI proof, ruff, mypy
+  - Status: checkpointed in `0b791e74`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_pairing_list_json_defaults_to_zalo_channel -q`
+    (channel-required CLI exit before implementation, then `1 passed`),
+    adjacent CLI proof
+    `python -m pytest tests\test_cli.py -q -k "pairing or devices"` (`11
+    passed, 590 deselected`), `ruff check src\openzues\cli.py
     tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
     --check`.
 

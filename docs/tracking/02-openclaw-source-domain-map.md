@@ -181,6 +181,10 @@ through direct-channel delivery with idempotency metadata.
 `src/config/config.ts` is checkpointed in `c105b1c5`; it covers writing
 `zalo:<sender>` to `commands.ownerAllowFrom` when approval succeeds and no
 command owner is configured.
+`OZ-PROV-001FZ` Zalo pairing list default from `src/cli/pairing-cli.ts` and
+`src/cli/pairing-cli.test.ts` is checkpointed in `0b791e74`; it covers
+defaulting `openzues pairing list` to the sole native pairing channel when no
+channel argument or `--channel` option is provided.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
