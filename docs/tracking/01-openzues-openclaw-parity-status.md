@@ -21,7 +21,7 @@ may lag behind this tracker.
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.999989% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot reply message sequencing, QQBot local media file-data uploads, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.999997% | High for bounded native bridge | ACP resume ownership, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
+| Runtime/CLI/doctor native bridge | ~99.999998% | High for bounded native bridge | ACP resume ownership, ACP model/thinking overrides, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.9% | Low, broad parity still open | QR setup-code safety, SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, and approval-state preview metadata are landed; companion apps remain mostly open |
 
@@ -44,6 +44,26 @@ may lag behind this tracker.
     (`2 passed` after implementation), adjacent ACP gateway proof (`8 passed,
     1265 deselected`), ACP runtime proof (`19 passed`), ruff, mypy, and
     focused `git diff --check`.
+
+- [x] ACP model/thinking override propagation for `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.ts`,
+    `openclaw-main/src/agents/acp-spawn.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_acp_spawn.py`,
+    `src/openzues/services/codex_rpc.py`, `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_acp_spawn.py`, `tests/test_codex_rpc.py`
+  - Contract: `model` and `thinking` ACP spawn params are forwarded to runtime
+    startup/turn dispatch, persisted on spawned session metadata, and
+    serialized as Codex app-server model/effort fields.
+  - Evidence required: focused gateway/runtime/RPC proofs, adjacent ACP/RPC
+    tests, ruff, mypy
+  - Status: checkpointed in `c10e37f1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green gateway/runtime/RPC tests,
+    adjacent ACP runtime proof (`20 passed`), adjacent gateway ACP proof (`9
+    passed, 1265 deselected`), RPC proof (`9 passed`), ruff, mypy, and focused
+    `git diff --check`.
 
 - [x] Gateway method registry, policy wiring, strict parameter guards, config
   lookup/mutation, node invoke guards, device pairing, approvals, and node/global

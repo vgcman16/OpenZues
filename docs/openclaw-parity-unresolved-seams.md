@@ -15,9 +15,10 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.999997% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.999998% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
-  `resumeSessionId` ownership enforcement, package
+  `resumeSessionId` ownership enforcement, ACP model/thinking override
+  propagation, package
   post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback,
   startup-optimization doctor notes, installed runtime session/control-UI
   contribution capture, package
@@ -12830,3 +12831,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity moves to ~99.999997%. Continue deeper ACP bridge lifecycle edge
   cases, installed plugin activation depth, packaging/distribution, provider
   media edges, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now propagates
+  OpenClaw `model` and `thinking` overrides from gateway params through ACP
+  runtime startup/turn dispatch, persists spawned ACP session model metadata,
+  and serializes app-server thread-start `effort`. Source/test checkpointed in
+  `c10e37f1`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.999998%. Continue
+  deeper ACP bridge lifecycle edge cases, installed plugin activation depth,
+  packaging/distribution, provider media edges, or companion breadth.
