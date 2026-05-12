@@ -100137,6 +100137,76 @@ def _resolve_qr_remote_secret_refs(
     return resolved_snapshot, _dedupe_cli_strings(diagnostics)
 
 
+def _resolve_qr_secret_ref_string(
+    config_snapshot: Mapping[str, object],
+    *,
+    value: object,
+) -> tuple[str | None, str | None]:
+    parts = _qr_secret_ref_parts(value)
+    if parts is None:
+        return None, None
+    source, provider, secret_id = parts
+    if source == "env":
+        resolved = _optional_cli_string(os.environ.get(secret_id))
+    elif source == "file":
+        resolved = _resolve_qr_file_secret_ref(
+            config_snapshot,
+            provider=provider,
+            secret_id=secret_id,
+        )
+    elif source == "exec":
+        resolved = _resolve_qr_exec_secret_ref(
+            config_snapshot,
+            provider=provider,
+            secret_id=secret_id,
+        )
+    else:
+        resolved = None
+    return resolved, f"{source}:{provider}:{secret_id}"
+
+
+def _should_resolve_qr_local_gateway_password_secret(
+    config_snapshot: Mapping[str, object] | None,
+) -> bool:
+    if config_snapshot is None:
+        return False
+    if _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PASSWORD")) is not None:
+        return False
+    auth_config = _qr_config_mapping(_qr_gateway_config(config_snapshot).get("auth"))
+    auth_mode = str(auth_config.get("mode") or "").strip().lower()
+    if auth_mode == "password":
+        return True
+    if auth_mode in {"token", "none", "trusted-proxy"}:
+        return False
+    if _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_TOKEN")) is not None:
+        return False
+    return not _has_configured_secret_input(auth_config.get("token"))
+
+
+def _resolve_qr_local_gateway_password_secret_ref(
+    config_snapshot: Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
+    if config_snapshot is None:
+        return None
+    resolved_snapshot = copy.deepcopy(dict(config_snapshot))
+    gateway = resolved_snapshot.get("gateway")
+    if not isinstance(gateway, dict):
+        return resolved_snapshot
+    auth_config = gateway.get("auth")
+    if not isinstance(auth_config, dict):
+        return resolved_snapshot
+    resolved, ref_label = _resolve_qr_secret_ref_string(
+        resolved_snapshot,
+        value=auth_config.get("password"),
+    )
+    if ref_label is None:
+        return resolved_snapshot
+    if resolved is None:
+        raise ValueError(f"gateway.auth.password SecretRef is unresolved ({ref_label}).")
+    auth_config["password"] = resolved
+    return resolved_snapshot
+
+
 def _emit_qr_secret_resolve_diagnostics(
     diagnostics: Sequence[str],
     *,
@@ -100172,6 +100242,8 @@ def _resolve_qr_auth_label(
         return "token"
 
     gateway_config = _qr_gateway_config(config_snapshot)
+    env_token = _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_TOKEN"))
+    env_password = _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PASSWORD"))
     if remote:
         remote_config = _qr_gateway_remote_config(config_snapshot)
         if _qr_config_text(remote_config.get("token")):
@@ -100181,8 +100253,14 @@ def _resolve_qr_auth_label(
 
     auth_config = _qr_config_mapping(gateway_config.get("auth"))
     auth_mode = str(auth_config.get("mode") or "").strip().lower()
-    has_token = _qr_config_text(auth_config.get("token")) is not None
-    has_password = _qr_config_text(auth_config.get("password")) is not None
+    has_token = (
+        env_token is not None
+        or _qr_config_text(auth_config.get("token")) is not None
+    )
+    has_password = (
+        env_password is not None
+        or _qr_config_text(auth_config.get("password")) is not None
+    )
     if auth_mode == "password":
         if has_password:
             return "password"
@@ -100440,6 +100518,14 @@ def qr_command(
                 secret_diagnostics,
                 json_output=json_output,
                 setup_code_only=setup_code_only,
+            )
+        elif (
+            not str(token or "").strip()
+            and not str(password or "").strip()
+            and _should_resolve_qr_local_gateway_password_secret(config_snapshot)
+        ):
+            config_snapshot = _resolve_qr_local_gateway_password_secret_ref(
+                config_snapshot
             )
         gateway_url, url_source = _resolve_qr_gateway_url(
             app_settings=app_settings,

@@ -237,6 +237,65 @@ def test_qr_setup_code_only_allows_private_lan_cleartext_url(
     assert payload["url"] == "ws://192.168.1.8:18789"
 
 
+def test_qr_local_json_resolves_gateway_password_secretref(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("QR_LOCAL_GATEWAY_PASSWORD", "local-password-secret")
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+    monkeypatch.delenv("OPENCLAW_GATEWAY_PASSWORD", raising=False)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {
+                        "mode": "password",
+                        "password": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "QR_LOCAL_GATEWAY_PASSWORD",
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--json",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "local-password-secret" not in result.stdout
+    assert "local-password-secret" not in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://gateway.example.test:18789"
+    assert payload["auth"] == "password"
+    assert payload["urlSource"] == "cli.url"
+
+
 def test_qr_remote_requires_explicit_remote_url_before_token_issue(
     tmp_path, monkeypatch
 ) -> None:
