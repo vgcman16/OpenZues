@@ -103,8 +103,12 @@ page emulation through `agent-browser eval --stdin`. `OZ-CANVAS-001T` tab
 label action route breadth from `extensions/browser/src/browser/routes/tabs.ts`
 is checkpointed in `c6fb16d3`; it maps `/tabs/action` `label` onto native
 session-local tab label projection and targeted-close cleanup.
-Remaining browser-request depth is profile mutation and permission beyond the
-current native adapter.
+`OZ-CANVAS-001U` permission grant route breadth from
+`extensions/browser/src/browser/routes/permissions.ts` is checkpointed in
+`1a27af54`; it maps `POST /permissions/grant` onto native CDP
+`Browser.grantPermissions` dispatch through `agent-browser get cdp-url`.
+Remaining browser-request depth is persistent profile mutation boundary review
+beyond the current native adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers

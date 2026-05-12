@@ -6,7 +6,7 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.961% of the
+- The active gateway/session/tool-contract family is estimated at ~99.962% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.986% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -140,7 +140,7 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.961% after the
+- The gateway session/tool-contract family is estimated at ~99.962% after the
   latest requester-scoped `agents_list` spawn-target projection slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.9991%
   after route-backed Telegram stale-thread retry fallback for JSON and
@@ -12220,3 +12220,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity moves to ~99.98%. Continue persistent-profile mutation boundary
   review, permissions, remaining provider-specific media/reply edges, deeper
   installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control permission
+  grant route breadth now maps upstream `POST /permissions/grant` from
+  `extensions/browser/src/browser/routes/permissions.ts` onto native
+  `agent-browser get cdp-url` plus CDP `Browser.grantPermissions` over
+  WebSocket, including optional-permission fallback retry. Source/test
+  checkpointed in `1a27af54`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.962%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.99%.
+  Continue persistent-profile mutation boundary review, remaining
+  provider-specific media/reply edges, deeper installed plugin activation,
+  companion breadth, or the next packaging edge.
