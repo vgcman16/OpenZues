@@ -3807,6 +3807,15 @@ def _telegram_terminal_result_payload(result: object) -> dict[str, Any]:
     return items[-1] if items else {}
 
 
+def _telegram_result_is_thread_not_found(result: object) -> bool:
+    if not isinstance(result, Mapping) or result.get("ok") is not False:
+        return False
+    description = str(
+        result.get("description") or result.get("error") or result.get("error_code") or ""
+    )
+    return "message thread not found" in description.lower()
+
+
 def _telegram_message_id(result: object) -> str | None:
     payload = _telegram_terminal_result_payload(result)
     candidate = payload.get("message_id")
@@ -31821,6 +31830,19 @@ class OpsMeshService:
         audio_as_voice = _optional_bool_payload_value(event, "audioAsVoice")
         media_kind = event.get("mediaKind")
         inline_keyboard = _telegram_inline_keyboard(event.get("channelData"))
+
+        def post_telegram_json(method: str, payload: dict[str, Any]) -> object:
+            endpoint = _telegram_api_endpoint(str(route.get("target") or ""), token, method)
+            result = self._post_json_webhook(endpoint, payload)
+            if (
+                "message_thread_id" in payload
+                and _telegram_result_is_thread_not_found(result)
+            ):
+                threadless_payload = dict(payload)
+                threadless_payload.pop("message_thread_id", None)
+                return self._post_json_webhook(endpoint, threadless_payload)
+            return result
+
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
@@ -31861,10 +31883,7 @@ class OpsMeshService:
                 payload["reply_to_message_id"] = reply_to_id
             if thread_id:
                 payload["message_thread_id"] = thread_id
-            result = self._post_json_webhook(
-                _telegram_api_endpoint(str(route.get("target") or ""), token, "sendPoll"),
-                payload,
-            )
+            result = post_telegram_json("sendPoll", payload)
         else:
             raw_media_urls = event.get("mediaUrls")
             media_urls = _normalize_direct_channel_media_urls(
@@ -31913,14 +31932,7 @@ class OpsMeshService:
                         media_payload["caption"] = text[:1024]
                     if index == 0 and inline_keyboard is not None:
                         media_payload["reply_markup"] = inline_keyboard
-                    media_result = self._post_json_webhook(
-                        _telegram_api_endpoint(
-                            str(route.get("target") or ""),
-                            token,
-                            telegram_method,
-                        ),
-                        media_payload,
-                    )
+                    media_result = post_telegram_json(telegram_method, media_payload)
                     if not isinstance(media_result, dict):
                         raise RuntimeError("Telegram API returned a non-JSON response.")
                     if media_result.get("ok") is False:
@@ -31953,26 +31965,12 @@ class OpsMeshService:
                     payload["caption"] = text[:1024]
                 if inline_keyboard is not None:
                     payload["reply_markup"] = inline_keyboard
-                result = self._post_json_webhook(
-                    _telegram_api_endpoint(
-                        str(route.get("target") or ""),
-                        token,
-                        telegram_method,
-                    ),
-                    payload,
-                )
+                result = post_telegram_json(telegram_method, payload)
             else:
                 payload["text"] = text
                 if inline_keyboard is not None:
                     payload["reply_markup"] = inline_keyboard
-                result = self._post_json_webhook(
-                    _telegram_api_endpoint(
-                        str(route.get("target") or ""),
-                        token,
-                        "sendMessage",
-                    ),
-                    payload,
-                )
+                result = post_telegram_json("sendMessage", payload)
         if not isinstance(result, dict):
             raise RuntimeError("Telegram API returned a non-JSON response.")
         if result.get("ok") is False:
