@@ -4684,6 +4684,59 @@ def test_channels_capabilities_json_reports_zalo_support(tmp_path, monkeypatch) 
     assert report["actions"] == ["send", "broadcast"]
 
 
+def test_channels_capabilities_json_hides_zalo_actions_for_disabled_account(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Disabled Zalo Capabilities")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Disabled Zalo Route",
+            kind="zalo",
+            target="https://bot-api.zaloplatforms.test",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "zalo",
+                "account_id": "default",
+                "peer_kind": "direct",
+                "peer_id": "direct:dm-chat-1",
+                "summary": "disabled default Zalo account",
+            },
+            enabled=False,
+            secret_header_name=None,
+            secret_token="zalo-access-token",
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "capabilities",
+            "--channel",
+            "zalo",
+            "--account",
+            "default",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert len(payload["channels"]) == 1
+    report = payload["channels"][0]
+    assert report["channel"] == "zalo"
+    assert report["accountId"] == "default"
+    assert report["configured"] is True
+    assert report["enabled"] is False
+    assert report["actions"] == []
+
+
 def test_channels_capabilities_json_reports_feishu_media_voice_support(
     tmp_path,
     monkeypatch,

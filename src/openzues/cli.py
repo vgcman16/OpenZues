@@ -98385,8 +98385,8 @@ def _build_channel_capabilities_report(
         and enabled_route_count > 0
     )
     support = dict(_CHANNEL_CAPABILITY_SUPPORT.get(channel_id, {"chatTypes": ["direct"]}))
-    actions = ["send", "broadcast"]
-    if support.get("polls") is True:
+    actions: list[str] = ["send", "broadcast"] if enabled else []
+    if enabled and support.get("polls") is True:
         actions.append("poll")
     probe = account_summary.get("probe") if account_summary is not None else None
     if not isinstance(probe, dict):
