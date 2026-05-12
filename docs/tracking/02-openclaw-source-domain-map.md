@@ -189,6 +189,10 @@ channel argument or `--channel` option is provided.
 `src/cli/pairing-cli.ts` and `src/cli/pairing-cli.test.ts` is checkpointed in
 `646fa3d0`; it covers human output explaining that
 `commands.ownerAllowFrom` was empty when command-owner bootstrap occurs.
+`OZ-PROV-001GB` Zalo pairing approval not-found text from
+`src/cli/pairing-cli.ts` and `src/cli/pairing-cli.test.ts` is checkpointed in
+`433368f1`; it covers projecting missing-code approvals as `No pending pairing
+request found for code: <code>` in human CLI output.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
