@@ -24,7 +24,7 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.969% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.999988% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline image tags, and reply sequencing are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.999989% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline tags, reply sequencing, and local media upload are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.999996% | Mostly landed; startup optimization, packaging, and installed plugin depth are advancing | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.9% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
@@ -210,9 +210,10 @@ breadth to ~99.999986%. `OZ-PROV-001GK` inline QQBot image tags are
 source/test checkpointed in `8369a37c`, moving provider-native inbound/outbound
 breadth to ~99.999987%. `OZ-PROV-001GL` QQBot reply sequencing is source/test
 checkpointed in `44c83da3`, moving provider-native inbound/outbound breadth to
-~99.999988%. Continue QQBot local/chunked media and broader structured
-media-tag coverage, ACP bridge lifecycle depth, packaging/distribution, or
-companion breadth.
+~99.999988%. `OZ-PROV-001GM` QQBot local media file-data upload is source/test
+checkpointed in `09943f82`, moving provider-native inbound/outbound breadth to
+~99.999989%. Continue QQBot chunked upload/voice-video-file edges, ACP bridge
+lifecycle depth, packaging/distribution, or companion breadth.
 Runtime addendum: `OZ-PKG-001DA` package-update post-core resume mode is
 source/test checkpointed in `4f874859`, moving runtime/CLI/doctor native-bridge
 parity to ~99.999991%. Continue package-update fresh-process handoff, deeper
