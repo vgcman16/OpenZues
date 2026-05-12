@@ -166,6 +166,11 @@ and adding approved senders to the account-scoped Zalo `allowFrom` store.
 `src/cli/pairing-cli.ts` is checkpointed in `d1c79fea`; it covers pending
 request listing, account filtering, expired request pruning, per-account cap
 pruning, and `createdAt` ordering.
+`OZ-PROV-001FW` Zalo pairing CLI list/approve from
+`src/cli/pairing-cli.ts`, `src/cli/pairing-cli.test.ts`, and
+`src/pairing/pairing-store.ts` is checkpointed in `6de9e5a1`; it covers
+native `openzues pairing list`/`approve` JSON and human output, Zalo
+channel/account scoping, and CLI data-dir pairing-store wiring.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and

@@ -23468,6 +23468,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
   tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
   focused `git diff --check`. Source/test checkpointed in `d1c79fea`.
+- Native `openzues pairing list` and `openzues pairing approve` commands now
+  expose the Zalo pairing store operator lifecycle from
+  `src/cli/pairing-cli.ts`: list supports positional/`--channel` Zalo,
+  `--account`, JSON and human output, while approve supports positional or
+  `--channel` Zalo, account scoping, JSON success/error projection, and the
+  CLI-built OpsMesh service now receives the native data directory as its
+  pairing store root. This closes `OZ-PROV-001FW`; repo-wide parity remains
+  estimated at ~99.9%, provider-native inbound/outbound breadth moves to
+  ~99.99991%, and runtime/CLI/doctor plus CLI/operator parity move to
+  ~99.99993%.
+- Verified the Zalo pairing CLI seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_pairing_list_json_calls_zalo_pairing_store tests\test_cli.py::test_pairing_approve_json_calls_zalo_pairing_store -q`
+  (unregistered command before implementation, then `2 passed`), adjacent CLI
+  proof `python -m pytest tests\test_cli.py -q -k "pairing or devices"` (`8
+  passed, 590 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `6de9e5a1`.
 
 ## References
 
