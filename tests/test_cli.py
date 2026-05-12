@@ -29500,6 +29500,12 @@ def test_update_fails_when_restart_health_snapshot_is_unhealthy(
     assert "Port diagnostics errors: netstat denied" in result.stdout
 
 
+def test_update_restart_runtime_diagnostics_label_abort_exit_status() -> None:
+    assert cli_module._openclaw_update_restart_runtime_diagnostics(
+        {"runtime": {"status": "stopped", "lastExitStatus": 134}}
+    ) == ["Service runtime: status=stopped, lastExit=134 (SIGABRT/abort)"]
+
+
 def test_update_restart_health_diagnostics_include_restart_log_and_status_hint(
     tmp_path,
     monkeypatch,

@@ -10446,6 +10446,27 @@ def _openclaw_update_restart_scalar(value: object) -> str | None:
     return _optional_cli_string(value)
 
 
+_OPENCLAW_UPDATE_EXIT_SIGNAL_BY_STATUS = {
+    129: "SIGHUP",
+    130: "SIGINT",
+    131: "SIGQUIT",
+    134: "SIGABRT/abort",
+    137: "SIGKILL",
+    143: "SIGTERM",
+}
+
+
+def _openclaw_update_restart_last_exit_status(value: object) -> str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        signal_name = _OPENCLAW_UPDATE_EXIT_SIGNAL_BY_STATUS.get(value)
+        if signal_name is not None:
+            return f"{value} ({signal_name})"
+        return str(value)
+    return _optional_cli_string(value)
+
+
 def _openclaw_update_restart_runtime_diagnostics(
     health_payload: Mapping[str, object],
 ) -> list[str]:
@@ -10462,7 +10483,11 @@ def _openclaw_update_restart_runtime_diagnostics(
         ("pid", "pid"),
         ("lastExitStatus", "lastExit"),
     ):
-        value = _openclaw_update_restart_scalar(runtime.get(source_key))
+        value = (
+            _openclaw_update_restart_last_exit_status(runtime.get(source_key))
+            if source_key == "lastExitStatus"
+            else _openclaw_update_restart_scalar(runtime.get(source_key))
+        )
         if value is not None:
             parts.append(f"{label}={value}")
     return [f"Service runtime: {', '.join(parts)}"] if parts else []
