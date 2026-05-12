@@ -157,10 +157,11 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999998%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999999%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Matrix implicit reply
-  fanout, IRC media attachment formatting, Discord voice message sends,
+  fanout, IRC media attachment formatting, Discord multi-media implicit reply
+  fanout, Discord voice message sends,
   Discord audio-as-voice direct media sends, Signal receive envelope session
   routing with sync-message drops, QQBot route-backed text sends,
   QQBot image media uploads, QQBot inline image media tags, QQBot structured
@@ -13009,3 +13010,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor native-bridge parity moves to ~99.9999998%. Continue
   packaging/distribution edges, deeper ACP lifecycle, installed plugin
   activation, provider media edges, or companion app breadth.
+- Current queue-head adjustment: native Discord route-backed multi-media sends
+  now consume implicit reply ids once across media webhook fanout, matching
+  OpenClaw's `replyToIdSource="implicit"` behavior while preserving reusable
+  explicit replies. Source/test checkpointed in `0d06982e`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.999999%. Continue provider media/reply edges,
+  packaging/distribution, device-token authz depth, ACP lifecycle, or
+  companion app breadth.
