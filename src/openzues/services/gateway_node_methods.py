@@ -8863,6 +8863,20 @@ class GatewayNodeMethodService:
                     else _sessions_spawn_default_run_timeout_seconds(self._config_service)
                 )
                 requester_agent_id = resolve_agent_id_from_session_key(spawn_parent_session_key)
+                if spawn_parent_depth > 0:
+                    acp_subagent_policy_error = _sessions_spawn_agent_policy_error(
+                        self._config_service,
+                        requester_agent_id=requester_agent_id,
+                        target_agent_id=acp_agent_id,
+                        requested_agent_id=agent_id,
+                    )
+                    if acp_subagent_policy_error is not None:
+                        return {
+                            "status": "forbidden",
+                            "errorCode": "subagent_policy",
+                            "error": acp_subagent_policy_error,
+                            **role_context,
+                        }
                 requester_origin = _requester_route_context(resolved_requester)
                 requester_origin = _sessions_spawn_origin_for_target_agent(
                     self._config_service,
@@ -15324,6 +15338,119 @@ def _sessions_spawn_allowed_agent_policy(
             continue
         allowed.add(normalize_agent_id(text))
     return allow_any, tuple(sorted(allowed))
+
+
+def _sessions_spawn_agent_policy_error(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_agent_id: str,
+    target_agent_id: str,
+    requested_agent_id: str | None = None,
+) -> str | None:
+    if config_service is None:
+        return None
+    normalized_requester_agent_id = normalize_agent_id(requester_agent_id)
+    normalized_target_agent_id = normalize_agent_id(target_agent_id)
+    if (
+        _string_or_none(requested_agent_id) is None
+        and normalized_target_agent_id == normalized_requester_agent_id
+    ):
+        return None
+    if not _sessions_spawn_allow_agents_configured(
+        config_service,
+        requester_agent_id=normalized_requester_agent_id,
+    ):
+        allowed_agent_ids: tuple[str, ...]
+        allowed_agent_ids = (
+            (normalized_requester_agent_id,) if normalized_requester_agent_id else ()
+        )
+        allow_any_agent = False
+    else:
+        allow_any_agent, allowed_agent_ids = _sessions_spawn_allowed_agent_policy(
+            config_service,
+            requester_agent_id=normalized_requester_agent_id,
+        )
+    if allow_any_agent or normalized_target_agent_id in allowed_agent_ids:
+        return None
+    allowed_text = ", ".join(allowed_agent_ids) if allowed_agent_ids else "none"
+    return f"agentId is not allowed for sessions_spawn (allowed: {allowed_text})"
+
+
+def _sessions_spawn_allow_agents_configured(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_agent_id: str,
+) -> bool:
+    if config_service is None:
+        return False
+    raw_reader = getattr(config_service, "_read_raw_config_object", None)
+    if callable(raw_reader):
+        try:
+            raw_payload = raw_reader(label="sessions_spawn allowAgents config")
+        except Exception:  # noqa: BLE001 - raw config support is best-effort.
+            raw_payload = None
+        if isinstance(raw_payload, Mapping):
+            return _sessions_spawn_raw_allow_agents_configured(
+                raw_payload,
+                requester_agent_id=requester_agent_id,
+            )
+    subagents_config = _sessions_spawn_subagents_config(
+        config_service,
+        requester_agent_id=requester_agent_id,
+    )
+    raw_allow_agents = (
+        subagents_config.get("allowAgents") if isinstance(subagents_config, dict) else None
+    )
+    return isinstance(raw_allow_agents, list) and bool(raw_allow_agents)
+
+
+def _sessions_spawn_raw_allow_agents_configured(
+    payload: Mapping[str, object],
+    *,
+    requester_agent_id: str,
+) -> bool:
+    for agents_config in _sessions_spawn_raw_agents_config_roots(payload):
+        defaults_config = _mapping_or_none(agents_config.get("defaults"))
+        defaults_subagents = (
+            _mapping_or_none(defaults_config.get("subagents"))
+            if defaults_config is not None
+            else None
+        )
+        defaults_allow_agents = (
+            defaults_subagents.get("allowAgents")
+            if defaults_subagents is not None
+            else None
+        )
+        if isinstance(defaults_allow_agents, list) and defaults_allow_agents:
+            return True
+        agent_config = _sessions_spawn_agent_config_from_root(
+            agents_config,
+            agent_id=requester_agent_id,
+        )
+        if agent_config is None:
+            continue
+        agent_subagents = _mapping_or_none(agent_config.get("subagents"))
+        agent_allow_agents = (
+            agent_subagents.get("allowAgents") if agent_subagents is not None else None
+        )
+        if isinstance(agent_allow_agents, list) and agent_allow_agents:
+            return True
+    return False
+
+
+def _sessions_spawn_raw_agents_config_roots(
+    payload: Mapping[str, object],
+) -> tuple[dict[str, Any], ...]:
+    roots: list[dict[str, Any]] = []
+    gateway_config = _mapping_or_none(payload.get("gateway"))
+    if gateway_config is not None:
+        gateway_agents = gateway_config.get("agents")
+        if isinstance(gateway_agents, dict):
+            roots.append(gateway_agents)
+    top_level_agents = payload.get("agents")
+    if isinstance(top_level_agents, dict):
+        roots.append(top_level_agents)
+    return tuple(roots)
 
 
 def _sessions_spawn_acp_config(
