@@ -15,9 +15,10 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.9999998% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.9999999% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
-  `resumeSessionId` ownership enforcement, ACP model/thinking override
+  `resumeSessionId` requester-context preflight, ACP `resumeSessionId`
+  ownership enforcement, ACP model/thinking override
   propagation, ACP configured runtime agent alias mapping, ACP runtime-agent
   mismatch preflight, ACP run-timeout runtime propagation, ACP subagent
   depth/child-cap policy, ACP subagent target allowlist policy, ACP
@@ -13018,3 +13019,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   moves to ~99.999999%. Continue provider media/reply edges,
   packaging/distribution, device-token authz depth, ACP lifecycle, or
   companion app breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now rejects
+  `resumeSessionId` without an explicit requester session context as
+  `requester_session_required` instead of treating the default main session as
+  resume ownership context. Source/test checkpointed in `03ce091c`; repo-wide
+  parity remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge
+  parity moves to ~99.9999999%. Continue deeper ACP lifecycle edges,
+  packaging/distribution, installed plugin activation, provider media edges,
+  or companion app breadth.
