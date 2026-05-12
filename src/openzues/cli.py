@@ -24,10 +24,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlunparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
 import typer
 import uvicorn
 from typer.completion import get_completion_script
@@ -105406,14 +105407,133 @@ def _latest_pending_device(payload: dict[str, object]) -> dict[str, object] | No
     return {str(key): value for key, value in latest.items() if isinstance(key, str)}
 
 
+_DEVICES_DEFAULT_TIMEOUT_MS = 10_000
+
+
+def _devices_gateway_timeout_ms(timeout: str | None) -> int:
+    timeout_value = _optional_cli_string(timeout)
+    if timeout_value is None:
+        return _DEVICES_DEFAULT_TIMEOUT_MS
+    try:
+        timeout_ms = int(timeout_value)
+    except ValueError as exc:
+        raise typer.BadParameter("timeout must be an integer number of milliseconds") from exc
+    if timeout_ms <= 0:
+        raise typer.BadParameter("timeout must be greater than 0")
+    return timeout_ms
+
+
+def _devices_gateway_method_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme == "ws":
+        scheme = "http"
+    elif parsed.scheme == "wss":
+        scheme = "https"
+    elif parsed.scheme in {"http", "https"}:
+        scheme = parsed.scheme
+    else:
+        raise typer.BadParameter("Gateway URL must start with ws://, wss://, http://, or https://")
+    if not parsed.netloc:
+        raise typer.BadParameter("Gateway URL must include a host")
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/gateway/node-methods/call"):
+        endpoint_path = path
+    elif path:
+        endpoint_path = f"{path}/api/gateway/node-methods/call"
+    else:
+        endpoint_path = "/api/gateway/node-methods/call"
+    return urlunparse((scheme, parsed.netloc, endpoint_path, "", "", ""))
+
+
+async def _call_remote_gateway_node_method(
+    method: str,
+    params: dict[str, object],
+    *,
+    url: str,
+    token: str | None,
+    password: str | None,
+    timeout_ms: int,
+) -> dict[str, object]:
+    headers = {
+        "X-OpenZues-Client-Id": "openzues-cli",
+        "X-OpenClaw-Client-Mode": "cli",
+    }
+    if token:
+        headers["X-OpenClaw-Token"] = token
+    if password:
+        headers["X-OpenClaw-Password"] = password
+    endpoint_url = _devices_gateway_method_url(url)
+    try:
+        async with httpx.AsyncClient(timeout=timeout_ms / 1000) as client:
+            response = await client.post(
+                endpoint_url,
+                json={"method": method, "params": params},
+                headers=headers,
+            )
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Remote gateway request failed: {exc}") from exc
+    if response.status_code >= 400:
+        try:
+            error_payload = response.json()
+        except ValueError:
+            error_payload = response.text
+        message: object = error_payload
+        if isinstance(error_payload, dict):
+            message = error_payload.get("detail") or error_payload.get("error") or error_payload
+        raise RuntimeError(str(message))
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Remote gateway returned non-JSON response") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Remote gateway returned an invalid response")
+    return {str(key): value for key, value in payload.items() if isinstance(key, str)}
+
+
+def _run_devices_gateway_node_method(
+    method: str,
+    params: dict[str, object],
+    *,
+    url: str | None,
+    token: str | None,
+    password: str | None,
+    timeout: str | None,
+) -> dict[str, object]:
+    url_value = _optional_cli_string(url)
+    if url_value is not None:
+        return _run(
+            _call_remote_gateway_node_method(
+                method,
+                params,
+                url=url_value,
+                token=_optional_cli_string(token),
+                password=_optional_cli_string(password),
+                timeout_ms=_devices_gateway_timeout_ms(timeout),
+            )
+        )
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, method, params)
+
+    return _run(_run_with_services(_action))
+
+
 @devices_app.command("list")
 def devices_list_command(
+    url: str | None = typer.Option(None, "--url", help="Gateway WebSocket URL."),
+    timeout: str | None = typer.Option(None, "--timeout", help="Gateway timeout in ms."),
+    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    password: str | None = typer.Option(None, "--password", help="Gateway password."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
-    async def _action(services: CliServices) -> dict[str, object]:
-        return await _call_gateway_node_method(services, "device.pair.list", {})
-
-    result = _run(_run_with_services(_action))
+    result = _run_devices_gateway_node_method(
+        "device.pair.list",
+        {},
+        url=url,
+        token=token,
+        password=password,
+        timeout=timeout,
+    )
     _emit_devices_list(result, json_output=json_output)
 
 
@@ -105530,11 +105650,14 @@ def devices_approve_command(
     token_value = _optional_cli_string(token)
     password_value = _optional_cli_string(password)
     if normalized_request_id is None or latest:
-
-        async def _preview_action(services: CliServices) -> dict[str, object]:
-            return await _call_gateway_node_method(services, "device.pair.list", {})
-
-        listing = _run(_run_with_services(_preview_action))
+        listing = _run_devices_gateway_node_method(
+            "device.pair.list",
+            {},
+            url=url,
+            token=token,
+            password=password,
+            timeout=timeout,
+        )
         selected = _latest_pending_device(listing)
         if selected is None:
             typer.echo("No pending device pairing requests to approve", err=True)
@@ -105567,14 +105690,14 @@ def devices_approve_command(
                 typer.echo("Reuse the same auth flag when running approve.", err=True)
         raise typer.Exit(code=1)
 
-    async def _action(services: CliServices) -> dict[str, object]:
-        return await _call_gateway_node_method(
-            services,
-            "device.pair.approve",
-            {"requestId": normalized_request_id},
-        )
-
-    result = _run(_run_with_services(_action))
+    result = _run_devices_gateway_node_method(
+        "device.pair.approve",
+        {"requestId": normalized_request_id},
+        url=url,
+        token=token,
+        password=password,
+        timeout=timeout,
+    )
     if json_output:
         typer.echo(json.dumps(result, indent=2))
         return

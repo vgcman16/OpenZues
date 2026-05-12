@@ -835,25 +835,43 @@ def test_devices_approve_latest_json_previews_without_approving(monkeypatch) -> 
 def test_devices_approve_latest_json_preserves_gateway_flags_without_secrets(
     monkeypatch,
 ) -> None:
-    calls: list[tuple[str, dict[str, object]]] = []
+    remote_calls: list[tuple[str, dict[str, object], dict[str, object]]] = []
 
-    class FakeGatewayNodeMethods:
-        async def call(
-            self,
-            method: str,
-            params: dict[str, object],
-        ) -> dict[str, object]:
-            calls.append((method, params))
-            assert method == "device.pair.list"
-            return {
-                "pending": [{"requestId": "req-url", "deviceId": "device-9", "ts": 1000}],
-                "paired": [],
-            }
+    async def fake_remote_gateway_call(
+        method: str,
+        params: dict[str, object],
+        *,
+        url: str,
+        token: str | None,
+        password: str | None,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        remote_calls.append(
+            (
+                method,
+                dict(params),
+                {
+                    "url": url,
+                    "token": token,
+                    "password": password,
+                    "timeoutMs": timeout_ms,
+                },
+            )
+        )
+        assert method == "device.pair.list"
+        return {
+            "pending": [{"requestId": "req-url", "deviceId": "device-9", "ts": 1000}],
+            "paired": [],
+        }
 
-    async def fake_run_with_services(action):
-        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+    async def fail_local_services(action):
+        raise AssertionError("explicit --url should use remote gateway dispatch")
 
-    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+    monkeypatch.setattr(
+        "openzues.cli._call_remote_gateway_node_method",
+        fake_remote_gateway_call,
+    )
+    monkeypatch.setattr("openzues.cli._run_with_services", fail_local_services)
 
     result = runner.invoke(
         app,
@@ -872,13 +890,164 @@ def test_devices_approve_latest_json_preserves_gateway_flags_without_secrets(
     )
 
     assert result.exit_code == 1
-    assert calls == [("device.pair.list", {})]
+    assert remote_calls == [
+        (
+            "device.pair.list",
+            {},
+            {
+                "url": "ws://gateway.example:18789",
+                "token": "secret-token",
+                "password": None,
+                "timeoutMs": 3000,
+            },
+        )
+    ]
     payload = json.loads(result.stdout)
     assert payload["approveCommand"] == (
         "openzues devices approve req-url --url ws://gateway.example:18789 "
         "--timeout 3000 --json"
     )
     assert payload["requiresAuthFlags"] == {"token": True, "password": False}
+    assert "secret-token" not in result.stdout
+
+
+def test_devices_list_json_calls_remote_gateway_with_auth_flags(monkeypatch) -> None:
+    remote_calls: list[tuple[str, dict[str, object], dict[str, object]]] = []
+
+    async def fake_remote_gateway_call(
+        method: str,
+        params: dict[str, object],
+        *,
+        url: str,
+        token: str | None,
+        password: str | None,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        remote_calls.append(
+            (
+                method,
+                dict(params),
+                {
+                    "url": url,
+                    "token": token,
+                    "password": password,
+                    "timeoutMs": timeout_ms,
+                },
+            )
+        )
+        return {
+            "pending": [{"requestId": "req-remote", "deviceId": "device-remote"}],
+            "paired": [],
+        }
+
+    async def fail_local_services(action):
+        raise AssertionError("explicit --url should use remote gateway dispatch")
+
+    monkeypatch.setattr(
+        "openzues.cli._call_remote_gateway_node_method",
+        fake_remote_gateway_call,
+    )
+    monkeypatch.setattr("openzues.cli._run_with_services", fail_local_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "devices",
+            "list",
+            "--url",
+            "wss://gateway.example/openzues",
+            "--timeout",
+            "3000",
+            "--token",
+            "secret-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert remote_calls == [
+        (
+            "device.pair.list",
+            {},
+            {
+                "url": "wss://gateway.example/openzues",
+                "token": "secret-token",
+                "password": None,
+                "timeoutMs": 3000,
+            },
+        )
+    ]
+    payload = json.loads(result.stdout)
+    assert payload["pending"][0]["requestId"] == "req-remote"
+    assert "secret-token" not in result.stdout
+
+
+def test_devices_approve_json_calls_remote_gateway_with_auth_flags(monkeypatch) -> None:
+    remote_calls: list[tuple[str, dict[str, object], dict[str, object]]] = []
+
+    async def fake_remote_gateway_call(
+        method: str,
+        params: dict[str, object],
+        *,
+        url: str,
+        token: str | None,
+        password: str | None,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        remote_calls.append(
+            (
+                method,
+                dict(params),
+                {
+                    "url": url,
+                    "token": token,
+                    "password": password,
+                    "timeoutMs": timeout_ms,
+                },
+            )
+        )
+        return {"device": {"deviceId": "device-remote"}}
+
+    async def fail_local_services(action):
+        raise AssertionError("explicit --url should use remote gateway dispatch")
+
+    monkeypatch.setattr(
+        "openzues.cli._call_remote_gateway_node_method",
+        fake_remote_gateway_call,
+    )
+    monkeypatch.setattr("openzues.cli._run_with_services", fail_local_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "devices",
+            "approve",
+            "req-remote",
+            "--url",
+            "wss://gateway.example/openzues",
+            "--timeout",
+            "3000",
+            "--token",
+            "secret-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert remote_calls == [
+        (
+            "device.pair.approve",
+            {"requestId": "req-remote"},
+            {
+                "url": "wss://gateway.example/openzues",
+                "token": "secret-token",
+                "password": None,
+                "timeoutMs": 3000,
+            },
+        )
+    ]
+    payload = json.loads(result.stdout)
+    assert payload["device"]["deviceId"] == "device-remote"
     assert "secret-token" not in result.stdout
 
 
