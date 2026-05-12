@@ -96080,6 +96080,73 @@ async def test_sessions_spawn_acp_maps_configured_runtime_agent_alias(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_rejects_configured_native_agent_id(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-native-agent.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+                "agents": {
+                    "list": [{"id": "pleres"}],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {"status": "accepted"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Investigate flaky tests.",
+            "runtime": "acp",
+            "agentId": "pleres",
+        },
+        now_ms=10_000,
+    )
+
+    assert payload["status"] == "error"
+    assert payload["errorCode"] == "runtime_agent_mismatch"
+    assert "OpenClaw config agent" in payload["error"]
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_inherits_target_agent_workspace_when_cwd_omitted(
     tmp_path,
 ) -> None:

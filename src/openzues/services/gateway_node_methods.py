@@ -8738,6 +8738,17 @@ class GatewayNodeMethodService:
                         "error": _ACP_SANDBOXED_REQUESTER_ERROR,
                         **role_context,
                     }
+                acp_agent_mismatch_error = _sessions_spawn_acp_config_agent_mismatch_error(
+                    requested_agent_id=agent_id,
+                    config_service=self._config_service,
+                )
+                if acp_agent_mismatch_error is not None:
+                    return {
+                        "status": "error",
+                        "errorCode": "runtime_agent_mismatch",
+                        "error": acp_agent_mismatch_error,
+                        **role_context,
+                    }
                 acp_agent_id = _sessions_spawn_acp_target_agent_id(
                     requested_agent_id=agent_id,
                     config_service=self._config_service,
@@ -15361,6 +15372,44 @@ def _sessions_spawn_acp_target_agent_id(
     return target_agent_id
 
 
+def _sessions_spawn_acp_config_agent_mismatch_error(
+    *,
+    requested_agent_id: str | None,
+    config_service: GatewayConfigService | None,
+) -> str | None:
+    if requested_agent_id is None or config_service is None:
+        return None
+    requested = normalize_agent_id(requested_agent_id)
+    for agents_config in _sessions_spawn_agents_config_roots(config_service):
+        agent_config = _sessions_spawn_agent_config_from_root(
+            agents_config,
+            agent_id=requested,
+        )
+        if agent_config is None:
+            continue
+        runtime_config = _mapping_or_none(agent_config.get("runtime"))
+        runtime_type = (
+            _string_or_none(runtime_config.get("type"))
+            if runtime_config is not None
+            else None
+        )
+        if str(runtime_type or "").strip().lower() == "acp":
+            return None
+        if _sessions_spawn_acp_agent_explicitly_allowed(
+            config_service,
+            agent_id=requested,
+        ):
+            return None
+        return (
+            f'agentId "{requested}" is an OpenClaw config agent, not an ACP harness. '
+            'Use runtime="subagent" or omit runtime for OpenClaw config agents. '
+            'Use runtime="acp" only with external ACP harness ids such as codex, '
+            "claude, droid, gemini, or opencode, or configure "
+            'agents.list[].runtime.type="acp" with runtime.acp.agent.'
+        )
+    return None
+
+
 async def _sessions_spawn_resolve_acp_runtime_cwd(
     agents_service: GatewayAgentsService,
     *,
@@ -15416,6 +15465,26 @@ def _sessions_spawn_acp_agent_policy_error(
     if not allowed_agents or normalize_agent_id(agent_id) in allowed_agents:
         return None
     return f'ACP agent "{normalize_agent_id(agent_id)}" is not allowed by policy.'
+
+
+def _sessions_spawn_acp_agent_explicitly_allowed(
+    config_service: GatewayConfigService | None,
+    *,
+    agent_id: str,
+) -> bool:
+    raw_allowed_agents = _sessions_spawn_acp_config(config_service).get("allowedAgents")
+    if not isinstance(raw_allowed_agents, list):
+        return False
+    normalized_agent_id = normalize_agent_id(agent_id)
+    for raw_agent in raw_allowed_agents:
+        allowed_agent = _string_or_none(raw_agent)
+        if allowed_agent is None:
+            continue
+        if allowed_agent == "*":
+            return True
+        if normalize_agent_id(allowed_agent) == normalized_agent_id:
+            return True
+    return False
 
 
 def _normalized_session_key_for_compare(value: object) -> str | None:
