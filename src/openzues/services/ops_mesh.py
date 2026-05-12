@@ -5363,7 +5363,9 @@ def _qqbot_media_tag_kind(tag_name: str) -> str | None:
     return None
 
 
-def _qqbot_inline_media_tags(text: str) -> tuple[str, list[tuple[str, str | None]]]:
+def _qqbot_inline_media_segments(
+    text: str,
+) -> list[tuple[Literal["text", "media"], str, str | None]]:
     raw_matches: list[tuple[int, int, str, str | None]] = []
     for pattern in (_QQBOT_SELF_CLOSING_MEDIA_TAG_RE, _QQBOT_WRAPPED_MEDIA_TAG_RE):
         for match in pattern.finditer(text):
@@ -5376,10 +5378,8 @@ def _qqbot_inline_media_tags(text: str) -> tuple[str, list[tuple[str, str | None
                 )
             )
     if not raw_matches:
-        return text, []
+        return []
     raw_matches.sort(key=lambda entry: (entry[0], -(entry[1] - entry[0])))
-    entries: list[tuple[str, str | None]] = []
-    caption_parts: list[str] = []
     filtered_matches: list[tuple[int, int, str, str | None]] = []
     cursor = 0
     for start, end, media_url, media_kind in raw_matches:
@@ -5387,22 +5387,38 @@ def _qqbot_inline_media_tags(text: str) -> tuple[str, list[tuple[str, str | None
             continue
         filtered_matches.append((start, end, media_url, media_kind))
         cursor = end
+    segments: list[tuple[Literal["text", "media"], str, str | None]] = []
     last_index = 0
     for start, end, raw_media_url, media_kind in filtered_matches:
         before = html.unescape(text[last_index:start]).strip()
         if before:
-            caption_parts.append(before)
+            segments.append(("text", before, None))
         media_url = html.unescape(raw_media_url).strip().strip("\"'")
         if media_url.startswith("MEDIA:"):
             media_url = media_url[len("MEDIA:") :].strip()
         if media_url:
-            entries.append((media_url, media_kind))
+            segments.append(("media", media_url, media_kind))
         last_index = end
-    if not entries:
-        return text, []
     after = html.unescape(text[last_index:]).strip()
     if after:
-        caption_parts.append(after)
+        segments.append(("text", after, None))
+    return segments
+
+
+def _qqbot_inline_media_tags(text: str) -> tuple[str, list[tuple[str, str | None]]]:
+    segments = _qqbot_inline_media_segments(text)
+    if not segments:
+        return text, []
+    entries = [
+        (value, media_kind)
+        for segment_type, value, media_kind in segments
+        if segment_type == "media"
+    ]
+    if not entries:
+        return text, []
+    caption_parts = [
+        value for segment_type, value, _ in segments if segment_type == "text"
+    ]
     return "\n".join(caption_parts).strip(), entries
 
 
@@ -35712,7 +35728,21 @@ class OpsMeshService:
         target_type, target_id = parsed_target
         canonical_target = _qqbot_canonical_target(target_type, target_id)
         text = str(event.get("message") or "").strip()
-        inline_text, inline_media_entries = _qqbot_inline_media_tags(text)
+        inline_media_segments = _qqbot_inline_media_segments(text)
+        inline_media_entries = [
+            (value, media_kind)
+            for segment_type, value, media_kind in inline_media_segments
+            if segment_type == "media"
+        ]
+        inline_text = (
+            "\n".join(
+                value
+                for segment_type, value, _ in inline_media_segments
+                if segment_type == "text"
+            ).strip()
+            if inline_media_entries
+            else text
+        )
         raw_media_urls = event.get("mediaUrls")
         media_urls = _normalize_direct_channel_media_urls(
             media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
@@ -35722,9 +35752,11 @@ class OpsMeshService:
                 else None
             ),
         )
+        using_inline_media = False
         if not media_urls and inline_media_entries:
             text = inline_text
             media_urls = [media_url for media_url, _ in inline_media_entries]
+            using_inline_media = True
         media_kind = event.get("mediaKind")
         if media_kind is None and inline_media_entries:
             inline_media_kinds = {kind for _, kind in inline_media_entries if kind is not None}
@@ -35746,6 +35778,40 @@ class OpsMeshService:
                     self.gateway_config_service.build_snapshot(),
                     account_id=account_id,
                 )
+            inline_texts_by_media_index: dict[int, list[str]] = {}
+            inline_trailing_texts: list[str] = []
+            if using_inline_media:
+                media_index = 0
+                pending_texts: list[str] = []
+                for segment_type, value, _ in inline_media_segments:
+                    if segment_type == "text":
+                        pending_texts.append(value)
+                        continue
+                    if pending_texts:
+                        inline_texts_by_media_index[media_index] = pending_texts
+                        pending_texts = []
+                    media_index += 1
+                inline_trailing_texts = pending_texts
+
+            def post_qqbot_text_fragment(fragment: str) -> None:
+                fragment = str(fragment or "").strip()
+                if not fragment:
+                    return
+                text_payload: dict[str, object] = {"content": fragment, "msg_type": 0}
+                if reply_to_id:
+                    text_payload["msg_id"] = reply_to_id
+                    if target_type in {"c2c", "group"}:
+                        text_payload["msg_seq"] = _qqbot_next_msg_seq(reply_to_id)
+                try:
+                    self._post_json_webhook(
+                        _qqbot_message_endpoint(base_target, target_type, target_id),
+                        text_payload,
+                        secret_header_name="Authorization",
+                        secret_token=bearer_token,
+                    )
+                except Exception:
+                    pass
+
             if target_type == "channel":
                 channel_payload: dict[str, object] = {
                     "content": _qqbot_channel_media_content(
@@ -35775,6 +35841,8 @@ class OpsMeshService:
                 message_ids.append(message_id)
             else:
                 for index, media_url in enumerate(media_urls):
+                    for inline_text_fragment in inline_texts_by_media_index.get(index, ()):
+                        post_qqbot_text_fragment(inline_text_fragment)
                     file_type, media_type = _qqbot_media_file_type(media_url, media_kind)
                     upload_result = self._request_qqbot_media_upload(
                         base_target=base_target,
@@ -35824,7 +35892,13 @@ class OpsMeshService:
                             else 1
                         ),
                     }
-                    if index == 0 and text and file_type in {1, 2} and not send_text_after_media:
+                    if (
+                        index == 0
+                        and text
+                        and file_type in {1, 2}
+                        and not send_text_after_media
+                        and not using_inline_media
+                    ):
                         message_payload["content"] = text
                     if reply_to_id and index == 0:
                         message_payload["msg_id"] = reply_to_id
@@ -35847,19 +35921,9 @@ class OpsMeshService:
                         )
                     message_ids.append(sent_message_id)
                     if index == 0 and send_text_after_media:
-                        text_payload: dict[str, object] = {"content": text, "msg_type": 0}
-                        if reply_to_id:
-                            text_payload["msg_id"] = reply_to_id
-                            text_payload["msg_seq"] = _qqbot_next_msg_seq(reply_to_id)
-                        try:
-                            self._post_json_webhook(
-                                _qqbot_message_endpoint(base_target, target_type, target_id),
-                                text_payload,
-                                secret_header_name="Authorization",
-                                secret_token=bearer_token,
-                            )
-                        except Exception:
-                            pass
+                        post_qqbot_text_fragment(text)
+                for inline_text_fragment in inline_trailing_texts:
+                    post_qqbot_text_fragment(inline_text_fragment)
             native_result: dict[str, object] = {
                 "runtime": "native-provider-backed",
                 "messageId": message_ids[-1],

@@ -20916,6 +20916,15 @@ async def test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image
     }
     assert qqbot_posts == [
         (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "content": "Caption",
+                "msg_type": 0,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
             "https://api.sgroup.qq.com/v2/users/openid-1/files",
             {
                 "file_type": 1,
@@ -20931,7 +20940,6 @@ async def test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image
                 "msg_type": 7,
                 "media": {"file_info": "qq-inline-file-info"},
                 "msg_seq": 1,
-                "content": "Caption",
             },
             "Authorization",
             "Bearer qqbot-access-token",
