@@ -98559,6 +98559,8 @@ async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
 ) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-acp-parent-stream.db")
     await database.initialize()
+    sessions_service = GatewaySessionsService(database)
+    requester_session_key = await sessions_service.main_session_key()
     calls: list[dict[str, object]] = []
     stream_log_path = str(tmp_path / "agent-main-acp-stream.jsonl")
 
@@ -98584,7 +98586,7 @@ async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
         GatewayNodeRegistry(),
         database=database,
         hub=BroadcastHub(),
-        sessions_service=GatewaySessionsService(database),
+        sessions_service=sessions_service,
         acp_spawn_service=FakeAcpSpawnService(),
     )
 
@@ -98597,6 +98599,7 @@ async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
             "streamTo": "parent",
             "cleanup": "delete",
             "runTimeoutSeconds": 11,
+            "requesterSessionKey": requester_session_key,
         },
         now_ms=20_000,
     )
@@ -98607,6 +98610,7 @@ async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
     assert spawn_payload["streamLogPath"] == stream_log_path
     assert spawn_payload["note"] == "streaming progress to parent session"
     assert calls[0]["params"]["streamTo"] == "parent"
+    assert calls[0]["context"]["requesterSessionKey"] == requester_session_key
     metadata_row = await database.get_gateway_session_metadata(child_session_key)
     assert metadata_row is not None
     metadata = metadata_row["metadata"]
@@ -98661,6 +98665,56 @@ async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
     assert [message["content"] for message in parent_messages] == [
         f"Subagent {child_session_key} completed: ACP streamed child finished."
     ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_stream_to_parent_requires_requester_session_context(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-parent-stream-no-requester.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:main:acp:thread-acp-stream",
+                "runId": "run-acp-stream-1",
+                "mode": "run",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this through ACP and stream progress home.",
+            "runtime": "acp",
+            "agentId": "main",
+            "streamTo": "parent",
+        },
+        now_ms=20_000,
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "requester_session_required",
+        "error": 'sessions_spawn streamTo="parent" requires an active requester session context.',
+        "role": "main",
+    }
+    assert calls == []
 
 
 @pytest.mark.asyncio

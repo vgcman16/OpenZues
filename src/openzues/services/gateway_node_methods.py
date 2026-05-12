@@ -8776,6 +8776,16 @@ class GatewayNodeMethodService:
                     payload.get("requesterSessionKey"),
                     label="requesterSessionKey",
                 )
+                if stream_to == "parent" and requester_session_key is None:
+                    return {
+                        "status": "error",
+                        "errorCode": "requester_session_required",
+                        "error": (
+                            'sessions_spawn streamTo="parent" requires an active '
+                            "requester session context."
+                        ),
+                        **role_context,
+                    }
                 spawn_parent_session_key = (
                     await self._resolve_existing_session_key(requester_session_key, now_ms=now_ms)
                     if requester_session_key is not None
