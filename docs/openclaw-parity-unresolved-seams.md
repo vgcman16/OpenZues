@@ -164,6 +164,9 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
+- The packaging/companion app breadth family is estimated at ~5.3% after QR
+  setup-code safety/SecretRef slices and device pairing CLI list/approve plus
+  remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -12096,6 +12099,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor and CLI/operator parity move to ~99.9993%, and companion
   breadth moves to ~5.2%. Continue package-update downgrade confirmation or
   remaining provider-specific media/reply edges.
+- Current queue-head adjustment: `openzues devices remove`, `clear`, `reject`,
+  `rotate`, and `revoke` now provide the remaining OpenClaw device pairing and
+  token mutation CLI surface. Source/test checkpointed in `1c25fdbb`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion app
+  breadth moves to ~5.3%. Continue remote device CLI fallback/auth ergonomics,
+  packaging/distribution, provider/runtime, or companion app breadth.
 - Current queue-head adjustment: package-shaped updates now resolve registry
   target versions for dry-run downgrade previews, set `downgradeRisk` for
   explicit semver/dist-tag package targets, and refuse JSON/non-interactive
@@ -12559,3 +12568,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and active gateway/session/tool-contract parity moves to ~99.969%. Continue
   broader installed plugin activation, packaging/distribution, companion,
   provider, and UI breadth.
+- Current queue-head adjustment: native `openzues devices remove`, `clear`,
+  `reject`, `rotate`, and `revoke` now cover the remaining OpenClaw device CLI
+  mutation cluster by routing to the existing `device.pair.*` and
+  `device.token.*` gateway methods, preserving JSON output, `clear --yes`,
+  optional `--pending` rejection, and repeated `--scope` token rotation.
+  Source/test checkpointed in `1c25fdbb`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion app breadth moves to ~5.3%. Continue
+  remote device CLI fallback/auth ergonomics, packaging/distribution,
+  provider/runtime, or companion app breadth.

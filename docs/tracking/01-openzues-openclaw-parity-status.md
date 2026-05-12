@@ -23,7 +23,7 @@ may lag behind this tracker.
 | Provider-native inbound/outbound breadth | ~99.99997% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99999% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
-| Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
+| Packaging/companion app breadth | ~5.3% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
 
@@ -401,6 +401,17 @@ may lag behind this tracker.
   `openzues devices approve`, including JSON output and preview-only latest
   approval selection.
   - Status: checkpointed in `25c344be`
+
+- [x] Device pairing CLI mutation surface: `openzues devices remove`,
+  `clear`, `reject`, `rotate`, and `revoke`, including JSON output, guarded
+  clear, optional pending rejection, and repeated rotation scopes.
+  - Status: checkpointed in `1c25fdbb`
+  - Source: `openclaw-main/src/cli/devices-cli.ts`,
+    `openclaw-main/src/cli/devices-cli.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Last verified: 2026-05-12, focused mutation CLI proof (`5 passed`),
+    adjacent devices/pairing CLI proof (`13 passed, 596 deselected`), `ruff
+    check`, `mypy`, and focused `git diff --check`.
 
 - [x] Package update downgrade confirmation: dry-run downgrade risk, JSON/non-
   interactive downgrade blocking, and `--yes`-confirmed package dispatch.
