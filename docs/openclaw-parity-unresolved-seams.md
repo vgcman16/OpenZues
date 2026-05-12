@@ -164,10 +164,10 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~5.5% after QR
+- The packaging/companion app breadth family is estimated at ~5.6% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
-  gateway dispatch, and
+  gateway dispatch, remote device mutation dispatch, and
   remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
@@ -12124,6 +12124,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Continue implicit/default configured remote fallback, the remaining device
   mutation remote flags, packaging/distribution, provider/runtime, or companion
   app breadth.
+- Current queue-head adjustment: `openzues devices remove`, `clear`, `reject`,
+  `rotate`, and `revoke` now accept explicit remote gateway/auth/timeout flags
+  and dispatch through the same native remote gateway method bridge. Source/test
+  checkpointed in `c54866d9`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion app breadth moves to ~5.6%. Continue
+  implicit/default configured remote fallback, packaging/distribution,
+  provider/runtime, or companion app breadth.
 - Current queue-head adjustment: package-shaped updates now resolve registry
   target versions for dry-run downgrade previews, set `downgradeRisk` for
   explicit semver/dist-tag package targets, and refuse JSON/non-interactive
@@ -12613,3 +12620,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and packaging/companion app breadth moves to ~5.5%.
   Continue implicit/default configured remote fallback, device mutation remote
   flags, packaging/distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: native `openzues devices remove`, `clear`,
+  `reject`, `rotate`, and `revoke` now use the fakeable production remote
+  gateway method dispatch path whenever `--url` is supplied, forwarding auth
+  and timeout flags and leaving no-URL local behavior intact. Source/test
+  checkpointed in `c54866d9`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion app breadth moves to ~5.6%. Continue implicit/default
+  configured remote fallback, packaging/distribution, provider/runtime, or
+  companion app breadth.
