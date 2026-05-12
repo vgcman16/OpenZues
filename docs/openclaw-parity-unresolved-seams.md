@@ -12089,3 +12089,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Continue richer local browser status/doctor/profile/permission/tab-action
   route breadth, remaining provider-specific media/reply edges, deeper
   installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control tab action
+  breadth now maps upstream `/tabs/action` `close` and `select` actions from
+  `extensions/browser/src/browser/routes/tabs.ts` onto native tab list,
+  targeted close, and focus calls. Source/test checkpointed in `904f2673`;
+  repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.950%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.65%.
+  Continue local browser status/doctor, profile mutation, permissions, label
+  action route breadth, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.

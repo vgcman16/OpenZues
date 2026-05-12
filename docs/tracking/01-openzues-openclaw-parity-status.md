@@ -17,9 +17,9 @@ may lag behind this tracker.
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
-| Active gateway/session/tool-contract family | ~99.949% | High for bounded local path | Does not mean whole product parity |
+| Active gateway/session/tool-contract family | ~99.950% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
-| Browser/canvas/nodes/voice bounded command family | ~99.6% | High for bounded local path | No longer active queue head |
+| Browser/canvas/nodes/voice bounded command family | ~99.65% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.9991% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99989% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99989% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
@@ -138,6 +138,22 @@ may lag behind this tracker.
   - Weight: 1
   - Last verified: 2026-05-12, focused red/green tab mutation route test,
     adjacent browser proof (`12 passed, 1235 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `browser.request` local tab action close/select routes.
+  - Source: `openclaw-main/extensions/browser/src/browser/routes/tabs.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_browser_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: native local request dispatch maps `/tabs/action` `close` and
+    `select` actions by resolving the requested tab index from the native tab
+    list, then dispatching targeted close or focus.
+  - Evidence required: focused tab-action route proof, adjacent browser
+    request/tab proof, ruff, mypy
+  - Status: checkpointed in `904f2673`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green tab-action route test,
+    adjacent browser proof (`13 passed, 1235 deselected`), ruff, mypy, and
     focused `git diff --check`.
 
 - [x] Requester-scoped `agents_list` spawn-target projection.

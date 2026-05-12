@@ -56,8 +56,12 @@ local tab mutation routes from
 `extensions/browser/src/browser/routes/tabs.ts` are checkpointed in
 `aa7298c6`; they map `POST /tabs/focus` and `DELETE /tabs/:targetId` onto
 native focus/targeted-close methods with decoded path-segment target ids.
-Remaining browser-request depth is richer local status, doctor, profile,
-permission, and tab-action route breadth beyond the current native adapter.
+`OZ-CANVAS-001I` local tab-action close/select breadth from
+`extensions/browser/src/browser/routes/tabs.ts` is checkpointed in
+`904f2673`; it resolves tab indexes from native tab list output and dispatches
+targeted close/focus. Remaining browser-request depth is richer local status,
+doctor, profile, permission, and label-action route breadth beyond the current
+native adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers
