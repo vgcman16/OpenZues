@@ -187,6 +187,21 @@ class GatewayBrowserRuntimeService:
                 return self.tabs(session=session)
             if action == "new":
                 return self.open_page("about:blank", session=session)
+            if action == "close":
+                target_id = browser_request_indexed_tab_target_id(
+                    self.tabs(session=session),
+                    browser_request_int(request_body, "index"),
+                )
+                return self.close(session=session, target_id=target_id)
+            if action == "select":
+                index = browser_request_int(request_body, "index")
+                if index is None:
+                    raise GatewayBrowserRuntimeError("index is required")
+                target_id = browser_request_indexed_tab_target_id(
+                    self.tabs(session=session),
+                    index,
+                )
+                return self.focus(target_id, session=session)
         raise GatewayBrowserRuntimeError(
             f"browser local request unsupported: {normalized_method} {normalized_path}"
         )
@@ -2388,6 +2403,27 @@ def browser_request_string(request: dict[str, Any], *keys: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def browser_request_indexed_tab_target_id(
+    tabs_payload: dict[str, object],
+    index: int | None,
+) -> str:
+    raw_tabs = tabs_payload.get("tabs")
+    if not isinstance(raw_tabs, list) or not raw_tabs:
+        raise GatewayBrowserRuntimeError("browser tab not found")
+    resolved_index = index if index is not None else 0
+    if resolved_index < 0 or resolved_index >= len(raw_tabs):
+        raise GatewayBrowserRuntimeError("browser tab not found")
+    tab = raw_tabs[resolved_index]
+    if isinstance(tab, dict):
+        for key in ("targetId", "id", "tabId"):
+            value = tab.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    if isinstance(tab, str) and tab.strip():
+        return tab.strip()
+    raise GatewayBrowserRuntimeError("browser tab targetId is unavailable")
 
 
 def browser_request_string_list(request: dict[str, Any], *keys: str) -> list[str]:

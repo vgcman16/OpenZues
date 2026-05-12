@@ -112109,6 +112109,53 @@ def test_browser_request_runtime_maps_tab_mutation_routes(
     assert closed["allSessions"] is False
 
 
+def test_browser_request_runtime_maps_tab_action_select_and_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-2:] == ["tab", "list"]:
+            return Completed('{"tabs": [{"targetId": "tab-1"}, {"targetId": "tab-2"}]}')
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    closed = service.request(
+        method="POST",
+        path="/tabs/action",
+        body={"action": "close", "index": 1},
+        session="parity-browser",
+    )
+    selected = service.request(
+        method="POST",
+        path="/tabs/action",
+        body={"action": "select", "index": 0},
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "list"],
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "close", "tab-2"],
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "list"],
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "tab-1"],
+    ]
+    assert closed["targetId"] == "tab-2"
+    assert selected["targetId"] == "tab-1"
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 
