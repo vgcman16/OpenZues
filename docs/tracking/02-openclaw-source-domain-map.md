@@ -84,7 +84,11 @@ guarded download, and guarded upload methods. `OZ-CANVAS-001O`
 status/doctor route breadth from
 `extensions/browser/src/browser/routes/basic.ts` is checkpointed in
 `4b1f8028`; it maps `GET /` and `GET /doctor` onto native
-session/profile posture plus optional live snapshot checks.
+session/profile posture plus optional live snapshot checks. `OZ-CANVAS-001P`
+snapshot artifact route breadth from
+`extensions/browser/src/browser/routes/agent.snapshot.ts` is checkpointed in
+`2ecdba40`; it maps `POST /navigate` and `POST /pdf` onto native navigation
+and controlled PDF artifact export.
 Remaining browser-request depth is profile mutation, permission,
 locale/timezone, response body, dialog hook, and label-action route breadth
 beyond the current native adapter.
