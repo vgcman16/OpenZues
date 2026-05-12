@@ -157,12 +157,12 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999997%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999998%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Matrix implicit reply
-  fanout, Discord voice message sends, Discord audio-as-voice direct media
-  sends, Signal receive envelope session routing with sync-message drops,
-  QQBot route-backed text sends,
+  fanout, IRC media attachment formatting, Discord voice message sends,
+  Discord audio-as-voice direct media sends, Signal receive envelope session
+  routing with sync-message drops, QQBot route-backed text sends,
   QQBot image media uploads, QQBot inline image media tags, QQBot structured
   self-closing media tags, QQBot reply message sequencing, QQBot local media
   file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file
@@ -12993,3 +12993,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and packaging/companion breadth moves to ~6.1%.
   Continue device-token authz depth, QR terminal rendering, packaging/
   distribution, ACP lifecycle, provider media edges, or companion app breadth.
+- Current queue-head adjustment: native IRC route-backed media sends now format
+  outbound media as `Attachment: <url>` blocks before the `[reply:<id>]`
+  marker, matching OpenClaw's IRC send adapter while preserving provider result
+  media metadata. Source/test checkpointed in `08be87cc`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.999998%. Continue provider media/reply edges,
+  packaging/distribution, device-token authz depth, ACP lifecycle, or
+  companion app breadth.
