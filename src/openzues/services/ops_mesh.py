@@ -4909,10 +4909,26 @@ def _zalo_inbound_message_id(payload: Mapping[str, Any]) -> str | None:
 
 def _zalo_webhook_event_text(payload: Mapping[str, Any]) -> str | None:
     event_name = str(payload.get("event_name") or "").strip()
+    message = _zalo_inbound_message(payload)
+    if event_name == "message.image.received":
+        caption = _zalo_inbound_optional_string(message.get("caption"))
+        if caption is not None:
+            return caption
+        if _zalo_inbound_optional_string(message.get("photo_url")) is not None:
+            return "<media:image>"
+        return None
     if event_name != "message.text.received":
         return None
-    message = _zalo_inbound_message(payload)
     return _zalo_inbound_optional_string(message.get("text"))
+
+
+def _zalo_webhook_media_urls(payload: Mapping[str, Any]) -> list[str]:
+    event_name = str(payload.get("event_name") or "").strip()
+    if event_name != "message.image.received":
+        return []
+    message = _zalo_inbound_message(payload)
+    photo_url = _zalo_inbound_optional_string(message.get("photo_url"))
+    return [photo_url] if photo_url is not None else []
 
 
 def _zalo_message_timestamp_ms(message: Mapping[str, Any]) -> int | None:
@@ -18705,6 +18721,14 @@ class OpsMeshService:
                     delivery["timestamp"] = timestamp
                 if context.sender_name is not None:
                     delivery["senderName"] = context.sender_name
+                media_urls = _zalo_webhook_media_urls(payload)
+                if media_urls:
+                    delivery["mediaUrls"] = media_urls
+                    delivery["photoUrl"] = media_urls[0]
+                    delivery["delivery"] = {
+                        "runtime": "session-backed",
+                        "media": {"urls": len(media_urls)},
+                    }
                 deliveries.append(delivery)
         result: dict[str, object] = {
             "ok": bool(event_name),

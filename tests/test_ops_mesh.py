@@ -34132,6 +34132,74 @@ async def test_ops_mesh_service_handle_zalo_webhook_deduplicates_text_redelivery
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_delivers_image_placeholder_with_media_url(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-image-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.image.received",
+            "message": {
+                "message_id": "zalo-image-1",
+                "caption": "",
+                "photo_url": "https://example.com/zalo-image.jpg",
+                "date": 1760000000,
+                "chat": {"id": "chat-image", "chat_type": "PRIVATE"},
+                "from": {"id": "zalo-user-image", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="zalo",
+        account_id="zalo-bot",
+        peer_kind="direct",
+        peer_id="zalo:chat-image",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert result["deliveredCount"] == 1
+    delivery = result["deliveries"][0]
+    assert delivery["eventName"] == "message.image.received"
+    assert delivery["messageId"] == "zalo-image-session-1"
+    assert delivery["inboundMessageId"] == "zalo-image-1"
+    assert delivery["text"] == "<media:image>"
+    assert delivery["mediaUrls"] == ["https://example.com/zalo-image.jpg"]
+    assert delivery["photoUrl"] == "https://example.com/zalo-image.jpg"
+    assert delivery["delivery"] == {
+        "runtime": "session-backed",
+        "media": {"urls": 1},
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message(
     tmp_path: Path,
 ) -> None:
