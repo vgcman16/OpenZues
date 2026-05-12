@@ -175,6 +175,10 @@ plugin/channel/version detail families.
 `src/cli/daemon-cli/register-service-commands.ts` is checkpointed in
 `005dc599`; it covers `openzues gateway status --deep --json` as a native alias
 over the gateway capability/status view with probe/require-rpc/deep posture.
+`OZ-PKG-001CZ` restart-health follow-up diagnostics from
+`src/cli/update-cli/update-command.ts` is checkpointed in `8e989b2d`; it covers
+`Restart log: ...` plus `openzues gateway status --deep` operator follow-up
+lines after package restart verification fails.
 
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is
