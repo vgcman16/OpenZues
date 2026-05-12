@@ -153,13 +153,14 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999989%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999990%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
   sends, Discord audio-as-voice direct media sends, Signal receive envelope
   session routing with sync-message drops, QQBot route-backed text sends,
-  QQBot image media uploads, QQBot inline image media tags, QQBot reply message
-  sequencing, QQBot local media file-data uploads, LINE signed webhook ingress, and
+  QQBot image media uploads, QQBot inline image media tags, QQBot structured
+  self-closing media tags, QQBot reply message sequencing, QQBot local media
+  file-data uploads, LINE signed webhook ingress, and
   LINE text webhook session delivery plus
   postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
@@ -12823,6 +12824,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and provider-native inbound/outbound breadth
   moves to ~99.999989%. Continue QQBot chunked upload/voice-video-file edges,
   ACP bridge lifecycle depth, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native QQBot structured media tags now parse
+  OpenClaw's entity-encoded and self-closing media-tag forms, including
+  `<qqmedia file="..."/>`/`src`/`path`/`url` attributes, upstream aliases, and
+  generic `qqmedia` auto-detection into the provider-backed media upload/send
+  path. Source/test checkpointed in `b5a821a7`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999990%. Continue QQBot chunked upload/deeper voice-video-file runtime
+  edges, ACP bridge lifecycle depth, packaging/distribution, or companion
+  breadth.
 - Current queue-head adjustment: native ACP `sessions.spawn` now rejects
   foreign `resumeSessionId` values before runtime dispatch, matching
   OpenClaw's requester-owned ACP session resume contract while preserving
