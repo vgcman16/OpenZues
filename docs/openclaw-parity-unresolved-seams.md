@@ -148,7 +148,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.99997%
+- The provider-native inbound/outbound breadth family is estimated at ~99.99998%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
   delivery plus postback/media-placeholder/sticker/location delivery and group
@@ -12670,3 +12670,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   checkpointed in `a45702fc`; repo-wide parity remains estimated at ~99.9%,
   and packaging/companion app breadth moves to ~5.9%. Continue packaging/
   distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: Discord provider-native direct video sends now
+  mirror OpenClaw's outbound adapter by sending the caption text first and then
+  a media-only video follow-up. The native route preserves thread query
+  placement, silent flags, final `messageId`, ordered `messageIds`, and
+  provider result metadata. Source/test checkpointed in `90ceab78`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth moves to ~99.99998%. Continue Discord audio-as-voice depth,
+  remaining provider-specific media/reply edges, packaging/distribution, or
+  companion breadth.
