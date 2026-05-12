@@ -10087,7 +10087,16 @@ def _line_webhook_event_text(event: Mapping[str, Any]) -> str | None:
     event_type = str(event.get("type") or "").strip().lower()
     if event_type == "message":
         message = _line_inbound_mapping(event.get("message"))
-        if str(message.get("type") or "").strip().lower() != "text":
+        message_type = str(message.get("type") or "").strip().lower()
+        if message_type != "text":
+            media_placeholder = {
+                "image": "<media:image>",
+                "video": "<media:video>",
+                "audio": "<media:audio>",
+                "file": "<media:document>",
+            }.get(message_type)
+            if media_placeholder is not None:
+                return media_placeholder
             return None
         text = _line_inbound_optional_string(message.get("text"))
         return text
