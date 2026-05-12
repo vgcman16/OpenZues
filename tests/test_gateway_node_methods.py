@@ -112026,6 +112026,48 @@ def test_browser_tabs_runtime_uses_agent_browser_tab_list(monkeypatch: pytest.Mo
     assert payload["tabs"] == [{"id": "tab-1", "url": "http://127.0.0.1:8884"}]
 
 
+def test_browser_request_runtime_maps_lifecycle_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    started = service.request(
+        method="POST",
+        path="/start",
+        session="parity-browser",
+    )
+    stopped = service.request(
+        method="POST",
+        path="/stop",
+        body={"all": True},
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "open", "about:blank"],
+        ["agent-browser.cmd", "--session", "parity-browser", "close", "--all"],
+    ]
+    assert started["ok"] is True
+    assert started["status"] == "ready"
+    assert stopped["ok"] is True
+    assert stopped["allSessions"] is True
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

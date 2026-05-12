@@ -148,6 +148,19 @@ class GatewayBrowserRuntimeService:
                 request_body.get("full_page", request_query.get("full_page"))
             )
             return self.screenshot(session=session, full_page=full_page)
+        if normalized_method == "POST" and normalized_path == "/start":
+            return self.start(session=session)
+        if normalized_method == "POST" and normalized_path == "/stop":
+            all_sessions = browser_request_bool(
+                request_body.get(
+                    "all",
+                    request_body.get(
+                        "allSessions",
+                        request_query.get("all", request_query.get("allSessions")),
+                    ),
+                )
+            )
+            return self.stop(session=session, all_sessions=all_sessions)
         if normalized_method == "GET" and normalized_path == "/profiles":
             return self.profiles(session=session)
         if normalized_method == "GET" and normalized_path == "/tabs":
