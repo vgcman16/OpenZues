@@ -23,6 +23,7 @@ class GatewayBrowserRuntimeService:
     def __init__(self, *, command: str | None = None) -> None:
         self._command = command
         self._recording_paths: dict[str, Path] = {}
+        self._tab_labels: dict[tuple[str, str], str] = {}
 
     def _resolve_command(self) -> str:
         command = self._command or shutil.which("agent-browser.cmd") or shutil.which(
@@ -355,6 +356,14 @@ class GatewayBrowserRuntimeService:
                     index,
                 )
                 return self.focus(target_id, session=session)
+            if action == "label":
+                target_id = browser_required_string(
+                    request_body,
+                    "targetId",
+                    label="targetId",
+                )
+                label = browser_required_string(request_body, "label", label="label")
+                return self.label_tab(target_id, label, session=session)
         if normalized_method == "GET" and normalized_path == "/cookies":
             return self.cookies_get(session=session)
         if normalized_method == "POST" and normalized_path == "/cookies/clear":
@@ -647,6 +656,7 @@ class GatewayBrowserRuntimeService:
     ) -> dict[str, object]:
         if target_id:
             output = self._run(["tab", "close", target_id], session=session, timeout_seconds=6.0)
+            self._tab_labels.pop((session, target_id), None)
             return {
                 "ok": True,
                 "status": "ready",
@@ -1462,7 +1472,28 @@ class GatewayBrowserRuntimeService:
 
     def tabs(self, *, session: str) -> dict[str, object]:
         output = self._run(["tab", "list"], session=session, timeout_seconds=5.0)
-        return browser_tabs_payload(session=session, output=output)
+        return browser_tabs_payload(
+            session=session,
+            output=output,
+            labels=self._tab_labels,
+        )
+
+    def label_tab(self, target_id: str, label: str, *, session: str) -> dict[str, object]:
+        self._tab_labels[(session, target_id)] = label
+        tabs = self.tabs(session=session)
+        tab = browser_tab_from_payload(tabs, target_id)
+        if tab is None:
+            tab = {"targetId": target_id, "label": label}
+        return {
+            "ok": True,
+            "status": "ready",
+            "headline": "Browser tab labeled",
+            "summary": f"Labeled browser tab {target_id} as {label}.",
+            "session": session,
+            "targetId": target_id,
+            "label": label,
+            "tab": tab,
+        }
 
     def screenshot(self, *, session: str, full_page: bool = False) -> dict[str, object]:
         screenshot_path = browser_screenshot_target_path(session)
@@ -1617,7 +1648,12 @@ def browser_stream_payload(*, label: str, session: str, output: str) -> dict[str
     }
 
 
-def browser_tabs_payload(*, session: str, output: str) -> dict[str, object]:
+def browser_tabs_payload(
+    *,
+    session: str,
+    output: str,
+    labels: dict[tuple[str, str], str] | None = None,
+) -> dict[str, object]:
     tabs: list[object] = []
     try:
         parsed = json.loads(output) if output else None
@@ -1629,6 +1665,8 @@ def browser_tabs_payload(*, session: str, output: str) -> dict[str, object]:
             tabs = raw_tabs
     elif isinstance(parsed, list):
         tabs = parsed
+    if labels:
+        tabs = browser_tabs_with_labels(session=session, tabs=tabs, labels=labels)
     lines = browser_output_lines(output)
     tab_count = len(tabs) if tabs else len(lines)
     return {
@@ -1641,6 +1679,51 @@ def browser_tabs_payload(*, session: str, output: str) -> dict[str, object]:
         "tabs": tabs,
         "lines": lines,
     }
+
+
+def browser_tabs_with_labels(
+    *,
+    session: str,
+    tabs: list[object],
+    labels: dict[tuple[str, str], str],
+) -> list[object]:
+    labeled_tabs: list[object] = []
+    for tab in tabs:
+        if not isinstance(tab, dict):
+            labeled_tabs.append(tab)
+            continue
+        target_id = browser_tab_target_id_from_map(tab)
+        label = labels.get((session, target_id)) if target_id else None
+        if label is None:
+            labeled_tabs.append(tab)
+            continue
+        labeled = dict(tab)
+        labeled["label"] = label
+        labeled_tabs.append(labeled)
+    return labeled_tabs
+
+
+def browser_tab_from_payload(
+    payload: dict[str, object],
+    target_id: str,
+) -> dict[str, object] | None:
+    raw_tabs = payload.get("tabs")
+    if not isinstance(raw_tabs, list):
+        return None
+    for tab in raw_tabs:
+        if not isinstance(tab, dict):
+            continue
+        if browser_tab_target_id_from_map(tab) == target_id:
+            return {str(key): value for key, value in tab.items() if isinstance(key, str)}
+    return None
+
+
+def browser_tab_target_id_from_map(tab: dict[object, object]) -> str:
+    for key in ("targetId", "id", "tabId"):
+        value = tab.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def browser_profiles_payload(*, session: str, output: str) -> dict[str, object]:

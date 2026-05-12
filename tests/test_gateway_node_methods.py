@@ -112156,6 +112156,49 @@ def test_browser_request_runtime_maps_tab_action_select_and_close(
     assert selected["targetId"] == "tab-1"
 
 
+def test_browser_request_runtime_maps_tab_action_label_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+        stdout = '{"tabs": [{"targetId": "tab-1", "url": "https://example.test"}]}'
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    label = service.request(
+        method="POST",
+        path="/tabs/action",
+        body={"action": "label", "targetId": "tab-1", "label": "docs"},
+        session="parity-browser",
+    )
+    tabs = service.request(method="GET", path="/tabs", session="parity-browser")
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "list"],
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "list"],
+    ]
+    assert label["ok"] is True
+    assert label["tab"] == {
+        "targetId": "tab-1",
+        "url": "https://example.test",
+        "label": "docs",
+    }
+    assert tabs["tabs"] == [
+        {"targetId": "tab-1", "url": "https://example.test", "label": "docs"}
+    ]
+
+
 def test_browser_request_runtime_maps_storage_routes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
