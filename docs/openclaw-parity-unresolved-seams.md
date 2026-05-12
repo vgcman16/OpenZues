@@ -164,10 +164,11 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~5.6% after QR
+- The packaging/companion app breadth family is estimated at ~5.7% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
-  gateway dispatch, remote device mutation dispatch, and
+  gateway dispatch, remote device mutation dispatch, configured remote URL
+  defaults, and
   remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
@@ -12131,6 +12132,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and packaging/companion app breadth moves to ~5.6%. Continue
   implicit/default configured remote fallback, packaging/distribution,
   provider/runtime, or companion app breadth.
+- Current queue-head adjustment: device CLI remote dispatch now uses configured
+  `gateway.remote.url` and configured remote auth when explicit `--url`/auth
+  flags are omitted, while preserving the local service path when no configured
+  remote URL exists. Source/test checkpointed in `aa2cbf50`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion app breadth moves to
+  ~5.7%. Continue loopback pairing-required local fallback, packaging/
+  distribution, provider/runtime, or companion app breadth.
 - Current queue-head adjustment: package-shaped updates now resolve registry
   target versions for dry-run downgrade previews, set `downgradeRisk` for
   explicit semver/dist-tag package targets, and refuse JSON/non-interactive
@@ -12628,3 +12636,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and packaging/companion app breadth moves to ~5.6%. Continue implicit/default
   configured remote fallback, packaging/distribution, provider/runtime, or
   companion app breadth.
+- Current queue-head adjustment: native device CLI gateway dispatch now loads
+  saved `gateway.remote.url`, `gateway.remote.token`, and
+  `gateway.remote.password` defaults through the existing config service, with
+  CLI flags taking precedence. Source/test checkpointed in `aa2cbf50`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion app
+  breadth moves to ~5.7%. Continue loopback pairing-required local fallback,
+  packaging/distribution, provider/runtime, or companion app breadth.
