@@ -15,10 +15,11 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.9999999% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999991% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
-  `resumeSessionId` requester-context preflight, ACP `resumeSessionId`
-  ownership enforcement, ACP model/thinking override
+  `streamTo="parent"` requester-context preflight, ACP `resumeSessionId`
+  requester-context preflight, ACP `resumeSessionId` ownership enforcement,
+  ACP model/thinking override
   propagation, ACP configured runtime agent alias mapping, ACP runtime-agent
   mismatch preflight, ACP run-timeout runtime propagation, ACP subagent
   depth/child-cap policy, ACP subagent target allowlist policy, ACP
@@ -13027,3 +13028,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity moves to ~99.9999999%. Continue deeper ACP lifecycle edges,
   packaging/distribution, installed plugin activation, provider media edges,
   or companion app breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now rejects
+  explicit `streamTo="parent"` without an explicit requester session context as
+  `requester_session_required` before ACP runtime dispatch, matching
+  OpenClaw's parent-stream preflight. Source/test checkpointed in `84086dcb`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor
+  native-bridge parity moves to ~99.99999991%. Continue deeper ACP lifecycle
+  edges, packaging/distribution, installed plugin activation, provider media
+  edges, or companion app breadth.
