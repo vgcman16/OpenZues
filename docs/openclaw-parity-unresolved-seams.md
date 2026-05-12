@@ -15,9 +15,10 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.999991% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
-  post-update completion-cache refresh, all-shell completion write-state,
+  post-core resume mode, package post-update completion-cache refresh,
+  all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
   preflight, devices list/approve CLI, package-update downgrade confirmation,
@@ -12679,3 +12680,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   breadth moves to ~99.99998%. Continue Discord audio-as-voice depth,
   remaining provider-specific media/reply edges, packaging/distribution, or
   companion breadth.
+- Current queue-head adjustment: native `openzues update` now supports
+  OpenClaw's post-core resume environment handoff. `OPENCLAW_UPDATE_POST_CORE`
+  skips package/git core update dispatch, validates post-core channel context,
+  runs only post-update plugin sync, preserves the OpenClaw-shaped
+  `postUpdate.plugins` result, and writes the plugin result file for
+  fresh-process parents when requested. Source/test checkpointed in
+  `4f874859`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.999991%. Continue
+  package-update fresh-process handoff, deeper installed plugin activation,
+  ACP bridge lifecycle depth, provider media edges, or companion breadth.

@@ -25,7 +25,7 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.99998% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.99999% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.999991% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.9% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -193,6 +193,10 @@ source/test checkpointed in `90ceab78`, moving provider-native inbound/outbound
 breadth to ~99.99998%. Continue Discord audio-as-voice depth, remaining
 provider-specific media/reply edges, packaging/distribution, or companion
 breadth.
+Runtime addendum: `OZ-PKG-001DA` package-update post-core resume mode is
+source/test checkpointed in `4f874859`, moving runtime/CLI/doctor native-bridge
+parity to ~99.999991%. Continue package-update fresh-process handoff, deeper
+installed plugin activation, ACP bridge lifecycle depth, or companion breadth.
 Packaging addendum: `OZ-PKG-001CJ` owning npm-root detection without
 `packageManager` metadata is source/test checkpointed in `76e2a21c`.
 `OZ-PKG-001CL` owning pnpm/bun global-root detection without
