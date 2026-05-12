@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.985% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.98% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.9997% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.9997% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.9998% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.9998% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -405,8 +405,35 @@ restart-health failure is source/test checkpointed in `32796916`;
 runtime/CLI/doctor and CLI/operator parity move to ~99.9997%. Continue package
 restart channel-probe diagnostics, provider-specific media/reply edges, deeper
 installed plugin activation, companion breadth, or the next packaging edge.
+Packaging addendum: `OZ-PKG-001CU` package-update channel-probe restart-health
+failure is source/test checkpointed in `bf46a1f5`; runtime/CLI/doctor and
+CLI/operator parity move to ~99.9998%. Continue remaining package restart
+diagnostics, provider-specific media/reply edges, deeper installed plugin
+activation, companion breadth, or the next packaging edge.
 
 ## Active Slice Detail
+
+- [x] `OZ-PKG-001CU` Package update channel-probe restart-health failure
+  - Source: `openclaw-main/src/cli/daemon-cli/restart-health.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: after a successful package update, restarted gateway health
+    channel entries with `probe.ok === false` mark the update as
+    `reason: restart-health`, emit `Channel health probe errors:` diagnostics,
+    and ignore healthy channel probes.
+  - Evidence required: focused package channel-probe proof, adjacent package
+    update selector, ruff, mypy
+  - Status: checkpointed in `bf46a1f5`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_fails_when_restarted_gateway_reports_channel_probe_errors -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent package
+    update proof
+    `python -m pytest tests\test_cli.py -q -k "update_fails_when_restarted_gateway_reports_channel_probe_errors or update_fails_when_restarted_gateway_reports_activated_plugin_load_errors or post_update_plugin_sync or update_json_uses_stored_channel_for_package_update or update_json_dispatches_package_update_service or update_json_blocks_package_update_when_target_requires_newer_node or update_json_blocks_registry_downgrade_without_yes or update_json_allows_registry_downgrade_with_yes"`
+    (`9 passed, 581 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
 
 - [x] `OZ-PKG-001CT` Package update activated plugin restart-health failure
   - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
