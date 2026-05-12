@@ -34246,7 +34246,6 @@ class OpsMeshService:
         event: dict[str, Any],
         secret_token: str | None,
     ) -> dict[str, object]:
-        del secret_token
         conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
         fallback_channel = str(
             event.get("to") or (conversation_target or {}).get("peer_id") or ""
@@ -34254,6 +34253,8 @@ class OpsMeshService:
         thread_id = str(event.get("threadId") or "").strip()
         result_fallback_channel = thread_id or fallback_channel
         reply_to_id = str(event.get("replyToId") or "").strip()
+        reply_to_id_source = event.get("replyToIdSource")
+        reply_to_mode = event.get("replyToMode")
         silent = _optional_bool_payload_value(event, "silent")
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
@@ -34287,6 +34288,126 @@ class OpsMeshService:
             text = str(event.get("message") or "").strip()
             payload = {"content": text[:2000] if text else ""}
             if media_urls:
+                audio_as_voice = _optional_bool_payload_value(event, "audioAsVoice") is True
+                if audio_as_voice:
+                    channel_id = _discord_action_channel_id(thread_id or fallback_channel)
+                    if channel_id is None:
+                        raise RuntimeError("Discord voice messages require a channel target.")
+                    media_bytes, content_type = self._load_discord_media(
+                        media_urls[0],
+                        max_bytes=DISCORD_MAX_MESSAGE_MEDIA_BYTES,
+                    )
+                    normalized_content_type = (
+                        content_type.split(";", 1)[0].strip().lower()
+                        if isinstance(content_type, str)
+                        else ""
+                    ) or "application/octet-stream"
+                    voice_bytes = self._prepare_discord_voice_media(
+                        media_bytes,
+                        filename=_discord_media_filename(
+                            media_urls[0],
+                            normalized_content_type,
+                        ),
+                        content_type=normalized_content_type,
+                    )
+                    voice_reply_to = _reply_to_fanout_id(
+                        reply_to_id=reply_to_id,
+                        reply_to_id_source=reply_to_id_source,
+                        reply_to_mode=reply_to_mode,
+                        index=0,
+                    )
+                    voice_result = self._request_discord_voice_message_upload(
+                        channel_id=channel_id,
+                        media_bytes=voice_bytes,
+                        reply_to=voice_reply_to or None,
+                        silent=silent is True,
+                        secret_token=secret_token,
+                    )
+                    voice_message_id = str(
+                        voice_result.get("id") or voice_result.get("messageId") or ""
+                    ).strip()
+                    if not voice_message_id:
+                        raise RuntimeError("Discord voice response did not include a message id.")
+                    delivered_channel = str(
+                        voice_result.get("channel_id")
+                        or voice_result.get("channelId")
+                        or result_fallback_channel
+                    ).strip()
+                    audio_message_ids = [voice_message_id]
+                    followup_index = 1
+                    target_url = _discord_webhook_url(
+                        str(route.get("target") or ""),
+                        thread_id=thread_id,
+                    )
+
+                    def post_discord_followup(followup_payload: dict[str, Any]) -> None:
+                        nonlocal delivered_channel
+                        followup_result = self._post_json_webhook(
+                            target_url,
+                            followup_payload,
+                        )
+                        if not isinstance(followup_result, dict):
+                            raise RuntimeError("Discord webhook returned a non-JSON response.")
+                        followup_message_id = _discord_message_id(followup_result)
+                        if followup_message_id is None:
+                            raise RuntimeError(
+                                "Discord webhook response did not include a message id."
+                            )
+                        audio_message_ids.append(followup_message_id)
+                        delivered_channel = _discord_channel_id(
+                            followup_result,
+                            delivered_channel or result_fallback_channel,
+                        )
+
+                    if text:
+                        text_payload: dict[str, Any] = {"content": text[:2000]}
+                        if silent is True:
+                            text_payload["flags"] = int(text_payload.get("flags") or 0) | (
+                                1 << 12
+                            )
+                        fanout_reply_to_id = _reply_to_fanout_id(
+                            reply_to_id=reply_to_id,
+                            reply_to_id_source=reply_to_id_source,
+                            reply_to_mode=reply_to_mode,
+                            index=followup_index,
+                        )
+                        followup_index += 1
+                        if fanout_reply_to_id:
+                            text_payload["message_reference"] = {
+                                "message_id": fanout_reply_to_id,
+                                "fail_if_not_exists": False,
+                            }
+                        post_discord_followup(text_payload)
+                    for media_url in media_urls[1:]:
+                        audio_media_payload: dict[str, Any] = {
+                            "content": "",
+                            "embeds": [{"image": {"url": media_url}}],
+                        }
+                        if silent is True:
+                            audio_media_payload["flags"] = int(
+                                audio_media_payload.get("flags") or 0
+                            ) | (1 << 12)
+                        fanout_reply_to_id = _reply_to_fanout_id(
+                            reply_to_id=reply_to_id,
+                            reply_to_id_source=reply_to_id_source,
+                            reply_to_mode=reply_to_mode,
+                            index=followup_index,
+                        )
+                        followup_index += 1
+                        if fanout_reply_to_id:
+                            audio_media_payload["message_reference"] = {
+                                "message_id": fanout_reply_to_id,
+                                "fail_if_not_exists": False,
+                            }
+                        post_discord_followup(audio_media_payload)
+                    return {
+                        "runtime": "native-provider-backed",
+                        "messageId": audio_message_ids[-1],
+                        "chatId": delivered_channel or result_fallback_channel,
+                        "channelId": delivered_channel or result_fallback_channel,
+                        "messageIds": audio_message_ids,
+                        "mediaUrls": media_urls,
+                    }
                 if len(media_urls) > 1:
                     message_ids: list[str] = []
                     delivered_channel = result_fallback_channel
