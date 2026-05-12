@@ -14,13 +14,14 @@ Current percentage rollup:
   `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, `tools.invoke`, and Tlon monitor lifecycle runtime
   seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.9996% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.9997% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
   preflight, devices list/approve CLI, package-update downgrade confirmation,
   stored-channel package update dispatch, package-update Node engine preflight,
+  package-update activated plugin restart-health failure,
   provider-gated plugin native command specs, plugin imported-state projection,
   errored runtime-imported plugin projection, facade-loaded plugin imported-state
   preservation, diagnostics-loaded plugin imported-state counts, bundled plugin
@@ -143,10 +144,10 @@ Current percentage rollup:
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
   delivery plus postback delivery.
-- The CLI/operator control-plane family is estimated at ~99.9996% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.9997% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
-  secrets reload CLI surface, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  secrets reload CLI surface, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin restart-health failure, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
@@ -11873,3 +11874,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Continue LINE group mention/history/media handling, remaining
   provider-specific media/reply edges, deeper installed plugin activation,
   companion breadth, or the next packaging edge.
+- Current queue-head adjustment: package-shaped updates now fail restart
+  verification when `/api/health` reports activated plugin load errors,
+  projecting only `plugins.errors[]` entries with `activated: true`, `id`, and
+  `error` into `Activated plugin load errors:` diagnostics and
+  `reason: restart-health`. Source/test checkpointed in `32796916`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor plus
+  CLI/operator parity move to ~99.9997%. Continue package restart channel-probe
+  diagnostics, remaining provider-specific media/reply edges, deeper installed
+  plugin activation, or companion breadth.

@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.985% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.98% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.9996% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.9996% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.9997% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.9997% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -400,8 +400,37 @@ source/test checkpointed in `b1bab063`; provider-native inbound/outbound
 breadth moves to ~99.98%. Continue LINE group mention/history/media handling,
 provider-specific media/reply edges, deeper installed plugin activation,
 companion breadth, or the next packaging edge.
+Packaging addendum: `OZ-PKG-001CT` package-update activated plugin
+restart-health failure is source/test checkpointed in `32796916`;
+runtime/CLI/doctor and CLI/operator parity move to ~99.9997%. Continue package
+restart channel-probe diagnostics, provider-specific media/reply edges, deeper
+installed plugin activation, companion breadth, or the next packaging edge.
 
 ## Active Slice Detail
+
+- [x] `OZ-PKG-001CT` Package update activated plugin restart-health failure
+  - Source: `openclaw-main/src/cli/update-cli/update-command.ts`,
+    `openclaw-main/src/cli/daemon-cli/restart-health.ts`,
+    `openclaw-main/src/cli/update-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: after a successful package-manager update and post-update plugin
+    sync, restarted gateway health is probed; any activated plugin load error
+    from `plugins.errors[]` with `activated: true`, `id`, and `error` marks the
+    update as `reason: restart-health` and emits `Activated plugin load
+    errors:` diagnostics without counting disabled plugin errors.
+  - Evidence required: focused package restart-health proof, adjacent package
+    update selector, ruff, mypy
+  - Status: checkpointed in `32796916`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_fails_when_restarted_gateway_reports_activated_plugin_load_errors -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent package
+    update proof
+    `python -m pytest tests\test_cli.py -q -k "update_fails_when_restarted_gateway_reports_activated_plugin_load_errors or post_update_plugin_sync or update_json_uses_stored_channel_for_package_update or update_json_dispatches_package_update_service or update_json_blocks_package_update_when_target_requires_newer_node or update_json_blocks_registry_downgrade_without_yes or update_json_allows_registry_downgrade_with_yes"`
+    (`8 passed, 581 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+    `git diff --check`.
 
 - [x] `OZ-PROV-001FA` LINE postback webhook session delivery
   - Source: `openclaw-main/extensions/line/src/bot-handlers.ts`,
