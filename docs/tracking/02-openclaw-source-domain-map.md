@@ -156,6 +156,11 @@ unknown direct senders before native session delivery.
 `src/pairing/allow-from-store-file.ts` is checkpointed in `1b2d5009`; it covers
 account-scoped `zalo-<account>-allowFrom.json` entries allowing already paired
 direct senders under `dmPolicy="pairing"`.
+`OZ-PROV-001FU` Zalo pairing approval store mutation from
+`src/pairing/pairing-store.ts`, `src/cli/pairing-cli.ts`, and
+`src/pairing/allow-from-store-file.ts` is checkpointed in `9409ad9b`; it covers
+consuming pending account-scoped pairing requests, pruning expired requests,
+and adding approved senders to the account-scoped Zalo `allowFrom` store.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and

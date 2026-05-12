@@ -23435,6 +23435,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
   tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
   focused `git diff --check`. Source/test checkpointed in `1b2d5009`.
+- Zalo pairing approval now mutates the account-scoped `allowFrom` store:
+  valid pending pairing codes are consumed from the OpenClaw-shaped Zalo
+  pairing request store, the sender is added to
+  `settings/oauth/zalo-<account>-allowFrom.json`, expired requests are pruned,
+  and missing storage or unknown codes return precise native error metadata.
+  This closes `OZ-PROV-001FU`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.99989%.
+- Verified the Zalo pairing approval store-mutation seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_approve_zalo_pairing_code_moves_sender_to_allow_from_store -q`
+  (missing `approve_zalo_pairing_code` before implementation, then `1
+  passed`), adjacent Zalo webhook/provider proof
+  `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo or approve_zalo_pairing"`
+  (`13 passed, 476 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_zalo_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `9409ad9b`.
 
 ## References
 
