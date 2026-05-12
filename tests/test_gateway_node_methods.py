@@ -97149,6 +97149,123 @@ async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_rejects_resume_id_not_owned_by_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-resume-forbidden.db")
+    await database.initialize()
+    await database.upsert_gateway_session_metadata(
+        session_key="agent:codex:acp:thread-other",
+        metadata={
+            "runtime": "acp",
+            "spawnedBy": "agent:other:main",
+            "parentSessionKey": "agent:other:main",
+            "runtimeThreadId": "thread-existing",
+            "runtimeSessionId": "session-existing",
+        },
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            raise AssertionError("foreign resume ids should reject before ACP dispatch")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Resume someone else's ACP thread.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "resumeSessionId": "thread-existing",
+            "requesterSessionKey": "agent:main:main",
+        },
+        now_ms=20_000,
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "errorCode": "resume_forbidden",
+        "error": (
+            "sessions_spawn resumeSessionId is only allowed for ACP sessions previously "
+            "recorded for this requester. Omit resumeSessionId to start a fresh ACP session."
+        ),
+        "role": "codex",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_allows_resume_id_owned_by_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-resume-owned.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+    requester_session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key="agent:codex:acp:thread-owned",
+        metadata={
+            "runtime": "acp",
+            "spawnedBy": requester_session_key,
+            "parentSessionKey": requester_session_key,
+            "runtimeThreadId": "thread-owned",
+            "runtimeSessionId": "session-owned",
+        },
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-owned",
+                "runId": "run-acp-resume-owned-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-owned",
+                "runtimeSessionId": "session-owned",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Resume my ACP thread.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "resumeSessionId": "session-owned",
+            "requesterSessionKey": requester_session_key,
+        },
+        now_ms=20_000,
+    )
+
+    assert payload["status"] == "accepted"
+    assert calls[0]["params"]["resumeSessionId"] == "session-owned"
+    assert calls[0]["context"]["requesterSessionKey"] == requester_session_key
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_run_from_subagent_requester_implicitly_streams_to_parent(
     tmp_path,
 ) -> None:

@@ -8760,6 +8760,13 @@ class GatewayNodeMethodService:
                         "error": acp_agent_policy_error,
                         **role_context,
                     }
+                acp_resume_error = await _sessions_spawn_acp_resume_session_error(
+                    self._database,
+                    requester_session_key=spawn_parent_session_key,
+                    resume_session_id=resume_session_id,
+                )
+                if acp_resume_error is not None:
+                    return {**acp_resume_error, **role_context}
                 spawn_parent_payload = await self._sessions_service.build_session_payload_for_key(
                     session_key=spawn_parent_session_key,
                     now_ms=timestamp_ms,
@@ -15366,6 +15373,95 @@ def _sessions_spawn_acp_agent_policy_error(
     if not allowed_agents or normalize_agent_id(agent_id) in allowed_agents:
         return None
     return f'ACP agent "{normalize_agent_id(agent_id)}" is not allowed by policy.'
+
+
+def _normalized_session_key_for_compare(value: object) -> str | None:
+    text = _string_or_none(value)
+    if text is None:
+        return None
+    return _canonical_session_key(text).lower()
+
+
+def _sessions_spawn_acp_resume_identity_values(metadata: Mapping[str, object]) -> set[str]:
+    values: set[str] = set()
+    for key in ("runtimeThreadId", "runtimeSessionId", "sessionId"):
+        value = _string_or_none(metadata.get(key))
+        if value is not None:
+            values.add(value)
+    acp_metadata = _mapping_or_none(metadata.get("acp"))
+    identity = _mapping_or_none(acp_metadata.get("identity")) if acp_metadata is not None else None
+    if identity is not None:
+        for key in ("agentSessionId", "acpxSessionId"):
+            value = _string_or_none(identity.get(key))
+            if value is not None:
+                values.add(value)
+    return values
+
+
+def _sessions_spawn_acp_resume_row_owned_by_requester(
+    row: Mapping[str, object],
+    *,
+    requester_session_key: str,
+) -> bool:
+    requester_key = _normalized_session_key_for_compare(requester_session_key)
+    if requester_key is None:
+        return False
+    session_key = _normalized_session_key_for_compare(row.get("session_key"))
+    if session_key == requester_key:
+        return True
+    metadata = _mapping_or_none(row.get("metadata")) or {}
+    for key in ("spawnedBy", "parentSessionKey"):
+        if _normalized_session_key_for_compare(metadata.get(key)) == requester_key:
+            return True
+    task_record = _mapping_or_none(metadata.get("taskRecord"))
+    if task_record is not None:
+        for key in ("requesterSessionKey", "ownerKey"):
+            if _normalized_session_key_for_compare(task_record.get(key)) == requester_key:
+                return True
+    return False
+
+
+async def _sessions_spawn_acp_resume_session_error(
+    database: Database,
+    *,
+    requester_session_key: str | None,
+    resume_session_id: str | None,
+) -> dict[str, str] | None:
+    normalized_resume_session_id = _string_or_none(resume_session_id)
+    if normalized_resume_session_id is None:
+        return None
+    normalized_requester_session_key = _string_or_none(requester_session_key)
+    if normalized_requester_session_key is None:
+        return {
+            "status": "error",
+            "errorCode": "requester_session_required",
+            "error": (
+                "sessions_spawn resumeSessionId requires an active requester "
+                "session context."
+            ),
+        }
+    for row in await database.list_gateway_session_metadata_rows():
+        metadata = _mapping_or_none(row.get("metadata"))
+        if metadata is None or metadata.get("runtime") != "acp":
+            continue
+        if normalized_resume_session_id not in _sessions_spawn_acp_resume_identity_values(
+            metadata
+        ):
+            continue
+        if _sessions_spawn_acp_resume_row_owned_by_requester(
+            row,
+            requester_session_key=normalized_requester_session_key,
+        ):
+            return None
+        break
+    return {
+        "status": "forbidden",
+        "errorCode": "resume_forbidden",
+        "error": (
+            "sessions_spawn resumeSessionId is only allowed for ACP sessions previously "
+            "recorded for this requester. Omit resumeSessionId to start a fresh ACP session."
+        ),
+    }
 
 
 def _sessions_spawn_acp_task_record(
