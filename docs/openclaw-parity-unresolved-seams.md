@@ -149,11 +149,11 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999981%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999982%
   after route-backed Telegram stale-thread retry fallback for JSON and
-  HTTP-error paths, Feishu media implicit reply fanout, LINE signed webhook
-  ingress, and LINE text webhook session
-  delivery plus postback/media-placeholder/sticker/location delivery and group
+  HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
+  sends, LINE signed webhook ingress, and LINE text webhook session delivery
+  plus postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
   pending-history replay, non-text group media mention-gate bypass, LINE
   inbound media staging, production credential-backed LINE media download, and
@@ -12710,3 +12710,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, and provider-native inbound/outbound breadth moves to ~99.999981%.
   Continue Discord audio-as-voice depth, remaining provider-specific
   media/reply edges, deeper runtime/plugin activation, or companion breadth.
+- Current queue-head adjustment: native Discord `message.action send` now
+  supports the OpenClaw `asVoice` branch: media is required, text/components
+  are rejected, route-backed audio is loaded and converted to Ogg/Opus when
+  needed, the Discord attachment-upload protocol is used, and the final voice
+  message preserves `replyTo`, `silent`, `messageId`, and `channelId`
+  metadata. Source/test checkpointed in `6be0ca36`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999982%. Continue remaining provider-specific media/reply edges, deeper
+  runtime/plugin activation, packaging/distribution, or companion breadth.

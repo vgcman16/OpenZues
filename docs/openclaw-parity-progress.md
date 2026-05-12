@@ -16,13 +16,14 @@
   remove/clear/reject/rotate/revoke coverage; companion apps remain broadly
   open.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.999992% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, deeper installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated provider-native inbound/outbound breadth: ~99.999981% after Slack
+- Estimated provider-native inbound/outbound breadth: ~99.999982% after Slack
   event/interactions/slash/signing coverage, command aliases/plugin command
   injection, WhatsApp reply fanout, Telegram media reply fanout/caption
   passthrough, Feishu media implicit reply fanout, Telegram stale-thread retry
   fallback for route-backed JSON and HTTP-error send/poll paths, Discord
-  video-caption split delivery, LINE signed webhook ingress, and LINE text
-  webhook/postback/media-placeholder/sticker/location session delivery plus
+  video-caption split delivery, Discord voice message sends, LINE signed
+  webhook ingress, and LINE text webhook/postback/media-placeholder/sticker/location
+  session delivery plus
   group mention gating, native LINE mention metadata handling, group
   pending-history replay, non-text group media mention-gate bypass, LINE
   inbound media staging, production credential-backed LINE media download, and
@@ -23899,6 +23900,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
   `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `ae7e9ed1`.
+- Native Discord `message.action send` now mirrors OpenClaw's `asVoice`
+  branch from `extensions/discord/src/actions/runtime.messaging.send.ts` and
+  `extensions/discord/src/send.voice.ts`: voice sends require media, reject
+  text/components, preserve `replyTo` and `silent`, load/transcode audio to an
+  Ogg/Opus voice payload, request a Discord attachment upload URL, upload the
+  voice bytes, and post the final message with the voice-message flag and
+  attachment metadata. This closes `OZ-PROV-001GF`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999982%.
+- Verified the Discord voice-message send seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_discord_voice_send_route -q`
+  (`1 failed` before implementation because the webhook send path was used,
+  then `1 passed`), protocol helper proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_discord_voice_send_route tests\test_ops_mesh.py::test_ops_mesh_service_discord_voice_upload_uses_attachment_protocol -q`
+  (`2 passed`), adjacent provider proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_voice_send or discord_voice_upload or
+  discord_voice_status or discord_native or discord_media or discord_video or
+  discord_reply or discord_thread_query"` (`9 passed, 483 deselected`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `6be0ca36`.
 
 ## References
 
