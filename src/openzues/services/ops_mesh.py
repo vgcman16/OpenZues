@@ -5101,11 +5101,36 @@ def _zalo_pairing_entry_matches_account(
     entry: Mapping[str, Any],
     normalized_account_id: str,
 ) -> bool:
+    return _zalo_pairing_entry_account_id(entry) == normalized_account_id
+
+
+def _zalo_pairing_entry_account_id(entry: Mapping[str, Any]) -> str:
     meta = _zalo_inbound_mapping(entry.get("meta"))
     entry_account = normalize_optional_account_id(
         _zalo_inbound_optional_string(meta.get("accountId"))
     )
-    return (entry_account or DEFAULT_ACCOUNT_ID) == normalized_account_id
+    return entry_account or DEFAULT_ACCOUNT_ID
+
+
+def _zalo_pairing_entry_timestamp(
+    entry: Mapping[str, Any],
+    key: str,
+) -> float | None:
+    value = _zalo_inbound_optional_string(entry.get(key))
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _zalo_pairing_entry_last_seen_timestamp(entry: Mapping[str, Any]) -> float:
+    return (
+        _zalo_pairing_entry_timestamp(entry, "lastSeenAt")
+        or _zalo_pairing_entry_timestamp(entry, "createdAt")
+        or 0.0
+    )
 
 
 def _zalo_pairing_entry_is_expired(entry: Mapping[str, Any], *, now: float) -> bool:
@@ -5131,6 +5156,49 @@ def _zalo_pairing_read_store(path: Path) -> list[dict[str, object]]:
     if not isinstance(requests, list):
         return []
     return [dict(item) for item in requests if isinstance(item, Mapping)]
+
+
+def _zalo_pairing_prune_excess_requests_by_account(
+    requests: Sequence[Mapping[str, object]],
+) -> tuple[list[dict[str, object]], bool]:
+    entries = [dict(item) for item in requests]
+    if ZALO_PAIRING_PENDING_MAX <= 0 or len(entries) <= ZALO_PAIRING_PENDING_MAX:
+        return entries, False
+    grouped: dict[str, list[int]] = {}
+    for index, entry in enumerate(entries):
+        grouped.setdefault(_zalo_pairing_entry_account_id(entry), []).append(index)
+    dropped: set[int] = set()
+    for indexes in grouped.values():
+        if len(indexes) <= ZALO_PAIRING_PENDING_MAX:
+            continue
+        sorted_indexes = sorted(
+            indexes,
+            key=lambda index: _zalo_pairing_entry_last_seen_timestamp(entries[index]),
+        )
+        dropped.update(sorted_indexes[: len(sorted_indexes) - ZALO_PAIRING_PENDING_MAX])
+    if not dropped:
+        return entries, False
+    return [entry for index, entry in enumerate(entries) if index not in dropped], True
+
+
+def _zalo_pairing_public_request(entry: Mapping[str, object]) -> dict[str, object] | None:
+    sender_id = _zalo_inbound_optional_string(entry.get("id"))
+    code = _zalo_inbound_optional_string(entry.get("code"))
+    created_at = _zalo_inbound_optional_string(entry.get("createdAt"))
+    if sender_id is None or code is None or created_at is None:
+        return None
+    payload: dict[str, object] = {
+        "id": sender_id,
+        "code": code,
+        "createdAt": created_at,
+    }
+    last_seen_at = _zalo_inbound_optional_string(entry.get("lastSeenAt"))
+    if last_seen_at is not None:
+        payload["lastSeenAt"] = last_seen_at
+    meta = _zalo_inbound_mapping(entry.get("meta"))
+    if meta:
+        payload["meta"] = dict(meta)
+    return payload
 
 
 def _zalo_pairing_write_store(path: Path, requests: Sequence[Mapping[str, object]]) -> None:
@@ -18959,6 +19027,72 @@ class OpsMeshService:
         )
         _zalo_pairing_write_store(path, entries)
         return {"code": code, "created": True}
+
+    async def list_zalo_pairing_requests(
+        self,
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        if self.canvas_state_dir is None:
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "reason": "zalo_pairing_storage_unavailable",
+            }
+        return await asyncio.to_thread(
+            self._list_zalo_pairing_requests,
+            account_id=account_id,
+        )
+
+    def _list_zalo_pairing_requests(
+        self,
+        *,
+        account_id: str | None,
+    ) -> dict[str, object]:
+        if self.canvas_state_dir is None:
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "reason": "zalo_pairing_storage_unavailable",
+            }
+        path = _zalo_pairing_store_path(self.canvas_state_dir)
+        now_ts = datetime.now(UTC).timestamp()
+        raw_entries = _zalo_pairing_read_store(path)
+        unexpired_entries = [
+            entry
+            for entry in raw_entries
+            if not _zalo_pairing_entry_is_expired(entry, now=now_ts)
+        ]
+        pruned_entries, capped_removed = _zalo_pairing_prune_excess_requests_by_account(
+            unexpired_entries
+        )
+        if capped_removed or len(unexpired_entries) != len(raw_entries):
+            _zalo_pairing_write_store(path, pruned_entries)
+        normalized_account_id = normalize_optional_account_id(account_id)
+        if normalized_account_id is not None:
+            filtered_entries: Sequence[Mapping[str, object]] = [
+                entry
+                for entry in pruned_entries
+                if _zalo_pairing_entry_matches_account(entry, normalized_account_id)
+            ]
+        else:
+            filtered_entries = pruned_entries
+        requests = [
+            public_entry
+            for public_entry in (
+                _zalo_pairing_public_request(entry) for entry in filtered_entries
+            )
+            if public_entry is not None
+        ]
+        requests.sort(key=lambda entry: str(entry.get("createdAt") or ""))
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "zalo",
+            "requests": requests,
+        }
+        if normalized_account_id is not None:
+            result["accountId"] = normalized_account_id
+        return result
 
     async def approve_zalo_pairing_code(
         self,

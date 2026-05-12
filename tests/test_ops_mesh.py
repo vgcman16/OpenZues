@@ -34770,6 +34770,102 @@ async def test_ops_mesh_service_approve_zalo_pairing_code_moves_sender_to_allow_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_list_zalo_pairing_requests_filters_and_prunes_store(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    store_dir = tmp_path / "settings" / "oauth"
+    store_dir.mkdir(parents=True)
+    now = datetime.now(UTC)
+
+    def iso(seconds_ago: int) -> str:
+        return (now - timedelta(seconds=seconds_ago)).isoformat().replace("+00:00", "Z")
+
+    (store_dir / "zalo-pairing.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "requests": [
+                    {
+                        "id": "drop-old-bot",
+                        "code": "DROPME01",
+                        "createdAt": iso(300),
+                        "lastSeenAt": iso(300),
+                        "meta": {"accountId": "zalo-bot"},
+                    },
+                    {
+                        "id": "keep-bot-1",
+                        "code": "KEEPBOT1",
+                        "createdAt": iso(240),
+                        "lastSeenAt": iso(180),
+                        "meta": {"accountId": "zalo-bot", "name": "Ada"},
+                    },
+                    {
+                        "id": "keep-bot-2",
+                        "code": "KEEPBOT2",
+                        "createdAt": iso(120),
+                        "lastSeenAt": iso(120),
+                        "meta": {"accountId": "zalo-bot"},
+                    },
+                    {
+                        "id": "keep-bot-3",
+                        "code": "KEEPBOT3",
+                        "createdAt": iso(60),
+                        "lastSeenAt": iso(60),
+                        "meta": {"accountId": "zalo-bot"},
+                    },
+                    {
+                        "id": "other-account",
+                        "code": "OTHER001",
+                        "createdAt": iso(90),
+                        "lastSeenAt": iso(90),
+                        "meta": {"accountId": "other-bot"},
+                    },
+                    {
+                        "id": "expired-bot",
+                        "code": "EXPIRED1",
+                        "createdAt": iso(7200),
+                        "lastSeenAt": iso(7200),
+                        "meta": {"accountId": "zalo-bot"},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        canvas_state_dir=tmp_path,
+    )
+
+    result = await service.list_zalo_pairing_requests(account_id="zalo-bot")
+
+    assert result["ok"] is True
+    assert result["channel"] == "zalo"
+    assert result["accountId"] == "zalo-bot"
+    assert [entry["id"] for entry in result["requests"]] == [
+        "keep-bot-1",
+        "keep-bot-2",
+        "keep-bot-3",
+    ]
+    assert result["requests"][0]["meta"] == {"accountId": "zalo-bot", "name": "Ada"}
+    pairing_store = json.loads((store_dir / "zalo-pairing.json").read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in pairing_store["requests"]] == [
+        "keep-bot-1",
+        "keep-bot-2",
+        "keep-bot-3",
+        "other-account",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message(
     tmp_path: Path,
 ) -> None:
