@@ -164,11 +164,12 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~5.8% after QR
+- The packaging/companion app breadth family is estimated at ~5.9% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
-  defaults, loopback pairing-required fallback, and
+  defaults, loopback pairing-required fallback, approval-state preview
+  metadata, and
   remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
@@ -12146,6 +12147,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   checkpointed in `3616f48b`; repo-wide parity remains estimated at ~99.9%,
   and packaging/companion app breadth moves to ~5.8%. Continue packaging/
   distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: `openzues devices approve --latest --json`
+  now includes OpenClaw-style approval-state metadata (`kind`, `requested`,
+  `approved`) for new pairing, role-upgrade, scope-upgrade, and re-approval
+  previews. Source/test checkpointed in `a45702fc`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion app breadth moves to ~5.9%.
+  Continue packaging/distribution, provider/runtime, or companion app breadth.
 - Current queue-head adjustment: package-shaped updates now resolve registry
   target versions for dry-run downgrade previews, set `downgradeRisk` for
   explicit semver/dist-tag package targets, and refuse JSON/non-interactive
@@ -12656,4 +12663,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   locally, while explicit `--url` remains remote-strict. Source/test
   checkpointed in `3616f48b`; repo-wide parity remains estimated at ~99.9%,
   and packaging/companion app breadth moves to ~5.8%. Continue packaging/
+  distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: native device approval previews now project
+  upstream-compatible `approvalState` JSON, including normalized roles/scopes
+  and approval kind classification against existing paired records. Source/test
+  checkpointed in `a45702fc`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion app breadth moves to ~5.9%. Continue packaging/
   distribution, provider/runtime, or companion app breadth.
