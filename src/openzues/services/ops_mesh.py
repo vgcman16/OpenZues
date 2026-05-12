@@ -185,6 +185,8 @@ SLACK_COMMAND_ARG_CHROME_BLOCKS = 3
 SLACK_COMMAND_ARG_ACTION_BLOCKS_MAX = SLACK_MAX_BLOCKS - SLACK_COMMAND_ARG_CHROME_BLOCKS
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
+ZALO_WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60
+ZALO_WEBHOOK_REPLAY_MAX_ENTRIES = 5000
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
 LINE_GROUP_HISTORY_LIMIT = 50
 LINE_HISTORY_CONTEXT_MARKER = "[Chat messages since your last reply - for context]"
@@ -4883,6 +4885,165 @@ def _zalo_chat_from_result(result: object, fallback: str) -> str:
                 if candidate:
                     return candidate
     return fallback
+
+
+def _zalo_inbound_mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _zalo_inbound_optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _zalo_inbound_message(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    return _zalo_inbound_mapping(payload.get("message"))
+
+
+def _zalo_inbound_message_id(payload: Mapping[str, Any]) -> str | None:
+    message = _zalo_inbound_message(payload)
+    return _zalo_inbound_optional_string(message.get("message_id"))
+
+
+def _zalo_webhook_event_text(payload: Mapping[str, Any]) -> str | None:
+    event_name = str(payload.get("event_name") or "").strip()
+    if event_name != "message.text.received":
+        return None
+    message = _zalo_inbound_message(payload)
+    return _zalo_inbound_optional_string(message.get("text"))
+
+
+def _zalo_message_timestamp_ms(message: Mapping[str, Any]) -> int | None:
+    raw_timestamp = message.get("date")
+    if raw_timestamp is None:
+        return None
+    try:
+        timestamp = float(raw_timestamp)
+    except (TypeError, ValueError):
+        return None
+    if timestamp <= 0:
+        return None
+    if timestamp >= 1_000_000_000_000:
+        return int(timestamp)
+    return int(timestamp * 1000)
+
+
+@dataclass(frozen=True, slots=True)
+class _ZaloWebhookReplayCandidate:
+    key: str
+    replay_id: str
+    inbound_message_id: str | None
+
+
+def _zalo_webhook_replay_candidate(
+    payload: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _ZaloWebhookReplayCandidate | None:
+    message = _zalo_inbound_message(payload)
+    message_id = _zalo_inbound_optional_string(message.get("message_id"))
+    if message_id is None:
+        return None
+    event_name = str(payload.get("event_name") or "").strip()
+    chat = _zalo_inbound_mapping(message.get("chat"))
+    sender = _zalo_inbound_mapping(message.get("from"))
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    chat_id = _zalo_inbound_optional_string(chat.get("id")) or ""
+    sender_id = _zalo_inbound_optional_string(sender.get("id")) or ""
+    replay_id = f"message:{message_id}"
+    return _ZaloWebhookReplayCandidate(
+        key=json.dumps(
+            [
+                normalized_account_id,
+                event_name,
+                chat_id,
+                sender_id,
+                message_id,
+            ],
+            separators=(",", ":"),
+        ),
+        replay_id=replay_id,
+        inbound_message_id=message_id,
+    )
+
+
+def _zalo_webhook_replay_skip(
+    payload: Mapping[str, Any],
+    candidate: _ZaloWebhookReplayCandidate,
+) -> dict[str, object]:
+    skip: dict[str, object] = {
+        "eventName": str(payload.get("event_name") or "").strip() or "event",
+        "reason": "zalo_webhook_replay_duplicate",
+        "replayId": candidate.replay_id,
+    }
+    if candidate.inbound_message_id is not None:
+        skip["inboundMessageId"] = candidate.inbound_message_id
+    return skip
+
+
+@dataclass(frozen=True, slots=True)
+class _ZaloInboundSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    sender_id: str
+    sender_name: str | None
+    conversation_id: str
+    conversation_type: str
+    reply_to: str
+
+
+def _zalo_inbound_session_context(
+    payload: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _ZaloInboundSessionContext:
+    message = _zalo_inbound_message(payload)
+    chat = _zalo_inbound_mapping(message.get("chat"))
+    sender = _zalo_inbound_mapping(message.get("from"))
+    chat_id = _zalo_inbound_optional_string(chat.get("id"))
+    sender_id = _zalo_inbound_optional_string(sender.get("id"))
+    if chat_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Zalo inbound message is missing chat id."
+        )
+    if sender_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Zalo inbound message is missing sender id."
+        )
+    chat_type = str(chat.get("chat_type") or "").strip().upper()
+    is_group = chat_type == "GROUP"
+    conversation_type = "group" if is_group else "direct"
+    peer_kind: ConversationTargetPeerKind = "group" if is_group else "direct"
+    peer_id = f"zalo:group:{chat_id}" if is_group else f"zalo:{chat_id}"
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="zalo",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    sender_name = _zalo_inbound_optional_string(
+        sender.get("display_name") or sender.get("name")
+    )
+    return _ZaloInboundSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        sender_id=sender_id,
+        sender_name=sender_name,
+        conversation_id=chat_id,
+        conversation_type=conversation_type,
+        reply_to=f"zalo:{chat_id}",
+    )
 
 
 GOOGLE_CHAT_API_BASE_URL = "https://chat.googleapis.com/v1"
@@ -14517,6 +14678,10 @@ class OpsMeshService:
         init=False,
         default_factory=dict,
     )
+    _zalo_webhook_replay_cache: dict[str, float] = field(
+        init=False,
+        default_factory=dict,
+    )
 
     async def start(self) -> None:
         if self._task is not None:
@@ -18351,6 +18516,20 @@ class OpsMeshService:
             del cache[oldest_key]
         return True
 
+    def _claim_zalo_webhook_replay(self, candidate: _ZaloWebhookReplayCandidate) -> bool:
+        now = time.monotonic()
+        cache = self._zalo_webhook_replay_cache
+        for key, expires_at in list(cache.items()):
+            if expires_at <= now:
+                del cache[key]
+        if candidate.key in cache:
+            return False
+        cache[candidate.key] = now + ZALO_WEBHOOK_REPLAY_WINDOW_SECONDS
+        while len(cache) > ZALO_WEBHOOK_REPLAY_MAX_ENTRIES:
+            oldest_key = min(cache, key=cache.__getitem__)
+            del cache[oldest_key]
+        return True
+
     async def handle_line_webhook(
         self,
         payload: Mapping[str, Any],
@@ -18475,19 +18654,77 @@ class OpsMeshService:
         account_id: str | None = None,
     ) -> dict[str, object]:
         event_name = str(payload.get("event_name") or "").strip()
+        event_count = 1 if event_name else 0
+        deliveries: list[dict[str, object]] = []
+        skips: list[dict[str, object]] = []
+        replay_candidate = _zalo_webhook_replay_candidate(
+            payload,
+            account_id=account_id,
+        )
+        if replay_candidate is not None and not self._claim_zalo_webhook_replay(
+            replay_candidate
+        ):
+            skips.append(_zalo_webhook_replay_skip(payload, replay_candidate))
+        else:
+            text = _zalo_webhook_event_text(payload)
+            if text is not None:
+                context = _zalo_inbound_session_context(payload, account_id=account_id)
+                if self.session_delivery_service is None:
+                    raise GatewayOutboundRuntimeUnavailableError(
+                        "Zalo inbound session delivery is unavailable."
+                    )
+                delivery_result = await self.session_delivery_service(
+                    context.session_key,
+                    text,
+                )
+                delivery_message_id = _session_delivery_message_id(delivery_result)
+                message = _zalo_inbound_message(payload)
+                delivery: dict[str, object] = {
+                    "eventName": event_name or "event",
+                    "sessionKey": context.session_key,
+                    "text": text,
+                    "senderId": context.sender_id,
+                    "conversationId": context.conversation_id,
+                    "conversationType": context.conversation_type,
+                    "conversationTarget": context.conversation_target.model_dump(
+                        mode="json"
+                    ),
+                    "reply": {
+                        "to": context.reply_to,
+                        "originatingTo": context.reply_to,
+                    },
+                    "delivery": {"runtime": "session-backed"},
+                }
+                if delivery_message_id is not None:
+                    delivery["messageId"] = delivery_message_id
+                inbound_message_id = _zalo_inbound_message_id(payload)
+                if inbound_message_id is not None:
+                    delivery["inboundMessageId"] = inbound_message_id
+                timestamp = _zalo_message_timestamp_ms(message)
+                if timestamp is not None:
+                    delivery["timestamp"] = timestamp
+                if context.sender_name is not None:
+                    delivery["senderName"] = context.sender_name
+                deliveries.append(delivery)
         result: dict[str, object] = {
             "ok": bool(event_name),
             "channel": "zalo",
             "eventName": event_name or "unknown",
+            "eventCount": event_count,
+            "deliveredCount": len(deliveries),
         }
         normalized_account_id = str(account_id or "").strip()
         if normalized_account_id:
             result["accountId"] = normalized_account_id
-        message = payload.get("message")
-        if isinstance(message, Mapping):
-            message_id = str(message.get("message_id") or "").strip()
-            if message_id:
-                result["inboundMessageId"] = message_id
+        if deliveries:
+            result["deliveries"] = deliveries
+        if skips:
+            result["skippedCount"] = len(skips)
+            result["skips"] = skips
+        if not deliveries and not skips:
+            inbound_message_id = _zalo_inbound_message_id(payload)
+            if inbound_message_id is not None:
+                result["inboundMessageId"] = inbound_message_id
         return result
 
     async def _stage_line_inbound_media(

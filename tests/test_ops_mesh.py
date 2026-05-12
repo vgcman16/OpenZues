@@ -33982,6 +33982,156 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_delivers_direct_text_message(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "zalo-message-1",
+                "text": "Ship the Zalo inbound lane.",
+                "date": 1760000000,
+                "chat": {"id": "chat-123", "chat_type": "PRIVATE"},
+                "from": {"id": "zalo-user-1", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="zalo",
+        account_id="zalo-bot",
+        peer_kind="direct",
+        peer_id="zalo:chat-123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [
+        (expected_session_key, "Ship the Zalo inbound lane.")
+    ]
+    assert result == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "eventName": "message.text.received",
+        "eventCount": 1,
+        "deliveredCount": 1,
+        "deliveries": [
+            {
+                "eventName": "message.text.received",
+                "messageId": "zalo-session-message-1",
+                "inboundMessageId": "zalo-message-1",
+                "timestamp": 1760000000000,
+                "sessionKey": expected_session_key,
+                "text": "Ship the Zalo inbound lane.",
+                "senderId": "zalo-user-1",
+                "senderName": "Ada",
+                "conversationId": "chat-123",
+                "conversationType": "direct",
+                "conversationTarget": expected_target.model_dump(mode="json"),
+                "reply": {
+                    "to": "zalo:chat-123",
+                    "originatingTo": "zalo:chat-123",
+                },
+                "delivery": {"runtime": "session-backed"},
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_deduplicates_text_redelivery_by_message_id(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": f"zalo-session-message-{len(session_deliveries)}"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    original_payload = {
+        "event_name": "message.text.received",
+        "message": {
+            "message_id": "zalo-message-dedupe-1",
+            "text": "Deliver this Zalo update once.",
+            "date": 1760000000,
+            "chat": {"id": "chat-dedupe", "chat_type": "PRIVATE"},
+            "from": {"id": "zalo-user-dedupe", "display_name": "Ada"},
+        },
+    }
+
+    first = await service.handle_zalo_webhook(
+        original_payload,
+        account_id="zalo-bot",
+    )
+    redelivery = await service.handle_zalo_webhook(
+        original_payload,
+        account_id="zalo-bot",
+    )
+
+    assert first["deliveredCount"] == 1
+    assert len(session_deliveries) == 1
+    assert session_deliveries[0][1] == "Deliver this Zalo update once."
+    assert redelivery == {
+        "ok": True,
+        "channel": "zalo",
+        "accountId": "zalo-bot",
+        "eventName": "message.text.received",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skippedCount": 1,
+        "skips": [
+            {
+                "eventName": "message.text.received",
+                "reason": "zalo_webhook_replay_duplicate",
+                "inboundMessageId": "zalo-message-dedupe-1",
+                "replayId": "message:zalo-message-dedupe-1",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message(
     tmp_path: Path,
 ) -> None:
