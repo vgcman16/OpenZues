@@ -15321,12 +15321,44 @@ def _sessions_spawn_acp_target_agent_id(
     requested_agent_id: str | None,
     config_service: GatewayConfigService | None,
 ) -> str | None:
+    target_agent_id: str | None
     if requested_agent_id is not None:
-        return normalize_agent_id(requested_agent_id)
-    configured_default = _string_or_none(
-        _sessions_spawn_acp_config(config_service).get("defaultAgent")
-    )
-    return normalize_agent_id(configured_default) if configured_default is not None else None
+        target_agent_id = normalize_agent_id(requested_agent_id)
+    else:
+        configured_default = _string_or_none(
+            _sessions_spawn_acp_config(config_service).get("defaultAgent")
+        )
+        target_agent_id = (
+            normalize_agent_id(configured_default)
+            if configured_default is not None
+            else None
+        )
+    if target_agent_id is None:
+        return None
+    if config_service is None:
+        return target_agent_id
+    for agents_config in _sessions_spawn_agents_config_roots(config_service):
+        agent_config = _sessions_spawn_agent_config_from_root(
+            agents_config,
+            agent_id=target_agent_id,
+        )
+        if agent_config is None:
+            continue
+        runtime_config = _mapping_or_none(agent_config.get("runtime"))
+        if runtime_config is None:
+            continue
+        runtime_type = _string_or_none(runtime_config.get("type"))
+        if str(runtime_type or "").strip().lower() != "acp":
+            continue
+        acp_runtime_config = _mapping_or_none(runtime_config.get("acp"))
+        runtime_agent = (
+            _string_or_none(acp_runtime_config.get("agent"))
+            if acp_runtime_config is not None
+            else None
+        ) or _string_or_none(runtime_config.get("agent"))
+        if runtime_agent is not None:
+            return normalize_agent_id(runtime_agent)
+    return target_agent_id
 
 
 async def _sessions_spawn_resolve_acp_runtime_cwd(

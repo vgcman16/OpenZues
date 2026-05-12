@@ -1787,6 +1787,7 @@ class ControlUiGatewayAgentConfigView(BaseModel):
     default: bool | None = None
     workspace: str | None = None
     agent_dir: str | None = Field(default=None, alias="agentDir")
+    runtime: dict[str, Any] | None = None
     subagents: ControlUiGatewayAgentSubagentsConfigView | None = None
     sandbox: ControlUiGatewayAgentSandboxConfigView | None = None
     tools: ControlUiToolAllowDenyConfigView | None = None
