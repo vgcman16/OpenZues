@@ -12132,3 +12132,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   local browser status/doctor, profile mutation, permissions, label-action
   route breadth, remaining provider-specific media/reply edges, deeper
   installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control setting route
+  breadth now maps supported upstream `/set/*` routes from
+  `extensions/browser/src/browser/routes/agent.storage.ts` onto native
+  `agent-browser set` commands for offline, headers, credentials,
+  geolocation, media, and device settings. Source/test checkpointed in
+  `97755215`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.954%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.85%.
+  Continue local browser status/doctor, profile mutation, permissions,
+  locale/timezone, label-action route breadth, remaining provider-specific
+  media/reply edges, deeper installed plugin activation, companion breadth, or
+  the next packaging edge.

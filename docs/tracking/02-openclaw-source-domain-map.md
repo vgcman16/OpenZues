@@ -72,8 +72,13 @@ upstream `cookie` set fields. `OZ-CANVAS-001L` debug route breadth from
 `d7eb616d`; it maps `GET /console`, `GET /errors`, `GET /requests`,
 `POST /trace/start`, and `POST /trace/stop` onto native console/error,
 network-request, and trace artifact methods with supported clear/filter flags.
+`OZ-CANVAS-001M` setting route breadth from
+`extensions/browser/src/browser/routes/agent.storage.ts` is checkpointed in
+`97755215`; it maps supported `/set/*` routes onto native offline, headers,
+credentials, geolocation, media, and device settings with existing redaction.
 Remaining browser-request depth is richer local status, doctor, profile,
-permission, and label-action route breadth beyond the current native adapter.
+permission, locale/timezone, and label-action route breadth beyond the current
+native adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers
