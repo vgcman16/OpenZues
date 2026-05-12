@@ -12068,3 +12068,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.5%. Continue richer local browser route breadth, remaining
   provider-specific media/reply edges, deeper installed plugin activation,
   companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control lifecycle
+  route breadth now maps upstream `POST /start` and `POST /stop` from
+  `extensions/browser/src/browser/routes/basic.ts` onto native `agent-browser`
+  lifecycle methods, including `all` / `allSessions` stop options in the
+  adapter. Source/test checkpointed in `d9b5e87d`; repo-wide parity remains
+  estimated at ~99.9%, active gateway/session/tool-contract parity moves to
+  ~99.948%, and browser/canvas/nodes/voice bounded-command parity moves to
+  ~99.55%. Continue richer local browser status/doctor/profile/permission/tab
+  route breadth, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.

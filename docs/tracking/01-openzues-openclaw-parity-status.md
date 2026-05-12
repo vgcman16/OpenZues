@@ -17,9 +17,9 @@ may lag behind this tracker.
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
-| Active gateway/session/tool-contract family | ~99.947% | High for bounded local path | Does not mean whole product parity |
+| Active gateway/session/tool-contract family | ~99.948% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
-| Browser/canvas/nodes/voice bounded command family | ~99.5% | High for bounded local path | No longer active queue head |
+| Browser/canvas/nodes/voice bounded command family | ~99.55% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.9991% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99989% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99989% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
@@ -107,6 +107,22 @@ may lag behind this tracker.
   - Last verified: 2026-05-12, focused red/green local-fallback test, adjacent
     browser/node proof (`9 passed, 1236 deselected`), ruff, mypy, and focused
     `git diff --check`.
+
+- [x] `browser.request` local lifecycle routes.
+  - Source: `openclaw-main/extensions/browser/src/browser/routes/basic.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_browser_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: native local request dispatch maps `POST /start` and
+    `POST /stop` into the existing browser lifecycle runtime, preserving
+    profile/session routing and `all` / `allSessions` stop options.
+  - Evidence required: focused lifecycle route proof, adjacent browser
+    lifecycle/request proof, ruff, mypy
+  - Status: checkpointed in `d9b5e87d`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green lifecycle route test,
+    adjacent browser proof (`8 passed, 1238 deselected`), ruff, mypy, and
+    focused `git diff --check`.
 
 - [x] Requester-scoped `agents_list` spawn-target projection.
   - Source: `openclaw-main/src/agents/tools/agents-list-tool.ts`,
