@@ -8738,6 +8738,17 @@ class GatewayNodeMethodService:
                         "error": _ACP_SANDBOXED_REQUESTER_ERROR,
                         **role_context,
                     }
+                acp_agent_mismatch_error = _sessions_spawn_acp_config_agent_mismatch_error(
+                    requested_agent_id=agent_id,
+                    config_service=self._config_service,
+                )
+                if acp_agent_mismatch_error is not None:
+                    return {
+                        "status": "error",
+                        "errorCode": "runtime_agent_mismatch",
+                        "error": acp_agent_mismatch_error,
+                        **role_context,
+                    }
                 acp_agent_id = _sessions_spawn_acp_target_agent_id(
                     requested_agent_id=agent_id,
                     config_service=self._config_service,
@@ -8780,10 +8791,25 @@ class GatewayNodeMethodService:
                 if spawn_parent_depth >= max_spawn_depth:
                     return {
                         "status": "forbidden",
+                        "errorCode": "subagent_policy",
                         "error": (
                             "sessions_spawn is not allowed at this depth "
                             f"(current depth: {spawn_parent_depth}, "
                             f"max: {max_spawn_depth})"
+                        ),
+                        **role_context,
+                    }
+                max_children = _sessions_spawn_max_children_per_agent(self._config_service)
+                active_child_count = await self._active_sessions_spawn_child_count(
+                    requester_session_key=spawn_parent_session_key,
+                )
+                if active_child_count >= max_children:
+                    return {
+                        "status": "forbidden",
+                        "errorCode": "subagent_policy",
+                        "error": (
+                            "sessions_spawn has reached max active children for this "
+                            f"session ({active_child_count}/{max_children})"
                         ),
                         **role_context,
                     }
@@ -8837,6 +8863,20 @@ class GatewayNodeMethodService:
                     else _sessions_spawn_default_run_timeout_seconds(self._config_service)
                 )
                 requester_agent_id = resolve_agent_id_from_session_key(spawn_parent_session_key)
+                if spawn_parent_depth > 0:
+                    acp_subagent_policy_error = _sessions_spawn_agent_policy_error(
+                        self._config_service,
+                        requester_agent_id=requester_agent_id,
+                        target_agent_id=acp_agent_id,
+                        requested_agent_id=agent_id,
+                    )
+                    if acp_subagent_policy_error is not None:
+                        return {
+                            "status": "forbidden",
+                            "errorCode": "subagent_policy",
+                            "error": acp_subagent_policy_error,
+                            **role_context,
+                        }
                 requester_origin = _requester_route_context(resolved_requester)
                 requester_origin = _sessions_spawn_origin_for_target_agent(
                     self._config_service,
@@ -8908,19 +8948,26 @@ class GatewayNodeMethodService:
                 if requester_group_id is not None:
                     acp_context["requesterGroupId"] = requester_group_id
                 label = _optional_session_label(payload.get("label"), label="label")
+                model = _optional_non_empty_string(payload.get("model"), label="model")
+                thinking = _optional_non_empty_string(payload.get("thinking"), label="thinking")
+                acp_spawn_params: dict[str, object] = {
+                    "task": task,
+                    "label": label,
+                    "agentId": acp_agent_id,
+                    "resumeSessionId": resume_session_id,
+                    "cwd": acp_cwd,
+                    "mode": mode,
+                    "thread": thread,
+                    "sandbox": sandbox,
+                    "streamTo": effective_stream_to,
+                    "runTimeoutSeconds": run_timeout_seconds,
+                }
+                if model is not None:
+                    acp_spawn_params["model"] = model
+                if thinking is not None:
+                    acp_spawn_params["thinking"] = thinking
                 acp_result = await self._acp_spawn_service.spawn(
-                    {
-                        "task": task,
-                        "label": label,
-                        "agentId": acp_agent_id,
-                        "resumeSessionId": resume_session_id,
-                        "cwd": acp_cwd,
-                        "mode": mode,
-                        "thread": thread,
-                        "sandbox": sandbox,
-                        "streamTo": effective_stream_to,
-                        "runTimeoutSeconds": run_timeout_seconds,
-                    },
+                    acp_spawn_params,
                     acp_context,
                 )
                 if str(acp_result.get("status") or "").strip().lower() != "accepted":
@@ -8992,6 +9039,10 @@ class GatewayNodeMethodService:
                         acp_metadata["lastThreadId"] = requester_origin["threadId"]
                 if acp_cwd is not None:
                     acp_metadata["spawnedWorkspaceDir"] = acp_cwd
+                if model is not None:
+                    acp_metadata["model"] = model
+                if thinking is not None:
+                    acp_metadata["thinkingLevel"] = thinking
                 raw_acp_thread_binding = acp_result.get("threadBinding")
                 acp_thread_binding: dict[str, Any] | None = None
                 if isinstance(raw_acp_thread_binding, Mapping):
@@ -15289,6 +15340,119 @@ def _sessions_spawn_allowed_agent_policy(
     return allow_any, tuple(sorted(allowed))
 
 
+def _sessions_spawn_agent_policy_error(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_agent_id: str,
+    target_agent_id: str,
+    requested_agent_id: str | None = None,
+) -> str | None:
+    if config_service is None:
+        return None
+    normalized_requester_agent_id = normalize_agent_id(requester_agent_id)
+    normalized_target_agent_id = normalize_agent_id(target_agent_id)
+    if (
+        _string_or_none(requested_agent_id) is None
+        and normalized_target_agent_id == normalized_requester_agent_id
+    ):
+        return None
+    if not _sessions_spawn_allow_agents_configured(
+        config_service,
+        requester_agent_id=normalized_requester_agent_id,
+    ):
+        allowed_agent_ids: tuple[str, ...]
+        allowed_agent_ids = (
+            (normalized_requester_agent_id,) if normalized_requester_agent_id else ()
+        )
+        allow_any_agent = False
+    else:
+        allow_any_agent, allowed_agent_ids = _sessions_spawn_allowed_agent_policy(
+            config_service,
+            requester_agent_id=normalized_requester_agent_id,
+        )
+    if allow_any_agent or normalized_target_agent_id in allowed_agent_ids:
+        return None
+    allowed_text = ", ".join(allowed_agent_ids) if allowed_agent_ids else "none"
+    return f"agentId is not allowed for sessions_spawn (allowed: {allowed_text})"
+
+
+def _sessions_spawn_allow_agents_configured(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_agent_id: str,
+) -> bool:
+    if config_service is None:
+        return False
+    raw_reader = getattr(config_service, "_read_raw_config_object", None)
+    if callable(raw_reader):
+        try:
+            raw_payload = raw_reader(label="sessions_spawn allowAgents config")
+        except Exception:  # noqa: BLE001 - raw config support is best-effort.
+            raw_payload = None
+        if isinstance(raw_payload, Mapping):
+            return _sessions_spawn_raw_allow_agents_configured(
+                raw_payload,
+                requester_agent_id=requester_agent_id,
+            )
+    subagents_config = _sessions_spawn_subagents_config(
+        config_service,
+        requester_agent_id=requester_agent_id,
+    )
+    raw_allow_agents = (
+        subagents_config.get("allowAgents") if isinstance(subagents_config, dict) else None
+    )
+    return isinstance(raw_allow_agents, list) and bool(raw_allow_agents)
+
+
+def _sessions_spawn_raw_allow_agents_configured(
+    payload: Mapping[str, object],
+    *,
+    requester_agent_id: str,
+) -> bool:
+    for agents_config in _sessions_spawn_raw_agents_config_roots(payload):
+        defaults_config = _mapping_or_none(agents_config.get("defaults"))
+        defaults_subagents = (
+            _mapping_or_none(defaults_config.get("subagents"))
+            if defaults_config is not None
+            else None
+        )
+        defaults_allow_agents = (
+            defaults_subagents.get("allowAgents")
+            if defaults_subagents is not None
+            else None
+        )
+        if isinstance(defaults_allow_agents, list) and defaults_allow_agents:
+            return True
+        agent_config = _sessions_spawn_agent_config_from_root(
+            agents_config,
+            agent_id=requester_agent_id,
+        )
+        if agent_config is None:
+            continue
+        agent_subagents = _mapping_or_none(agent_config.get("subagents"))
+        agent_allow_agents = (
+            agent_subagents.get("allowAgents") if agent_subagents is not None else None
+        )
+        if isinstance(agent_allow_agents, list) and agent_allow_agents:
+            return True
+    return False
+
+
+def _sessions_spawn_raw_agents_config_roots(
+    payload: Mapping[str, object],
+) -> tuple[dict[str, Any], ...]:
+    roots: list[dict[str, Any]] = []
+    gateway_config = _mapping_or_none(payload.get("gateway"))
+    if gateway_config is not None:
+        gateway_agents = gateway_config.get("agents")
+        if isinstance(gateway_agents, dict):
+            roots.append(gateway_agents)
+    top_level_agents = payload.get("agents")
+    if isinstance(top_level_agents, dict):
+        roots.append(top_level_agents)
+    return tuple(roots)
+
+
 def _sessions_spawn_acp_config(
     config_service: GatewayConfigService | None,
 ) -> dict[str, Any]:
@@ -15310,12 +15474,82 @@ def _sessions_spawn_acp_target_agent_id(
     requested_agent_id: str | None,
     config_service: GatewayConfigService | None,
 ) -> str | None:
+    target_agent_id: str | None
     if requested_agent_id is not None:
-        return normalize_agent_id(requested_agent_id)
-    configured_default = _string_or_none(
-        _sessions_spawn_acp_config(config_service).get("defaultAgent")
-    )
-    return normalize_agent_id(configured_default) if configured_default is not None else None
+        target_agent_id = normalize_agent_id(requested_agent_id)
+    else:
+        configured_default = _string_or_none(
+            _sessions_spawn_acp_config(config_service).get("defaultAgent")
+        )
+        target_agent_id = (
+            normalize_agent_id(configured_default)
+            if configured_default is not None
+            else None
+        )
+    if target_agent_id is None:
+        return None
+    if config_service is None:
+        return target_agent_id
+    for agents_config in _sessions_spawn_agents_config_roots(config_service):
+        agent_config = _sessions_spawn_agent_config_from_root(
+            agents_config,
+            agent_id=target_agent_id,
+        )
+        if agent_config is None:
+            continue
+        runtime_config = _mapping_or_none(agent_config.get("runtime"))
+        if runtime_config is None:
+            continue
+        runtime_type = _string_or_none(runtime_config.get("type"))
+        if str(runtime_type or "").strip().lower() != "acp":
+            continue
+        acp_runtime_config = _mapping_or_none(runtime_config.get("acp"))
+        runtime_agent = (
+            _string_or_none(acp_runtime_config.get("agent"))
+            if acp_runtime_config is not None
+            else None
+        ) or _string_or_none(runtime_config.get("agent"))
+        if runtime_agent is not None:
+            return normalize_agent_id(runtime_agent)
+    return target_agent_id
+
+
+def _sessions_spawn_acp_config_agent_mismatch_error(
+    *,
+    requested_agent_id: str | None,
+    config_service: GatewayConfigService | None,
+) -> str | None:
+    if requested_agent_id is None or config_service is None:
+        return None
+    requested = normalize_agent_id(requested_agent_id)
+    for agents_config in _sessions_spawn_agents_config_roots(config_service):
+        agent_config = _sessions_spawn_agent_config_from_root(
+            agents_config,
+            agent_id=requested,
+        )
+        if agent_config is None:
+            continue
+        runtime_config = _mapping_or_none(agent_config.get("runtime"))
+        runtime_type = (
+            _string_or_none(runtime_config.get("type"))
+            if runtime_config is not None
+            else None
+        )
+        if str(runtime_type or "").strip().lower() == "acp":
+            return None
+        if _sessions_spawn_acp_agent_explicitly_allowed(
+            config_service,
+            agent_id=requested,
+        ):
+            return None
+        return (
+            f'agentId "{requested}" is an OpenClaw config agent, not an ACP harness. '
+            'Use runtime="subagent" or omit runtime for OpenClaw config agents. '
+            'Use runtime="acp" only with external ACP harness ids such as codex, '
+            "claude, droid, gemini, or opencode, or configure "
+            'agents.list[].runtime.type="acp" with runtime.acp.agent.'
+        )
+    return None
 
 
 async def _sessions_spawn_resolve_acp_runtime_cwd(
@@ -15373,6 +15607,26 @@ def _sessions_spawn_acp_agent_policy_error(
     if not allowed_agents or normalize_agent_id(agent_id) in allowed_agents:
         return None
     return f'ACP agent "{normalize_agent_id(agent_id)}" is not allowed by policy.'
+
+
+def _sessions_spawn_acp_agent_explicitly_allowed(
+    config_service: GatewayConfigService | None,
+    *,
+    agent_id: str,
+) -> bool:
+    raw_allowed_agents = _sessions_spawn_acp_config(config_service).get("allowedAgents")
+    if not isinstance(raw_allowed_agents, list):
+        return False
+    normalized_agent_id = normalize_agent_id(agent_id)
+    for raw_agent in raw_allowed_agents:
+        allowed_agent = _string_or_none(raw_agent)
+        if allowed_agent is None:
+            continue
+        if allowed_agent == "*":
+            return True
+        if normalize_agent_id(allowed_agent) == normalized_agent_id:
+            return True
+    return False
 
 
 def _normalized_session_key_for_compare(value: object) -> str | None:

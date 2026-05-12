@@ -20,12 +20,140 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.969% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.999989% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot reply message sequencing, QQBot local media file-data uploads, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.999996% | High for bounded native bridge | Packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; ACP bridge depth and deeper installed plugin activation remain |
+| Provider-native inbound/outbound breadth | ~99.999996% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Runtime/CLI/doctor native bridge | ~99.9999994% | High for bounded native bridge | ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.9% | Low, broad parity still open | QR setup-code safety, SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, and approval-state preview metadata are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
+
+- [x] ACP `resumeSessionId` ownership enforcement for `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: resume ids must match persisted ACP runtime identity metadata
+    owned by the requester session; foreign ids return `resume_forbidden`
+    before runtime dispatch, while owned ids continue to dispatch.
+  - Evidence required: focused ACP resume proof, adjacent ACP gateway proof,
+    ACP runtime service proof, ruff, mypy
+  - Status: checkpointed in `27b7e14e`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_rejects_resume_id_not_owned_by_requester tests\test_gateway_node_methods.py::test_sessions_spawn_acp_allows_resume_id_owned_by_requester -q`
+    (`2 passed` after implementation), adjacent ACP gateway proof (`8 passed,
+    1265 deselected`), ACP runtime proof (`19 passed`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] ACP model/thinking override propagation for `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.ts`,
+    `openclaw-main/src/agents/acp-spawn.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_acp_spawn.py`,
+    `src/openzues/services/codex_rpc.py`, `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_acp_spawn.py`, `tests/test_codex_rpc.py`
+  - Contract: `model` and `thinking` ACP spawn params are forwarded to runtime
+    startup/turn dispatch, persisted on spawned session metadata, and
+    serialized as Codex app-server model/effort fields.
+  - Evidence required: focused gateway/runtime/RPC proofs, adjacent ACP/RPC
+    tests, ruff, mypy
+  - Status: checkpointed in `c10e37f1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green gateway/runtime/RPC tests,
+    adjacent ACP runtime proof (`20 passed`), adjacent gateway ACP proof (`9
+    passed, 1265 deselected`), RPC proof (`9 passed`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] ACP configured runtime-agent alias mapping for `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/schemas.py`, `tests/test_gateway_node_methods.py`
+  - Contract: a configured OpenZues agent whose `runtime.type` is `acp` maps to
+    the configured ACP harness id before allowlist checks and runtime dispatch,
+    while spawned-session metadata records the resolved runtime agent id.
+  - Evidence required: focused ACP alias proof, adjacent ACP gateway proof,
+    ruff, mypy
+  - Status: checkpointed in `ccbbd403`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_maps_configured_runtime_agent_alias -q`
+    (`1 passed` after implementation), adjacent ACP gateway proof (`4 passed,
+    1271 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] ACP native-agent mismatch preflight for `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.ts`,
+    `openclaw-main/src/agents/acp-spawn.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: a configured native OpenZues agent id requested with
+    `runtime="acp"` returns `runtime_agent_mismatch` before dispatch unless it
+    is explicitly an allowed ACP harness id or declares `runtime.type="acp"`.
+  - Evidence required: focused ACP mismatch proof, adjacent ACP gateway proof,
+    ruff, mypy
+  - Status: checkpointed in `a0cccb08`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_rejects_configured_native_agent_id -q`
+    (failed before implementation with `agent_forbidden`), paired ACP proof
+    (`2 passed`), adjacent ACP gateway proof (`5 passed, 1271 deselected`),
+    ruff, mypy, and focused `git diff --check`.
+
+- [x] ACP run-timeout runtime propagation for `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_acp_spawn.py`,
+    `src/openzues/services/manager.py`, `src/openzues/services/codex_rpc.py`,
+    `tests/test_gateway_acp_spawn.py`, `tests/test_codex_rpc.py`
+  - Contract: `runTimeoutSeconds` reaches ACP runtime session initialization
+    and turn dispatch, then applies to Codex app-server `thread/start` and
+    `turn/start` request timeouts.
+  - Evidence required: focused ACP runtime proof, RPC proof, adjacent ACP/RPC
+    suites, ruff, mypy
+  - Status: checkpointed in `3e821817`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green ACP runtime proof (`1
+    passed` after implementation), focused RPC timeout proof (`2 passed`),
+    adjacent ACP runtime suite (`21 passed`), RPC suite (`11 passed`), gateway
+    timeout tracking proof (`1 passed`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] ACP subagent depth and child-cap policy for `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: ACP spawns obey configured `maxSpawnDepth` and
+    `maxChildrenPerAgent` before runtime dispatch, returning OpenClaw-shaped
+    `subagent_policy` errors.
+  - Evidence required: focused ACP policy proof, adjacent ACP gateway proof,
+    ruff, mypy
+  - Status: checkpointed in `1bd16f72`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green ACP depth/child-cap proof
+    (`2 passed` after implementation), adjacent ACP gateway proof (`6 passed,
+    1272 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] ACP subagent target allowlist policy for `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.test.ts`,
+    `openclaw-main/src/agents/subagent-target-policy.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: child ACP spawns obey requester-specific
+    `subagents.allowAgents`; explicit targets outside the allowlist and
+    explicit self-targets excluded by the allowlist return `subagent_policy`
+    before ACP runtime dispatch, while top-level ACP spawns preserve existing
+    ACP allowlist/runtime-agent checks.
+  - Evidence required: focused ACP allowlist proof, adjacent ACP gateway proof,
+    ruff, mypy
+  - Status: checkpointed in `39d3b06b`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green ACP allowlist proof (`2
+    passed` after implementation), adjacent ACP gateway proof (`6 passed, 1274
+    deselected`), ruff, mypy, and focused `git diff --check`.
 
 - [x] Gateway method registry, policy wiring, strict parameter guards, config
   lookup/mutation, node invoke guards, device pairing, approvals, and node/global
@@ -7320,6 +7448,175 @@ may lag behind this tracker.
     (`6 passed`), adjacent
     `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
     (`10 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot structured self-closing media tags.
+  - Source: `openclaw-main/extensions/qqbot/src/utils/media-tags.ts`,
+    `openclaw-main/extensions/qqbot/src/utils/media-tags.test.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/messaging/outbound.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/messaging/outbound-media-send.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: route-backed QQBot sends normalize entity-encoded and
+    self-closing media tags, resolve upstream aliases into canonical QQBot tag
+    kinds, extract `file`/`src`/`path`/`url` attribute media sources, and route
+    generic `qqmedia` through file/video/voice/image auto-detection before
+    provider upload.
+  - Evidence required: focused self-closing media-tag test, focused adjacent
+    QQBot provider proof, adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `b5a821a7`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_self_closing_media_tag -q`
+    (`1 failed` before implementation because the encoded self-closing tag was
+    sent as text without `mediaIds`, then `1 passed`), focused adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (self_closing or image_tag or image_media or reply_seq or local_media or native_route)"`
+    (`6 passed, 497 deselected`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`11 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot chunked local media uploads.
+  - Source: `openclaw-main/extensions/qqbot/src/engine/api/media-chunked.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/api/media-chunked.test.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/messaging/sender.ts`,
+    `openclaw-main/extensions/qqbot/src/utils/file-utils.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: large allowed local C2C/group media sends at or above the
+    OpenClaw 5 MiB threshold use `upload_prepare`, presigned part PUTs,
+    `upload_part_finish`, and `upload_id` completion before the normal
+    `file_info` media message path.
+  - Evidence required: focused chunked local media test, focused adjacent
+    QQBot provider proof, adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `ee990c4f`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_qqbot_chunked_local_media_upload -q`
+    (`1 failed` before implementation because the local file stayed on the
+    one-shot `/files` upload path without `file_info`, then `1 passed`),
+    focused adjacent `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (chunked or self_closing or image_tag or image_media or reply_seq or local_media or native_route)"`
+    (`7 passed, 497 deselected`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`12 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot voice-to-file fallback.
+  - Source: `openclaw-main/extensions/qqbot/src/engine/messaging/outbound.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/messaging/outbound-media-send.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: voice media sends first try QQBot voice upload, then retry the
+    same source as file/document upload when the provider rejects the voice
+    path; successful fallback returns normal `file_info` delivery and provider
+    metadata reports `mediaType=file`.
+  - Evidence required: focused fallback test, focused adjacent QQBot provider
+    proof, adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `0ccc41c0`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_falls_back_from_qqbot_voice_to_file -q`
+    (`1 failed` before implementation because the voice upload error surfaced
+    without retrying as a file, then `1 passed`), focused adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (falls_back or chunked or self_closing or image_tag or image_media or reply_seq or local_media or native_route)"`
+    (`8 passed, 497 deselected`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`13 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot file-media text follow-up delivery.
+  - Source: `openclaw-main/extensions/qqbot/src/engine/messaging/outbound.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: file/document media sends post the media message first, then
+    send accompanying text through the normal QQBot text path without replacing
+    the media result's `messageId`/`messageIds`.
+  - Evidence required: focused text-after-media test, focused adjacent QQBot
+    provider proof, adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `ea9dfe30`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_sends_qqbot_file_text_after_media -q`
+    (`1 failed` before implementation because only the media message was
+    posted, then `1 passed`), focused adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (file_text or falls_back or chunked or self_closing or image_tag or image_media or reply_seq or local_media or native_route)"`
+    (`9 passed, 497 deselected`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`14 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot direct image/video media text follow-up delivery.
+  - Source: `openclaw-main/extensions/qqbot/src/engine/messaging/outbound.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/messaging/sender.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: direct image/video media sends keep the media payload free of
+    caption text, preserve the media result as the delivery result, and send
+    accompanying text through the normal QQBot text path after media delivery.
+  - Evidence required: focused image text-after-media test, focused adjacent
+    QQBot provider proof, adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `0ea67d9f`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_image_media -q`
+    (`1 failed` before implementation because the media payload still carried
+    `content` and no follow-up text was posted, then `1 passed`), focused
+    adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (image_media or local_media or chunked or file_text or falls_back or self_closing or image_tag or reply_seq or native_route)"`
+    (`9 passed, 497 deselected`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`14 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot inline media text ordering.
+  - Source: `openclaw-main/extensions/qqbot/src/engine/messaging/outbound.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: route-backed inline media tags are parsed into ordered text/media
+    segments; text fragments are sent through the QQBot text path before or
+    after adjacent media, and media payloads do not embed those fragments as
+    `content`.
+  - Evidence required: focused inline image-tag ordering test, focused
+    adjacent QQBot provider proof, adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `9b34e2aa`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image_tag -q`
+    (`1 failed` before implementation because inline text was embedded in the
+    media payload instead of sent first, then `1 passed`), focused adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (image_tag or image_media or local_media or chunked or file_text or falls_back or self_closing or reply_seq or native_route)"`
+    (`9 passed, 497 deselected`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`14 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot inline trailing result metadata.
+  - Source: `openclaw-main/extensions/qqbot/src/engine/messaging/outbound.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: when an inline media queue ends with text after media, the
+    provider `messageId` reports that trailing text message id, matching
+    OpenClaw's `lastResult`, while media ids and media message ids remain
+    available in the result metadata.
+  - Evidence required: focused inline trailing-result test, focused adjacent
+    QQBot provider proof, adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `34a31061`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_reports_qqbot_inline_trailing_text -q`
+    (`1 failed` before implementation because `messageId` still reported the
+    media message id, then `1 passed`), focused adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (inline_trailing or image_tag or image_media or local_media or chunked or file_text or falls_back or self_closing or reply_seq or native_route)"`
+    (`10 passed, 497 deselected`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`15 passed, 492 deselected`), `ruff check
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 

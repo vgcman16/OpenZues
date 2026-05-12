@@ -46,12 +46,17 @@ async def test_start_thread_uses_enum_sandbox_and_approval_policy(monkeypatch) -
 
     monkeypatch.setattr(CodexAppServerClient, "call", fake_call)
 
-    await client.start_thread(model="gpt-5.4", cwd="C:/workspace")
+    await client.start_thread(
+        model="gpt-5.4",
+        cwd="C:/workspace",
+        reasoning_effort="high",
+    )
 
     assert recorded["method"] == "thread/start"
     assert recorded["params"] == {
         "model": "gpt-5.4",
         "cwd": "C:/workspace",
+        "effort": "high",
         "approvalPolicy": "never",
         "sandbox": "workspace-write",
     }
@@ -110,6 +115,43 @@ async def test_start_thread_uses_danger_full_access_on_windows(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+async def test_start_thread_uses_runtime_timeout_override(monkeypatch) -> None:
+    client = CodexAppServerClient(
+        transport="stdio",
+        command="codex",
+        args="-a never -s workspace-write app-server",
+        websocket_url=None,
+        cwd="C:/workspace",
+        event_callback=_noop_callback,
+        server_request_callback=_noop_callback,
+    )
+    recorded: dict[str, object] = {}
+    monkeypatch.setattr(codex_rpc.sys, "platform", "linux")
+
+    async def fake_call(
+        self: CodexAppServerClient,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict:
+        recorded["method"] = method
+        recorded["params"] = params or {}
+        recorded["timeout"] = timeout
+        return {"thread": {"id": "thread_123"}}
+
+    monkeypatch.setattr(CodexAppServerClient, "call", fake_call)
+
+    await client.start_thread(
+        model="gpt-5.4",
+        cwd="C:/workspace",
+        timeout_seconds=45,
+    )
+
+    assert recorded["method"] == "thread/start"
+    assert recorded["timeout"] == 45.0
+
+
+@pytest.mark.asyncio
 async def test_start_turn_uses_object_sandbox_policy(monkeypatch) -> None:
     client = CodexAppServerClient(
         transport="stdio",
@@ -155,6 +197,44 @@ async def test_start_turn_uses_object_sandbox_policy(monkeypatch) -> None:
         "sandboxPolicy": {"type": "workspaceWrite"},
     }
     assert recorded["timeout"] == 60.0
+
+
+@pytest.mark.asyncio
+async def test_start_turn_uses_runtime_timeout_override(monkeypatch) -> None:
+    client = CodexAppServerClient(
+        transport="stdio",
+        command="codex",
+        args="-a never -s workspace-write app-server",
+        websocket_url=None,
+        cwd="C:/workspace",
+        event_callback=_noop_callback,
+        server_request_callback=_noop_callback,
+    )
+    recorded: dict[str, object] = {}
+    monkeypatch.setattr(codex_rpc.sys, "platform", "linux")
+
+    async def fake_call(
+        self: CodexAppServerClient,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict:
+        recorded["method"] = method
+        recorded["params"] = params or {}
+        recorded["timeout"] = timeout
+        return {"turn": {"id": "turn_123"}}
+
+    monkeypatch.setattr(CodexAppServerClient, "call", fake_call)
+
+    await client.start_turn(
+        thread_id="thread_123",
+        text="Build the moderation queue.",
+        cwd="C:/workspace",
+        timeout_seconds=45,
+    )
+
+    assert recorded["method"] == "turn/start"
+    assert recorded["timeout"] == 45.0
 
 
 @pytest.mark.asyncio

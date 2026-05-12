@@ -15,8 +15,8 @@
   loopback pairing-required fallback, approval-state preview metadata, and
   remove/clear/reject/rotate/revoke coverage; companion apps remain broadly
   open.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.999996% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, deeper installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated provider-native inbound/outbound breadth: ~99.999989% after Slack
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.9999994% after the runtime bridge doctor posture, native ACP client interactive replay, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override propagation, ACP configured runtime agent alias mapping, ACP runtime-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, deeper ACP bridge lifecycle edge cases, deeper installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated provider-native inbound/outbound breadth: ~99.999996% after Slack
   event/interactions/slash/signing coverage, command aliases/plugin command
   injection, WhatsApp reply fanout, Telegram media reply fanout/caption
   passthrough, Feishu media implicit reply fanout, Telegram stale-thread retry
@@ -36,9 +36,12 @@
   allowFrom-store authorization, approval mutation, request listing, and
   pairing list/approve/notify CLI plus command-owner bootstrap, list default,
   bootstrap explanation, not-found error text, and disabled-account capability
-  action gating, QQBot route-backed text sends, QQBot image media uploads, and
-  QQBot inline image media tags, QQBot reply message sequencing, and QQBot
-  local media file-data uploads.
+  action gating, QQBot route-backed text sends, QQBot image media uploads,
+  QQBot inline image media tags, QQBot structured self-closing media tags,
+  QQBot reply message sequencing, QQBot local media file-data uploads, and
+  QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot
+  file-media text follow-up delivery, and QQBot direct image/video media
+  text follow-up delivery plus QQBot inline media text ordering/result metadata.
 - Runtime helper addendum: imported `agent-runtime` core helper coverage is
   now verified in `a8e871a3` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `agent-runtime` model-selection helper
@@ -24129,6 +24132,272 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `09943f82`.
+
+- Native QQBot structured media tags now mirror OpenClaw's
+  `normalizeMediaTags` route into media sends for the provider-backed path:
+  entity-encoded/self-closing `<qqmedia file="..."/>` tags are extracted,
+  upstream tag aliases resolve to the canonical QQBot media tag family, and
+  generic `qqmedia` sources auto-detect file/video/voice/image upload type
+  before dispatch. This closes `OZ-PROV-001GN`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999990%.
+- Verified the QQBot structured media-tag seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_self_closing_media_tag -q`
+  (`1 failed` before implementation because the encoded self-closing tag was
+  sent as plain text without `mediaIds`, then `1 passed`), focused adjacent
+  QQBot proof `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (self_closing or image_tag or image_media or reply_seq or local_media or native_route)"`
+  (`6 passed, 497 deselected`), adjacent provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+  (`11 passed, 492 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `b5a821a7`.
+
+- Native QQBot large local media uploads now mirror OpenClaw's chunked upload
+  path for provider-backed C2C/group sends: allowed local files at or above
+  the 5 MiB threshold compute `md5`/`sha1`/`md5_10m`, call
+  `upload_prepare`, upload every prepared part to its presigned URL, call
+  `upload_part_finish`, complete via `/files` with `upload_id`, then deliver
+  the returned `file_info` through the existing `msg_type: 7` message path.
+  This closes `OZ-PROV-001GO`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.999991%.
+- Verified the QQBot chunked local media seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_qqbot_chunked_local_media_upload -q`
+  (`1 failed` before implementation because the upload stayed on the one-shot
+  `/files` path without `file_info`, then `1 passed`), focused adjacent QQBot
+  proof `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (chunked or self_closing or image_tag or image_media or reply_seq or local_media or native_route)"`
+  (`7 passed, 497 deselected`), adjacent provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+  (`12 passed, 492 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `ee990c4f`.
+
+- Native QQBot voice media sends now mirror OpenClaw's resilient
+  audio-as-voice fallback: when the QQBot voice upload path returns a
+  provider error, OpenZues retries the same source as a file/document upload,
+  preserves the returned `file_info`, and records the provider result
+  `mediaType` as `file`. This closes `OZ-PROV-001GP`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999992%.
+- Verified the QQBot voice fallback seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_falls_back_from_qqbot_voice_to_file -q`
+  (`1 failed` before implementation because the voice upload error was
+  surfaced without retrying as a file, then `1 passed`), focused adjacent
+  QQBot proof `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (falls_back or chunked or self_closing or image_tag or image_media or reply_seq or local_media or native_route)"`
+  (`8 passed, 497 deselected`), adjacent provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+  (`13 passed, 492 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `0ccc41c0`.
+
+- Native QQBot file/document media sends now mirror OpenClaw's
+  `sendTextAfterMedia` path for successful document uploads: when text
+  accompanies a file media send, OpenZues posts the media message first, then
+  posts the text as a follow-up without changing the media delivery result.
+  This closes `OZ-PROV-001GQ`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.999993%.
+- Verified the QQBot file text-after-media seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_sends_qqbot_file_text_after_media -q`
+  (`1 failed` before implementation because only the media message was posted,
+  then `1 passed`), focused adjacent QQBot proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (file_text or falls_back or chunked or self_closing or image_tag or image_media or reply_seq or local_media or native_route)"`
+  (`9 passed, 497 deselected`), adjacent provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+  (`14 passed, 492 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `ea9dfe30`.
+
+- Native QQBot direct image/video media sends now follow OpenClaw's
+  post-media text contract instead of embedding the accompanying text in the
+  media message payload: direct media sends keep the media result as the
+  delivery result, then issue the normal text send as a follow-up. This closes
+  `OZ-PROV-001GR`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.999994%.
+- Verified the QQBot direct media text-after-media seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_image_media -q`
+  (`1 failed` before implementation because the image media message still
+  carried `content` and no follow-up text message was posted, then `1 passed`),
+  focused adjacent QQBot proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (image_media or local_media or chunked or file_text or falls_back or self_closing or image_tag or reply_seq or native_route)"`
+  (`9 passed, 497 deselected`), adjacent provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+  (`14 passed, 492 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `0ea67d9f`.
+
+- Native QQBot inline media tags now preserve OpenClaw's text/media send
+  ordering for route-backed sends: text fragments around inline media tags are
+  posted through the normal QQBot text path in order, and media messages no
+  longer receive those fragments as embedded media payload content. This closes
+  `OZ-PROV-001GS`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.999995%.
+- Verified the QQBot inline media ordering seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image_tag -q`
+  (`1 failed` before implementation because the inline text was embedded in
+  the media payload and sent after upload ordering, then `1 passed`), focused
+  adjacent QQBot proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (image_tag or image_media or local_media or chunked or file_text or falls_back or self_closing or reply_seq or native_route)"`
+  (`9 passed, 497 deselected`), adjacent provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+  (`14 passed, 492 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `9b34e2aa`.
+
+- Native QQBot inline media trailing text now mirrors OpenClaw's queue result
+  metadata: when an inline media tag is followed by text, OpenZues reports the
+  trailing text message id as the provider `messageId` while preserving media
+  ids and media message ids. This closes `OZ-PROV-001GT`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.999996%.
+- Verified the QQBot inline trailing-result seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_reports_qqbot_inline_trailing_text -q`
+  (`1 failed` before implementation because `messageId` still reported the
+  media message instead of the trailing text message, then `1 passed`),
+  focused adjacent QQBot proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "qqbot and (inline_trailing or image_tag or image_media or local_media or chunked or file_text or falls_back or self_closing or reply_seq or native_route)"`
+  (`10 passed, 497 deselected`), adjacent provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+  (`15 passed, 492 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `34a31061`.
+
+- Native ACP `sessions.spawn` now enforces OpenClaw's `resumeSessionId`
+  ownership contract before runtime dispatch: resume ids must match a persisted
+  ACP session's `runtimeThreadId`, `runtimeSessionId`, or ACP identity fields
+  and that row must be owned by the resolved requester session. Foreign resume
+  ids return the upstream-shaped `resume_forbidden` response without starting
+  the runtime, while owned resume ids still dispatch unchanged. This closes
+  `OZ-RT-001AB`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.999997%.
+- Verified the ACP resume ownership seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_rejects_resume_id_not_owned_by_requester tests\test_gateway_node_methods.py::test_sessions_spawn_acp_allows_resume_id_owned_by_requester -q`
+  (`1 failed, 1 passed` before implementation because the foreign resume id
+  reached the fake ACP runtime, then `2 passed`), adjacent ACP proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_acp and (resume or runtime or stream)"`
+  (`8 passed, 1265 deselected`), `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`19 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `27b7e14e`.
+
+- Native ACP `sessions.spawn` now forwards OpenClaw `model` and `thinking`
+  overrides through the gateway branch, persists them on the spawned ACP
+  session metadata, applies them in `RuntimeManagerAcpSpawnService`, and
+  serializes thread-start `effort` into the Codex app-server RPC payload.
+  This closes `OZ-RT-001AC`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.999998%.
+- Verified the ACP model/thinking override seam with focused red/green
+  `python -m pytest tests\test_gateway_acp_spawn.py::test_runtime_manager_acp_spawn_applies_model_and_thinking_overrides -q`,
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_forwards_model_and_thinking_overrides -q`,
+  and `python -m pytest tests\test_codex_rpc.py::test_start_thread_uses_enum_sandbox_and_approval_policy -q`
+  (each failed before implementation at the matching drop point, then passed),
+  adjacent proofs `python -m pytest tests\test_gateway_acp_spawn.py -q` (`20
+  passed`), `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp and (model or thinking or resume or runtime or stream)"`
+  (`9 passed, 1265 deselected`), and `python -m pytest tests\test_codex_rpc.py
+  -q` (`9 passed`), plus `ruff check` on touched source/tests, `mypy` on
+  touched source modules, and focused `git diff --check`. Source/test
+  checkpointed in `c10e37f1`.
+
+- Native ACP `sessions.spawn` now maps configured OpenZues agent ids whose
+  `agents.list[].runtime.type` is `acp` to the configured ACP harness id before
+  allowlist checks and runtime dispatch. This preserves the upstream behavior
+  where a local agent id such as `reviewer` can target an ACP runtime agent such
+  as `codex`, while session metadata records the resolved runtime agent id.
+  This closes `OZ-ACP-001A`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.999999%.
+- Verified the ACP configured runtime-agent alias seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_maps_configured_runtime_agent_alias -q`
+  (failed before implementation because the unresolved local agent id was
+  rejected by the ACP allowlist, then `1 passed`), adjacent ACP proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and (configured_runtime_agent_alias or default_agent or agent_allowlist or forwards_model or runtime_tracks_wait_cleanup)"`
+  (`4 passed, 1271 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`, and
+  focused `git diff --check`. Source/test checkpointed in `ccbbd403`.
+
+- Native ACP `sessions.spawn` now rejects configured native OpenZues agent ids
+  before ACP allowlist handling when those ids are not explicitly allowed ACP
+  harness ids and do not declare `runtime.type="acp"`. This matches
+  OpenClaw's `runtime_agent_mismatch` response and prevents accidental dispatch
+  of local config agent ids as external ACP harness names. This closes
+  `OZ-ACP-001B`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.9999991%.
+- Verified the ACP native-agent mismatch seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_rejects_configured_native_agent_id -q`
+  (failed before implementation because the path returned `forbidden`
+  `agent_forbidden`, then passed in the focused pair), paired ACP proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_rejects_configured_native_agent_id tests\test_gateway_node_methods.py::test_sessions_spawn_acp_maps_configured_runtime_agent_alias -q`
+  (`2 passed`), adjacent ACP proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "acp and (configured_native_agent_id or configured_runtime_agent_alias or default_agent or agent_allowlist or forwards_model or runtime_tracks_wait_cleanup)"`
+  (`5 passed, 1271 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `a0cccb08`.
+
+- Native ACP `sessions.spawn` now carries `runTimeoutSeconds` through the
+  production runtime bridge: `RuntimeManagerAcpSpawnService` forwards the
+  timeout to thread initialization and turn dispatch, `RuntimeManager` passes it
+  to the connected app-server client, and `CodexAppServerClient` applies it as
+  the JSON-RPC request timeout for `thread/start` and `turn/start`. This closes
+  `OZ-ACP-001C`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.9999992%.
+- Verified the ACP run-timeout propagation seam with focused red/green
+  `python -m pytest tests\test_gateway_acp_spawn.py::test_runtime_manager_acp_spawn_applies_run_timeout_to_runtime_dispatch -q`
+  (`1 failed` before implementation because both runtime calls recorded
+  `timeout_seconds=None`, then `1 passed`), focused RPC proof
+  `python -m pytest tests\test_codex_rpc.py::test_start_thread_uses_runtime_timeout_override tests\test_codex_rpc.py::test_start_turn_uses_runtime_timeout_override -q`
+  (`2 passed`), adjacent proofs `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`21 passed`), `python -m pytest
+  tests\test_codex_rpc.py -q` (`11 passed`), and
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion -q`
+  (`1 passed`), plus `ruff check` on touched source/tests, `mypy` on touched
+  source modules, and focused `git diff --check`. Source/test checkpointed in
+  `3e821817`.
+
+- Native ACP `sessions.spawn` now applies OpenClaw subagent policy limits before
+  dispatch: configured max-depth failures carry `errorCode="subagent_policy"`,
+  and configured `maxChildrenPerAgent` blocks additional active ACP children
+  before the ACP runtime is called. This closes `OZ-ACP-001D`; repo-wide parity
+  remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves
+  to ~99.9999993%.
+- Verified the ACP subagent policy limit seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_rejects_configured_max_spawn_depth tests\test_gateway_node_methods.py::test_sessions_spawn_acp_honors_configured_max_children_per_agent -q`
+  (`2 failed` before implementation: missing `subagent_policy` for depth and
+  accepted second child despite the cap, then `2 passed`), adjacent ACP proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and (configured_max_spawn_depth or max_children_per_agent or runtime_tracks_wait_cleanup or stream_to_parent or configured_native_agent_id or configured_runtime_agent_alias)"`
+  (`6 passed, 1272 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `1bd16f72`.
+
+- Native ACP `sessions.spawn` now applies OpenClaw's subagent target allowlist
+  policy before ACP runtime dispatch for child sessions: requester-specific
+  `subagents.allowAgents` restricts explicit ACP targets, explicit self-targets
+  are rejected when the allowlist excludes the requester, and top-level ACP
+  spawns continue through the established ACP allowlist/runtime-agent checks.
+  This closes `OZ-ACP-001E`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.9999994%.
+- Verified the ACP subagent allowlist seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_rejects_agent_outside_subagent_allowlist tests\test_gateway_node_methods.py::test_sessions_spawn_acp_rejects_explicit_self_target_outside_allowlist -q`
+  (`2 failed` before implementation because both requests reached the fake ACP
+  runtime, then `2 passed`), adjacent ACP proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and (subagent_allowlist or self_target_outside_allowlist or max_children_per_agent or configured_max_spawn_depth or configured_runtime_agent_alias or configured_native_agent_id)"`
+  (`6 passed, 1274 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `39d3b06b`.
 
 ## References
 

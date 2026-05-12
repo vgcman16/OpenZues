@@ -5042,6 +5042,38 @@ def _qqbot_media_upload_endpoint(target: str | None, target_type: str, target_id
     return endpoint
 
 
+def _qqbot_upload_prepare_endpoint(target: str | None, target_type: str, target_id: str) -> str:
+    base_url = str(target or "").strip() or QQBOT_API_BASE_URL
+    if target_type == "c2c":
+        path = f"/v2/users/{quote(target_id, safe='')}/upload_prepare"
+    elif target_type == "group":
+        path = f"/v2/groups/{quote(target_id, safe='')}/upload_prepare"
+    else:
+        raise RuntimeError("QQBot native chunked upload requires a C2C or group target.")
+    endpoint = f"{base_url.rstrip('/')}{path}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("QQBot route target must be an http(s) API base URL.")
+    return endpoint
+
+
+def _qqbot_upload_part_finish_endpoint(
+    target: str | None,
+    target_type: str,
+    target_id: str,
+) -> str:
+    base_url = str(target or "").strip() or QQBOT_API_BASE_URL
+    if target_type == "c2c":
+        path = f"/v2/users/{quote(target_id, safe='')}/upload_part_finish"
+    elif target_type == "group":
+        path = f"/v2/groups/{quote(target_id, safe='')}/upload_part_finish"
+    else:
+        raise RuntimeError("QQBot native chunked upload requires a C2C or group target.")
+    endpoint = f"{base_url.rstrip('/')}{path}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("QQBot route target must be an http(s) API base URL.")
+    return endpoint
+
+
 def _qqbot_media_file_type(media_url: str, media_kind: object) -> tuple[int, str]:
     normalized_kind = str(media_kind or "").strip().lower()
     if normalized_kind in {"image", "photo", "picture"}:
@@ -5063,6 +5095,80 @@ def _qqbot_media_file_type(media_url: str, media_kind: object) -> tuple[int, str
     return 4, "file"
 
 
+_QQBOT_LARGE_FILE_THRESHOLD_BYTES = 5 * 1024 * 1024
+_QQBOT_MD5_10M_SIZE_BYTES = 10_002_432
+
+
+def _qqbot_local_media_upload_path(
+    media_url: str,
+    *,
+    local_roots: list[str],
+    account_id: str | None,
+) -> Path | None:
+    stripped = str(media_url or "").strip()
+    if re.match(r"^data:[^;]+;base64,", stripped, flags=re.IGNORECASE | re.DOTALL):
+        return None
+    local_source_path = _bluebubbles_local_media_source_path(stripped)
+    if local_source_path is None:
+        return None
+    return _qqbot_allowed_local_media_path(
+        local_source_path,
+        source=stripped,
+        local_roots=local_roots,
+        account_id=account_id,
+    )
+
+
+def _qqbot_file_hashes(media_path: Path) -> dict[str, str]:
+    file_size = media_path.stat().st_size
+    md5_hash = hashlib.md5()
+    sha1_hash = hashlib.sha1()
+    md5_10m_hash = hashlib.md5()
+    needs_md5_10m = file_size > _QQBOT_MD5_10M_SIZE_BYTES
+    consumed = 0
+    with media_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            md5_hash.update(chunk)
+            sha1_hash.update(chunk)
+            if needs_md5_10m:
+                remaining = _QQBOT_MD5_10M_SIZE_BYTES - consumed
+                if remaining > 0:
+                    md5_10m_hash.update(chunk[:remaining])
+            consumed += len(chunk)
+    md5_hex = md5_hash.hexdigest()
+    return {
+        "md5": md5_hex,
+        "sha1": sha1_hash.hexdigest(),
+        "md5_10m": md5_10m_hash.hexdigest() if needs_md5_10m else md5_hex,
+    }
+
+
+def _qqbot_upload_part_index(part: Mapping[str, object]) -> int:
+    for key in ("index", "part_index", "partIndex"):
+        value = part.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            index = int(str(value).strip())
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("QQBot chunked upload part index must be numeric.") from exc
+        if index <= 0:
+            raise RuntimeError("QQBot chunked upload part index must be positive.")
+        return index
+    raise RuntimeError("QQBot chunked upload part is missing an index.")
+
+
+def _qqbot_upload_part_url(part: Mapping[str, object]) -> str:
+    for key in ("presigned_url", "presignedUrl", "url"):
+        value = part.get(key)
+        if value not in (None, ""):
+            url = str(value).strip()
+            if _normalized_http_webhook_url(url) is None:
+                raise RuntimeError("QQBot chunked upload part URL must be http(s).")
+            return url
+    raise RuntimeError("QQBot chunked upload part is missing a presigned URL.")
+
+
 def _qqbot_upload_payload(
     media_url: str,
     file_type: int,
@@ -5076,14 +5182,12 @@ def _qqbot_upload_payload(
     if data_match:
         payload["file_data"] = data_match.group(1)
     else:
-        local_source_path = _bluebubbles_local_media_source_path(stripped)
-        if local_source_path is not None:
-            allowed_path = _qqbot_allowed_local_media_path(
-                local_source_path,
-                source=stripped,
-                local_roots=local_roots,
-                account_id=account_id,
-            )
+        allowed_path = _qqbot_local_media_upload_path(
+            stripped,
+            local_roots=local_roots,
+            account_id=account_id,
+        )
+        if allowed_path is not None:
             payload["file_data"] = base64.b64encode(allowed_path.read_bytes()).decode("ascii")
         else:
             payload["url"] = stripped
@@ -5148,14 +5252,106 @@ def _qqbot_channel_media_content(text: str, media_urls: Sequence[str], media_typ
     return "\n".join(part for part in content_parts if part)
 
 
-_QQBOT_MEDIA_TAG_RE = re.compile(
-    r"<(qqimg|qqvoice|qqvideo|qqfile|qqmedia)>([^<>]+)</(?:qqimg|qqvoice|qqvideo|qqfile|qqmedia|img)>",
+_QQBOT_VALID_MEDIA_TAGS = ("qqimg", "qqvoice", "qqvideo", "qqfile", "qqmedia")
+_QQBOT_MEDIA_TAG_ALIASES = {
+    "qq_img": "qqimg",
+    "qqimage": "qqimg",
+    "qq_image": "qqimg",
+    "qqpic": "qqimg",
+    "qq_pic": "qqimg",
+    "qqpicture": "qqimg",
+    "qq_picture": "qqimg",
+    "qqphoto": "qqimg",
+    "qq_photo": "qqimg",
+    "img": "qqimg",
+    "image": "qqimg",
+    "pic": "qqimg",
+    "picture": "qqimg",
+    "photo": "qqimg",
+    "qq_voice": "qqvoice",
+    "qqaudio": "qqvoice",
+    "qq_audio": "qqvoice",
+    "voice": "qqvoice",
+    "audio": "qqvoice",
+    "qq_video": "qqvideo",
+    "video": "qqvideo",
+    "qq_file": "qqfile",
+    "qqdoc": "qqfile",
+    "qq_doc": "qqfile",
+    "file": "qqfile",
+    "doc": "qqfile",
+    "document": "qqfile",
+    "qq_media": "qqmedia",
+    "media": "qqmedia",
+    "attachment": "qqmedia",
+    "attach": "qqmedia",
+    "qqattachment": "qqmedia",
+    "qq_attachment": "qqmedia",
+    "qqsend": "qqmedia",
+    "qq_send": "qqmedia",
+    "send": "qqmedia",
+}
+_QQBOT_MEDIA_TAG_NAMES = tuple(
+    sorted(
+        [*_QQBOT_VALID_MEDIA_TAGS, *_QQBOT_MEDIA_TAG_ALIASES.keys()],
+        key=len,
+        reverse=True,
+    )
+)
+_QQBOT_MEDIA_TAG_NAME_PATTERN = "|".join(re.escape(tag) for tag in _QQBOT_MEDIA_TAG_NAMES)
+_QQBOT_LEFT_BRACKET_PATTERN = r"(?:<|&lt;|\uff1c)"
+_QQBOT_RIGHT_BRACKET_PATTERN = r"(?:>|&gt;|\uff1e)"
+_QQBOT_MEDIA_TAG_ATTR_VALUE_PATTERN = r"[^\"'\s<>\uff1c\uff1e]+"
+_QQBOT_MEDIA_TAG_EXTRA_ATTR_PATTERN = (
+    r"[a-z_-]+\s*=\s*[\"']?" + _QQBOT_MEDIA_TAG_ATTR_VALUE_PATTERN + r"[\"']?"
+)
+_QQBOT_SELF_CLOSING_MEDIA_TAG_RE = re.compile(
+    "`?"
+    + _QQBOT_LEFT_BRACKET_PATTERN
+    + r"\s*("
+    + _QQBOT_MEDIA_TAG_NAME_PATTERN
+    + r")"
+    + r"(?:\s+(?!(?:file|src|path|url)\s*=)"
+    + _QQBOT_MEDIA_TAG_EXTRA_ATTR_PATTERN
+    + r")*"
+    + r"\s+(?:file|src|path|url)\s*=\s*[\"']?("
+    + _QQBOT_MEDIA_TAG_ATTR_VALUE_PATTERN
+    + r")[\"']?"
+    + r"(?:\s+"
+    + _QQBOT_MEDIA_TAG_EXTRA_ATTR_PATTERN
+    + r")*"
+    + r"\s*/?\s*"
+    + _QQBOT_RIGHT_BRACKET_PATTERN
+    + "`?",
+    flags=re.IGNORECASE,
+)
+_QQBOT_WRAPPED_MEDIA_TAG_RE = re.compile(
+    "`?"
+    + _QQBOT_LEFT_BRACKET_PATTERN
+    + r"\s*("
+    + _QQBOT_MEDIA_TAG_NAME_PATTERN
+    + r")\s*"
+    + _QQBOT_RIGHT_BRACKET_PATTERN
+    + r"[\"']?\s*([\s\S]*?)\s*[\"']?"
+    + _QQBOT_LEFT_BRACKET_PATTERN
+    + r"\s*/?\s*(?:"
+    + _QQBOT_MEDIA_TAG_NAME_PATTERN
+    + r"|img)\s*"
+    + _QQBOT_RIGHT_BRACKET_PATTERN
+    + "`?",
     flags=re.IGNORECASE,
 )
 
 
-def _qqbot_media_tag_kind(tag_name: str) -> str | None:
+def _qqbot_canonical_media_tag(tag_name: str) -> str:
     normalized = str(tag_name or "").strip().lower()
+    if normalized in _QQBOT_VALID_MEDIA_TAGS:
+        return normalized
+    return _QQBOT_MEDIA_TAG_ALIASES.get(normalized, "qqimg")
+
+
+def _qqbot_media_tag_kind(tag_name: str) -> str | None:
+    normalized = _qqbot_canonical_media_tag(tag_name)
     if normalized == "qqimg":
         return "image"
     if normalized == "qqvoice":
@@ -5167,23 +5363,62 @@ def _qqbot_media_tag_kind(tag_name: str) -> str | None:
     return None
 
 
-def _qqbot_inline_media_tags(text: str) -> tuple[str, list[tuple[str, str | None]]]:
-    entries: list[tuple[str, str | None]] = []
-    caption_parts: list[str] = []
+def _qqbot_inline_media_segments(
+    text: str,
+) -> list[tuple[Literal["text", "media"], str, str | None]]:
+    raw_matches: list[tuple[int, int, str, str | None]] = []
+    for pattern in (_QQBOT_SELF_CLOSING_MEDIA_TAG_RE, _QQBOT_WRAPPED_MEDIA_TAG_RE):
+        for match in pattern.finditer(text):
+            raw_matches.append(
+                (
+                    match.start(),
+                    match.end(),
+                    str(match.group(2) or ""),
+                    _qqbot_media_tag_kind(str(match.group(1) or "")),
+                )
+            )
+    if not raw_matches:
+        return []
+    raw_matches.sort(key=lambda entry: (entry[0], -(entry[1] - entry[0])))
+    filtered_matches: list[tuple[int, int, str, str | None]] = []
+    cursor = 0
+    for start, end, media_url, media_kind in raw_matches:
+        if start < cursor:
+            continue
+        filtered_matches.append((start, end, media_url, media_kind))
+        cursor = end
+    segments: list[tuple[Literal["text", "media"], str, str | None]] = []
     last_index = 0
-    for match in _QQBOT_MEDIA_TAG_RE.finditer(text):
-        before = text[last_index : match.start()].strip()
+    for start, end, raw_media_url, media_kind in filtered_matches:
+        before = html.unescape(text[last_index:start]).strip()
         if before:
-            caption_parts.append(before)
-        media_url = html.unescape(str(match.group(2) or "").strip())
+            segments.append(("text", before, None))
+        media_url = html.unescape(raw_media_url).strip().strip("\"'")
+        if media_url.startswith("MEDIA:"):
+            media_url = media_url[len("MEDIA:") :].strip()
         if media_url:
-            entries.append((media_url, _qqbot_media_tag_kind(str(match.group(1)))))
-        last_index = match.end()
+            segments.append(("media", media_url, media_kind))
+        last_index = end
+    after = html.unescape(text[last_index:]).strip()
+    if after:
+        segments.append(("text", after, None))
+    return segments
+
+
+def _qqbot_inline_media_tags(text: str) -> tuple[str, list[tuple[str, str | None]]]:
+    segments = _qqbot_inline_media_segments(text)
+    if not segments:
+        return text, []
+    entries = [
+        (value, media_kind)
+        for segment_type, value, media_kind in segments
+        if segment_type == "media"
+    ]
     if not entries:
         return text, []
-    after = text[last_index:].strip()
-    if after:
-        caption_parts.append(after)
+    caption_parts = [
+        value for segment_type, value, _ in segments if segment_type == "text"
+    ]
     return "\n".join(caption_parts).strip(), entries
 
 
@@ -35493,7 +35728,21 @@ class OpsMeshService:
         target_type, target_id = parsed_target
         canonical_target = _qqbot_canonical_target(target_type, target_id)
         text = str(event.get("message") or "").strip()
-        inline_text, inline_media_entries = _qqbot_inline_media_tags(text)
+        inline_media_segments = _qqbot_inline_media_segments(text)
+        inline_media_entries = [
+            (value, media_kind)
+            for segment_type, value, media_kind in inline_media_segments
+            if segment_type == "media"
+        ]
+        inline_text = (
+            "\n".join(
+                value
+                for segment_type, value, _ in inline_media_segments
+                if segment_type == "text"
+            ).strip()
+            if inline_media_entries
+            else text
+        )
         raw_media_urls = event.get("mediaUrls")
         media_urls = _normalize_direct_channel_media_urls(
             media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
@@ -35503,9 +35752,11 @@ class OpsMeshService:
                 else None
             ),
         )
+        using_inline_media = False
         if not media_urls and inline_media_entries:
             text = inline_text
             media_urls = [media_url for media_url, _ in inline_media_entries]
+            using_inline_media = True
         media_kind = event.get("mediaKind")
         if media_kind is None and inline_media_entries:
             inline_media_kinds = {kind for _, kind in inline_media_entries if kind is not None}
@@ -35514,7 +35765,10 @@ class OpsMeshService:
         reply_to_id = str(event.get("replyToId") or "").strip()
         if media_urls:
             first_file_type, first_media_type = _qqbot_media_file_type(media_urls[0], media_kind)
+            result_media_type = first_media_type
+            send_text_after_media = bool(text and not inline_media_entries)
             message_ids: list[str] = []
+            last_message_id: str | None = None
             media_ids: list[str] = []
             bearer_token = _qqbot_bearer_token(secret_token)
             base_target = str(route.get("target") or "")
@@ -35525,6 +35779,43 @@ class OpsMeshService:
                     self.gateway_config_service.build_snapshot(),
                     account_id=account_id,
                 )
+            inline_texts_by_media_index: dict[int, list[str]] = {}
+            inline_trailing_texts: list[str] = []
+            if using_inline_media:
+                media_index = 0
+                pending_texts: list[str] = []
+                for segment_type, value, _ in inline_media_segments:
+                    if segment_type == "text":
+                        pending_texts.append(value)
+                        continue
+                    if pending_texts:
+                        inline_texts_by_media_index[media_index] = pending_texts
+                        pending_texts = []
+                    media_index += 1
+                inline_trailing_texts = pending_texts
+
+            def post_qqbot_text_fragment(fragment: str) -> str | None:
+                fragment = str(fragment or "").strip()
+                if not fragment:
+                    return None
+                text_payload: dict[str, object] = {"content": fragment, "msg_type": 0}
+                if reply_to_id:
+                    text_payload["msg_id"] = reply_to_id
+                    if target_type in {"c2c", "group"}:
+                        text_payload["msg_seq"] = _qqbot_next_msg_seq(reply_to_id)
+                try:
+                    text_result = self._post_json_webhook(
+                        _qqbot_message_endpoint(base_target, target_type, target_id),
+                        text_payload,
+                        secret_header_name="Authorization",
+                        secret_token=bearer_token,
+                    )
+                except Exception:
+                    return None
+                if not isinstance(text_result, Mapping) or text_result.get("ok") is False:
+                    return None
+                return _qqbot_message_id(text_result)
+
             if target_type == "channel":
                 channel_payload: dict[str, object] = {
                     "content": _qqbot_channel_media_content(
@@ -35552,20 +35843,43 @@ class OpsMeshService:
                 if message_id is None:
                     raise RuntimeError("QQBot API response did not include a message id.")
                 message_ids.append(message_id)
+                last_message_id = message_id
             else:
                 for index, media_url in enumerate(media_urls):
+                    for inline_text_fragment in inline_texts_by_media_index.get(index, ()):
+                        text_message_id = post_qqbot_text_fragment(inline_text_fragment)
+                        if text_message_id is not None:
+                            last_message_id = text_message_id
                     file_type, media_type = _qqbot_media_file_type(media_url, media_kind)
-                    upload_result = self._post_json_webhook(
-                        _qqbot_media_upload_endpoint(base_target, target_type, target_id),
-                        _qqbot_upload_payload(
-                            media_url,
-                            file_type,
+                    upload_result = self._request_qqbot_media_upload(
+                        base_target=base_target,
+                        target_type=target_type,
+                        target_id=target_id,
+                        media_url=media_url,
+                        file_type=file_type,
+                        local_roots=local_roots,
+                        account_id=account_id,
+                        bearer_token=bearer_token,
+                    )
+                    if (
+                        isinstance(upload_result, Mapping)
+                        and upload_result.get("ok") is False
+                        and file_type == 3
+                    ):
+                        upload_result = self._request_qqbot_media_upload(
+                            base_target=base_target,
+                            target_type=target_type,
+                            target_id=target_id,
+                            media_url=media_url,
+                            file_type=4,
                             local_roots=local_roots,
                             account_id=account_id,
-                        ),
-                        secret_header_name="Authorization",
-                        secret_token=bearer_token,
-                    )
+                            bearer_token=bearer_token,
+                        )
+                        file_type = 4
+                        media_type = "file"
+                        if index == 0:
+                            result_media_type = media_type
                     if not isinstance(upload_result, dict):
                         raise RuntimeError("QQBot API returned a non-JSON upload response.")
                     if upload_result.get("ok") is False:
@@ -35585,7 +35899,13 @@ class OpsMeshService:
                             else 1
                         ),
                     }
-                    if index == 0 and text and file_type in {1, 2}:
+                    if (
+                        index == 0
+                        and text
+                        and file_type in {1, 2}
+                        and not send_text_after_media
+                        and not using_inline_media
+                    ):
                         message_payload["content"] = text
                     if reply_to_id and index == 0:
                         message_payload["msg_id"] = reply_to_id
@@ -35607,9 +35927,16 @@ class OpsMeshService:
                             "QQBot API response did not include a message id."
                         )
                     message_ids.append(sent_message_id)
+                    last_message_id = sent_message_id
+                    if index == 0 and send_text_after_media:
+                        post_qqbot_text_fragment(text)
+                for inline_text_fragment in inline_trailing_texts:
+                    text_message_id = post_qqbot_text_fragment(inline_text_fragment)
+                    if text_message_id is not None:
+                        last_message_id = text_message_id
             native_result: dict[str, object] = {
                 "runtime": "native-provider-backed",
-                "messageId": message_ids[-1],
+                "messageId": last_message_id or message_ids[-1],
                 "chatId": canonical_target,
                 "channelId": canonical_target,
                 "mediaUrls": media_urls,
@@ -35617,7 +35944,7 @@ class OpsMeshService:
                 "meta": {
                     "targetId": target_id,
                     "targetType": target_type,
-                    "mediaType": first_media_type,
+                    "mediaType": result_media_type,
                 },
             }
             if media_ids:
@@ -35652,6 +35979,157 @@ class OpsMeshService:
             "channelId": canonical_target,
             "meta": {"targetId": target_id, "targetType": target_type},
         }
+
+    def _request_qqbot_media_upload(
+        self,
+        *,
+        base_target: str,
+        target_type: str,
+        target_id: str,
+        media_url: str,
+        file_type: int,
+        local_roots: list[str],
+        account_id: str | None,
+        bearer_token: str,
+    ) -> object | None:
+        allowed_path = _qqbot_local_media_upload_path(
+            media_url,
+            local_roots=local_roots,
+            account_id=account_id,
+        )
+        if (
+            allowed_path is not None
+            and allowed_path.stat().st_size >= _QQBOT_LARGE_FILE_THRESHOLD_BYTES
+        ):
+            return self._request_qqbot_chunked_media_upload(
+                base_target=base_target,
+                target_type=target_type,
+                target_id=target_id,
+                media_path=allowed_path,
+                file_type=file_type,
+                bearer_token=bearer_token,
+            )
+        return self._post_json_webhook(
+            _qqbot_media_upload_endpoint(base_target, target_type, target_id),
+            _qqbot_upload_payload(
+                media_url,
+                file_type,
+                local_roots=local_roots,
+                account_id=account_id,
+            ),
+            secret_header_name="Authorization",
+            secret_token=bearer_token,
+        )
+
+    def _request_qqbot_chunked_media_upload(
+        self,
+        *,
+        base_target: str,
+        target_type: str,
+        target_id: str,
+        media_path: Path,
+        file_type: int,
+        bearer_token: str,
+    ) -> object | None:
+        file_size = media_path.stat().st_size
+        hashes = _qqbot_file_hashes(media_path)
+        upload_id: str | None = None
+        prepare_result = self._post_json_webhook(
+            _qqbot_upload_prepare_endpoint(base_target, target_type, target_id),
+            {
+                "file_type": file_type,
+                "file_name": media_path.name or "file",
+                "file_size": file_size,
+                **hashes,
+            },
+            secret_header_name="Authorization",
+            secret_token=bearer_token,
+        )
+        if not isinstance(prepare_result, Mapping):
+            raise RuntimeError("QQBot chunked upload_prepare returned a non-JSON response.")
+        if prepare_result.get("ok") is False:
+            raise RuntimeError(
+                f"QQBot chunked upload_prepare returned {_qqbot_error_detail(prepare_result)}."
+            )
+        raw_upload_id = prepare_result.get("upload_id") or prepare_result.get("uploadId")
+        upload_id = str(raw_upload_id or "").strip()
+        if not upload_id:
+            raise RuntimeError("QQBot chunked upload_prepare did not include upload_id.")
+        raw_block_size = prepare_result.get("block_size") or prepare_result.get("blockSize")
+        if raw_block_size in (None, ""):
+            raise RuntimeError("QQBot chunked upload_prepare did not include block_size.")
+        try:
+            block_size = int(str(raw_block_size).strip())
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("QQBot chunked upload_prepare did not include block_size.") from exc
+        if block_size <= 0:
+            raise RuntimeError("QQBot chunked upload_prepare block_size must be positive.")
+        raw_parts = prepare_result.get("parts")
+        if not isinstance(raw_parts, list) or not raw_parts:
+            raise RuntimeError("QQBot chunked upload_prepare did not include parts.")
+
+        for raw_part in raw_parts:
+            if not isinstance(raw_part, Mapping):
+                raise RuntimeError("QQBot chunked upload_prepare parts must be objects.")
+            part_index = _qqbot_upload_part_index(raw_part)
+            part_url = _qqbot_upload_part_url(raw_part)
+            offset = (part_index - 1) * block_size
+            length = min(block_size, file_size - offset)
+            if offset < 0 or length <= 0:
+                raise RuntimeError("QQBot chunked upload part range is invalid.")
+            with media_path.open("rb") as handle:
+                handle.seek(offset)
+                media_part = handle.read(length)
+            part_md5 = hashlib.md5(media_part).hexdigest()
+            self._put_qqbot_chunked_upload_part(part_url, media_part)
+            finish_result = self._post_json_webhook(
+                _qqbot_upload_part_finish_endpoint(base_target, target_type, target_id),
+                {
+                    "upload_id": upload_id,
+                    "part_index": part_index,
+                    "block_size": len(media_part),
+                    "md5": part_md5,
+                },
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            if isinstance(finish_result, Mapping) and finish_result.get("ok") is False:
+                raise RuntimeError(
+                    "QQBot chunked upload_part_finish returned "
+                    f"{_qqbot_error_detail(finish_result)}."
+                )
+        return self._post_json_webhook(
+            _qqbot_media_upload_endpoint(base_target, target_type, target_id),
+            {"upload_id": upload_id},
+            secret_header_name="Authorization",
+            secret_token=bearer_token,
+        )
+
+    def _put_qqbot_chunked_upload_part(
+        self,
+        presigned_url: str,
+        media_part: bytes,
+    ) -> None:
+        request = Request(
+            presigned_url,
+            data=media_part,
+            headers={"Content-Length": str(len(media_part))},
+            method="PUT",
+        )
+        try:
+            with urlopen(request, timeout=300) as response:
+                if response.status >= 400:
+                    raise RuntimeError(
+                        f"QQBot chunked media part upload returned HTTP {response.status}"
+                    )
+        except HTTPError as exc:
+            raise RuntimeError(
+                _http_error_message("QQBot chunked media part upload returned HTTP", exc)
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"QQBot chunked media part upload failed: {exc.reason}"
+            ) from exc
 
     def _post_zalo_provider_event(
         self,

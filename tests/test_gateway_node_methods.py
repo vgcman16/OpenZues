@@ -95993,6 +95993,160 @@ async def test_sessions_spawn_acp_uses_configured_default_agent(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_maps_configured_runtime_agent_alias(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-agent-alias.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+                "agents": {
+                    "list": [
+                        {
+                            "id": "reviewer",
+                            "runtime": {
+                                "type": "acp",
+                                "acp": {"agent": "codex"},
+                            },
+                        }
+                    ]
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            assert params["agentId"] == "codex"
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-acp-alias",
+                "runId": "run-acp-alias-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-acp-alias",
+                "runtimeSessionId": "thread-acp-alias",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Review this through the configured ACP alias.",
+            "runtime": "acp",
+            "agentId": "reviewer",
+        },
+        now_ms=10_000,
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["childSessionKey"] == "agent:codex:acp:thread-acp-alias"
+    assert calls[0]["params"]["agentId"] == "codex"
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:codex:acp:thread-acp-alias"
+    )
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["agentId"] == "codex"
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_rejects_configured_native_agent_id(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-native-agent.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+                "agents": {
+                    "list": [{"id": "pleres"}],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {"status": "accepted"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Investigate flaky tests.",
+            "runtime": "acp",
+            "agentId": "pleres",
+        },
+        now_ms=10_000,
+    )
+
+    assert payload["status"] == "error"
+    assert payload["errorCode"] == "runtime_agent_mismatch"
+    assert "OpenClaw config agent" in payload["error"]
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_inherits_target_agent_workspace_when_cwd_omitted(
     tmp_path,
 ) -> None:
@@ -96378,6 +96532,346 @@ async def test_sessions_spawn_acp_respects_disabled_policy(tmp_path) -> None:
         "status": "forbidden",
         "errorCode": "acp_disabled",
         "error": "ACP is disabled by policy (`acp.enabled=false`).",
+        "role": "codex",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_rejects_configured_max_spawn_depth(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-config-depth.db")
+    await database.initialize()
+    parent_session_key = "agent:main:subagent:parent:subagent:leaf"
+    await database.upsert_gateway_session_metadata(
+        session_key=parent_session_key,
+        metadata={"label": "Leaf parent", "spawnDepth": 2},
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "maxSpawnDepth": 2,
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            raise AssertionError("max depth should reject before ACP dispatch")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "This should be blocked by ACP subagent depth.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "requesterSessionKey": parent_session_key,
+        },
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "errorCode": "subagent_policy",
+        "error": "sessions_spawn is not allowed at this depth (current depth: 2, max: 2)",
+        "role": "codex",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_honors_configured_max_children_per_agent(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-max-children.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "maxSpawnDepth": 2,
+                                "maxChildrenPerAgent": 1,
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": f"agent:codex:acp:thread-acp-child-{len(calls)}",
+                "runId": f"run-acp-child-{len(calls)}",
+                "mode": "run",
+                "runtimeThreadId": f"thread-acp-child-{len(calls)}",
+                "runtimeSessionId": f"thread-acp-child-{len(calls)}",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    first = await service.call(
+        "sessions.spawn",
+        {
+            "task": "First ACP child.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "requesterSessionKey": requester_session_key,
+        },
+    )
+    second = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Second ACP child.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "requesterSessionKey": requester_session_key,
+        },
+    )
+
+    assert first["status"] == "accepted"
+    assert second == {
+        "status": "forbidden",
+        "errorCode": "subagent_policy",
+        "error": "sessions_spawn has reached max active children for this session (1/1)",
+        "role": "codex",
+    }
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_rejects_agent_outside_subagent_allowlist(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-subagent-allowlist.db")
+    await database.initialize()
+    parent_session_key = "agent:main:subagent:parent"
+    await database.upsert_gateway_session_metadata(
+        session_key=parent_session_key,
+        metadata={"label": "Parent", "spawnDepth": 1},
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex", "writer"],
+                },
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "maxSpawnDepth": 2,
+                            },
+                        },
+                        "list": [
+                            {
+                                "id": "main",
+                                "subagents": {"allowAgents": ["codex"]},
+                            },
+                            {"id": "writer"},
+                        ],
+                    },
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            raise AssertionError("subagent allowlist should reject before ACP dispatch")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Try a writer ACP child.",
+            "runtime": "acp",
+            "agentId": "writer",
+            "requesterSessionKey": parent_session_key,
+        },
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "errorCode": "subagent_policy",
+        "error": "agentId is not allowed for sessions_spawn (allowed: codex)",
+        "role": "writer",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_rejects_explicit_self_target_outside_allowlist(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-self-allowlist.db")
+    await database.initialize()
+    parent_session_key = "agent:codex:subagent:parent"
+    await database.upsert_gateway_session_metadata(
+        session_key=parent_session_key,
+        metadata={"label": "Parent", "spawnDepth": 1},
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex", "writer"],
+                },
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "allowAgents": ["writer"],
+                                "maxSpawnDepth": 2,
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            raise AssertionError("explicit self-target should honor subagent allowlist")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Try an explicit self-target ACP child.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "requesterSessionKey": parent_session_key,
+        },
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "errorCode": "subagent_policy",
+        "error": "agentId is not allowed for sessions_spawn (allowed: writer)",
         "role": "codex",
     }
 
@@ -97263,6 +97757,60 @@ async def test_sessions_spawn_acp_allows_resume_id_owned_by_requester(
     assert payload["status"] == "accepted"
     assert calls[0]["params"]["resumeSessionId"] == "session-owned"
     assert calls[0]["context"]["requesterSessionKey"] == requester_session_key
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_forwards_model_and_thinking_overrides(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-model-thinking.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-model-thinking",
+                "runId": "run-acp-model-thinking-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-model-thinking",
+                "runtimeSessionId": "session-model-thinking",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Investigate flaky tests.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "model": "openai-codex/gpt-5.4",
+            "thinking": "high",
+        },
+        now_ms=20_000,
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    assert payload["status"] == "accepted"
+    assert calls[0]["params"]["model"] == "openai-codex/gpt-5.4"
+    assert calls[0]["params"]["thinking"] == "high"
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["model"] == "openai-codex/gpt-5.4"
+    assert metadata_row["metadata"]["thinkingLevel"] == "high"
 
 
 @pytest.mark.asyncio

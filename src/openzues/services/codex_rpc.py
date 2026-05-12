@@ -298,6 +298,7 @@ class CodexAppServerClient:
         reasoning_effort: str | None = None,
         collaboration_mode: str | None = None,
         sandbox_mode: str | None = None,
+        timeout_seconds: int | None = None,
     ) -> Any:
         params: JsonDict = {"model": model}
         approval_policy, _sandbox_mode, _sandbox_policy = self._execution_defaults()
@@ -311,11 +312,16 @@ class CodexAppServerClient:
         )
         if cwd:
             params["cwd"] = cwd
+        if reasoning_effort:
+            params["effort"] = reasoning_effort
         if approval_policy:
             params["approvalPolicy"] = approval_policy
         if effective_sandbox_mode:
             params["sandbox"] = effective_sandbox_mode
-        return await self.call("thread/start", params, timeout=60.0)
+        request_timeout = (
+            float(timeout_seconds) if timeout_seconds and timeout_seconds > 0 else 60.0
+        )
+        return await self.call("thread/start", params, timeout=request_timeout)
 
     async def start_turn(
         self,
@@ -327,6 +333,7 @@ class CodexAppServerClient:
         reasoning_effort: str | None = None,
         collaboration_mode: str | None = None,
         sandbox_mode: str | None = None,
+        timeout_seconds: int | None = None,
     ) -> Any:
         params: JsonDict = {
             "threadId": thread_id,
@@ -354,7 +361,10 @@ class CodexAppServerClient:
             params["approvalPolicy"] = approval_policy
         if sandbox_policy:
             params["sandboxPolicy"] = sandbox_policy
-        return await self.call("turn/start", params, timeout=60.0)
+        request_timeout = (
+            float(timeout_seconds) if timeout_seconds and timeout_seconds > 0 else 60.0
+        )
+        return await self.call("turn/start", params, timeout=request_timeout)
 
     async def interrupt_turn(self, *, thread_id: str, turn_id: str | None = None) -> Any:
         params: JsonDict = {"threadId": thread_id}

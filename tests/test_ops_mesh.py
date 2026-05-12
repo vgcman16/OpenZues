@@ -20786,7 +20786,15 @@ async def test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_image_
                 "msg_type": 7,
                 "media": {"file_info": "qq-file-info-1"},
                 "msg_seq": 1,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
                 "content": "Caption from OpenZues",
+                "msg_type": 0,
             },
             "Authorization",
             "Bearer qqbot-access-token",
@@ -20908,6 +20916,15 @@ async def test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image
     }
     assert qqbot_posts == [
         (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "content": "Caption",
+                "msg_type": 0,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
             "https://api.sgroup.qq.com/v2/users/openid-1/files",
             {
                 "file_type": 1,
@@ -20923,7 +20940,206 @@ async def test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image
                 "msg_type": 7,
                 "media": {"file_info": "qq-inline-file-info"},
                 "msg_seq": 1,
-                "content": "Caption",
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_reports_qqbot_inline_trailing_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-qqbot-inline-trailing"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="QQBot Native Inline Trailing Provider",
+        kind="qqbot",
+        target="https://api.sgroup.qq.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="qqbot-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "qqbot",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "qqbot:c2c:openid-1",
+        },
+    )
+    qqbot_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        qqbot_posts.append((target, payload, secret_header_name, secret_token))
+        if target.endswith("/files"):
+            return {
+                "file_info": "qq-inline-trailing-file-info",
+                "file_uuid": "qq-inline-trailing-file-uuid",
+                "ttl": 3600,
+            }
+        if payload.get("msg_type") == 7:
+            return {"id": "qq-inline-trailing-media-msg-1"}
+        return {"id": "qq-inline-trailing-text-msg-1"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="qqbot",
+        to="qqbot:c2c:openid-1",
+        message="<qqimg>https://example.com/inline.png</qqimg> trailing text",
+        account_id="default",
+        idempotency_key="idem-native-qqbot-inline-trailing-text",
+    )
+
+    assert result["messageId"] == "qq-inline-trailing-text-msg-1"
+    assert result["messageIds"] == ["qq-inline-trailing-media-msg-1"]
+    assert result["mediaIds"] == ["qq-inline-trailing-file-uuid"]
+    assert result["mediaUrls"] == ["https://example.com/inline.png"]
+    assert qqbot_posts == [
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/files",
+            {
+                "file_type": 1,
+                "srv_send_msg": False,
+                "url": "https://example.com/inline.png",
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "msg_type": 7,
+                "media": {"file_info": "qq-inline-trailing-file-info"},
+                "msg_seq": 1,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "content": "trailing text",
+                "msg_type": 0,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_self_closing_media_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-qqbot-self-closing-tag"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="QQBot Native Self Closing Media Tag Provider",
+        kind="qqbot",
+        target="https://api.sgroup.qq.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="qqbot-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "qqbot",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "qqbot:c2c:openid-1",
+        },
+    )
+    qqbot_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        qqbot_posts.append((target, payload, secret_header_name, secret_token))
+        if target.endswith("/files"):
+            return {
+                "file_info": "qq-self-closing-file-info",
+                "file_uuid": "qq-self-closing-file-uuid",
+                "ttl": 3600,
+            }
+        return {"id": "qq-self-closing-msg-1", "timestamp": "2026-05-12T12:08:00Z"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="qqbot",
+        to="qqbot:c2c:openid-1",
+        message='&lt;qqmedia file="https://example.com/report.zip" /&gt;',
+        account_id="default",
+        idempotency_key="idem-native-qqbot-self-closing-media-tag",
+    )
+
+    assert result["messageId"] == "qq-self-closing-msg-1"
+    assert result["mediaIds"] == ["qq-self-closing-file-uuid"]
+    assert result["mediaUrls"] == ["https://example.com/report.zip"]
+    assert result["meta"] == {
+        "targetId": "openid-1",
+        "targetType": "c2c",
+        "mediaType": "file",
+    }
+    assert qqbot_posts == [
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/files",
+            {
+                "file_type": 4,
+                "srv_send_msg": False,
+                "url": "https://example.com/report.zip",
+                "file_name": "report.zip",
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "msg_type": 7,
+                "media": {"file_info": "qq-self-closing-file-info"},
+                "msg_seq": 1,
             },
             "Authorization",
             "Bearer qqbot-access-token",
@@ -21091,8 +21307,418 @@ async def test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_local_
         "msg_type": 7,
         "media": {"file_info": "qq-local-file-info"},
         "msg_seq": 1,
-        "content": "Local upload",
     }
+    assert qqbot_posts[2][1] == {
+        "content": "Local upload",
+        "msg_type": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_qqbot_chunked_local_media_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-qqbot-chunked-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    media_bytes = b"v" * (5 * 1024 * 1024 + 7)
+    media_file = tmp_path / "large-video.mp4"
+    media_file.write_bytes(media_bytes)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="QQBot Native Chunked Media Provider",
+        kind="qqbot",
+        target="https://api.sgroup.qq.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="qqbot-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "qqbot",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "qqbot:c2c:openid-1",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="",
+        assistant_agent_id="main",
+        server_version=None,
+        data_dir=tmp_path / "config",
+    )
+    config_service.patch_object({"channels": {"qqbot": {"mediaLocalRoots": [str(tmp_path)]}}})
+    qqbot_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+    put_parts: list[tuple[str, bytes]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        qqbot_posts.append((target, payload, secret_header_name, secret_token))
+        if target.endswith("/upload_prepare"):
+            assert payload["file_type"] == 2
+            assert payload["file_name"] == "large-video.mp4"
+            assert payload["file_size"] == len(media_bytes)
+            assert payload["md5"] == hashlib.md5(media_bytes).hexdigest()
+            assert payload["sha1"] == hashlib.sha1(media_bytes).hexdigest()
+            assert payload["md5_10m"] == hashlib.md5(media_bytes).hexdigest()
+            return {
+                "upload_id": "qq-upload-1",
+                "block_size": 3 * 1024 * 1024,
+                "parts": [
+                    {"index": 1, "presigned_url": "https://cos.example.com/part-1"},
+                    {"index": 2, "presigned_url": "https://cos.example.com/part-2"},
+                ],
+            }
+        if target.endswith("/upload_part_finish"):
+            return {"ok": True}
+        if target.endswith("/files") and payload.get("upload_id") == "qq-upload-1":
+            return {
+                "file_info": "qq-chunked-file-info",
+                "file_uuid": "qq-chunked-file-uuid",
+                "ttl": 3600,
+            }
+        return {"id": "qq-chunked-msg-1", "timestamp": "2026-05-12T12:20:00Z"}
+
+    def fake_put_qqbot_chunked_upload_part(
+        self: OpsMeshService,
+        presigned_url: str,
+        media_part: bytes,
+    ) -> None:
+        del self
+        put_parts.append((presigned_url, media_part))
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_qqbot_chunked_upload_part",
+        fake_put_qqbot_chunked_upload_part,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=config_service,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="qqbot",
+        to="qqbot:c2c:openid-1",
+        message="Chunked local upload",
+        media_urls=[str(media_file)],
+        media_kind="video",
+        account_id="default",
+        idempotency_key="idem-native-qqbot-chunked-media",
+    )
+
+    assert result["messageId"] == "qq-chunked-msg-1"
+    assert result["mediaIds"] == ["qq-chunked-file-uuid"]
+    assert result["mediaUrls"] == [str(media_file)]
+    assert result["meta"] == {
+        "targetId": "openid-1",
+        "targetType": "c2c",
+        "mediaType": "video",
+    }
+    assert [(url, len(part)) for url, part in put_parts] == [
+        ("https://cos.example.com/part-1", 3 * 1024 * 1024),
+        ("https://cos.example.com/part-2", 2 * 1024 * 1024 + 7),
+    ]
+    assert qqbot_posts == [
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/upload_prepare",
+            {
+                "file_type": 2,
+                "file_name": "large-video.mp4",
+                "file_size": len(media_bytes),
+                "md5": hashlib.md5(media_bytes).hexdigest(),
+                "sha1": hashlib.sha1(media_bytes).hexdigest(),
+                "md5_10m": hashlib.md5(media_bytes).hexdigest(),
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/upload_part_finish",
+            {
+                "upload_id": "qq-upload-1",
+                "part_index": 1,
+                "block_size": 3 * 1024 * 1024,
+                "md5": hashlib.md5(media_bytes[: 3 * 1024 * 1024]).hexdigest(),
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/upload_part_finish",
+            {
+                "upload_id": "qq-upload-1",
+                "part_index": 2,
+                "block_size": 2 * 1024 * 1024 + 7,
+                "md5": hashlib.md5(media_bytes[3 * 1024 * 1024 :]).hexdigest(),
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/files",
+            {"upload_id": "qq-upload-1"},
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "msg_type": 7,
+                "media": {"file_info": "qq-chunked-file-info"},
+                "msg_seq": 1,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "content": "Chunked local upload",
+                "msg_type": 0,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_falls_back_from_qqbot_voice_to_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-qqbot-voice-fallback"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="QQBot Native Voice Fallback Provider",
+        kind="qqbot",
+        target="https://api.sgroup.qq.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="qqbot-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "qqbot",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "qqbot:c2c:openid-1",
+        },
+    )
+    qqbot_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        qqbot_posts.append((target, payload, secret_header_name, secret_token))
+        if target.endswith("/files") and payload.get("file_type") == 3:
+            return {"ok": False, "message": "voice not supported"}
+        if target.endswith("/files") and payload.get("file_type") == 4:
+            return {
+                "file_info": "qq-voice-file-fallback-info",
+                "file_uuid": "qq-voice-file-fallback-uuid",
+                "ttl": 3600,
+            }
+        return {"id": "qq-voice-file-fallback-msg-1", "timestamp": "2026-05-12T12:25:00Z"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="qqbot",
+        to="qqbot:c2c:openid-1",
+        message="",
+        media_urls=["https://example.com/clip.mp3"],
+        media_kind="voice",
+        account_id="default",
+        idempotency_key="idem-native-qqbot-voice-file-fallback",
+    )
+
+    assert result["messageId"] == "qq-voice-file-fallback-msg-1"
+    assert result["mediaIds"] == ["qq-voice-file-fallback-uuid"]
+    assert result["mediaUrls"] == ["https://example.com/clip.mp3"]
+    assert result["meta"] == {
+        "targetId": "openid-1",
+        "targetType": "c2c",
+        "mediaType": "file",
+    }
+    assert qqbot_posts == [
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/files",
+            {
+                "file_type": 3,
+                "srv_send_msg": False,
+                "url": "https://example.com/clip.mp3",
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/files",
+            {
+                "file_type": 4,
+                "srv_send_msg": False,
+                "url": "https://example.com/clip.mp3",
+                "file_name": "clip.mp3",
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "msg_type": 7,
+                "media": {"file_info": "qq-voice-file-fallback-info"},
+                "msg_seq": 1,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_sends_qqbot_file_text_after_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-qqbot-file-text"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="QQBot Native File Text Provider",
+        kind="qqbot",
+        target="https://api.sgroup.qq.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="qqbot-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "qqbot",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "qqbot:c2c:openid-1",
+        },
+    )
+    qqbot_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        qqbot_posts.append((target, payload, secret_header_name, secret_token))
+        if target.endswith("/files"):
+            return {
+                "file_info": "qq-file-text-info",
+                "file_uuid": "qq-file-text-uuid",
+                "ttl": 3600,
+            }
+        if payload.get("msg_type") == 7:
+            return {"id": "qq-file-media-msg-1", "timestamp": "2026-05-12T12:30:00Z"}
+        return {"id": "qq-file-text-msg-1", "timestamp": "2026-05-12T12:30:01Z"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="qqbot",
+        to="qqbot:c2c:openid-1",
+        message="Please review this report.",
+        media_urls=["https://example.com/report.pdf"],
+        media_kind="file",
+        account_id="default",
+        idempotency_key="idem-native-qqbot-file-text-after-media",
+    )
+
+    assert result["messageId"] == "qq-file-media-msg-1"
+    assert result["messageIds"] == ["qq-file-media-msg-1"]
+    assert result["mediaIds"] == ["qq-file-text-uuid"]
+    assert result["meta"] == {
+        "targetId": "openid-1",
+        "targetType": "c2c",
+        "mediaType": "file",
+    }
+    assert qqbot_posts == [
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/files",
+            {
+                "file_type": 4,
+                "srv_send_msg": False,
+                "url": "https://example.com/report.pdf",
+                "file_name": "report.pdf",
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "msg_type": 7,
+                "media": {"file_info": "qq-file-text-info"},
+                "msg_seq": 1,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "content": "Please review this report.",
+                "msg_type": 0,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+    ]
 
 
 @pytest.mark.asyncio

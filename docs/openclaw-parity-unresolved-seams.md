@@ -15,8 +15,12 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.999996% after the
-  runtime bridge doctor posture, native ACP client interactive replay, package
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.9999994% after the
+  runtime bridge doctor posture, native ACP client interactive replay, ACP
+  `resumeSessionId` ownership enforcement, ACP model/thinking override
+  propagation, ACP configured runtime agent alias mapping, ACP runtime-agent
+  mismatch preflight, ACP run-timeout runtime propagation, ACP subagent
+  depth/child-cap policy, ACP subagent target allowlist policy, package
   post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback,
   startup-optimization doctor notes, installed runtime session/control-UI
   contribution capture, package
@@ -151,13 +155,18 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999989%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999996%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
   sends, Discord audio-as-voice direct media sends, Signal receive envelope
   session routing with sync-message drops, QQBot route-backed text sends,
-  QQBot image media uploads, QQBot inline image media tags, QQBot reply message
-  sequencing, QQBot local media file-data uploads, LINE signed webhook ingress, and
+  QQBot image media uploads, QQBot inline image media tags, QQBot structured
+  self-closing media tags, QQBot reply message sequencing, QQBot local media
+  file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file
+  fallback, QQBot file-media text follow-up delivery, QQBot direct image/video
+  media text follow-up delivery, QQBot inline media text ordering/result
+  metadata, LINE signed webhook
+  ingress, and
   LINE text webhook session delivery plus
   postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
@@ -12821,3 +12830,117 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and provider-native inbound/outbound breadth
   moves to ~99.999989%. Continue QQBot chunked upload/voice-video-file edges,
   ACP bridge lifecycle depth, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native QQBot structured media tags now parse
+  OpenClaw's entity-encoded and self-closing media-tag forms, including
+  `<qqmedia file="..."/>`/`src`/`path`/`url` attributes, upstream aliases, and
+  generic `qqmedia` auto-detection into the provider-backed media upload/send
+  path. Source/test checkpointed in `b5a821a7`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999990%. Continue QQBot chunked upload/deeper voice-video-file runtime
+  edges, ACP bridge lifecycle depth, packaging/distribution, or companion
+  breadth.
+- Current queue-head adjustment: native QQBot chunked local media upload now
+  follows OpenClaw's large-file path for allowed local C2C/group sends:
+  compute whole-file hashes, call `upload_prepare`, PUT each prepared part to
+  its presigned URL, call `upload_part_finish`, complete with `upload_id`, and
+  reuse the returned `file_info` in the normal media message. Source/test
+  checkpointed in `ee990c4f`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.999991%. Continue
+  deeper QQBot voice/video/file runtime edges, ACP bridge lifecycle depth,
+  packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native QQBot voice media sends now follow
+  OpenClaw's fallback contract: if the voice upload path returns a provider
+  error, OpenZues retries the source as a file/document upload, keeps the
+  normal `file_info` message path, and records provider `mediaType="file"`.
+  Source/test checkpointed in `0ccc41c0`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999992%. Continue deeper QQBot video/file runtime edges, ACP bridge
+  lifecycle depth, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native QQBot file/document media sends now
+  follow OpenClaw's `sendTextAfterMedia` path: successful file uploads post
+  the media message first, then send the accompanying text as a follow-up while
+  keeping the media delivery result unchanged. Source/test checkpointed in
+  `ea9dfe30`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.999993%. Continue
+  deeper QQBot video/media text-after-media breadth, ACP bridge lifecycle
+  depth, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native QQBot direct image/video media sends
+  now use OpenClaw's post-media text path rather than embedding the text in
+  the media payload. The media delivery result remains the returned result, and
+  text is sent as a follow-up. Source/test checkpointed in `0ea67d9f`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.999994%. Continue QQBot inline media
+  text ordering, ACP bridge lifecycle depth, packaging/distribution, or
+  companion breadth.
+- Current queue-head adjustment: native QQBot inline media tags now preserve
+  OpenClaw's text/media queue order for route-backed sends: text fragments are
+  posted through the text path around media tags, and media payloads no longer
+  carry those fragments as embedded content. Source/test checkpointed in
+  `9b34e2aa`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.999995%. Continue
+  deeper QQBot inline trailing-result metadata, ACP bridge lifecycle depth,
+  packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native QQBot inline media trailing text now
+  reports the trailing text message id as the provider `messageId`, matching
+  OpenClaw's queued `lastResult` behavior while preserving media metadata.
+  Source/test checkpointed in `34a31061`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999996%. Continue broader QQBot provider/media edge review, ACP bridge
+  lifecycle depth, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now rejects
+  foreign `resumeSessionId` values before runtime dispatch, matching
+  OpenClaw's requester-owned ACP session resume contract while preserving
+  owned resume dispatch. Source/test checkpointed in `27b7e14e`; repo-wide
+  parity remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge
+  parity moves to ~99.999997%. Continue deeper ACP bridge lifecycle edge
+  cases, installed plugin activation depth, packaging/distribution, provider
+  media edges, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now propagates
+  OpenClaw `model` and `thinking` overrides from gateway params through ACP
+  runtime startup/turn dispatch, persists spawned ACP session model metadata,
+  and serializes app-server thread-start `effort`. Source/test checkpointed in
+  `c10e37f1`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.999998%. Continue
+  deeper ACP bridge lifecycle edge cases, installed plugin activation depth,
+  packaging/distribution, provider media edges, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now resolves
+  configured OpenZues agent ids whose `agents.list[].runtime.type` is `acp`
+  into the configured ACP harness id before allowlist checks and dispatch,
+  preserving upstream ACP runtime-agent alias behavior and resolved-agent
+  metadata. Source/test checkpointed in `ccbbd403`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999999%. Continue ACP runtime-agent mismatch errors, deeper installed
+  plugin activation depth, packaging/distribution, provider media edges, or
+  companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now rejects
+  configured native OpenZues agent ids as `runtime_agent_mismatch` before ACP
+  allowlist handling unless the local config agent declares `runtime.type="acp"`
+  or is explicitly listed as an ACP harness id. Source/test checkpointed in
+  `a0cccb08`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.9999991%. Continue
+  deeper ACP bridge lifecycle edge cases, deeper installed plugin activation,
+  packaging/distribution, provider media edges, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now propagates
+  `runTimeoutSeconds` from gateway params through `RuntimeManagerAcpSpawnService`
+  into runtime thread initialization, turn dispatch, and Codex app-server RPC
+  request timeouts. Source/test checkpointed in `3e821817`; repo-wide parity
+  remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity
+  moves to ~99.9999992%. Continue deeper ACP bridge lifecycle edge cases,
+  deeper installed plugin activation, packaging/distribution, provider media
+  edges, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now applies
+  configured subagent max-depth and max-active-child limits before ACP runtime
+  dispatch, including OpenClaw's `subagent_policy` error code for ACP depth
+  failures. Source/test checkpointed in `1bd16f72`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.9999993%. Continue deeper ACP bridge lifecycle edge cases, deeper
+  installed plugin activation, packaging/distribution, provider media edges, or
+  companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now enforces
+  OpenClaw's subagent target allowlist policy for child ACP spawns before
+  runtime dispatch, including explicit self-target rejection when the
+  requester is excluded. Source/test checkpointed in `39d3b06b`; repo-wide
+  parity remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge
+  parity moves to ~99.9999994%. Continue deeper ACP thread-bound lifecycle
+  edges, deeper installed plugin activation, packaging/distribution, provider
+  media edges, or companion breadth.

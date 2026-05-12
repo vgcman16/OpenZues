@@ -108,6 +108,14 @@ def _optional_agent_id(value: object) -> str | None:
     return normalize_agent_id(normalized) if normalized is not None else None
 
 
+def _optional_timeout_seconds(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if value < 0:
+        return None
+    return int(value)
+
+
 def _requester_channel_from_context(context: Mapping[str, object]) -> str | None:
     for key in ("requesterChannel", "channel", "agentChannel"):
         channel = _optional_string(context.get(key))
@@ -687,6 +695,12 @@ class RuntimeManagerAcpSpawnService:
         label = _optional_string(params.get("label"))
         cwd = _optional_string(params.get("cwd"))
         resume_session_id = _optional_string(params.get("resumeSessionId"))
+        model = _optional_string(params.get("model"))
+        thinking = _optional_string(params.get("thinking"))
+        run_timeout_seconds = _optional_timeout_seconds(params.get("runTimeoutSeconds"))
+        if run_timeout_seconds is None:
+            run_timeout_seconds = _optional_timeout_seconds(params.get("timeoutSeconds"))
+        effective_model = model or self._default_model
         stream_log_path: str | None = None
         parent_relay: GatewayAcpParentStreamRelayHandle | None = None
         provisional_run_id: str | None = None
@@ -697,10 +711,11 @@ class RuntimeManagerAcpSpawnService:
             else:
                 thread_result = await self._manager.start_thread(
                     instance_id,
-                    model=self._default_model,
+                    model=effective_model,
                     cwd=cwd,
-                    reasoning_effort=None,
+                    reasoning_effort=thinking,
                     collaboration_mode=None,
+                    timeout_seconds=run_timeout_seconds,
                 )
                 thread_id = _read_thread_id(thread_result)
                 if thread_id is None:
@@ -728,9 +743,10 @@ class RuntimeManagerAcpSpawnService:
                 thread_id=thread_id,
                 text=_prefix_acp_prompt_cwd(task, cwd),
                 cwd=cwd,
-                model=None,
-                reasoning_effort=None,
+                model=model,
+                reasoning_effort=thinking,
                 collaboration_mode=None,
+                timeout_seconds=run_timeout_seconds,
             )
         except Exception as exc:  # noqa: BLE001 - surface runtime failures to tool callers.
             if parent_relay is not None:
