@@ -906,6 +906,70 @@ def test_pairing_approve_json_calls_zalo_pairing_store(monkeypatch) -> None:
     }
 
 
+def test_pairing_approve_notify_sends_zalo_approval_message(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeOpsMesh:
+        async def approve_zalo_pairing_code(
+            self,
+            code: str,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            calls.append(("approve", {"code": code, "accountId": account_id}))
+            return {
+                "ok": True,
+                "channel": "zalo",
+                "accountId": account_id,
+                "senderId": "user-1",
+                "code": code,
+            }
+
+        async def send_direct_channel_message(self, **kwargs: object) -> dict[str, object]:
+            calls.append(("notify", dict(kwargs)))
+            return {"ok": True, "messageId": "zalo-approved-1", "deliveryId": "delivery-1"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "pairing",
+            "approve",
+            "zalo",
+            "PAIRCODE",
+            "--account",
+            "zalo-bot",
+            "--notify",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        ("approve", {"code": "PAIRCODE", "accountId": "zalo-bot"}),
+        (
+            "notify",
+            {
+                "channel": "zalo",
+                "to": "user-1",
+                "message": "Your pairing request has been approved.",
+                "account_id": "zalo-bot",
+                "idempotency_key": "zalo-pairing-approved:zalo-bot:user-1:PAIRCODE",
+            },
+        ),
+    ]
+    payload = json.loads(result.stdout)
+    assert payload["notification"] == {
+        "ok": True,
+        "messageId": "zalo-approved-1",
+        "deliveryId": "delivery-1",
+    }
+
+
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
     assert _is_root_value_token("work") is True
     assert _is_root_value_token("-1") is True

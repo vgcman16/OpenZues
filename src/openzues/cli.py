@@ -136,6 +136,7 @@ _ATTENTION_QUEUE_IDLE_REPLY = (
 _DEFAULT_WATCH_TASK_NAME = "OpenClaw Total Parity Program"
 _DEFAULT_BROWSER_SESSION = "openzues-browser"
 _DEFAULT_BROWSER_WATCH_SESSION = "openzues-watch"
+_ZALO_PAIRING_APPROVED_MESSAGE = "Your pairing request has been approved."
 _BROWSER_RENDERED_SCREENSHOT_MIN_BYTES = 32_768
 _BROWSER_BLANK_SCREENSHOT_MAX_BYTES = 8_192
 _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
@@ -105536,6 +105537,7 @@ def pairing_approve_command(
         "--account-id",
         help="Provider account id.",
     ),
+    notify: bool = typer.Option(False, "--notify", help="Notify the requester on the channel."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     explicit_channel = _optional_cli_string(channel_option)
@@ -105555,10 +105557,32 @@ def pairing_approve_command(
 
     async def _action(services: CliServices) -> dict[str, object]:
         if channel == "zalo":
-            return await services.ops_mesh.approve_zalo_pairing_code(
+            result = await services.ops_mesh.approve_zalo_pairing_code(
                 resolved_code,
                 account_id=account_id,
             )
+            if notify and result.get("ok") is True:
+                sender_id = _optional_cli_string(result.get("senderId"))
+                if sender_id is not None:
+                    notify_result = dict(result)
+                    notify_account_id = _optional_cli_string(account_id) or DEFAULT_ACCOUNT_ID
+                    try:
+                        notification = await services.ops_mesh.send_direct_channel_message(
+                            channel="zalo",
+                            to=sender_id,
+                            message=_ZALO_PAIRING_APPROVED_MESSAGE,
+                            account_id=account_id,
+                            idempotency_key=(
+                                "zalo-pairing-approved:"
+                                f"{notify_account_id}:{sender_id}:{resolved_code}"
+                            ),
+                        )
+                    except Exception as exc:
+                        notify_result["notificationError"] = str(exc)[:240]
+                    else:
+                        notify_result["notification"] = notification
+                    return notify_result
+            return result
         raise typer.BadParameter("Unsupported pairing channel.")
 
     result = _run(_run_with_services(_action))
@@ -105567,6 +105591,11 @@ def pairing_approve_command(
     elif result.get("ok") is True:
         sender_id = _optional_cli_string(result.get("senderId")) or "<unknown>"
         typer.echo(f"Approved {channel} sender {sender_id}.")
+        notification_error = _optional_cli_string(result.get("notificationError"))
+        if notification_error is not None:
+            typer.echo(f"Failed to notify requester: {notification_error}", err=True)
+        elif isinstance(result.get("notification"), dict):
+            typer.echo(f"Notified {channel} sender {sender_id}.")
     else:
         reason = _optional_cli_string(result.get("reason")) or "pairing approval failed"
         typer.echo(reason, err=True)
