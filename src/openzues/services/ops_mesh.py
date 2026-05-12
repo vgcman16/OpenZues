@@ -35768,6 +35768,7 @@ class OpsMeshService:
             result_media_type = first_media_type
             send_text_after_media = bool(text and not inline_media_entries)
             message_ids: list[str] = []
+            last_message_id: str | None = None
             media_ids: list[str] = []
             bearer_token = _qqbot_bearer_token(secret_token)
             base_target = str(route.get("target") or "")
@@ -35793,24 +35794,27 @@ class OpsMeshService:
                     media_index += 1
                 inline_trailing_texts = pending_texts
 
-            def post_qqbot_text_fragment(fragment: str) -> None:
+            def post_qqbot_text_fragment(fragment: str) -> str | None:
                 fragment = str(fragment or "").strip()
                 if not fragment:
-                    return
+                    return None
                 text_payload: dict[str, object] = {"content": fragment, "msg_type": 0}
                 if reply_to_id:
                     text_payload["msg_id"] = reply_to_id
                     if target_type in {"c2c", "group"}:
                         text_payload["msg_seq"] = _qqbot_next_msg_seq(reply_to_id)
                 try:
-                    self._post_json_webhook(
+                    text_result = self._post_json_webhook(
                         _qqbot_message_endpoint(base_target, target_type, target_id),
                         text_payload,
                         secret_header_name="Authorization",
                         secret_token=bearer_token,
                     )
                 except Exception:
-                    pass
+                    return None
+                if not isinstance(text_result, Mapping) or text_result.get("ok") is False:
+                    return None
+                return _qqbot_message_id(text_result)
 
             if target_type == "channel":
                 channel_payload: dict[str, object] = {
@@ -35839,10 +35843,13 @@ class OpsMeshService:
                 if message_id is None:
                     raise RuntimeError("QQBot API response did not include a message id.")
                 message_ids.append(message_id)
+                last_message_id = message_id
             else:
                 for index, media_url in enumerate(media_urls):
                     for inline_text_fragment in inline_texts_by_media_index.get(index, ()):
-                        post_qqbot_text_fragment(inline_text_fragment)
+                        text_message_id = post_qqbot_text_fragment(inline_text_fragment)
+                        if text_message_id is not None:
+                            last_message_id = text_message_id
                     file_type, media_type = _qqbot_media_file_type(media_url, media_kind)
                     upload_result = self._request_qqbot_media_upload(
                         base_target=base_target,
@@ -35920,13 +35927,16 @@ class OpsMeshService:
                             "QQBot API response did not include a message id."
                         )
                     message_ids.append(sent_message_id)
+                    last_message_id = sent_message_id
                     if index == 0 and send_text_after_media:
                         post_qqbot_text_fragment(text)
                 for inline_text_fragment in inline_trailing_texts:
-                    post_qqbot_text_fragment(inline_text_fragment)
+                    text_message_id = post_qqbot_text_fragment(inline_text_fragment)
+                    if text_message_id is not None:
+                        last_message_id = text_message_id
             native_result: dict[str, object] = {
                 "runtime": "native-provider-backed",
-                "messageId": message_ids[-1],
+                "messageId": last_message_id or message_ids[-1],
                 "chatId": canonical_target,
                 "channelId": canonical_target,
                 "mediaUrls": media_urls,
