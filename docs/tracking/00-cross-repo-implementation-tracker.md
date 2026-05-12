@@ -24,7 +24,7 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.969% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.99998% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.999981% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.999992% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.9% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
@@ -193,6 +193,11 @@ source/test checkpointed in `90ceab78`, moving provider-native inbound/outbound
 breadth to ~99.99998%. Continue Discord audio-as-voice depth, remaining
 provider-specific media/reply edges, packaging/distribution, or companion
 breadth.
+Provider addendum: `OZ-PROV-001GE` Feishu media implicit reply fanout is
+source/test checkpointed in `ae7e9ed1`, moving provider-native inbound/outbound
+breadth to ~99.999981%. Continue Discord audio-as-voice depth, remaining
+provider-specific media/reply edges, deeper runtime/plugin activation, or
+companion breadth.
 Runtime addendum: `OZ-PKG-001DA` package-update post-core resume mode is
 source/test checkpointed in `4f874859`, moving runtime/CLI/doctor native-bridge
 parity to ~99.999991%. Continue package-update fresh-process handoff, deeper
@@ -1988,6 +1993,29 @@ companion breadth.
     (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
     tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
     focused `git diff --check`.
+
+- [x] `OZ-PROV-001GE` Feishu/Lark multi-media implicit reply fanout
+  - Source: `openclaw-main/src/infra/outbound/reply-policy.ts`,
+    `openclaw-main/src/infra/outbound/message-plan.ts`,
+    `openclaw-main/src/infra/outbound/message-plan.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: route-backed Feishu/Lark multi-media sends consume implicit
+    `replyToMode: "batched"` reply targets only on the first media payload,
+    while later media payloads send top-level and preserve ordered media
+    result metadata.
+  - Evidence required: focused Feishu reply fanout proof, adjacent Feishu
+    native media proof, adjacent Telegram reply fanout proof, ruff, mypy
+  - Status: checkpointed in `ae7e9ed1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_feishu_reply_fanout -q`
+    (`1 failed` before implementation because both media sends used the reply
+    endpoint, then `1 passed`), adjacent provider proof
+    `python -m pytest tests\test_ops_mesh.py -q -k "feishu_native_media or feishu_reply_fanout or feishu_send_route or telegram_reply_fanout"`
+    (`4 passed, 486 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 
 - [x] `OZ-PROV-001EV` Telegram media caption passthrough
   - Source: `openclaw-main/extensions/telegram/src/send.ts`,

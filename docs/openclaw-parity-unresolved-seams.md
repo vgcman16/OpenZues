@@ -149,9 +149,10 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.99998%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999981%
   after route-backed Telegram stale-thread retry fallback for JSON and
-  HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
+  HTTP-error paths, Feishu media implicit reply fanout, LINE signed webhook
+  ingress, and LINE text webhook session
   delivery plus postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
   pending-history replay, non-text group media mention-gate bypass, LINE
@@ -12700,3 +12701,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
   ~99.999992%. Continue deeper installed plugin activation, ACP bridge
   lifecycle depth, provider media edges, or companion breadth.
+- Current queue-head adjustment: native Feishu media sends now consume implicit
+  batched reply metadata once per media fanout, matching OpenClaw's
+  `replyToMode: "batched"` plan behavior. The first media item replies to the
+  parent message, later media items send top-level while preserving final
+  `messageId`, ordered `mediaIds`, `mediaUrls`, and provider result metadata.
+  Source/test checkpointed in `ae7e9ed1`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth moves to ~99.999981%.
+  Continue Discord audio-as-voice depth, remaining provider-specific
+  media/reply edges, deeper runtime/plugin activation, or companion breadth.
