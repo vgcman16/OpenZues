@@ -25,8 +25,8 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.985% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.965% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.9993% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.9993% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.9994% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.9994% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -373,8 +373,33 @@ checkpointed in `0544ceb2` with poll-specific proof in `1eadc4ae`;
 provider-native inbound/outbound breadth moves to ~99.965%.
 Continue provider-specific media/reply edges, companion breadth, deeper
 installed plugin activation, or packaging edges.
+Packaging addendum: `OZ-PKG-001CQ` package update downgrade confirmation is
+source/test checkpointed in `e39ead6e`; runtime/CLI/doctor and CLI/operator
+parity move to ~99.9994%. Continue provider-specific media/reply edges, deeper
+installed plugin activation, companion breadth, or the next packaging edge.
 
 ## Active Slice Detail
+
+- [x] `OZ-PKG-001CQ` package update downgrade confirmation
+  - Source: `openclaw-main/src/cli/update-cli/shared.ts`,
+    `openclaw-main/src/cli/update-cli/update-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: package update dry-runs resolve explicit semver/dist-tag
+    registry targets into `targetVersion` and `downgradeRisk`; JSON or
+    non-interactive package downgrades exit before runtime dispatch unless
+    `--yes` is supplied; confirmed downgrades keep the normal package update
+    service path.
+  - Evidence required: focused downgrade dry-run/block/allow proof, adjacent
+    package update CLI proof, ruff, mypy
+  - Status: checkpointed in `e39ead6e`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_dry_run_json_flags_registry_downgrade_risk tests\test_cli.py::test_update_json_blocks_registry_downgrade_without_yes tests\test_cli.py::test_update_json_allows_registry_downgrade_with_yes -q`
+    (`2 failed, 1 passed` before implementation, then `3 passed`), adjacent
+    update CLI selector (`11 passed, 575 deselected`), `ruff check
+    src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
 
 - [x] `OZ-PROV-001EX` Telegram HTTP stale-thread fallback
   - Source: `openclaw-main/extensions/telegram/src/send.ts`,
