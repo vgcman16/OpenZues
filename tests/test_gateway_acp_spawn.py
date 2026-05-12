@@ -788,6 +788,132 @@ async def test_runtime_manager_acp_spawn_uses_route_backed_matrix_thread_binder(
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_unbinds_thread_when_turn_start_fails() -> None:
+    class FailingTurnManager(FakeManager):
+        async def start_turn(self, *args: object, **kwargs: object) -> dict[str, object]:
+            self.events.append("turn")
+            self.start_turn_calls.append({"args": args, "kwargs": kwargs})
+            raise RuntimeError("turn failed")
+
+    class FakeThreadBinder:
+        def __init__(self, events: list[str]) -> None:
+            self.events = events
+            self.unbind_calls: list[dict[str, object]] = []
+
+        async def __call__(
+            self,
+            parent: dict[str, object],
+            child: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            self.events.append("bind")
+            assert parent == {"sessionKey": "agent:main:matrix:channel:!room:example.org"}
+            assert child["sessionKey"] == "agent:codex:acp:thread-acp-new"
+            assert child["runtime"] == "acp"
+            assert child["targetKind"] == "session"
+            assert context == {
+                "channel": "matrix",
+                "accountId": "default",
+                "to": "room:!room:example.org",
+            }
+            return {
+                "status": "ok",
+                "threadBindingReady": True,
+                "channel": "matrix",
+                "accountId": "default",
+                "to": "room:!room:example.org",
+                "threadId": "$matrix-child-root",
+                "deliveryOrigin": {
+                    "channel": "matrix",
+                    "accountId": "default",
+                    "to": "room:!room:example.org",
+                    "threadId": "$matrix-child-root",
+                },
+                "sessionBinding": {
+                    "bindingId": "default:!room:example.org:$matrix-child-root",
+                    "targetSessionKey": "agent:codex:acp:thread-acp-new",
+                    "targetKind": "session",
+                    "conversation": {
+                        "channel": "matrix",
+                        "accountId": "default",
+                        "conversationId": "$matrix-child-root",
+                        "parentConversationId": "!room:example.org",
+                    },
+                    "status": "active",
+                    "boundAt": 123,
+                    "metadata": {"placement": "child"},
+                },
+            }
+
+        async def unbind(
+            self,
+            target: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            self.events.append("unbind")
+            self.unbind_calls.append({"target": dict(target), "context": dict(context)})
+            return {"status": "ok", "unbound": True}
+
+    events: list[str] = []
+    manager = FailingTurnManager(events)
+    binder = FakeThreadBinder(events)
+    service = RuntimeManagerAcpSpawnService(manager, thread_binder=binder)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate Matrix post-bind failure.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": "agent:main:matrix:channel:!room:example.org",
+            "requesterChannel": "matrix",
+            "requesterAccountId": "default",
+            "requesterTo": "room:!room:example.org",
+        },
+    )
+
+    assert payload == {"status": "error", "error": "turn failed"}
+    assert events == ["thread", "bind", "turn", "unbind"]
+    assert binder.unbind_calls == [
+        {
+            "target": {
+                "sessionKey": "agent:codex:acp:thread-acp-new",
+                "agentId": "codex",
+                "runtime": "acp",
+                "threadBinding": {
+                    "channel": "matrix",
+                    "accountId": "default",
+                    "to": "room:!room:example.org",
+                    "threadId": "$matrix-child-root",
+                },
+                "sessionBinding": {
+                    "bindingId": "default:!room:example.org:$matrix-child-root",
+                    "targetSessionKey": "agent:codex:acp:thread-acp-new",
+                    "targetKind": "session",
+                    "conversation": {
+                        "channel": "matrix",
+                        "accountId": "default",
+                        "conversationId": "$matrix-child-root",
+                        "parentConversationId": "!room:example.org",
+                    },
+                    "status": "active",
+                    "boundAt": 123,
+                    "metadata": {"placement": "child"},
+                },
+            },
+            "context": {
+                "channel": "matrix",
+                "accountId": "default",
+                "to": "room:!room:example.org",
+                "reason": "spawn-failed",
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_formats_discord_child_delivery_target() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)

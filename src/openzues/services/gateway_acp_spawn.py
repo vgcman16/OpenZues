@@ -749,6 +749,9 @@ class RuntimeManagerAcpSpawnService:
         stream_log_path: str | None = None
         parent_relay: GatewayAcpParentStreamRelayHandle | None = None
         provisional_run_id: str | None = None
+        child_session_key: str | None = None
+        thread_binding_payload: dict[str, object] | None = None
+        thread_binder_context: dict[str, object] | None = None
         try:
             thread_id: str | None
             if resume_session_id is not None:
@@ -783,10 +786,10 @@ class RuntimeManagerAcpSpawnService:
                     delivery_context=_parent_delivery_context_from_context(context),
                     emit_start_notice=False,
                 )
-            thread_binding_payload: dict[str, object] | None = None
             if thread_requested and self._thread_binder is not None:
                 binder_context = _thread_binder_context_from_context(context)
                 if binder_context is not None:
+                    thread_binder_context = binder_context
                     raw_thread_binding = await self._thread_binder(
                         {
                             "sessionKey": parent_session_key,
@@ -832,11 +835,20 @@ class RuntimeManagerAcpSpawnService:
         except Exception as exc:  # noqa: BLE001 - surface runtime failures to tool callers.
             if parent_relay is not None:
                 parent_relay.dispose()
+            await self._cleanup_failed_thread_binding(
+                child_session_key=child_session_key,
+                agent_id=target_agent_id,
+                thread_binding_payload=thread_binding_payload,
+                context=thread_binder_context,
+                reason="spawn-failed",
+            )
             return {
                 "status": "error",
                 "error": str(exc).strip() or type(exc).__name__,
             }
 
+        assert child_session_key is not None
+        assert thread_id is not None
         run_id = (
             extract_turn_id(turn_result)
             or (provisional_run_id if stream_to_parent else None)
@@ -932,6 +944,43 @@ class RuntimeManagerAcpSpawnService:
         result = await self._manager.interrupt_turn(instance_id, runtime_thread_id)
         cancelled = bool(result.get("ok")) if isinstance(result, dict) else True
         return {"status": "ok", "cancelled": cancelled}
+
+    async def _cleanup_failed_thread_binding(
+        self,
+        *,
+        child_session_key: str | None,
+        agent_id: str,
+        thread_binding_payload: Mapping[str, object] | None,
+        context: Mapping[str, object] | None,
+        reason: str,
+    ) -> None:
+        if (
+            child_session_key is None
+            or thread_binding_payload is None
+            or self._thread_binder is None
+        ):
+            return
+        unbind = getattr(self._thread_binder, "unbind", None)
+        if not callable(unbind):
+            return
+        target: dict[str, object] = {
+            "sessionKey": child_session_key,
+            "agentId": agent_id,
+            "runtime": "acp",
+        }
+        raw_thread_binding = thread_binding_payload.get("threadBinding")
+        if isinstance(raw_thread_binding, Mapping):
+            target["threadBinding"] = dict(raw_thread_binding)
+        raw_session_binding = thread_binding_payload.get("sessionBinding")
+        if isinstance(raw_session_binding, Mapping):
+            target["sessionBinding"] = json.loads(json.dumps(dict(raw_session_binding)))
+        cleanup_context = dict(context or {})
+        cleanup_context["reason"] = reason
+        try:
+            await unbind(target, cleanup_context)
+        except Exception:
+            # Best-effort cleanup: preserve the actionable spawn failure.
+            return
 
     async def close_session(
         self,
