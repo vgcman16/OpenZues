@@ -25,9 +25,9 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.985% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.965% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.9992% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.9992% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
-| Packaging/companion app breadth | ~5.1% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.9993% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.9993% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Packaging/companion app breadth | ~5.2% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
 
@@ -15648,6 +15648,29 @@ installed plugin activation, or packaging edges.
     src\openzues\services\gateway_commands.py
     src\openzues\services\gateway_plugin_runtime.py src\openzues\cli.py`, and
     focused `git diff --check`.
+
+- [x] `OZ-COMP-001N` Device pairing CLI list/approve
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/cli/devices-cli.ts`,
+    `openclaw-main/src/cli/devices-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: QR-promised `openzues devices list` and
+    `openzues devices approve` commands call `device.pair.list` and
+    `device.pair.approve`, support JSON output, and keep implicit latest
+    approval preview-only until the operator reruns with an explicit request id.
+  - Evidence required: focused devices CLI proof, adjacent QR/device-pairing
+    selector, ruff, mypy
+  - Status: checkpointed in `25c344be`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_cli.py::test_devices_list_json_calls_device_pair_list
+    tests\test_cli.py::test_devices_approve_json_calls_device_pair_approve
+    tests\test_cli.py::test_devices_approve_latest_json_previews_without_approving -q`
+    (`3 passed`), `python -m pytest tests\test_cli.py -q -k "devices or
+    device_pairing or qr_human_output"` (`7 passed, 576 deselected`), `ruff
+    check src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`,
+    and focused `git diff --check`.
 
 ## Canonical Checklist Format
 

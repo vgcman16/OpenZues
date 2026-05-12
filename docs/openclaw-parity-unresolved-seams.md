@@ -14,12 +14,13 @@ Current percentage rollup:
   `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, `tools.invoke`, and Tlon monitor lifecycle runtime
   seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.9992% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.9993% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
-  preflight, provider-gated plugin native command specs, plugin imported-state projection,
+  preflight, devices list/approve CLI, provider-gated plugin native command
+  specs, plugin imported-state projection,
   errored runtime-imported plugin projection, facade-loaded plugin imported-state
   preservation, diagnostics-loaded plugin imported-state counts, bundled plugin
   reported-version normalization, bundled plugin env discovery/default-disable,
@@ -140,10 +141,10 @@ Current percentage rollup:
 - The provider-native inbound/outbound breadth family is estimated at ~99.965%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths.
-- The CLI/operator control-plane family is estimated at ~99.9992% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.9993% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
-  secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  secrets reload CLI surface, devices list/approve CLI, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
@@ -11809,5 +11810,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   native-command enabled. Source/test checkpointed in `6f15b49f`; repo-wide
   parity remains estimated at ~99.9%, active gateway/session/tool-contract
   parity moves to ~99.92%, and runtime/CLI/doctor plus CLI/operator parity
-  move to ~99.9992%. Continue `openzues devices list/approve`, package-update
-  downgrade confirmation, or remaining provider-specific media/reply edges.
+  move to ~99.9992%. Continue package-update downgrade confirmation or
+  remaining provider-specific media/reply edges.
+- Current queue-head adjustment: `openzues devices list` and
+  `openzues devices approve` now provide the QR-promised companion pairing CLI
+  surface, including JSON list/approve output and preview-only `approve
+  --latest --json` selection before explicit approval. Source/test
+  checkpointed in `25c344be`; repo-wide parity remains estimated at ~99.9%,
+  runtime/CLI/doctor and CLI/operator parity move to ~99.9993%, and companion
+  breadth moves to ~5.2%. Continue package-update downgrade confirmation or
+  remaining provider-specific media/reply edges.
