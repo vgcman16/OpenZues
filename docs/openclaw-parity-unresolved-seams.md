@@ -140,10 +140,10 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.92% after the
   latest provider-gated plugin native command-spec slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.985%
+- The provider-native inbound/outbound breadth family is estimated at ~99.99%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
-  delivery plus postback/media-placeholder delivery.
+  delivery plus postback/media-placeholder/sticker delivery.
 - The CLI/operator control-plane family is estimated at ~99.9998% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -11899,3 +11899,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound/outbound breadth moves to ~99.985%. Continue LINE location/sticker
   text extraction, group mention/history handling, remaining provider-specific
   media/reply edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: LINE signed webhook sticker `message` events
+  now deliver readable OpenClaw-shaped sticker text, including LINE package-name
+  lookup and up to three keyword/text descriptors. Source/test checkpointed in
+  `583bd41a`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.99%. Continue LINE
+  location text extraction, group mention/history handling, remaining
+  provider-specific media/reply edges, deeper installed plugin activation, or
+  companion breadth.
