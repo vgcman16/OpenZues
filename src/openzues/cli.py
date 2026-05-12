@@ -105503,6 +105503,40 @@ def _emit_pairing_list(payload: dict[str, object], *, json_output: bool) -> None
         typer.echo(f"  {code} {sender_id}{suffix}")
 
 
+def _pairing_command_owner_entry(channel: str, sender_id: str) -> str | None:
+    normalized_channel = _optional_cli_string(channel)
+    normalized_sender = _optional_cli_string(sender_id)
+    if normalized_channel is None or normalized_sender is None:
+        return None
+    return f"{normalized_channel.lower()}:{normalized_sender}"
+
+
+def _bootstrap_pairing_command_owner(
+    services: CliServices,
+    *,
+    channel: str,
+    sender_id: str,
+) -> dict[str, object] | None:
+    owner_entry = _pairing_command_owner_entry(channel, sender_id)
+    if owner_entry is None:
+        return None
+    config_service = getattr(services, "gateway_config", None)
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    patch_object = getattr(config_service, "patch_object", None)
+    if not callable(build_snapshot) or not callable(patch_object):
+        return None
+    snapshot = build_snapshot()
+    if not isinstance(snapshot, Mapping):
+        return None
+    commands = snapshot.get("commands")
+    if isinstance(commands, Mapping) and _normalize_allowlist_entries(
+        commands.get("ownerAllowFrom")
+    ):
+        return {"ownerEntry": owner_entry, "bootstrapped": False}
+    patch_object({"commands": {"ownerAllowFrom": [owner_entry]}})
+    return {"ownerEntry": owner_entry, "bootstrapped": True}
+
+
 @pairing_app.command("list")
 def pairing_list_command(
     channel_arg: str | None = typer.Argument(None, help="Pairing channel."),
@@ -105561,6 +105595,18 @@ def pairing_approve_command(
                 resolved_code,
                 account_id=account_id,
             )
+            if result.get("ok") is True:
+                sender_id = _optional_cli_string(result.get("senderId"))
+                if sender_id is not None:
+                    owner_result = _bootstrap_pairing_command_owner(
+                        services,
+                        channel=channel,
+                        sender_id=sender_id,
+                    )
+                    if owner_result is not None and owner_result.get("bootstrapped") is True:
+                        next_result = dict(result)
+                        next_result["commandOwner"] = owner_result
+                        result = next_result
             if notify and result.get("ok") is True:
                 sender_id = _optional_cli_string(result.get("senderId"))
                 if sender_id is not None:
@@ -105596,6 +105642,11 @@ def pairing_approve_command(
             typer.echo(f"Failed to notify requester: {notification_error}", err=True)
         elif isinstance(result.get("notification"), dict):
             typer.echo(f"Notified {channel} sender {sender_id}.")
+        command_owner = result.get("commandOwner")
+        if isinstance(command_owner, Mapping):
+            owner_entry = _optional_cli_string(command_owner.get("ownerEntry"))
+            if owner_entry is not None:
+                typer.echo(f"Command owner configured {owner_entry}.")
     else:
         reason = _optional_cli_string(result.get("reason")) or "pairing approval failed"
         typer.echo(reason, err=True)
