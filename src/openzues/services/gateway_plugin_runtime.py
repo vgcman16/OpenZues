@@ -130,12 +130,18 @@ class GatewayPluginRuntimeService:
         control_ui_descriptor_registry: GatewayPluginControlUiDescriptorRegistry | None = None,
         command_specs: Iterable[GatewayPluginCommandEntry] | None = None,
         command_registry: GatewayPluginCommandRegistry | None = None,
+        native_command_enabled_providers: Iterable[str] = (),
         owner_only: Iterable[str] = (),
     ) -> None:
         self._owner_only = {
             str(tool or "").strip()
             for tool in owner_only
             if str(tool or "").strip()
+        }
+        self._native_command_enabled_providers = {
+            str(provider or "").strip().casefold()
+            for provider in native_command_enabled_providers
+            if str(provider or "").strip()
         }
         self._configured_executors: list[GatewayPluginRuntimeExecutorSpec] = []
         if executors is not None:
@@ -264,6 +270,12 @@ class GatewayPluginRuntimeService:
 
     def command_specs(self) -> tuple[GatewayPluginCommandSpec, ...]:
         return tuple(self._iter_command_specs())
+
+    def native_commands_auto_enabled(self, provider: str | None) -> bool:
+        normalized_provider = str(provider or "").strip().casefold()
+        if not normalized_provider:
+            return True
+        return normalized_provider in self._native_command_enabled_providers
 
     def has_session_extension(self, plugin_id: str, namespace: str) -> bool:
         return self._resolve_session_extension(plugin_id, namespace) is not None

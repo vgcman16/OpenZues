@@ -1219,22 +1219,32 @@ class GatewayCommandsService:
         if self._plugin_runtime_service is None:
             return []
         payloads: list[dict[str, Any]] = []
+        provider_native_commands_enabled = (
+            self._plugin_runtime_service.native_commands_auto_enabled(provider)
+        )
         for spec in self._plugin_runtime_service.command_specs():
-            native_name = _plugin_provider_native_command_name(spec, provider)
-            if scope != "text":
+            native_name = (
+                _plugin_provider_native_command_name(spec, provider)
+                if provider_native_commands_enabled
+                else None
+            )
+            if scope == "native" and native_name is None:
+                continue
+            if scope != "text" and native_name is not None:
                 native_key = native_name.casefold()
                 if native_key in seen_native_names:
                     continue
                 seen_native_names.add(native_key)
             payload: dict[str, Any] = {
-                "name": spec.name if scope == "text" else native_name,
-                "nativeName": native_name,
+                "name": spec.name if scope == "text" or native_name is None else native_name,
                 "textAliases": [f"/{spec.name}"],
                 "description": spec.description,
                 "source": "plugin",
                 "scope": "both",
                 "acceptsArgs": spec.accepts_args,
             }
+            if native_name is not None:
+                payload["nativeName"] = native_name
             if spec.description_localizations:
                 payload["descriptionLocalizations"] = dict(spec.description_localizations)
             if spec.plugin_id is not None:

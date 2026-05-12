@@ -85326,7 +85326,15 @@ function listProviderPluginCommandSpecs(provider) {
   }));
 }
 
-function getPluginCommandSpecs(provider) {
+function getPluginCommandSpecs(provider, options = {}) {
+  const providerKey = normalizePluginCommandName(provider);
+  const nativeCommandsAutoEnabled =
+    options &&
+    (options.nativeCommandsAutoEnabled === true ||
+      (options.config && options.config.nativeCommandsAutoEnabled === true));
+  if (providerKey && nativeCommandsAutoEnabled !== true) {
+    return [];
+  }
   return listProviderPluginCommandSpecs(provider);
 }
 

@@ -78952,7 +78952,10 @@ module.exports = {
             duplicate,
             listed: pluginRuntime.listPluginCommands(),
             providerSpecs: pluginRuntime.listProviderPluginCommandSpecs("telegram"),
-            allSpecs: pluginRuntime.getPluginCommandSpecs("telegram")
+            allSpecs: pluginRuntime.getPluginCommandSpecs("telegram"),
+            enabledSpecs: pluginRuntime.getPluginCommandSpecs("telegram", {
+              nativeCommandsAutoEnabled: true
+            })
           },
           matching: {
             args: match.args,
@@ -79085,7 +79088,8 @@ module.exports = {
                     "acceptsArgs": True,
                 }
             ],
-            "allSpecs": [
+            "allSpecs": [],
+            "enabledSpecs": [
                 {
                     "name": "demo_tg",
                     "description": "Demo command",
@@ -110047,6 +110051,7 @@ async def test_commands_list_applies_slack_native_command_aliases() -> None:
 @pytest.mark.asyncio
 async def test_commands_list_appends_slack_provider_plugin_commands() -> None:
     plugin_runtime = GatewayPluginRuntimeService(
+        native_command_enabled_providers=("slack",),
         command_specs=(
             {
                 "pluginId": "voice-plugin",
@@ -110092,6 +110097,32 @@ async def test_commands_list_appends_slack_provider_plugin_commands() -> None:
         command["source"] == "plugin" and command["nativeName"] == "agentstatus"
         for command in commands
     )
+
+
+@pytest.mark.asyncio
+async def test_commands_list_omits_plugin_native_commands_without_provider_gate() -> None:
+    plugin_runtime = GatewayPluginRuntimeService(
+        command_specs=(
+            {
+                "pluginId": "voice-plugin",
+                "name": "voice",
+                "description": "Run voice routing.",
+                "nativeNames": {"default": "talkvoice", "whatsapp": "wavox"},
+                "acceptsArgs": False,
+            },
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    payload = await service.call(
+        "commands.list",
+        {"provider": "whatsapp", "scope": "native", "includeArgs": False},
+    )
+
+    assert [command for command in payload["commands"] if command["source"] == "plugin"] == []
 
 
 class _FakeBrowserRuntime:
