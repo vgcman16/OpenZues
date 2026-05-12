@@ -8,6 +8,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 DEFAULT_BROWSER_SESSION = "openzues-browser"
 _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
@@ -170,6 +171,16 @@ class GatewayBrowserRuntimeService:
             if not isinstance(target, str) or not target.strip():
                 raise GatewayBrowserRuntimeError("url is required")
             return self.open_page(target.strip(), session=session)
+        if normalized_method == "POST" and normalized_path == "/tabs/focus":
+            target_id = request_body.get("targetId")
+            if not isinstance(target_id, str) or not target_id.strip():
+                raise GatewayBrowserRuntimeError("targetId is required")
+            return self.focus(target_id.strip(), session=session)
+        if normalized_method == "DELETE" and normalized_path.startswith("/tabs/"):
+            target_id = unquote(normalized_path.removeprefix("/tabs/")).strip()
+            if not target_id:
+                raise GatewayBrowserRuntimeError("targetId is required")
+            return self.close(session=session, target_id=target_id)
         if normalized_method == "POST" and normalized_path == "/tabs/action":
             action = request_body.get("action")
             if action == "list":

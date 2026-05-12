@@ -112068,6 +112068,47 @@ def test_browser_request_runtime_maps_lifecycle_routes(
     assert stopped["allSessions"] is True
 
 
+def test_browser_request_runtime_maps_tab_mutation_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    focused = service.request(
+        method="POST",
+        path="/tabs/focus",
+        body={"targetId": "tab-1"},
+        session="parity-browser",
+    )
+    closed = service.request(
+        method="DELETE",
+        path="/tabs/tab-2",
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "tab-1"],
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "close", "tab-2"],
+    ]
+    assert focused["targetId"] == "tab-1"
+    assert closed["targetId"] == "tab-2"
+    assert closed["allSessions"] is False
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 
