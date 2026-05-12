@@ -140,6 +140,11 @@ storage is configured. `OZ-PROV-001FQ` Zalo direct-DM disabled policy from
 `extensions/zalo/src/monitor.ts` and `extensions/zalo/src/config-schema.ts` is
 checkpointed in `ac0e17e3`; it covers configured direct-message disable
 skipping before native session delivery.
+`OZ-PROV-001FR` Zalo group allowlist policy from
+`extensions/zalo/src/monitor.ts` and `extensions/zalo/src/group-access.ts` is
+checkpointed in `d0d548e2`; it covers `groupPolicy="allowlist"` /
+`groupAllowFrom` blocking non-allowlisted group senders before native session
+delivery.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
