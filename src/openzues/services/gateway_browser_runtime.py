@@ -121,6 +121,52 @@ class GatewayBrowserRuntimeService:
             "session": session,
         }
 
+    def request(
+        self,
+        *,
+        method: str,
+        path: str,
+        query: dict[str, object] | None = None,
+        body: object = None,
+        timeout_ms: int | None = None,
+        session: str = DEFAULT_BROWSER_SESSION,
+    ) -> dict[str, object]:
+        del timeout_ms
+        normalized_method = method.strip().upper()
+        normalized_path = "/" + path.strip().lstrip("/")
+        request_body = body if isinstance(body, dict) else {}
+        request_query = query or {}
+
+        if normalized_method == "GET" and normalized_path == "/snapshot":
+            return self.snapshot(session=session)
+        if normalized_method == "POST" and normalized_path == "/act":
+            return self.act(dict(request_body), session=session)
+        if normalized_method == "POST" and normalized_path == "/screenshot":
+            full_page = browser_request_bool(
+                request_body.get("fullPage", request_query.get("fullPage"))
+            ) or browser_request_bool(
+                request_body.get("full_page", request_query.get("full_page"))
+            )
+            return self.screenshot(session=session, full_page=full_page)
+        if normalized_method == "GET" and normalized_path == "/profiles":
+            return self.profiles(session=session)
+        if normalized_method == "GET" and normalized_path == "/tabs":
+            return self.tabs(session=session)
+        if normalized_method == "POST" and normalized_path == "/tabs/open":
+            target = request_body.get("url")
+            if not isinstance(target, str) or not target.strip():
+                raise GatewayBrowserRuntimeError("url is required")
+            return self.open_page(target.strip(), session=session)
+        if normalized_method == "POST" and normalized_path == "/tabs/action":
+            action = request_body.get("action")
+            if action == "list":
+                return self.tabs(session=session)
+            if action == "new":
+                return self.open_page("about:blank", session=session)
+        raise GatewayBrowserRuntimeError(
+            f"browser local request unsupported: {normalized_method} {normalized_path}"
+        )
+
     def history(self, action: str, *, session: str) -> dict[str, object]:
         if action not in {"back", "forward", "reload"}:
             raise ValueError(f"unsupported browser history action: {action}")
@@ -2614,6 +2660,16 @@ def browser_bool_value(value: str) -> bool | None:
     if text in {"false", "0", "no", "hidden", "disabled", "unchecked"}:
         return False
     return None
+
+
+def browser_request_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "on"}
+    if isinstance(value, int):
+        return value != 0
+    return False
 
 
 def browser_url_value(value: str) -> str:

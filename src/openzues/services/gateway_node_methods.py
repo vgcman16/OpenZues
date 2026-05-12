@@ -907,6 +907,30 @@ def _browser_request_proxy_payload(
     return cast(dict[str, Any], resolved_payload)
 
 
+def _browser_request_local_response_payload(result: object) -> dict[str, Any]:
+    if not isinstance(result, Mapping):
+        return {"result": result}
+    if "status" not in result or "body" not in result:
+        return cast(dict[str, Any], dict(result))
+    status = _int_or_none(result.get("status")) or 200
+    body = result.get("body")
+    if status >= 400:
+        message: str | None = None
+        if isinstance(body, Mapping):
+            error = body.get("error")
+            if isinstance(error, str) and error.strip():
+                message = error.strip()
+        raise GatewayNodeMethodError(
+            code="UNAVAILABLE" if status >= 500 else "INVALID_REQUEST",
+            message=message or f"browser request failed ({status})",
+            status_code=503 if status >= 500 else 400,
+            details=cast(dict[str, Any], dict(body)) if isinstance(body, Mapping) else None,
+        )
+    if isinstance(body, Mapping):
+        return cast(dict[str, Any], dict(body))
+    return {"result": body}
+
+
 def _browser_proxy_file_extension(source_path: str, mime_type: str | None) -> str:
     if mime_type is not None:
         extension = _BROWSER_PROXY_MIME_EXTENSIONS.get(mime_type.strip().lower())
@@ -3196,11 +3220,37 @@ class GatewayNodeMethodService:
 
         node = self._resolve_browser_request_node_target()
         if node is None:
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="browser control is disabled",
-                status_code=503,
-            )
+            request_runner = getattr(self._browser_runtime_service, "request", None)
+            if not callable(request_runner):
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="browser control is disabled",
+                    status_code=503,
+                )
+            try:
+                local_result = request_runner(
+                    method=method,
+                    path=path,
+                    query=query,
+                    body=body,
+                    timeout_ms=timeout_ms,
+                    session=DEFAULT_BROWSER_SESSION,
+                )
+                if inspect.isawaitable(local_result):
+                    local_result = await local_result
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            except Exception as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            return _browser_request_local_response_payload(local_result)
 
         allowlist = resolve_node_command_allowlist(
             platform=node.platform,

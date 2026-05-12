@@ -122092,6 +122092,72 @@ async def test_browser_request_uses_configured_browser_node_when_multiple_connec
 
 
 @pytest.mark.asyncio
+async def test_browser_request_falls_back_to_local_browser_runtime_without_node() -> None:
+    class FakeLocalBrowserRuntime:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def request(
+            self,
+            *,
+            method: str,
+            path: str,
+            query: dict[str, object] | None = None,
+            body: object = None,
+            timeout_ms: int | None = None,
+            session: str,
+        ) -> dict[str, object]:
+            self.calls.append(
+                {
+                    "method": method,
+                    "path": path,
+                    "query": query or {},
+                    "body": body,
+                    "timeoutMs": timeout_ms or 0,
+                    "session": session,
+                }
+            )
+            return {
+                "ok": True,
+                "source": "local-browser-runtime",
+                "path": path,
+            }
+
+    runtime = FakeLocalBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=runtime,
+    )
+
+    response = await service.call(
+        "browser.request",
+        {
+            "method": "POST",
+            "path": "/act",
+            "query": {"profile": "work"},
+            "body": {"action": "click", "ref": "button"},
+            "timeoutMs": 500,
+        },
+    )
+
+    assert response == {
+        "ok": True,
+        "source": "local-browser-runtime",
+        "path": "/act",
+    }
+    assert runtime.calls == [
+        {
+            "method": "POST",
+            "path": "/act",
+            "query": {"profile": "work"},
+            "body": {"action": "click", "ref": "button"},
+            "timeoutMs": 500,
+            "session": "openzues-browser",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_node_invoke_rejects_invalid_canvas_a2ui_jsonl_before_dispatch() -> None:
     registry = GatewayNodeRegistry()
     connection = FakeNodeConnection("conn-canvas-a2ui-node")
