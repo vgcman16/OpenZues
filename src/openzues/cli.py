@@ -105537,6 +105537,14 @@ def _bootstrap_pairing_command_owner(
     return {"ownerEntry": owner_entry, "bootstrapped": True}
 
 
+def _pairing_approval_failure_text(result: Mapping[str, object], *, code: str) -> str:
+    reason = _optional_cli_string(result.get("reason"))
+    if reason == "zalo_pairing_code_not_found":
+        result_code = _optional_cli_string(result.get("code")) or code
+        return f"No pending pairing request found for code: {result_code}"
+    return reason or "pairing approval failed"
+
+
 @pairing_app.command("list")
 def pairing_list_command(
     channel_arg: str | None = typer.Argument(None, help="Pairing channel."),
@@ -105651,8 +105659,7 @@ def pairing_approve_command(
                     "(commands.ownerAllowFrom was empty)."
                 )
     else:
-        reason = _optional_cli_string(result.get("reason")) or "pairing approval failed"
-        typer.echo(reason, err=True)
+        typer.echo(_pairing_approval_failure_text(result, code=resolved_code), err=True)
     if result.get("ok") is not True:
         raise typer.Exit(code=1)
 

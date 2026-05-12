@@ -1092,6 +1092,33 @@ def test_pairing_approve_human_output_explains_command_owner_bootstrap(monkeypat
     )
 
 
+def test_pairing_approve_human_output_reports_not_found_code(monkeypatch) -> None:
+    class FakeOpsMesh:
+        async def approve_zalo_pairing_code(
+            self,
+            code: str,
+            *,
+            account_id: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": False,
+                "channel": "zalo",
+                "accountId": account_id,
+                "code": code,
+                "reason": "zalo_pairing_code_not_found",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["pairing", "approve", "zalo", "PAIRCODE"])
+
+    assert result.exit_code == 1
+    assert "No pending pairing request found for code: PAIRCODE" in result.stderr
+
+
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
     assert _is_root_value_token("work") is True
     assert _is_root_value_token("-1") is True
