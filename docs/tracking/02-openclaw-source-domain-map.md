@@ -88,10 +88,14 @@ session/profile posture plus optional live snapshot checks. `OZ-CANVAS-001P`
 snapshot artifact route breadth from
 `extensions/browser/src/browser/routes/agent.snapshot.ts` is checkpointed in
 `2ecdba40`; it maps `POST /navigate` and `POST /pdf` onto native navigation
-and controlled PDF artifact export.
+and controlled PDF artifact export. `OZ-CANVAS-001Q` response-body route
+breadth from `extensions/browser/src/browser/routes/agent.act.ts` is
+checkpointed in `e7084f1f`; it maps `POST /response/body` onto native network
+request inventory/detail commands with response status/header/body/truncation
+projection.
 Remaining browser-request depth is profile mutation, permission,
-locale/timezone, response body, dialog hook, and label-action route breadth
-beyond the current native adapter.
+locale/timezone, dialog hook, and label-action route breadth beyond the
+current native adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers

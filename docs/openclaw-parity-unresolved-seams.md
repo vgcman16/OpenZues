@@ -12177,3 +12177,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   body/dialog-hook route breadth, remaining provider-specific media/reply
   edges, deeper installed plugin activation, companion breadth, or the next
   packaging edge.
+- Current queue-head adjustment: `browser.request` local-control response body
+  route breadth now maps upstream `POST /response/body` from
+  `extensions/browser/src/browser/routes/agent.act.ts` onto native network
+  request inventory/detail commands with response body truncation metadata.
+  Source/test checkpointed in `e7084f1f`; repo-wide parity remains estimated
+  at ~99.9%, active gateway/session/tool-contract parity moves to ~99.958%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.95%.
+  Continue profile mutation, permissions, locale/timezone, dialog-hook route
+  breadth, remaining provider-specific media/reply edges, deeper installed
+  plugin activation, companion breadth, or the next packaging edge.
