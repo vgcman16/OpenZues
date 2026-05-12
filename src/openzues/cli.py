@@ -105407,6 +105407,94 @@ def _latest_pending_device(payload: dict[str, object]) -> dict[str, object] | No
     return {str(key): value for key, value in latest.items() if isinstance(key, str)}
 
 
+def _devices_string_list(*items: object) -> list[str]:
+    values: set[str] = set()
+    for item in items:
+        candidates: list[object]
+        if isinstance(item, str):
+            candidates = [item]
+        elif isinstance(item, list):
+            candidates = list(item)
+        else:
+            continue
+        for candidate in candidates:
+            text = _optional_cli_string(candidate)
+            if text is not None:
+                values.add(text)
+    return sorted(values)
+
+
+def _devices_normalize_scopes(value: object) -> list[str]:
+    scopes = set(_devices_string_list(value))
+    if "operator.admin" in scopes:
+        scopes.update({"operator.read", "operator.write"})
+    elif "operator.write" in scopes:
+        scopes.add("operator.read")
+    return sorted(scopes)
+
+
+def _devices_access_summary(item: Mapping[str, object]) -> dict[str, list[str]]:
+    return {
+        "roles": _devices_string_list(item.get("roles"), item.get("role")),
+        "scopes": _devices_normalize_scopes(item.get("scopes")),
+    }
+
+
+def _devices_approved_access_summary(item: Mapping[str, object]) -> dict[str, list[str]]:
+    roles = _devices_string_list(item.get("roles"), item.get("role"))
+    tokens = item.get("tokens")
+    if isinstance(tokens, dict):
+        token_items = [token for token in tokens.values() if isinstance(token, Mapping)]
+    elif isinstance(tokens, list):
+        token_items = [token for token in tokens if isinstance(token, Mapping)]
+    else:
+        token_items = []
+    if token_items:
+        token_roles = _devices_string_list(
+            [
+                token.get("role")
+                for token in token_items
+                if not isinstance(token.get("revokedAtMs"), int)
+            ]
+        )
+        roles = [role for role in token_roles if role in roles]
+    return {"roles": roles, "scopes": _devices_normalize_scopes(item.get("scopes"))}
+
+
+def _devices_lookup_paired_for_pending(
+    payload: Mapping[str, object],
+    pending: Mapping[str, object],
+) -> Mapping[str, object] | None:
+    pending_device_id = _optional_cli_string(pending.get("deviceId"))
+    paired_value = payload.get("paired")
+    if pending_device_id is None or not isinstance(paired_value, list):
+        return None
+    for item in paired_value:
+        if not isinstance(item, Mapping):
+            continue
+        if _optional_cli_string(item.get("deviceId")) == pending_device_id:
+            return item
+    return None
+
+
+def _devices_approval_state(
+    payload: Mapping[str, object],
+    pending: Mapping[str, object],
+) -> dict[str, object]:
+    requested = _devices_access_summary(pending)
+    paired = _devices_lookup_paired_for_pending(payload, pending)
+    if paired is None:
+        return {"kind": "new-pairing", "requested": requested, "approved": None}
+    approved = _devices_approved_access_summary(paired)
+    if not set(requested["roles"]).issubset(set(approved["roles"])):
+        kind = "role-upgrade"
+    elif not set(requested["scopes"]).issubset(set(approved["scopes"])):
+        kind = "scope-upgrade"
+    else:
+        kind = "re-approval"
+    return {"kind": kind, "requested": requested, "approved": approved}
+
+
 _DEVICES_DEFAULT_TIMEOUT_MS = 10_000
 
 
@@ -105759,6 +105847,7 @@ def devices_approve_command(
             approve_args.append("--json")
         preview = {
             "selected": selected,
+            "approvalState": _devices_approval_state(listing, selected),
             "approveCommand": _doctor_format_cli_args(approve_args),
             "requiresAuthFlags": {
                 "token": token_value is not None,

@@ -832,6 +832,53 @@ def test_devices_approve_latest_json_previews_without_approving(monkeypatch) -> 
     assert payload["approveCommand"] == "openzues devices approve req-new --json"
 
 
+def test_devices_approve_latest_json_includes_approval_state(monkeypatch) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            assert method == "device.pair.list"
+            assert params == {}
+            return {
+                "pending": [
+                    {
+                        "requestId": "req-scope",
+                        "deviceId": "device-9",
+                        "role": "operator",
+                        "scopes": ["operator.admin"],
+                        "ts": 2000,
+                    }
+                ],
+                "paired": [
+                    {
+                        "deviceId": "device-9",
+                        "roles": ["operator"],
+                        "scopes": ["operator.read"],
+                    }
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "approve", "--latest", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["approvalState"] == {
+        "kind": "scope-upgrade",
+        "requested": {
+            "roles": ["operator"],
+            "scopes": ["operator.admin", "operator.read", "operator.write"],
+        },
+        "approved": {"roles": ["operator"], "scopes": ["operator.read"]},
+    }
+
+
 def test_devices_approve_latest_json_preserves_gateway_flags_without_secrets(
     monkeypatch,
 ) -> None:
