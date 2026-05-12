@@ -184,6 +184,75 @@ class GatewayBrowserRuntimeService:
             return self.trace_start(session=session)
         if normalized_method == "POST" and normalized_path == "/trace/stop":
             return self.trace_stop(session=session)
+        if normalized_method == "POST" and normalized_path == "/set/offline":
+            if "offline" not in request_body:
+                raise GatewayBrowserRuntimeError("offline is required")
+            return self.set_setting(
+                "offline",
+                ["on" if browser_request_bool(request_body.get("offline")) else "off"],
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/headers":
+            headers = request_body.get("headers")
+            if not isinstance(headers, dict):
+                raise GatewayBrowserRuntimeError("headers is required")
+            return self.set_setting(
+                "headers",
+                [json.dumps(headers, separators=(",", ":"))],
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/credentials":
+            return self.set_setting(
+                "credentials",
+                [
+                    browser_required_string(
+                        request_body,
+                        "username",
+                        label="username",
+                    ),
+                    browser_required_string(
+                        request_body,
+                        "password",
+                        label="password",
+                    ),
+                ],
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/geolocation":
+            return self.set_setting(
+                "geo",
+                [
+                    browser_request_number_text(
+                        request_body,
+                        "latitude",
+                        label="latitude",
+                    ),
+                    browser_request_number_text(
+                        request_body,
+                        "longitude",
+                        label="longitude",
+                    ),
+                ],
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/media":
+            return self.set_setting(
+                "media",
+                [
+                    browser_required_string(
+                        request_body,
+                        "colorScheme",
+                        label="colorScheme",
+                    )
+                ],
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/device":
+            return self.set_setting(
+                "device",
+                [browser_required_string(request_body, "name", label="name")],
+                session=session,
+            )
         if normalized_method == "POST" and normalized_path == "/tabs/open":
             target = request_body.get("url")
             if not isinstance(target, str) or not target.strip():
@@ -2524,6 +2593,17 @@ def browser_required_string(request: dict[str, Any], key: str, *, label: str) ->
     if not value:
         raise ValueError(f"{label} is required")
     return value
+
+
+def browser_request_number_text(request: dict[str, Any], key: str, *, label: str) -> str:
+    value = request.get(key)
+    if isinstance(value, bool) or value is None:
+        raise GatewayBrowserRuntimeError(f"{label} is required")
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise GatewayBrowserRuntimeError(f"{label} is required")
 
 
 def browser_required_selector(request: dict[str, Any], kind: str) -> str:

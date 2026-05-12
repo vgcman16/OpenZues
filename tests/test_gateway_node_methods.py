@@ -112385,6 +112385,111 @@ def test_browser_request_runtime_maps_debug_routes(
     assert str(trace_stop["path"]).endswith(".zip")
 
 
+def test_browser_request_runtime_maps_setting_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "setting updated") -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-4:-2] == ["set", "credentials"]:
+            return Completed("credentials set for admin with secret-token")
+        if invocation[-3:-1] == ["set", "headers"]:
+            return Completed("headers set with Bearer token")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    offline = service.request(
+        method="POST",
+        path="/set/offline",
+        body={"offline": True},
+        session="parity-browser",
+    )
+    headers = service.request(
+        method="POST",
+        path="/set/headers",
+        body={"headers": {"Authorization": "Bearer token", "X-Test": "yes"}},
+        session="parity-browser",
+    )
+    credentials = service.request(
+        method="POST",
+        path="/set/credentials",
+        body={"username": "admin", "password": "secret-token"},
+        session="parity-browser",
+    )
+    geolocation = service.request(
+        method="POST",
+        path="/set/geolocation",
+        body={"latitude": 37.7749, "longitude": -122.4194},
+        session="parity-browser",
+    )
+    media = service.request(
+        method="POST",
+        path="/set/media",
+        body={"colorScheme": "dark"},
+        session="parity-browser",
+    )
+    device = service.request(
+        method="POST",
+        path="/set/device",
+        body={"name": "iPhone 12"},
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "set", "offline", "on"],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "set",
+            "headers",
+            '{"Authorization":"Bearer token","X-Test":"yes"}',
+        ],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "set",
+            "credentials",
+            "admin",
+            "secret-token",
+        ],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "set",
+            "geo",
+            "37.7749",
+            "-122.4194",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "set", "media", "dark"],
+        ["agent-browser.cmd", "--session", "parity-browser", "set", "device", "iPhone 12"],
+    ]
+    assert offline["setting"] == "offline"
+    assert offline["values"] == ["on"]
+    assert headers["headerNames"] == ["Authorization", "X-Test"]
+    assert "Bearer token" not in str(headers)
+    assert credentials["values"] == ["admin", "[redacted]"]
+    assert "secret-token" not in str(credentials)
+    assert geolocation["setting"] == "geo"
+    assert media["setting"] == "media"
+    assert device["values"] == ["iPhone 12"]
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 
