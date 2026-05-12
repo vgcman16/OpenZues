@@ -112287,6 +112287,104 @@ def test_browser_request_runtime_maps_cookie_routes(
     assert clear_result["operation"] == "clear"
 
 
+def test_browser_request_runtime_maps_debug_routes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-1] == "console":
+            return Completed("console ready")
+        if invocation[-2:] == ["errors", "--clear"]:
+            return Completed("page error")
+        if invocation[-5:] == ["network", "requests", "--filter", "api", "--clear"]:
+            return Completed('{"requests": [{"id": "req-1", "url": "https://example.test/api"}]}')
+        if invocation[-2] == "stop":
+            Path(invocation[-1]).write_bytes(b"trace")
+            return Completed("trace complete")
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    console = service.request(
+        method="GET",
+        path="/console",
+        session="parity-browser",
+    )
+    errors = service.request(
+        method="GET",
+        path="/errors",
+        query={"clear": "true"},
+        session="parity-browser",
+    )
+    requests = service.request(
+        method="GET",
+        path="/requests",
+        query={"filter": "api", "clear": True},
+        session="parity-browser",
+    )
+    trace_start = service.request(
+        method="POST",
+        path="/trace/start",
+        body={"screenshots": True},
+        session="parity-browser",
+    )
+    trace_stop = service.request(
+        method="POST",
+        path="/trace/stop",
+        body={"path": "custom-trace.zip"},
+        session="parity-browser",
+    )
+
+    assert calls[:4] == [
+        ["agent-browser.cmd", "--session", "parity-browser", "console"],
+        ["agent-browser.cmd", "--session", "parity-browser", "errors", "--clear"],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "network",
+            "requests",
+            "--filter",
+            "api",
+            "--clear",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "trace", "start"],
+    ]
+    assert calls[4][:5] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "trace",
+        "stop",
+    ]
+    assert console["lines"] == ["console ready"]
+    assert errors["cleared"] is True
+    assert requests["requestCount"] == 1
+    assert requests["clear"] is True
+    assert trace_start["traceRecording"] is True
+    assert trace_stop["traceRecording"] is False
+    assert str(trace_stop["path"]).startswith(str(tmp_path))
+    assert str(trace_stop["path"]).endswith(".zip")
+
+
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

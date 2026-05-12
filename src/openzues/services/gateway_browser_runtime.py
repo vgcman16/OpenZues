@@ -166,6 +166,24 @@ class GatewayBrowserRuntimeService:
             return self.profiles(session=session)
         if normalized_method == "GET" and normalized_path == "/tabs":
             return self.tabs(session=session)
+        if normalized_method == "GET" and normalized_path == "/console":
+            return self.console(session=session)
+        if normalized_method == "GET" and normalized_path == "/errors":
+            return self.errors(
+                session=session,
+                clear=browser_request_bool(request_query.get("clear")),
+            )
+        if normalized_method == "GET" and normalized_path == "/requests":
+            filter_value = request_query.get("filter")
+            return self.network_requests(
+                session=session,
+                filter_pattern=filter_value.strip() if isinstance(filter_value, str) else None,
+                clear=browser_request_bool(request_query.get("clear")),
+            )
+        if normalized_method == "POST" and normalized_path == "/trace/start":
+            return self.trace_start(session=session)
+        if normalized_method == "POST" and normalized_path == "/trace/stop":
+            return self.trace_stop(session=session)
         if normalized_method == "POST" and normalized_path == "/tabs/open":
             target = request_body.get("url")
             if not isinstance(target, str) or not target.strip():
@@ -539,9 +557,14 @@ class GatewayBrowserRuntimeService:
         output = self._run(["console"], session=session, timeout_seconds=5.0)
         return browser_stream_payload(label="console", session=session, output=output)
 
-    def errors(self, *, session: str) -> dict[str, object]:
-        output = self._run(["errors"], session=session, timeout_seconds=5.0)
-        return browser_stream_payload(label="error", session=session, output=output)
+    def errors(self, *, session: str, clear: bool = False) -> dict[str, object]:
+        args = ["errors"]
+        if clear:
+            args.append("--clear")
+        output = self._run(args, session=session, timeout_seconds=5.0)
+        payload = browser_stream_payload(label="error", session=session, output=output)
+        payload["cleared"] = clear
+        return payload
 
     def profiles(self, *, session: str) -> dict[str, object]:
         output = self._run(["profiles"], session=session, timeout_seconds=5.0)
@@ -611,6 +634,7 @@ class GatewayBrowserRuntimeService:
         resource_type: str | None = None,
         method: str | None = None,
         status: str | None = None,
+        clear: bool = False,
     ) -> dict[str, object]:
         args = ["network", "requests"]
         if filter_pattern is not None:
@@ -621,6 +645,8 @@ class GatewayBrowserRuntimeService:
             args.extend(["--method", method])
         if status is not None:
             args.extend(["--status", status])
+        if clear:
+            args.append("--clear")
         output = self._run(args, session=session, timeout_seconds=5.0)
         return browser_network_requests_payload(
             session=session,
@@ -629,6 +655,7 @@ class GatewayBrowserRuntimeService:
             resource_type=resource_type,
             method=method,
             status=status,
+            clear=clear,
         )
 
     def network_request(self, request_id: str, *, session: str) -> dict[str, object]:
@@ -1410,6 +1437,7 @@ def browser_network_requests_payload(
     resource_type: str | None,
     method: str | None,
     status: str | None,
+    clear: bool = False,
 ) -> dict[str, object]:
     requests: list[object] = []
     try:
@@ -1434,6 +1462,7 @@ def browser_network_requests_payload(
         "type": resource_type,
         "method": method,
         "statusFilter": status,
+        "clear": clear,
         "requestCount": request_count,
         "requests": requests,
         "lines": lines,
