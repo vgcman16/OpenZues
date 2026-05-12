@@ -128,7 +128,10 @@ sender/timestamp/reply metadata, and message-id replay dedupe for
 `extensions/zalo/src/monitor.ts` and
 `extensions/zalo/src/test-support/lifecycle-test-support.ts` is checkpointed in
 `6c87d9e5`; it covers caption/`<media:image>` session delivery plus `photo_url`
-media metadata for `message.image.received`.
+media metadata for `message.image.received`. `OZ-PROV-001FO` fakeable inbound
+image media staging from the same upstream lifecycle path is checkpointed in
+`652f0938`; it covers native fetch adapter request metadata, inbound attachment
+storage, and `MediaPath`/`MediaType`/`stagedMedia` projection.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
