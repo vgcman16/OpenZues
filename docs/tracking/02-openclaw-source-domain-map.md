@@ -63,9 +63,13 @@ targeted close/focus. `OZ-CANVAS-001J` storage route breadth from
 `extensions/browser/src/browser/routes/agent.storage.ts` is checkpointed in
 `483e4aff`; it maps `GET /storage/:kind`, `POST /storage/:kind/set`, and
 `POST /storage/:kind/clear` onto native local/session storage get/set/clear.
+`OZ-CANVAS-001K` cookie route breadth from
+`extensions/browser/src/browser/routes/agent.storage.ts` is checkpointed in
+`97602084`; it maps `GET /cookies`, `POST /cookies/set`, and
+`POST /cookies/clear` onto native cookie get/set/clear, including nested
+upstream `cookie` set fields.
 Remaining browser-request depth is richer local status, doctor, profile,
-permission, cookies, and label-action route breadth beyond the current native
-adapter.
+permission, and label-action route breadth beyond the current native adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers

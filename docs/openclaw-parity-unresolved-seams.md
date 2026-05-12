@@ -12110,3 +12110,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   local browser status/doctor, profile mutation, permissions, cookies, label
   action route breadth, remaining provider-specific media/reply edges, deeper
   installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control cookie route
+  breadth now maps upstream `GET /cookies`, `POST /cookies/set`, and
+  `POST /cookies/clear` from
+  `extensions/browser/src/browser/routes/agent.storage.ts` onto native browser
+  cookie get/set/clear methods, including nested `cookie` set fields.
+  Source/test checkpointed in `97602084`; repo-wide parity remains estimated
+  at ~99.9%, active gateway/session/tool-contract parity moves to ~99.952%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.75%.
+  Continue local browser status/doctor, profile mutation, permissions, label
+  action route breadth, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.
