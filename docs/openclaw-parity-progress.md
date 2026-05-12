@@ -4,7 +4,7 @@
 
 - Updated: 2026-05-12.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- Estimated active gateway/session/tool-contract family parity: ~99.966% for the bounded local OpenZues path.
+- Estimated active gateway/session/tool-contract family parity: ~99.967% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
@@ -23647,6 +23647,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_method_policy.py`, and focused `git diff
   --check`. Source/test checkpointed in `0a4deddc`.
+- Native `doctor.memory.remHarness` now covers OpenClaw's read-only REM
+  harness preview surface from `src/gateway/server-methods/doctor.ts`. It
+  accepts `grounded`, `includePromoted`, and clamped `limit`, scans native
+  workspace memory markdown, and returns OpenClaw-shaped `remConfig`,
+  `deepConfig`, `rem`, `grounded`, and `deep` preview payloads without mutating
+  memory files. This closes `OZ-RT-001BE`; repo-wide parity remains estimated
+  at ~99.9%, and active gateway/session/tool-contract parity moves to
+  ~99.967%.
+- Verified the gateway memory REM-harness seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_doctor_memory_rem_harness_returns_preview_payload -q`
+  (`unsupported method: doctor.memory.remHarness` before implementation, then
+  `1 passed`), adjacent memory-doctor proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "doctor_memory"`
+  (`4 passed, 1261 deselected`), policy proof
+  `python -m pytest tests\test_gateway_method_policy.py -q -k "doctor_memory or method_scope or read_scope"`
+  (`1 passed, 18 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`,
+  `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`, and focused `git diff
+  --check`. Source/test checkpointed in `5e6d43f6`.
 
 ## References
 

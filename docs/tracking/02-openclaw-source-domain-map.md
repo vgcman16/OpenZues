@@ -46,6 +46,9 @@ gateway method.
 `src/logging/diagnostic-stability.ts` is checkpointed in `0a4deddc`, returning
 payload-free native stability snapshots with OpenClaw-shaped filters and
 summaries.
+`OZ-RT-001BE` `doctor.memory.remHarness` from
+`src/gateway/server-methods/doctor.ts` is checkpointed in `5e6d43f6`, returning
+read-only native REM/deep/grounded memory preview payloads.
 
 Gateway/browser addendum: `OZ-CANVAS-001C` `browser.request` node-proxy
 dispatch from `extensions/browser/src/gateway/browser-request.ts` is
