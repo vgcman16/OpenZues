@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.92% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.985% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.992% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.994% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery and group mention gating, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.9998% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.9998% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
@@ -138,6 +138,9 @@ may lag behind this tracker.
 - [x] LINE location webhook session delivery, including map-pin coordinate text
   with fixed six-decimal latitude/longitude.
   - Status: checkpointed in `a3a4ad91`
+
+- [x] LINE default group mention gating before session delivery.
+  - Status: checkpointed in `beeb2d4a`
 
 - [x] Gateway-status slash command diagnostics for `/gateway-status` and
   `/gwstatus`, keeping gateway diagnostics separate from session `/status` in

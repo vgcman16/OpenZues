@@ -140,10 +140,11 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.92% after the
   latest provider-gated plugin native command-spec slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.992%
+- The provider-native inbound/outbound breadth family is estimated at ~99.994%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
-  delivery plus postback/media-placeholder/sticker/location delivery.
+  delivery plus postback/media-placeholder/sticker/location delivery and group
+  mention gating.
 - The CLI/operator control-plane family is estimated at ~99.9998% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -11914,3 +11915,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   provider-native inbound/outbound breadth moves to ~99.992%. Continue LINE
   group mention/history handling, remaining provider-specific media/reply
   edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: LINE signed webhook group/room messages now
+  apply the default OpenClaw mention gate before native session delivery,
+  skipping unmentioned group text with explicit skip metadata. Source/test
+  checkpointed in `beeb2d4a`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.994%. Continue LINE
+  mention pattern breadth/group history handling, remaining provider-specific
+  media/reply edges, deeper installed plugin activation, or companion breadth.
