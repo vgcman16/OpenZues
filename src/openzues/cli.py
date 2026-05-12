@@ -10319,19 +10319,53 @@ def _openclaw_update_activated_plugin_errors(
     return errors
 
 
+def _openclaw_update_channel_probe_errors(
+    health_payload: Mapping[str, object],
+) -> list[dict[str, object]]:
+    raw_channels = health_payload.get("channels")
+    if not isinstance(raw_channels, Mapping):
+        raw_health = health_payload.get("health")
+        raw_channels = raw_health.get("channels") if isinstance(raw_health, Mapping) else None
+    if not isinstance(raw_channels, Mapping):
+        return []
+    errors: list[dict[str, object]] = []
+    for channel_id, summary in raw_channels.items():
+        if not isinstance(summary, Mapping):
+            continue
+        probe = summary.get("probe")
+        if not isinstance(probe, Mapping) or probe.get("ok") is not False:
+            continue
+        normalized_channel_id = _optional_cli_string(channel_id)
+        if normalized_channel_id is None:
+            continue
+        errors.append(
+            {
+                "id": normalized_channel_id,
+                "error": _optional_cli_string(probe.get("error")) or "probe failed",
+            }
+        )
+    return errors
+
+
 def _openclaw_update_restart_health_diagnostics(
     activated_plugin_errors: Sequence[Mapping[str, object]],
+    channel_probe_errors: Sequence[Mapping[str, object]],
 ) -> list[str]:
-    if not activated_plugin_errors:
+    if not activated_plugin_errors and not channel_probe_errors:
         return []
-    lines = [
-        "Gateway did not become healthy after restart.",
-        "Activated plugin load errors:",
-    ]
-    for plugin in activated_plugin_errors:
-        plugin_id = _optional_cli_string(plugin.get("id")) or "unknown"
-        error = _optional_cli_string(plugin.get("error")) or "plugin load failed"
-        lines.append(f"- {plugin_id}: {error}")
+    lines = ["Gateway did not become healthy after restart."]
+    if activated_plugin_errors:
+        lines.append("Activated plugin load errors:")
+        for plugin in activated_plugin_errors:
+            plugin_id = _optional_cli_string(plugin.get("id")) or "unknown"
+            error = _optional_cli_string(plugin.get("error")) or "plugin load failed"
+            lines.append(f"- {plugin_id}: {error}")
+    if channel_probe_errors:
+        lines.append("Channel health probe errors:")
+        for channel in channel_probe_errors:
+            channel_id = _optional_cli_string(channel.get("id")) or "unknown"
+            error = _optional_cli_string(channel.get("error")) or "probe failed"
+            lines.append(f"- {channel_id}: {error}")
     return lines
 
 
@@ -10379,21 +10413,24 @@ async def _openclaw_update_attach_restart_health(
     if health_payload is None:
         return payload
     activated_plugin_errors = _openclaw_update_activated_plugin_errors(health_payload)
+    channel_probe_errors = _openclaw_update_channel_probe_errors(health_payload)
     restart_health: dict[str, object] = {
-        "status": "error" if activated_plugin_errors else "ok",
+        "status": "error" if activated_plugin_errors or channel_probe_errors else "ok",
         "activatedPluginErrors": activated_plugin_errors,
+        "channelProbeErrors": channel_probe_errors,
     }
     health_status = _optional_cli_string(health_payload.get("status"))
     if health_status is not None:
         restart_health["gatewayStatus"] = health_status
     diagnostics = _openclaw_update_restart_health_diagnostics(
         activated_plugin_errors,
+        channel_probe_errors,
     )
     if diagnostics:
         restart_health["diagnostics"] = diagnostics
     result = dict(payload)
     result["restartHealth"] = restart_health
-    if activated_plugin_errors:
+    if activated_plugin_errors or channel_probe_errors:
         result["status"] = "error"
         result["reason"] = "restart-health"
     return result
