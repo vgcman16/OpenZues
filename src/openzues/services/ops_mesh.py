@@ -17834,6 +17834,24 @@ class OpsMeshService:
             "reason": "slack_event_unsupported",
         }
 
+    async def handle_line_webhook(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        events = payload.get("events")
+        event_count = len(events) if isinstance(events, list) else 0
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "line",
+            "eventCount": event_count,
+        }
+        normalized_account_id = str(account_id or "").strip()
+        if normalized_account_id:
+            result["accountId"] = normalized_account_id
+        return result
+
     async def handle_msteams_inbound_activity(
         self,
         activity: Mapping[str, Any],
