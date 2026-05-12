@@ -191,6 +191,17 @@ LINE_HISTORY_CONTEXT_MARKER = "[Chat messages since your last reply - for contex
 LINE_CURRENT_MESSAGE_MARKER = "[Current message - respond to this]"
 LINE_MAX_HISTORY_KEYS = 1000
 LINE_DEFAULT_MEDIA_MAX_BYTES = 10 * 1024 * 1024
+LINE_MEDIA_CONTENT_ENDPOINT = "https://api-data.line.me/v2/bot/message/{message_id}/content"
+LINE_AUDIO_FTYP_BRANDS = frozenset(
+    {
+        "m4a ",
+        "m4b ",
+        "m4p ",
+        "m4r ",
+        "f4a ",
+        "f4b ",
+    }
+)
 BLUEBUBBLES_ROUTE_CHANNEL_ALIASES = {"bluebubbles", "imessage"}
 BLUEBUBBLES_AUDIO_MIME_MP3 = {"audio/mpeg", "audio/mp3"}
 BLUEBUBBLES_AUDIO_MIME_CAF = {"audio/x-caf", "audio/caf"}
@@ -10103,6 +10114,90 @@ def _line_inbound_optional_string(value: object) -> str | None:
     return normalized or None
 
 
+def _line_account_config_pair(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> tuple[Mapping[str, Any] | None, Mapping[str, Any] | None, str]:
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    channels = _line_inbound_mapping(snapshot.get("channels"))
+    line_config = _line_inbound_mapping(channels.get("line"))
+    if not line_config:
+        return None, None, normalized_account_id
+    account_config: Mapping[str, Any] | None = None
+    if normalized_account_id != DEFAULT_ACCOUNT_ID:
+        accounts = line_config.get("accounts")
+        if isinstance(accounts, Mapping):
+            direct = accounts.get(normalized_account_id)
+            if isinstance(direct, Mapping):
+                account_config = cast(Mapping[str, Any], direct)
+            else:
+                lowered = normalized_account_id.casefold()
+                for key, value in accounts.items():
+                    if str(key).strip().casefold() == lowered and isinstance(value, Mapping):
+                        account_config = cast(Mapping[str, Any], value)
+                        break
+    return line_config, account_config, normalized_account_id
+
+
+def _line_read_secret_file(value: object) -> str | None:
+    raw_path = _line_inbound_optional_string(value)
+    if raw_path is None:
+        return None
+    path = Path(raw_path)
+    try:
+        if path.is_symlink():
+            return None
+        secret = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return secret or None
+
+
+def _line_configured_channel_access_token(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> str | None:
+    line_config, account_config, normalized_account_id = _line_account_config_pair(
+        snapshot,
+        account_id=account_id,
+    )
+    if account_config is not None:
+        token = _line_inbound_optional_string(account_config.get("channelAccessToken"))
+        if token is not None:
+            return token
+        token = _line_read_secret_file(account_config.get("tokenFile"))
+        if token is not None:
+            return token
+    if normalized_account_id != DEFAULT_ACCOUNT_ID or line_config is None:
+        return None
+    token = _line_inbound_optional_string(line_config.get("channelAccessToken"))
+    if token is not None:
+        return token
+    token = _line_read_secret_file(line_config.get("tokenFile"))
+    if token is not None:
+        return token
+    return _line_inbound_optional_string(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN"))
+
+
+def _line_detect_media_content_type(buffer: bytes) -> str:
+    if len(buffer) >= 2 and buffer[0] == 0xFF and buffer[1] == 0xD8:
+        return "image/jpeg"
+    if len(buffer) >= 4 and buffer[:4] == b"\x89PNG":
+        return "image/png"
+    if len(buffer) >= 3 and buffer[:3] == b"GIF":
+        return "image/gif"
+    if len(buffer) >= 12 and buffer[:4] == b"RIFF" and buffer[8:12] == b"WEBP":
+        return "image/webp"
+    if len(buffer) >= 12 and buffer[4:8] == b"ftyp":
+        major_brand = buffer[8:12].decode("ascii", errors="ignore").lower()
+        if major_brand in LINE_AUDIO_FTYP_BRANDS:
+            return "audio/mp4"
+        return "video/mp4"
+    return "application/octet-stream"
+
+
 _LINE_STICKER_PACKAGES = {
     "1": "Moon & James",
     "2": "Cony & Brown",
@@ -18288,9 +18383,7 @@ class OpsMeshService:
         *,
         account_id: str | None,
     ) -> list[_MSTeamsStagedInboundMedia]:
-        fetcher = self.line_inbound_media_fetch_service
-        if fetcher is None:
-            return []
+        fetcher = self._line_inbound_media_fetcher()
         if str(event.get("type") or "").strip().lower() != "message":
             return []
         message = _line_inbound_mapping(event.get("message"))
@@ -18342,6 +18435,69 @@ class OpsMeshService:
             index=1,
         )
         return [staged] if staged is not None else []
+
+    def _line_inbound_media_fetcher(self) -> GatewayLineInboundMediaFetchService:
+        return self.line_inbound_media_fetch_service or self._default_line_inbound_media_fetch
+
+    async def _default_line_inbound_media_fetch(
+        self,
+        request: GatewayLineInboundMediaFetchRequest,
+    ) -> object:
+        return await asyncio.to_thread(self._download_line_inbound_media, request)
+
+    def _download_line_inbound_media(
+        self,
+        request: GatewayLineInboundMediaFetchRequest,
+    ) -> dict[str, object]:
+        if self.gateway_config_service is None:
+            raise RuntimeError("LINE channel access token is unavailable.")
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception as exc:
+            raise RuntimeError("LINE channel access token is unavailable.") from exc
+        token = _line_configured_channel_access_token(
+            snapshot,
+            account_id=request.account_id,
+        )
+        if token is None:
+            raise RuntimeError("LINE channel access token is unavailable.")
+        endpoint = LINE_MEDIA_CONTENT_ENDPOINT.format(
+            message_id=quote(request.message_id, safe="")
+        )
+        http_request = Request(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "OpenZues-LINE-Media/1.0",
+            },
+            method="GET",
+        )
+        try:
+            with urlopen(http_request, timeout=30) as response:
+                status = int(getattr(response, "status", 200) or 200)
+                if status >= 400:
+                    raise RuntimeError(f"LINE media content returned HTTP {status}.")
+                media_bytes = response.read(request.max_bytes + 1)
+                if len(media_bytes) > request.max_bytes:
+                    raise RuntimeError("LINE media attachment is too large.")
+                content_type = None
+                headers = getattr(response, "headers", None)
+                if headers is not None:
+                    raw_content_type = headers.get("Content-Type")
+                    if isinstance(raw_content_type, str) and raw_content_type.strip():
+                        content_type = raw_content_type.strip()
+        except HTTPError as exc:
+            message = _http_error_message("LINE media content returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"LINE media content failed: {exc.reason}") from exc
+        if content_type is None:
+            content_type = _line_detect_media_content_type(media_bytes)
+        return {
+            "bytes": media_bytes,
+            "contentType": content_type,
+            "filename": f"line-{request.message_type}-{request.message_id}",
+        }
 
     async def handle_msteams_inbound_activity(
         self,

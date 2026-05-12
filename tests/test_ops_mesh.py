@@ -34750,6 +34750,107 @@ async def test_ops_mesh_service_handle_line_webhook_stages_downloaded_media(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_downloads_media_with_configured_line_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    requests: list[Request] = []
+    png_bytes = b"\x89PNG\r\n\x1a\nline-production-media"
+
+    class FakeLineMediaResponse:
+        status = 200
+        headers = {"Content-Type": "image/png"}
+
+        def __enter__(self) -> FakeLineMediaResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            return png_bytes
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeLineMediaResponse:
+        requests.append(request)
+        return FakeLineMediaResponse()
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-production-media-session-1"}
+
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="zues",
+        server_version="test",
+        data_dir=tmp_path / "config",
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "line": {
+                    "accounts": {
+                        "line-bot": {
+                            "channelAccessToken": "account-line-token",
+                        }
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "replyToken": "line-production-reply-token",
+                    "timestamp": 1760000001800,
+                    "source": {"type": "user", "userId": "UPRODMEDIA"},
+                    "message": {
+                        "id": "line-production-media-1",
+                        "type": "image",
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    assert session_deliveries
+    assert len(requests) == 1
+    request = requests[0]
+    assert (
+        request.full_url
+        == "https://api-data.line.me/v2/bot/message/line-production-media-1/content"
+    )
+    assert request.get_header("Authorization") == "Bearer account-line-token"
+    delivery = result["deliveries"][0]
+    staged_paths = delivery["MediaPaths"]
+    assert isinstance(staged_paths, list)
+    assert Path(str(staged_paths[0])).read_bytes() == png_bytes
+    assert delivery["MediaType"] == "image/png"
+    assert delivery["stagedMedia"][0]["contentType"] == "image/png"
+    assert delivery["delivery"] == {"runtime": "session-backed", "media": {"staged": 1}}
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_line_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
