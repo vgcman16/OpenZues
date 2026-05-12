@@ -97365,6 +97365,229 @@ async def test_sessions_spawn_acp_thread_mode_persists_session_binding_metadata(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_cleans_runtime_when_metadata_registration_fails(
+    tmp_path,
+) -> None:
+    class FailingMetadataDatabase(Database):
+        async def upsert_gateway_session_metadata(
+            self,
+            *,
+            session_key: str,
+            metadata: dict[str, object],
+        ) -> None:
+            del session_key, metadata
+            raise RuntimeError("metadata store unavailable")
+
+    database = FailingMetadataDatabase(
+        tmp_path / "gateway-sessions-spawn-acp-metadata-failure.db"
+    )
+    await database.initialize()
+    cleanup_calls: list[dict[str, object]] = []
+    unbind_calls: list[dict[str, object]] = []
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+                "channels": {
+                    "matrix": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnAcpSessions": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-registration-fail",
+                "runId": "run-acp-registration-fail",
+                "mode": "session",
+                "runtimeThreadId": "thread-registration-fail",
+                "runtimeSessionId": "session-registration-fail",
+                "threadBinding": {
+                    "channel": "matrix",
+                    "accountId": "default",
+                    "to": "room:!room:example.org",
+                    "threadId": "$child-thread",
+                },
+                "sessionBinding": {
+                    "bindingId": "matrix-binding-registration-fail",
+                    "targetSessionKey": "agent:codex:acp:thread-registration-fail",
+                    "targetKind": "session",
+                    "conversation": {
+                        "channel": "matrix",
+                        "accountId": "default",
+                        "conversationId": "$child-thread",
+                        "parentConversationId": "!room:example.org",
+                    },
+                    "status": "active",
+                },
+            }
+
+        async def cancel_session(
+            self,
+            *,
+            session_key: str,
+            runtime_thread_id: str | None,
+            runtime_session_id: str | None,
+            reason: str,
+        ) -> dict[str, object]:
+            cleanup_calls.append(
+                {
+                    "op": "cancel",
+                    "sessionKey": session_key,
+                    "runtimeThreadId": runtime_thread_id,
+                    "runtimeSessionId": runtime_session_id,
+                    "reason": reason,
+                }
+            )
+            return {"status": "ok", "cancelled": True}
+
+        async def close_session(
+            self,
+            *,
+            session_key: str,
+            runtime_thread_id: str | None,
+            runtime_session_id: str | None,
+            reason: str,
+            discard_persistent_state: bool,
+            require_acp_session: bool,
+            allow_backend_unavailable: bool,
+        ) -> dict[str, object]:
+            cleanup_calls.append(
+                {
+                    "op": "close",
+                    "sessionKey": session_key,
+                    "runtimeThreadId": runtime_thread_id,
+                    "runtimeSessionId": runtime_session_id,
+                    "reason": reason,
+                    "discardPersistentState": discard_persistent_state,
+                    "requireAcpSession": require_acp_session,
+                    "allowBackendUnavailable": allow_backend_unavailable,
+                }
+            )
+            return {"status": "ok", "closed": True}
+
+    class FakeThreadBinder:
+        async def unbind(
+            self,
+            target: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            unbind_calls.append({"target": dict(target), "context": dict(context)})
+            return {"status": "ok", "unbound": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+        subagent_thread_binder=FakeThreadBinder(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Bind this ACP session before metadata fails.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_account_id="default",
+            message_to="room:!room:example.org",
+        ),
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "spawn_failed",
+        "error": "metadata store unavailable",
+        "childSessionKey": "agent:codex:acp:thread-registration-fail",
+        "mode": "session",
+        "cleanup": "keep",
+        "role": "codex",
+    }
+    assert cleanup_calls == [
+        {
+            "op": "cancel",
+            "sessionKey": "agent:codex:acp:thread-registration-fail",
+            "runtimeThreadId": "thread-registration-fail",
+            "runtimeSessionId": "session-registration-fail",
+            "reason": "spawn-failed",
+        },
+        {
+            "op": "close",
+            "sessionKey": "agent:codex:acp:thread-registration-fail",
+            "runtimeThreadId": "thread-registration-fail",
+            "runtimeSessionId": "session-registration-fail",
+            "reason": "spawn-failed",
+            "discardPersistentState": True,
+            "requireAcpSession": False,
+            "allowBackendUnavailable": True,
+        },
+    ]
+    assert unbind_calls == [
+        {
+            "target": {
+                "sessionKey": "agent:codex:acp:thread-registration-fail",
+                "agentId": "codex",
+            },
+            "context": {
+                "reason": "spawn-failed",
+                "channel": "matrix",
+                "to": "room:!room:example.org",
+                "accountId": "default",
+                "threadId": "$child-thread",
+            },
+        }
+    ]
+    assert (
+        await database.get_gateway_session_metadata(
+            "agent:codex:acp:thread-registration-fail"
+        )
+        is None
+    )
+    assert (
+        await database.count_control_chat_messages(
+            session_key="agent:codex:acp:thread-registration-fail"
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_thread_mode_uses_channel_default_account(
     tmp_path,
 ) -> None:

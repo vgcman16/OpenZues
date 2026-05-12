@@ -2726,6 +2726,59 @@ class GatewayNodeMethodService:
             # Best-effort cleanup: preserve the actionable spawn failure.
             return
 
+    async def _cleanup_failed_acp_spawn_acceptance(
+        self,
+        *,
+        session_key: str,
+        agent_id: str,
+        acp_result: Mapping[str, object],
+        reason: str,
+    ) -> None:
+        raw_thread_binding = acp_result.get("threadBinding")
+        thread_binding = raw_thread_binding if isinstance(raw_thread_binding, Mapping) else None
+        await self._cleanup_failed_thread_binding(
+            session_key=session_key,
+            agent_id=agent_id,
+            thread_binding=thread_binding,
+            reason=reason,
+        )
+        if self._acp_spawn_service is None:
+            return
+        runtime_thread_id = (
+            _string_or_none(acp_result.get("runtimeThreadId"))
+            or _string_or_none(acp_result.get("runtimeSessionId"))
+            or _acp_runtime_id_from_session_key(session_key)
+        )
+        runtime_session_id = _string_or_none(acp_result.get("runtimeSessionId")) or (
+            runtime_thread_id
+        )
+        service: Any = self._acp_spawn_service
+        cancel_session = getattr(service, "cancel_session", None)
+        if callable(cancel_session):
+            try:
+                await cancel_session(
+                    session_key=session_key,
+                    runtime_thread_id=runtime_thread_id,
+                    runtime_session_id=runtime_session_id,
+                    reason=reason,
+                )
+            except Exception:
+                pass
+        close_session = getattr(service, "close_session", None)
+        if callable(close_session):
+            try:
+                await close_session(
+                    session_key=session_key,
+                    runtime_thread_id=runtime_thread_id,
+                    runtime_session_id=runtime_session_id,
+                    reason=reason,
+                    discard_persistent_state=True,
+                    require_acp_session=False,
+                    allow_backend_unavailable=True,
+                )
+            except Exception:
+                pass
+
     async def _unbind_thread_binding_before_session_mutation(
         self,
         *,
@@ -9077,30 +9130,69 @@ class GatewayNodeMethodService:
                 if label is not None:
                     acp_metadata["label"] = label
                 acp_metadata["agentId"] = acp_agent_id
-                await self._database.upsert_gateway_session_metadata(
-                    session_key=child_session_key,
-                    metadata=acp_metadata,
-                )
-                entry = await self._sessions_service.build_session_payload_for_key(
-                    session_key=child_session_key,
-                    now_ms=timestamp_ms,
-                )
-                self._remember_gateway_chat_run(
-                    child_session_key,
-                    {"runId": run_id},
-                    started_at_ms=timestamp_ms,
-                    owner_requester=resolved_requester,
-                )
-                await self._publish_sessions_changed_event(
-                    session_key=child_session_key,
-                    reason="create",
-                    now_ms=now_ms,
-                )
-                await self._publish_sessions_changed_event(
-                    session_key=child_session_key,
-                    reason="send",
-                    now_ms=now_ms,
-                )
+                try:
+                    await self._database.upsert_gateway_session_metadata(
+                        session_key=child_session_key,
+                        metadata=acp_metadata,
+                    )
+                    entry = await self._sessions_service.build_session_payload_for_key(
+                        session_key=child_session_key,
+                        now_ms=timestamp_ms,
+                    )
+                    self._remember_gateway_chat_run(
+                        child_session_key,
+                        {"runId": run_id},
+                        started_at_ms=timestamp_ms,
+                        owner_requester=resolved_requester,
+                    )
+                    await self._publish_sessions_changed_event(
+                        session_key=child_session_key,
+                        reason="create",
+                        now_ms=now_ms,
+                    )
+                    await self._publish_sessions_changed_event(
+                        session_key=child_session_key,
+                        reason="send",
+                        now_ms=now_ms,
+                    )
+                except Exception as exc:  # noqa: BLE001 - return OpenClaw-shaped failure.
+                    await self._cleanup_failed_acp_spawn_acceptance(
+                        session_key=child_session_key,
+                        agent_id=acp_agent_id,
+                        acp_result=acp_result,
+                        reason="spawn-failed",
+                    )
+                    try:
+                        await self._database.delete_control_chat_messages(
+                            session_key=child_session_key
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        await self._database.delete_gateway_session_metadata(
+                            child_session_key
+                        )
+                    except Exception:
+                        pass
+                    self._forget_gateway_chat_run(child_session_key)
+                    try:
+                        await self._publish_sessions_changed_event(
+                            session_key=child_session_key,
+                            reason="delete",
+                            now_ms=now_ms,
+                        )
+                    except Exception:
+                        pass
+                    acp_spawn_error_response: dict[str, Any] = {
+                        "status": "error",
+                        "errorCode": "spawn_failed",
+                        "error": str(exc).strip() or type(exc).__name__,
+                        "childSessionKey": child_session_key,
+                        "mode": tracked_mode,
+                        "cleanup": tracked_cleanup,
+                    }
+                    acp_spawn_error_response.update(role_context)
+                    return acp_spawn_error_response
                 acp_response: dict[str, Any] = {
                     "status": "accepted",
                     "childSessionKey": child_session_key,
