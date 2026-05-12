@@ -10083,11 +10083,52 @@ def _line_inbound_optional_string(value: object) -> str | None:
     return normalized or None
 
 
+_LINE_STICKER_PACKAGES = {
+    "1": "Moon & James",
+    "2": "Cony & Brown",
+    "3": "Brown & Friends",
+    "4": "Moon Special",
+    "789": "LINE Characters",
+    "6136": "Cony's Happy Life",
+    "6325": "Brown's Life",
+    "6359": "Choco",
+    "6362": "Sally",
+    "6370": "Edward",
+    "11537": "Cony",
+    "11538": "Brown",
+    "11539": "Moon",
+}
+
+
+def _line_sticker_keywords(message: Mapping[str, Any]) -> str | None:
+    keywords = message.get("keywords")
+    if isinstance(keywords, list):
+        normalized_keywords = [
+            str(keyword).strip()
+            for keyword in keywords
+            if str(keyword).strip()
+        ]
+        if normalized_keywords:
+            return ", ".join(normalized_keywords[:3])
+    return _line_inbound_optional_string(message.get("text"))
+
+
+def _line_sticker_text(message: Mapping[str, Any]) -> str:
+    package_id = _line_inbound_optional_string(message.get("packageId"))
+    package_name = _LINE_STICKER_PACKAGES.get(package_id or "", "sticker")
+    keywords = _line_sticker_keywords(message)
+    if keywords is not None:
+        return f"[Sent a {package_name} sticker: {keywords}]"
+    return f"[Sent a {package_name} sticker]"
+
+
 def _line_webhook_event_text(event: Mapping[str, Any]) -> str | None:
     event_type = str(event.get("type") or "").strip().lower()
     if event_type == "message":
         message = _line_inbound_mapping(event.get("message"))
         message_type = str(message.get("type") or "").strip().lower()
+        if message_type == "sticker":
+            return _line_sticker_text(message)
         if message_type != "text":
             media_placeholder = {
                 "image": "<media:image>",
