@@ -149,11 +149,12 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999982%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999983%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
-  sends, LINE signed webhook ingress, and LINE text webhook session delivery
-  plus postback/media-placeholder/sticker/location delivery and group
+  sends, Discord audio-as-voice direct media sends, LINE signed webhook
+  ingress, and LINE text webhook session delivery plus
+  postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
   pending-history replay, non-text group media mention-gate bypass, LINE
   inbound media staging, production credential-backed LINE media download, and
@@ -12718,4 +12719,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   metadata. Source/test checkpointed in `6be0ca36`; repo-wide parity remains
   estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
   ~99.999982%. Continue remaining provider-specific media/reply edges, deeper
+  runtime/plugin activation, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native Discord direct provider-route media
+  sends now consume `audioAsVoice=true` like OpenClaw's Discord outbound
+  payload adapter. The first media item routes through the voice-message
+  helper, text and remaining media become ordered follow-ups, `replyToMode`
+  controls reply fanout, and the provider result preserves final `messageId`,
+  ordered `messageIds`, `mediaUrls`, silent flags, and delivery metadata.
+  Source/test checkpointed in `b9331153`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth moves to ~99.999983%.
+  Continue remaining provider-specific media/reply edges, deeper
   runtime/plugin activation, packaging/distribution, or companion breadth.
