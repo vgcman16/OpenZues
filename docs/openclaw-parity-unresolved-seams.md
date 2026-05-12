@@ -15,10 +15,10 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.999998% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.999999% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
   `resumeSessionId` ownership enforcement, ACP model/thinking override
-  propagation, package
+  propagation, ACP configured runtime agent alias mapping, package
   post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback,
   startup-optimization doctor notes, installed runtime session/control-UI
   contribution capture, package
@@ -12901,3 +12901,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor native-bridge parity moves to ~99.999998%. Continue
   deeper ACP bridge lifecycle edge cases, installed plugin activation depth,
   packaging/distribution, provider media edges, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now resolves
+  configured OpenZues agent ids whose `agents.list[].runtime.type` is `acp`
+  into the configured ACP harness id before allowlist checks and dispatch,
+  preserving upstream ACP runtime-agent alias behavior and resolved-agent
+  metadata. Source/test checkpointed in `ccbbd403`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999999%. Continue ACP runtime-agent mismatch errors, deeper installed
+  plugin activation depth, packaging/distribution, provider media edges, or
+  companion breadth.
