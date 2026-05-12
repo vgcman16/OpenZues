@@ -35281,9 +35281,15 @@ class OpsMeshService:
                             media_payload["flags"] = int(media_payload.get("flags") or 0) | (
                                 1 << 12
                             )
-                        if reply_to_id:
+                        fanout_reply_to_id = _reply_to_fanout_id(
+                            reply_to_id=reply_to_id,
+                            reply_to_id_source=reply_to_id_source,
+                            reply_to_mode=reply_to_mode,
+                            index=index,
+                        )
+                        if fanout_reply_to_id:
                             media_payload["message_reference"] = {
-                                "message_id": reply_to_id,
+                                "message_id": fanout_reply_to_id,
                                 "fail_if_not_exists": False,
                             }
                         media_result = self._post_json_webhook(

@@ -19767,6 +19767,9 @@ async def test_ops_mesh_service_send_direct_channel_message_iterates_discord_med
             "https://example.com/two.png",
         ],
         account_id="discord-webhook",
+        reply_to_id="parent-message-1",
+        reply_to_id_source="implicit",
+        reply_to_mode="batched",
         idempotency_key="idem-native-discord-media",
     )
     delivery = await database.get_outbound_delivery(1)
@@ -19782,6 +19785,10 @@ async def test_ops_mesh_service_send_direct_channel_message_iterates_discord_med
             {
                 "content": "Ship the Discord media bundle.",
                 "embeds": [{"image": {"url": "https://example.com/one.png"}}],
+                "message_reference": {
+                    "message_id": "parent-message-1",
+                    "fail_if_not_exists": False,
+                },
             },
         ),
         (
