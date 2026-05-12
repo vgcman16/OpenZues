@@ -170,6 +170,11 @@ without rendering a version-mismatch diagnostic.
 generic restart-health failure plus service runtime and gateway port
 diagnostics when the restart snapshot is explicitly unhealthy without
 plugin/channel/version detail families.
+`OZ-CLI-001A` gateway status command coverage from
+`src/cli/daemon-cli/status.ts` and
+`src/cli/daemon-cli/register-service-commands.ts` is checkpointed in
+`005dc599`; it covers `openzues gateway status --deep --json` as a native alias
+over the gateway capability/status view with probe/require-rpc/deep posture.
 
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is

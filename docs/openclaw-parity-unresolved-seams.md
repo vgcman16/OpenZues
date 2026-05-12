@@ -14,7 +14,7 @@ Current percentage rollup:
   `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99990% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99991% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
@@ -61,7 +61,7 @@ Current percentage rollup:
   sections, plugin inspect human header/bundle-format labels, plugin list
   verbose activation/import state, LINE rich-menu runtime helpers,
   restart-health missing-version diagnostics, restart-health unhealthy snapshot
-  diagnostics, plugin list human enabled label, plugin list
+  diagnostics, `gateway status --deep` command alias, plugin list human enabled label, plugin list
   human enabled count, manifest load-path activation-state projection,
   plugin public-surface/runtime-sidecar artifact metadata projection,
   configured-channel owner activation projection,
@@ -151,7 +151,7 @@ Current percentage rollup:
   pending-history replay, non-text group media mention-gate bypass, LINE
   inbound media staging, production credential-backed LINE media download, and
   LINE webhook redelivery dedupe.
-- The CLI/operator control-plane family is estimated at ~99.99990% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.99991% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
   secrets reload CLI surface, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch restart-health failure, gateway health `serverVersion` projection, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
@@ -179,7 +179,7 @@ Current percentage rollup:
   plugin inspect human header/bundle-format labels, plugin list verbose
   activation/import state, LINE rich-menu runtime helpers,
   restart-health missing-version diagnostics, restart-health unhealthy snapshot
-  diagnostics, plugin list human enabled label, plugin list human
+  diagnostics, `gateway status --deep` command alias, plugin list human enabled label, plugin list human
   enabled count, manifest load-path activation-state projection,
   plugin public-surface/runtime-sidecar artifact metadata projection,
   configured-channel owner activation projection,
@@ -223,6 +223,16 @@ remains estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity
 move to ~99.99990%. Continue remaining packaging/distribution breadth,
 provider-specific media/reply edges, deeper installed plugin activation, or
 companion breadth.
+
+Current queue-head adjustment: the native CLI now exposes
+`openzues gateway status --deep --json` as an OpenZues-native alias over the
+gateway capability/status view, covering the OpenClaw `gateway status --deep`
+operator command posture from `src/cli/daemon-cli/status.ts` and
+`src/cli/daemon-cli/register-service-commands.ts`. Source/test checkpointed in
+`005dc599`; repo-wide parity remains estimated at ~99.9%, and
+runtime/CLI/doctor plus CLI/operator parity move to ~99.99991%. Continue
+remaining packaging/distribution breadth, provider-specific media/reply edges,
+deeper installed plugin activation, or companion breadth.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -12262,5 +12272,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `src/cli/daemon-cli/restart-health.ts`. Source/test checkpointed in
   `23f1e2b2`; repo-wide parity remains estimated at ~99.9%, and
   runtime/CLI/doctor plus CLI/operator parity move to ~99.99990%. Continue
+  remaining packaging/distribution breadth, provider-specific media/reply
+  edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: `openzues gateway status --deep --json` now
+  aliases the native gateway capability/status view, matching the OpenClaw
+  operator command posture from `src/cli/daemon-cli/status.ts` and
+  `src/cli/daemon-cli/register-service-commands.ts`. Source/test checkpointed
+  in `005dc599`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.99991%. Continue
   remaining packaging/distribution breadth, provider-specific media/reply
   edges, deeper installed plugin activation, or companion breadth.
