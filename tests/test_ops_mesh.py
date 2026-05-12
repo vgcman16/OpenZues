@@ -21482,6 +21482,116 @@ async def test_ops_mesh_service_send_direct_channel_message_falls_back_from_qqbo
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_sends_qqbot_file_text_after_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-qqbot-file-text"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="QQBot Native File Text Provider",
+        kind="qqbot",
+        target="https://api.sgroup.qq.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="qqbot-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "qqbot",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "qqbot:c2c:openid-1",
+        },
+    )
+    qqbot_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        qqbot_posts.append((target, payload, secret_header_name, secret_token))
+        if target.endswith("/files"):
+            return {
+                "file_info": "qq-file-text-info",
+                "file_uuid": "qq-file-text-uuid",
+                "ttl": 3600,
+            }
+        if payload.get("msg_type") == 7:
+            return {"id": "qq-file-media-msg-1", "timestamp": "2026-05-12T12:30:00Z"}
+        return {"id": "qq-file-text-msg-1", "timestamp": "2026-05-12T12:30:01Z"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="qqbot",
+        to="qqbot:c2c:openid-1",
+        message="Please review this report.",
+        media_urls=["https://example.com/report.pdf"],
+        media_kind="file",
+        account_id="default",
+        idempotency_key="idem-native-qqbot-file-text-after-media",
+    )
+
+    assert result["messageId"] == "qq-file-media-msg-1"
+    assert result["messageIds"] == ["qq-file-media-msg-1"]
+    assert result["mediaIds"] == ["qq-file-text-uuid"]
+    assert result["meta"] == {
+        "targetId": "openid-1",
+        "targetType": "c2c",
+        "mediaType": "file",
+    }
+    assert qqbot_posts == [
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/files",
+            {
+                "file_type": 4,
+                "srv_send_msg": False,
+                "url": "https://example.com/report.pdf",
+                "file_name": "report.pdf",
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "msg_type": 7,
+                "media": {"file_info": "qq-file-text-info"},
+                "msg_seq": 1,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
+                "content": "Please review this report.",
+                "msg_type": 0,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

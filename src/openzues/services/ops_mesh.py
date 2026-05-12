@@ -35845,6 +35845,20 @@ class OpsMeshService:
                             "QQBot API response did not include a message id."
                         )
                     message_ids.append(sent_message_id)
+                    if index == 0 and text and file_type in {3, 4}:
+                        text_payload: dict[str, object] = {"content": text, "msg_type": 0}
+                        if reply_to_id:
+                            text_payload["msg_id"] = reply_to_id
+                            text_payload["msg_seq"] = _qqbot_next_msg_seq(reply_to_id)
+                        try:
+                            self._post_json_webhook(
+                                _qqbot_message_endpoint(base_target, target_type, target_id),
+                                text_payload,
+                                secret_header_name="Authorization",
+                                secret_token=bearer_token,
+                            )
+                        except Exception:
+                            pass
             native_result: dict[str, object] = {
                 "runtime": "native-provider-backed",
                 "messageId": message_ids[-1],
