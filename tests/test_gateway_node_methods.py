@@ -98176,6 +98176,7 @@ async def test_sessions_spawn_acp_run_from_subagent_requester_implicitly_streams
                         "defaults": {
                             "subagents": {
                                 "maxSpawnDepth": 3,
+                                "allowAgents": ["codex"],
                             },
                         },
                     },
@@ -98299,6 +98300,7 @@ async def test_sessions_spawn_acp_run_from_subagent_requester_skips_stream_when_
                         "defaults": {
                             "subagents": {
                                 "maxSpawnDepth": 3,
+                                "allowAgents": ["codex"],
                             },
                         },
                     },
