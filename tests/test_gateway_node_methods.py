@@ -97917,6 +97917,66 @@ async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_rejects_resume_id_without_requester_session_context(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-resume-no-requester.db")
+    await database.initialize()
+    await database.upsert_gateway_session_metadata(
+        session_key="agent:codex:acp:thread-owned",
+        metadata={
+            "runtime": "acp",
+            "spawnedBy": "agent:main:main",
+            "parentSessionKey": "agent:main:main",
+            "runtimeThreadId": "thread-owned",
+            "runtimeSessionId": "session-owned",
+        },
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-owned",
+                "runId": "run-acp-resume-without-requester-1",
+                "mode": "run",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Resume my ACP thread without a requester context.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "resumeSessionId": "session-owned",
+        },
+        now_ms=20_000,
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "requester_session_required",
+        "error": "sessions_spawn resumeSessionId requires an active requester session context.",
+        "role": "codex",
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_rejects_resume_id_not_owned_by_requester(
     tmp_path,
 ) -> None:

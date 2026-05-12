@@ -8781,6 +8781,9 @@ class GatewayNodeMethodService:
                     if requester_session_key is not None
                     else await self._sessions_service.main_session_key()
                 )
+                acp_resume_requester_session_key = (
+                    spawn_parent_session_key if requester_session_key is not None else None
+                )
                 requester_sandbox_status = _sessions_spawn_sandbox_runtime_status(
                     self._config_service,
                     session_key=spawn_parent_session_key,
@@ -8826,7 +8829,7 @@ class GatewayNodeMethodService:
                     }
                 acp_resume_error = await _sessions_spawn_acp_resume_session_error(
                     self._database,
-                    requester_session_key=spawn_parent_session_key,
+                    requester_session_key=acp_resume_requester_session_key,
                     resume_session_id=resume_session_id,
                 )
                 if acp_resume_error is not None:
