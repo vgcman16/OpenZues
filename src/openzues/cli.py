@@ -10439,6 +10439,48 @@ def _openclaw_update_can_resolve_registry_version_for_target(value: object) -> b
     ) and not _openclaw_update_is_explicit_package_install_spec(target)
 
 
+def _openclaw_update_normalize_version_tag(value: object) -> str | None:
+    target = _openclaw_update_normalize_package_target(value)
+    if not target:
+        return None
+    cleaned = target[1:] if target.startswith("v") else target
+    return cleaned if _openclaw_update_semver_tuple(cleaned) is not None else None
+
+
+def _openclaw_update_resolve_target_version(
+    tag: str,
+    *,
+    timeout_seconds: float | None = None,
+) -> str | None:
+    if not _openclaw_update_can_resolve_registry_version_for_target(tag):
+        return None
+    direct = _openclaw_update_normalize_version_tag(tag)
+    if direct is not None:
+        return direct
+    status = _openclaw_update_fetch_package_target_status(
+        tag,
+        timeout_seconds=timeout_seconds,
+    )
+    return _optional_cli_string(status.get("version"))
+
+
+def _openclaw_update_package_downgrade_risk(
+    *,
+    tag: str,
+    current_version: str | None,
+    target_version: str | None,
+    fallback_to_latest: bool,
+) -> bool:
+    if not _openclaw_update_can_resolve_registry_version_for_target(tag):
+        return False
+    if fallback_to_latest or current_version is None:
+        return False
+    if target_version is None:
+        return True
+    comparison = _openclaw_update_compare_semver_strings(current_version, target_version)
+    return comparison is not None and comparison > 0
+
+
 def _openclaw_update_resolve_global_install_spec(*, package_name: str, tag: str) -> str:
     override = (
         os.environ.get("OPENCLAW_UPDATE_PACKAGE_SPEC", "").strip()
@@ -10615,16 +10657,25 @@ def _openclaw_update_dry_run_preview(
     target_version: str | None = None
     fallback_to_latest = False
     mode = "unknown"
+    downgrade_risk = False
 
     if update_install_kind == "git":
         mode = "git"
     elif update_install_kind == "package":
         mode = _openclaw_update_package_manager(root)
-        if not explicit_tag:
+        if explicit_tag:
+            target_version = _openclaw_update_resolve_target_version(target_tag)
+        else:
             resolved = _openclaw_update_resolve_npm_channel_tag(effective_channel)
             target_tag = _optional_cli_string(resolved.get("tag")) or target_tag
             target_version = _optional_cli_string(resolved.get("version"))
             fallback_to_latest = effective_channel == "beta" and target_tag == "latest"
+        downgrade_risk = _openclaw_update_package_downgrade_risk(
+            tag=target_tag,
+            current_version=current_version,
+            target_version=target_version,
+            fallback_to_latest=fallback_to_latest,
+        )
         package_install_spec = _openclaw_update_resolve_global_install_spec(
             package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
             tag=target_tag,
@@ -10676,7 +10727,7 @@ def _openclaw_update_dry_run_preview(
         "tag": package_install_spec or target_tag,
         "currentVersion": current_version,
         "targetVersion": target_version,
-        "downgradeRisk": False,
+        "downgradeRisk": downgrade_risk,
         "actions": actions,
         "notes": notes,
     }
@@ -106342,12 +106393,52 @@ def update_root(
         effective_channel = requested_channel or "stable"
         explicit_tag = _openclaw_update_normalize_package_target(tag)
         target_tag = explicit_tag or _openclaw_update_channel_to_package_tag(effective_channel)
+        current_version = _openclaw_update_read_package_version(root)
+        target_version: str | None = None
+        fallback_to_latest = False
         if not explicit_tag:
             resolved = _openclaw_update_resolve_npm_channel_tag(
                 effective_channel,
                 timeout_seconds=timeout_seconds,
             )
             target_tag = _optional_cli_string(resolved.get("tag")) or target_tag
+            target_version = _optional_cli_string(resolved.get("version"))
+            fallback_to_latest = effective_channel == "beta" and target_tag == "latest"
+        else:
+            target_version = _openclaw_update_resolve_target_version(
+                target_tag,
+                timeout_seconds=timeout_seconds,
+            )
+        downgrade_risk = _openclaw_update_package_downgrade_risk(
+            tag=target_tag,
+            current_version=current_version,
+            target_version=target_version,
+            fallback_to_latest=fallback_to_latest,
+        )
+        if downgrade_risk and not yes:
+            if json_output or not _doctor_update_offer_is_interactive():
+                typer.echo(
+                    "\n".join(
+                        [
+                            "Downgrade confirmation required.",
+                            "Downgrading can break configuration. Re-run in a TTY to confirm.",
+                        ]
+                    ),
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+            target_label = target_version or f"{target_tag} (unknown)"
+            message = (
+                f"Downgrading from {current_version} to {target_label} can break configuration. "
+                "Continue?"
+            )
+            if not typer.confirm(
+                message,
+                default=False,
+            ):
+                if not json_output:
+                    typer.echo("Update cancelled.")
+                raise typer.Exit(code=0)
         package_spec = _openclaw_update_resolve_global_install_spec(
             package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
             tag=target_tag,

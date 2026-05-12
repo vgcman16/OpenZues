@@ -26340,6 +26340,32 @@ def test_update_dry_run_json_falls_back_beta_channel_to_latest(
     assert "Beta channel resolves to latest for this run (fallback)." in payload["notes"]
 
 
+def test_update_dry_run_json_flags_registry_downgrade_risk(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "npm@10.0.0", "version": "2.0.0"}),
+        encoding="utf-8",
+    )
+
+    def fake_fetch(target: str, *, timeout_seconds: float | None = None) -> dict[str, object]:
+        return {"target": target, "version": "1.5.0", "nodeEngine": None}
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_openclaw_update_fetch_package_target_status", fake_fetch)
+
+    result = runner.invoke(app, ["update", "--dry-run", "--json", "--tag", "1.5.0"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["currentVersion"] == "2.0.0"
+    assert payload["targetVersion"] == "1.5.0"
+    assert payload["downgradeRisk"] is True
+
+
 def test_update_resolve_npm_channel_tag_falls_back_beta_prerelease_to_latest(
     monkeypatch,
 ) -> None:
@@ -26648,6 +26674,135 @@ def test_update_json_dispatches_package_update_service(
     assert payload["mode"] == "pnpm"
     assert payload["warnings"] == ["Low disk space near package root: 256 MiB available."]
     assert "Warning: Low disk space near package root: 256 MiB available." in result.stderr
+
+
+def test_update_json_blocks_registry_downgrade_without_yes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0", "version": "2.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen["dispatched"] = True
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    def fake_fetch(target: str, *, timeout_seconds: float | None = None) -> dict[str, object]:
+        return {"target": target, "version": "1.5.0", "nodeEngine": None}
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_openclaw_update_fetch_package_target_status", fake_fetch)
+
+    result = runner.invoke(app, ["update", "--json", "--tag", "1.5.0"])
+
+    assert result.exit_code == 1
+    assert "Downgrade confirmation required." in result.stderr
+    assert seen == {}
+
+
+def test_update_json_allows_registry_downgrade_with_yes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0", "version": "2.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.update(
+                {
+                    "package_root": package_root,
+                    "package_manager": package_manager,
+                    "package_spec": package_spec,
+                    "timeout_ms": timeout_ms,
+                }
+            )
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    def fake_fetch(target: str, *, timeout_seconds: float | None = None) -> dict[str, object]:
+        return {"target": target, "version": "1.5.0", "nodeEngine": None}
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_openclaw_update_fetch_package_target_status", fake_fetch)
+
+    result = runner.invoke(app, ["update", "--json", "--yes", "--tag", "1.5.0"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen == {
+        "package_root": package_root,
+        "package_manager": "pnpm",
+        "package_spec": "openzues@1.5.0",
+        "timeout_ms": None,
+    }
 
 
 def test_update_json_refuses_package_update_inside_gateway_service(
