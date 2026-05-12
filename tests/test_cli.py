@@ -1274,6 +1274,92 @@ def test_devices_clear_remote_gateway_removes_and_rejects_with_auth_flags(monkey
     assert "secret-token" not in result.stdout
 
 
+def test_devices_list_uses_configured_remote_gateway_when_url_omitted(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.12-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.12-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "remote": {
+                        "url": "remote.example.com:444",
+                        "token": "configured-token",
+                    }
+                }
+            }
+        )
+    )
+    remote_calls: list[tuple[str, dict[str, object], dict[str, object]]] = []
+
+    async def fake_remote_gateway_call(
+        method: str,
+        params: dict[str, object],
+        *,
+        url: str,
+        token: str | None,
+        password: str | None,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        remote_calls.append(
+            (
+                method,
+                dict(params),
+                {
+                    "url": url,
+                    "token": token,
+                    "password": password,
+                    "timeoutMs": timeout_ms,
+                },
+            )
+        )
+        return {"pending": [], "paired": []}
+
+    async def fail_local_services(action):
+        raise AssertionError("configured gateway.remote.url should use remote dispatch")
+
+    monkeypatch.setattr(
+        "openzues.cli._call_remote_gateway_node_method",
+        fake_remote_gateway_call,
+    )
+    monkeypatch.setattr("openzues.cli._run_with_services", fail_local_services)
+
+    result = runner.invoke(app, ["devices", "list", "--timeout", "3000", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert remote_calls == [
+        (
+            "device.pair.list",
+            {},
+            {
+                "url": "wss://remote.example.com:444",
+                "token": "configured-token",
+                "password": None,
+                "timeoutMs": 3000,
+            },
+        )
+    ]
+    assert json.loads(result.stdout) == {"pending": [], "paired": []}
+    assert "configured-token" not in result.stdout
+
+
 @pytest.mark.parametrize(
     ("argv", "expected_call", "response"),
     [

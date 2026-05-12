@@ -105445,6 +105445,36 @@ def _devices_gateway_method_url(url: str) -> str:
     return urlunparse((scheme, parsed.netloc, endpoint_path, "", "", ""))
 
 
+def _devices_resolve_remote_gateway_options(
+    *,
+    url: str | None,
+    token: str | None,
+    password: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    url_value = _optional_cli_string(url)
+    token_value = _optional_cli_string(token)
+    password_value = _optional_cli_string(password)
+    if url_value is not None:
+        return url_value, token_value, password_value
+    try:
+        app_settings = _runtime_settings()
+        config_snapshot = _build_cli_gateway_config_service(app_settings).build_snapshot()
+    except Exception:
+        return None, token_value, password_value
+    remote_config = _qr_gateway_remote_config(config_snapshot)
+    configured_url = _qr_config_text(remote_config.get("url"))
+    if configured_url is None:
+        return None, token_value, password_value
+    return (
+        _normalize_pairing_config_url(
+            configured_url,
+            invalid_error="Configured gateway.remote.url is invalid.",
+        ),
+        token_value or _qr_config_text(remote_config.get("token")),
+        password_value or _qr_config_text(remote_config.get("password")),
+    )
+
+
 async def _call_remote_gateway_node_method(
     method: str,
     params: dict[str, object],
@@ -105499,15 +105529,19 @@ def _run_devices_gateway_node_method(
     password: str | None,
     timeout: str | None,
 ) -> dict[str, object]:
-    url_value = _optional_cli_string(url)
-    if url_value is not None:
+    remote_url, remote_token, remote_password = _devices_resolve_remote_gateway_options(
+        url=url,
+        token=token,
+        password=password,
+    )
+    if remote_url is not None:
         return _run(
             _call_remote_gateway_node_method(
                 method,
                 params,
-                url=url_value,
-                token=_optional_cli_string(token),
-                password=_optional_cli_string(password),
+                url=remote_url,
+                token=remote_token,
+                password=remote_password,
                 timeout_ms=_devices_gateway_timeout_ms(timeout),
             )
         )
