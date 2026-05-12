@@ -23,7 +23,7 @@ may lag behind this tracker.
 | Provider-native inbound/outbound breadth | ~99.999997% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Matrix implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.9999997% | High for bounded native bridge | ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
-| Packaging/companion app breadth | ~6.0% | Low, broad parity still open | QR setup-code safety, SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, and device token scope-preserving rotation are landed; companion apps remain mostly open |
+| Packaging/companion app breadth | ~6.1% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, and device token scope-preserving rotation are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
 
@@ -225,6 +225,23 @@ may lag behind this tracker.
   - Last verified: 2026-05-12, focused red/green proof (`1 failed` before
     implementation, then `1 passed`), adjacent proof (`5 passed, 1277
     deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] Local QR password SecretRef resolution.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: local `openzues qr` resolves `gateway.auth.password`
+    SecretRefs before setup-code auth-label selection when no explicit CLI
+    auth override is provided, and keeps the resolved password out of output.
+  - Evidence required: focused QR local SecretRef proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `8dbfb15b`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green proof (`1 failed` before
+    implementation with `auth="bootstrap-token"`, then `1 passed`), adjacent
+    QR proof (`16 passed, 609 deselected`), ruff, mypy, and focused
+    `git diff --check`.
 
 - [x] Gateway method registry, policy wiring, strict parameter guards, config
   lookup/mutation, node invoke guards, device pairing, approvals, and node/global
@@ -9527,6 +9544,28 @@ may lag behind this tracker.
     (`14 passed, 558 deselected`), `ruff check src\openzues\cli.py
     src\openzues\schemas.py tests\test_cli.py`, `mypy src\openzues\cli.py
     src\openzues\schemas.py`, and focused `git diff --check`.
+
+- [x] QR local password SecretRef resolution.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`,
+    `openclaw-main/src/gateway/resolve-configured-secret-input-string.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: non-remote QR setup-code generation resolves env/file/exec-shaped
+    local `gateway.auth.password` SecretRefs through the native QR SecretRef
+    helpers when upstream would materialize the local password, reports
+    `auth="password"`, and never prints the resolved secret.
+  - Evidence required: focused local QR password SecretRef proof, adjacent QR
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `8dbfb15b`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_local_json_resolves_gateway_password_secretref -q`
+    (`1 failed` before implementation because the JSON payload reported
+    `auth="bootstrap-token"`, then `1 passed`), adjacent
+    `python -m pytest tests\test_cli.py -q -k "qr_"` (`16 passed, 609
+    deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+    src\openzues\cli.py`, and focused `git diff --check`.
 
 - [x] Direct outbound `channelData`-only payloads.
   - Source: `openclaw-main/src/infra/outbound/deliver.ts`,
