@@ -153,7 +153,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999995%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999996%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
   sends, Discord audio-as-voice direct media sends, Signal receive envelope
@@ -162,8 +162,8 @@ Current percentage rollup:
   self-closing media tags, QQBot reply message sequencing, QQBot local media
   file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file
   fallback, QQBot file-media text follow-up delivery, QQBot direct image/video
-  media text follow-up delivery, QQBot inline media text ordering, LINE signed
-  webhook
+  media text follow-up delivery, QQBot inline media text ordering/result
+  metadata, LINE signed webhook
   ingress, and
   LINE text webhook session delivery plus
   postback/media-placeholder/sticker/location delivery and group
@@ -12878,6 +12878,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   provider-native inbound/outbound breadth moves to ~99.999995%. Continue
   deeper QQBot inline trailing-result metadata, ACP bridge lifecycle depth,
   packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native QQBot inline media trailing text now
+  reports the trailing text message id as the provider `messageId`, matching
+  OpenClaw's queued `lastResult` behavior while preserving media metadata.
+  Source/test checkpointed in `34a31061`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999996%. Continue broader QQBot provider/media edge review, ACP bridge
+  lifecycle depth, packaging/distribution, or companion breadth.
 - Current queue-head adjustment: native ACP `sessions.spawn` now rejects
   foreign `resumeSessionId` values before runtime dispatch, matching
   OpenClaw's requester-owned ACP session resume contract while preserving
