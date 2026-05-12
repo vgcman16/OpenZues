@@ -2811,6 +2811,12 @@ class GatewayNodeMethodService:
             and "sessionKey" not in tool_args
         ):
             tool_args["sessionKey"] = session_key
+        if (
+            session_key is not None
+            and resolved_tool_method == "agents.list"
+            and "requesterSessionKey" not in tool_args
+        ):
+            tool_args["requesterSessionKey"] = session_key
         if tool_key == "sessions_spawn" and resolved_tool_method == "sessions.spawn":
             tool_args = _openclaw_sessions_spawn_tool_args(tool_args)
         if session_key is not None and resolved_tool_method == "sessions.spawn":
@@ -8864,15 +8870,6 @@ class GatewayNodeMethodService:
                 )
             if agent_id is not None and not await self._agents_service.agent_exists(agent_id):
                 raise ValueError(f'unknown agent id "{agent_id}"')
-            if agent_id is None and _sessions_spawn_requires_agent_id(self._config_service):
-                return {
-                    "status": "forbidden",
-                    "error": (
-                        "sessions_spawn requires explicit agentId when requireAgentId is "
-                        "configured. Use agents_list to see allowed agent ids."
-                    ),
-                    **role_context,
-                }
             timestamp_ms = _timestamp_ms(now_ms)
             requester_session_key = _optional_non_empty_string(
                 payload.get("requesterSessionKey"),
@@ -8884,10 +8881,23 @@ class GatewayNodeMethodService:
                 else await self._sessions_service.main_session_key()
             )
             requester_agent_id = resolve_agent_id_from_session_key(spawn_parent_session_key)
+            if agent_id is None and _sessions_spawn_requires_agent_id(
+                self._config_service,
+                requester_agent_id=requester_agent_id,
+            ):
+                return {
+                    "status": "forbidden",
+                    "error": (
+                        "sessions_spawn requires explicit agentId when requireAgentId is "
+                        "configured. Use agents_list to see allowed agent ids."
+                    ),
+                    **role_context,
+                }
             target_agent_id = agent_id or requester_agent_id
             if target_agent_id != requester_agent_id:
                 allow_any_agent, allowed_agent_ids = _sessions_spawn_allowed_agent_policy(
-                    self._config_service
+                    self._config_service,
+                    requester_agent_id=requester_agent_id,
                 )
                 if not allow_any_agent and target_agent_id not in allowed_agent_ids:
                     allowed_text = ", ".join(allowed_agent_ids) if allowed_agent_ids else "none"
@@ -14921,7 +14931,10 @@ def _agents_list_sessions_spawn_projection(
             "configured": requester_agent_id == DEFAULT_AGENT_ID,
         },
     )
-    allow_any, allowed_agent_ids = _sessions_spawn_allowed_agent_policy(config_service)
+    allow_any, allowed_agent_ids = _sessions_spawn_allowed_agent_policy(
+        config_service,
+        requester_agent_id=requester_agent_id,
+    )
     visible_ids = {requester_agent_id}
     if allow_any:
         visible_ids.update(configured_by_id)
@@ -14989,10 +15002,17 @@ def _sessions_spawn_default_run_timeout_seconds(
     return max(0, math.floor(float(raw_timeout)))
 
 
-def _sessions_spawn_requires_agent_id(config_service: GatewayConfigService | None) -> bool:
+def _sessions_spawn_requires_agent_id(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_agent_id: str | None = None,
+) -> bool:
     if config_service is None:
         return False
-    subagents_config = _sessions_spawn_subagents_config(config_service)
+    subagents_config = _sessions_spawn_subagents_config(
+        config_service,
+        requester_agent_id=requester_agent_id,
+    )
     return bool(
         isinstance(subagents_config, dict)
         and subagents_config.get("requireAgentId") is True
@@ -15001,10 +15021,15 @@ def _sessions_spawn_requires_agent_id(config_service: GatewayConfigService | Non
 
 def _sessions_spawn_allowed_agent_policy(
     config_service: GatewayConfigService | None,
+    *,
+    requester_agent_id: str | None = None,
 ) -> tuple[bool, tuple[str, ...]]:
     if config_service is None:
         return False, ()
-    subagents_config = _sessions_spawn_subagents_config(config_service)
+    subagents_config = _sessions_spawn_subagents_config(
+        config_service,
+        requester_agent_id=requester_agent_id,
+    )
     if not isinstance(subagents_config, dict):
         return False, ()
     raw_allow_agents = subagents_config.get("allowAgents")
@@ -16033,19 +16058,30 @@ def _sessions_spawn_control_scope(
 
 def _sessions_spawn_subagents_config(
     config_service: GatewayConfigService,
+    *,
+    requester_agent_id: str | None = None,
 ) -> dict[str, Any] | None:
-    snapshot = config_service.build_snapshot()
-    gateway_config = snapshot.get("gateway")
-    if not isinstance(gateway_config, dict):
-        return None
-    agents_config = gateway_config.get("agents")
-    if not isinstance(agents_config, dict):
-        return None
-    defaults_config = agents_config.get("defaults")
-    if not isinstance(defaults_config, dict):
-        return None
-    subagents_config = defaults_config.get("subagents")
-    return subagents_config if isinstance(subagents_config, dict) else None
+    resolved: dict[str, Any] = {}
+    found = False
+    for agents_config in _sessions_spawn_agents_config_roots(config_service):
+        defaults_config = agents_config.get("defaults")
+        if isinstance(defaults_config, dict):
+            defaults_subagents = defaults_config.get("subagents")
+            if isinstance(defaults_subagents, dict):
+                resolved.update(defaults_subagents)
+                found = True
+        if requester_agent_id is None:
+            continue
+        agent_config = _sessions_spawn_agent_config_from_root(
+            agents_config,
+            agent_id=requester_agent_id,
+        )
+        if isinstance(agent_config, dict):
+            agent_subagents = agent_config.get("subagents")
+            if isinstance(agent_subagents, dict):
+                resolved.update(agent_subagents)
+                found = True
+    return resolved if found else None
 
 
 def _sessions_spawn_attachments_config(

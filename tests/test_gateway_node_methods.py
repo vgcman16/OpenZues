@@ -108057,6 +108057,92 @@ async def test_agents_list_sessions_spawn_projection_honors_allowlist(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_agents_list_uses_requester_agent_allowlist(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agents-list-requester-allowlist.db")
+    await database.initialize()
+    for agent_id, name in (
+        ("lead", "Lead"),
+        ("builder", "Builder"),
+        ("reviewer", "Reviewer"),
+    ):
+        await database.create_gateway_agent(
+            agent_id=agent_id,
+            name=name,
+            workspace=str(tmp_path / "agents" / agent_id),
+            model=None,
+            emoji=None,
+            avatar=None,
+        )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "allowAgents": ["reviewer"],
+                            },
+                        },
+                        "list": [
+                            {
+                                "id": "lead",
+                                "name": "Lead",
+                                "subagents": {
+                                    "allowAgents": ["builder"],
+                                },
+                            }
+                        ],
+                    },
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "agents_list",
+            "args": {"toolProjection": "sessions_spawn"},
+            "sessionKey": "agent:lead:main",
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "requester": "lead",
+            "allowAny": False,
+            "agents": [
+                {"id": "lead", "name": "Lead", "configured": True},
+                {"id": "builder", "name": "Builder", "configured": True},
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("method", "params", "message"),
     [
