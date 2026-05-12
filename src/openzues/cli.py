@@ -105518,9 +105518,17 @@ def devices_approve_command(
         "--latest",
         help="Preview the latest pending request before explicit approval.",
     ),
+    url: str | None = typer.Option(None, "--url", help="Gateway WebSocket URL."),
+    timeout: str | None = typer.Option(None, "--timeout", help="Gateway timeout in ms."),
+    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    password: str | None = typer.Option(None, "--password", help="Gateway password."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     normalized_request_id = _optional_cli_string(request_id)
+    url_value = _optional_cli_string(url)
+    timeout_value = _optional_cli_string(timeout)
+    token_value = _optional_cli_string(token)
+    password_value = _optional_cli_string(password)
     if normalized_request_id is None or latest:
 
         async def _preview_action(services: CliServices) -> dict[str, object]:
@@ -105535,18 +105543,28 @@ def devices_approve_command(
         if selected_request_id is None:
             typer.echo("Selected device pairing request is missing requestId", err=True)
             raise typer.Exit(code=1)
+        approve_args = ["openzues", "devices", "approve", selected_request_id]
+        if url_value is not None:
+            approve_args.extend(["--url", url_value])
+        if timeout_value is not None:
+            approve_args.extend(["--timeout", timeout_value])
+        if json_output:
+            approve_args.append("--json")
         preview = {
             "selected": selected,
-            "approveCommand": (
-                f"openzues devices approve {selected_request_id}"
-                f"{' --json' if json_output else ''}"
-            ),
+            "approveCommand": _doctor_format_cli_args(approve_args),
+            "requiresAuthFlags": {
+                "token": token_value is not None,
+                "password": password_value is not None,
+            },
         }
         if json_output:
             typer.echo(json.dumps(preview, indent=2))
         else:
             _emit_devices_list({"pending": [selected], "paired": []}, json_output=False)
             typer.echo(f"Run: {preview['approveCommand']}", err=True)
+            if token_value is not None or password_value is not None:
+                typer.echo("Reuse the same auth flag when running approve.", err=True)
         raise typer.Exit(code=1)
 
     async def _action(services: CliServices) -> dict[str, object]:

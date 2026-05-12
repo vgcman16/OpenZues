@@ -832,6 +832,56 @@ def test_devices_approve_latest_json_previews_without_approving(monkeypatch) -> 
     assert payload["approveCommand"] == "openzues devices approve req-new --json"
 
 
+def test_devices_approve_latest_json_preserves_gateway_flags_without_secrets(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            assert method == "device.pair.list"
+            return {
+                "pending": [{"requestId": "req-url", "deviceId": "device-9", "ts": 1000}],
+                "paired": [],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "devices",
+            "approve",
+            "--latest",
+            "--url",
+            "ws://gateway.example:18789",
+            "--timeout",
+            "3000",
+            "--token",
+            "secret-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert calls == [("device.pair.list", {})]
+    payload = json.loads(result.stdout)
+    assert payload["approveCommand"] == (
+        "openzues devices approve req-url --url ws://gateway.example:18789 "
+        "--timeout 3000 --json"
+    )
+    assert payload["requiresAuthFlags"] == {"token": True, "password": False}
+    assert "secret-token" not in result.stdout
+
+
 @pytest.mark.parametrize(
     ("argv", "expected_call", "response"),
     [
