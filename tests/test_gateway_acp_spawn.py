@@ -156,6 +156,28 @@ async def test_runtime_manager_acp_spawn_prefixes_cwd_like_openclaw() -> None:
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_applies_model_and_thinking_overrides() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager, default_model="gpt-5.4-mini")
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate flaky tests.",
+            "agentId": "codex",
+            "model": "openai-codex/gpt-5.4",
+            "thinking": "high",
+        },
+        {},
+    )
+
+    assert payload["status"] == "accepted"
+    assert manager.start_thread_calls[0]["model"] == "openai-codex/gpt-5.4"
+    assert manager.start_thread_calls[0]["reasoning_effort"] == "high"
+    assert manager.start_turn_calls[0]["model"] == "openai-codex/gpt-5.4"
+    assert manager.start_turn_calls[0]["reasoning_effort"] == "high"
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_returns_openclaw_accepted_note_for_run_mode() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)

@@ -8908,19 +8908,26 @@ class GatewayNodeMethodService:
                 if requester_group_id is not None:
                     acp_context["requesterGroupId"] = requester_group_id
                 label = _optional_session_label(payload.get("label"), label="label")
+                model = _optional_non_empty_string(payload.get("model"), label="model")
+                thinking = _optional_non_empty_string(payload.get("thinking"), label="thinking")
+                acp_spawn_params: dict[str, object] = {
+                    "task": task,
+                    "label": label,
+                    "agentId": acp_agent_id,
+                    "resumeSessionId": resume_session_id,
+                    "cwd": acp_cwd,
+                    "mode": mode,
+                    "thread": thread,
+                    "sandbox": sandbox,
+                    "streamTo": effective_stream_to,
+                    "runTimeoutSeconds": run_timeout_seconds,
+                }
+                if model is not None:
+                    acp_spawn_params["model"] = model
+                if thinking is not None:
+                    acp_spawn_params["thinking"] = thinking
                 acp_result = await self._acp_spawn_service.spawn(
-                    {
-                        "task": task,
-                        "label": label,
-                        "agentId": acp_agent_id,
-                        "resumeSessionId": resume_session_id,
-                        "cwd": acp_cwd,
-                        "mode": mode,
-                        "thread": thread,
-                        "sandbox": sandbox,
-                        "streamTo": effective_stream_to,
-                        "runTimeoutSeconds": run_timeout_seconds,
-                    },
+                    acp_spawn_params,
                     acp_context,
                 )
                 if str(acp_result.get("status") or "").strip().lower() != "accepted":
@@ -8992,6 +8999,10 @@ class GatewayNodeMethodService:
                         acp_metadata["lastThreadId"] = requester_origin["threadId"]
                 if acp_cwd is not None:
                     acp_metadata["spawnedWorkspaceDir"] = acp_cwd
+                if model is not None:
+                    acp_metadata["model"] = model
+                if thinking is not None:
+                    acp_metadata["thinkingLevel"] = thinking
                 raw_acp_thread_binding = acp_result.get("threadBinding")
                 acp_thread_binding: dict[str, Any] | None = None
                 if isinstance(raw_acp_thread_binding, Mapping):

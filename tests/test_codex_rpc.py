@@ -46,12 +46,17 @@ async def test_start_thread_uses_enum_sandbox_and_approval_policy(monkeypatch) -
 
     monkeypatch.setattr(CodexAppServerClient, "call", fake_call)
 
-    await client.start_thread(model="gpt-5.4", cwd="C:/workspace")
+    await client.start_thread(
+        model="gpt-5.4",
+        cwd="C:/workspace",
+        reasoning_effort="high",
+    )
 
     assert recorded["method"] == "thread/start"
     assert recorded["params"] == {
         "model": "gpt-5.4",
         "cwd": "C:/workspace",
+        "effort": "high",
         "approvalPolicy": "never",
         "sandbox": "workspace-write",
     }

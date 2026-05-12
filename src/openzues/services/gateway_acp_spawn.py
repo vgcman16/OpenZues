@@ -687,6 +687,9 @@ class RuntimeManagerAcpSpawnService:
         label = _optional_string(params.get("label"))
         cwd = _optional_string(params.get("cwd"))
         resume_session_id = _optional_string(params.get("resumeSessionId"))
+        model = _optional_string(params.get("model"))
+        thinking = _optional_string(params.get("thinking"))
+        effective_model = model or self._default_model
         stream_log_path: str | None = None
         parent_relay: GatewayAcpParentStreamRelayHandle | None = None
         provisional_run_id: str | None = None
@@ -697,9 +700,9 @@ class RuntimeManagerAcpSpawnService:
             else:
                 thread_result = await self._manager.start_thread(
                     instance_id,
-                    model=self._default_model,
+                    model=effective_model,
                     cwd=cwd,
-                    reasoning_effort=None,
+                    reasoning_effort=thinking,
                     collaboration_mode=None,
                 )
                 thread_id = _read_thread_id(thread_result)
@@ -728,8 +731,8 @@ class RuntimeManagerAcpSpawnService:
                 thread_id=thread_id,
                 text=_prefix_acp_prompt_cwd(task, cwd),
                 cwd=cwd,
-                model=None,
-                reasoning_effort=None,
+                model=model,
+                reasoning_effort=thinking,
                 collaboration_mode=None,
             )
         except Exception as exc:  # noqa: BLE001 - surface runtime failures to tool callers.

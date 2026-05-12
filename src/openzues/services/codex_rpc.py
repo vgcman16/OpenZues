@@ -311,6 +311,8 @@ class CodexAppServerClient:
         )
         if cwd:
             params["cwd"] = cwd
+        if reasoning_effort:
+            params["effort"] = reasoning_effort
         if approval_policy:
             params["approvalPolicy"] = approval_policy
         if effective_sandbox_mode:

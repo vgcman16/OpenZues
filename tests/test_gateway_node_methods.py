@@ -97266,6 +97266,60 @@ async def test_sessions_spawn_acp_allows_resume_id_owned_by_requester(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_forwards_model_and_thinking_overrides(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-model-thinking.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-model-thinking",
+                "runId": "run-acp-model-thinking-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-model-thinking",
+                "runtimeSessionId": "session-model-thinking",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Investigate flaky tests.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "model": "openai-codex/gpt-5.4",
+            "thinking": "high",
+        },
+        now_ms=20_000,
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    assert payload["status"] == "accepted"
+    assert calls[0]["params"]["model"] == "openai-codex/gpt-5.4"
+    assert calls[0]["params"]["thinking"] == "high"
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["model"] == "openai-codex/gpt-5.4"
+    assert metadata_row["metadata"]["thinkingLevel"] == "high"
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_run_from_subagent_requester_implicitly_streams_to_parent(
     tmp_path,
 ) -> None:
