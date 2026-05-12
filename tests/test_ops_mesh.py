@@ -25639,6 +25639,152 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_googlechat_medi
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_dispatch_googlechat_upload_file_message_action_uses_attachment_upload_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-googlechat-upload-file"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    media_path = tmp_path / "local.md"
+    media_path.write_bytes(b"googlechat-local-bytes")
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Google Chat Native Action Provider",
+        kind="googlechat",
+        target="https://chat.googleapis.com/v1",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="google-chat-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "googlechat",
+            "account_id": "workspace",
+            "peer_kind": "channel",
+            "peer_id": "spaces/BBBBBBB",
+        },
+    )
+    googlechat_uploads: list[dict[str, object]] = []
+    googlechat_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_googlechat_attachment_upload(
+        self: OpsMeshService,
+        route_target: str,
+        *,
+        space: str,
+        filename: str,
+        media_bytes: bytes,
+        content_type: str | None,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del self
+        googlechat_uploads.append(
+            {
+                "routeTarget": route_target,
+                "space": space,
+                "filename": filename,
+                "mediaBytes": media_bytes,
+                "contentType": content_type,
+                "secretToken": secret_token,
+            }
+        )
+        return {"attachmentDataRef": {"attachmentUploadToken": "upload-token-2"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        googlechat_posts.append((target, payload, secret_header_name, secret_token))
+        return {"name": "spaces/BBBBBBB/messages/msg-upload"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_googlechat_attachment_upload",
+        fake_googlechat_attachment_upload,
+        raising=False,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="googlechat",
+            action="upload-file",
+            params={
+                "to": "spaces/BBBBBBB",
+                "path": str(media_path),
+                "message": "notes",
+                "filename": "renamed.txt",
+                "threadId": "spaces/BBBBBBB/threads/thread-1",
+            },
+            account_id="workspace",
+            requester_sender_id="users/alice",
+            sender_is_owner=True,
+            session_key="agent:main:googlechat:channel:spaces/BBBBBBB",
+            idempotency_key="idem-googlechat-upload-file-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "spaces/BBBBBBB/messages/msg-upload",
+            "chatId": "spaces/BBBBBBB",
+            "channelId": "spaces/BBBBBBB",
+            "mediaIds": ["upload-token-2"],
+            "filenames": ["renamed.txt"],
+            "threadId": "spaces/BBBBBBB/threads/thread-1",
+        },
+    }
+    assert googlechat_uploads == [
+        {
+            "routeTarget": "https://chat.googleapis.com/v1",
+            "space": "spaces/BBBBBBB",
+            "filename": "renamed.txt",
+            "mediaBytes": b"googlechat-local-bytes",
+            "contentType": "text/markdown",
+            "secretToken": "google-chat-access-token",
+        }
+    ]
+    assert googlechat_posts == [
+        (
+            "https://chat.googleapis.com/v1/spaces/BBBBBBB/messages"
+            "?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD",
+            {
+                "text": "notes",
+                "thread": {"name": "spaces/BBBBBBB/threads/thread-1"},
+                "attachment": [
+                    {
+                        "attachmentDataRef": {"attachmentUploadToken": "upload-token-2"},
+                        "contentName": "renamed.txt",
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer google-chat-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_resolves_googlechat_dm_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

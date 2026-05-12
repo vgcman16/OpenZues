@@ -24469,6 +24469,22 @@ class OpsMeshService:
             )
         if channel == "zalo" and action == "send":
             return await self._dispatch_zalo_send_message_action(request)
+        if channel == "googlechat" and action in {"send", "upload-file"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Google Chat route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_googlechat_send_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "signal" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -36477,6 +36493,122 @@ class OpsMeshService:
         if reply_to_id:
             native_result["replyToId"] = reply_to_id
         return native_result
+
+    def _dispatch_googlechat_send_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        action = request.action.strip()
+        params = request.params
+        target = _message_action_param_string(params, "to", required=True) or ""
+        message = (
+            _message_action_param_string(
+                params,
+                "message",
+                required=action == "send",
+                allow_empty=True,
+            )
+            or _message_action_param_string(params, "initialComment", allow_empty=True)
+            or ""
+        )
+        media_url = (
+            _message_action_param_raw_string(params, "media")
+            or _message_action_param_raw_string(params, "filePath")
+            or _message_action_param_raw_string(params, "path")
+        )
+        thread = (
+            _message_action_param_string(params, "threadId")
+            or _message_action_param_string(params, "replyTo")
+        )
+        space = _googlechat_space_target(target)
+        if space is None:
+            raise RuntimeError("Google Chat route is missing a space target.")
+        if space.lower().startswith("users/"):
+            direct_message = self._request_json_provider_url(
+                _googlechat_direct_message_endpoint(
+                    str(route.get("target") or ""),
+                    user_name=space,
+                ),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=_googlechat_bearer_token(secret_token),
+            )
+            resolved_space = _googlechat_direct_message_space(direct_message)
+            if resolved_space is None:
+                raise RuntimeError(f"No Google Chat DM found for {space}.")
+            space = resolved_space
+
+        payload: dict[str, object] = {}
+        if message:
+            payload["text"] = message
+        if thread:
+            payload["thread"] = {"name": thread}
+        media_ids: list[str] = []
+        filenames: list[str] = []
+        if media_url:
+            media_bytes, content_type, detected_filename = self._download_matrix_media_url(
+                media_url
+            )
+            upload_filename = (
+                _message_action_param_string(params, "filename")
+                or _message_action_param_string(params, "title")
+                or detected_filename
+                or _matrix_media_filename(media_url, "attachment")
+            )
+            upload = self._request_googlechat_attachment_upload(
+                str(route.get("target") or ""),
+                space=space,
+                filename=upload_filename,
+                media_bytes=media_bytes,
+                content_type=content_type,
+                secret_token=secret_token,
+            )
+            upload_token = _googlechat_attachment_upload_token(upload)
+            if upload_token is None:
+                raise RuntimeError(
+                    "Google Chat upload response did not include an attachment token."
+                )
+            media_ids.append(upload_token)
+            filenames.append(upload_filename)
+            payload["attachment"] = [
+                {
+                    "attachmentDataRef": {"attachmentUploadToken": upload_token},
+                    "contentName": upload_filename,
+                }
+            ]
+        elif action == "upload-file":
+            raise RuntimeError("upload-file requires media, filePath, or path")
+
+        result = self._post_json_webhook(
+            _googlechat_messages_endpoint(
+                str(route.get("target") or ""),
+                space=space,
+                thread=thread or None,
+            ),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Google Chat API returned a non-JSON response.")
+        if result.get("error"):
+            raise RuntimeError(f"Google Chat send failed: {result.get('error')}")
+        message_id = _googlechat_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Google Chat API response did not include a message name.")
+        action_result: dict[str, object] = {
+            "messageId": message_id,
+            "chatId": space,
+            "channelId": space,
+        }
+        if media_ids:
+            action_result["mediaIds"] = media_ids
+            action_result["filenames"] = filenames
+        if thread:
+            action_result["threadId"] = thread
+        return {"ok": True, "result": action_result}
 
     def _post_nextcloud_talk_provider_event(
         self,
