@@ -1360,6 +1360,86 @@ def test_devices_list_uses_configured_remote_gateway_when_url_omitted(
     assert "configured-token" not in result.stdout
 
 
+def test_devices_list_falls_back_to_local_pairing_on_configured_loopback_rejection(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.12-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.12-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "remote": {
+                        "url": "ws://127.0.0.1:18789",
+                        "token": "configured-token",
+                    }
+                },
+            }
+        )
+    )
+    remote_calls: list[tuple[str, dict[str, object]]] = []
+    local_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def fake_remote_gateway_call(
+        method: str,
+        params: dict[str, object],
+        *,
+        url: str,
+        token: str | None,
+        password: str | None,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        del url, token, password, timeout_ms
+        remote_calls.append((method, dict(params)))
+        raise RuntimeError("gateway closed (1008): pairing required")
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            local_calls.append((method, params))
+            return {
+                "pending": [{"requestId": "req-local", "deviceId": "device-local"}],
+                "paired": [],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr(
+        "openzues.cli._call_remote_gateway_node_method",
+        fake_remote_gateway_call,
+    )
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert remote_calls == [("device.pair.list", {})]
+    assert local_calls == [("device.pair.list", {})]
+    payload = json.loads(result.stdout)
+    assert payload["pending"][0]["requestId"] == "req-local"
+    assert "configured-token" not in result.stdout
+
+
 @pytest.mark.parametrize(
     ("argv", "expected_call", "response"),
     [

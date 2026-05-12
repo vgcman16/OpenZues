@@ -105450,21 +105450,21 @@ def _devices_resolve_remote_gateway_options(
     url: str | None,
     token: str | None,
     password: str | None,
-) -> tuple[str | None, str | None, str | None]:
+) -> tuple[str | None, str | None, str | None, bool]:
     url_value = _optional_cli_string(url)
     token_value = _optional_cli_string(token)
     password_value = _optional_cli_string(password)
     if url_value is not None:
-        return url_value, token_value, password_value
+        return url_value, token_value, password_value, True
     try:
         app_settings = _runtime_settings()
         config_snapshot = _build_cli_gateway_config_service(app_settings).build_snapshot()
     except Exception:
-        return None, token_value, password_value
+        return None, token_value, password_value, False
     remote_config = _qr_gateway_remote_config(config_snapshot)
     configured_url = _qr_config_text(remote_config.get("url"))
     if configured_url is None:
-        return None, token_value, password_value
+        return None, token_value, password_value, False
     return (
         _normalize_pairing_config_url(
             configured_url,
@@ -105472,7 +105472,31 @@ def _devices_resolve_remote_gateway_options(
         ),
         token_value or _qr_config_text(remote_config.get("token")),
         password_value or _qr_config_text(remote_config.get("password")),
+        False,
     )
+
+
+def _devices_error_allows_local_pairing_fallback(error: BaseException) -> bool:
+    message = str(error).strip().lower()
+    return "pairing required" in message or "pending approval" in message
+
+
+def _devices_remote_url_is_loopback(url: str) -> bool:
+    try:
+        host = urlparse(url).hostname
+    except ValueError:
+        return False
+    return _is_pairing_loopback_host(host or "")
+
+
+def _run_local_devices_gateway_node_method(
+    method: str,
+    params: dict[str, object],
+) -> dict[str, object]:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, method, params)
+
+    return _run(_run_with_services(_action))
 
 
 async def _call_remote_gateway_node_method(
@@ -105529,27 +105553,38 @@ def _run_devices_gateway_node_method(
     password: str | None,
     timeout: str | None,
 ) -> dict[str, object]:
-    remote_url, remote_token, remote_password = _devices_resolve_remote_gateway_options(
+    (
+        remote_url,
+        remote_token,
+        remote_password,
+        explicit_remote_url,
+    ) = _devices_resolve_remote_gateway_options(
         url=url,
         token=token,
         password=password,
     )
     if remote_url is not None:
-        return _run(
-            _call_remote_gateway_node_method(
-                method,
-                params,
-                url=remote_url,
-                token=remote_token,
-                password=remote_password,
-                timeout_ms=_devices_gateway_timeout_ms(timeout),
+        try:
+            return _run(
+                _call_remote_gateway_node_method(
+                    method,
+                    params,
+                    url=remote_url,
+                    token=remote_token,
+                    password=remote_password,
+                    timeout_ms=_devices_gateway_timeout_ms(timeout),
+                )
             )
-        )
+        except RuntimeError as exc:
+            if (
+                explicit_remote_url
+                or not _devices_remote_url_is_loopback(remote_url)
+                or not _devices_error_allows_local_pairing_fallback(exc)
+            ):
+                raise
+            return _run_local_devices_gateway_node_method(method, params)
 
-    async def _action(services: CliServices) -> dict[str, object]:
-        return await _call_gateway_node_method(services, method, params)
-
-    return _run(_run_with_services(_action))
+    return _run_local_devices_gateway_node_method(method, params)
 
 
 @devices_app.command("list")
