@@ -24,10 +24,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlunparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
 import typer
 import uvicorn
 from typer.completion import get_completion_script
@@ -10730,6 +10731,44 @@ def _openclaw_update_attach_requested_channel(
     return result
 
 
+async def _openclaw_update_run_post_core_resume(
+    services: CliServices,
+    *,
+    root: Path,
+    requested_channel: str | None,
+) -> dict[str, object]:
+    payload = _openclaw_update_attach_requested_channel(
+        services,
+        {
+            "status": "ok",
+            "mode": "unknown",
+            "root": str(root),
+            "steps": [],
+            "durationMs": 0,
+        },
+        requested_channel,
+    )
+    return await _openclaw_update_attach_post_update_plugins(services, payload)
+
+
+def _openclaw_update_write_post_core_plugin_result(
+    result_path: str | None,
+    payload: Mapping[str, object],
+) -> None:
+    normalized_path = _optional_cli_string(result_path)
+    if normalized_path is None:
+        return
+    post_update = payload.get("postUpdate")
+    plugins = (
+        post_update.get("plugins")
+        if isinstance(post_update, Mapping)
+        else {"status": "error", "sync": {"errors": ["Missing post-update plugin result."]}}
+    )
+    path = Path(normalized_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(plugins), encoding="utf-8")
+
+
 def _openclaw_update_read_stored_channel_for_preview() -> str | None:
     async def read_channel(services: object) -> str | None:
         config_service = getattr(services, "gateway_config", None)
@@ -10780,6 +10819,12 @@ _OPENCLAW_UPDATE_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS = 2.0
 _OPENZUES_MAIN_PACKAGE_SPEC = "github:openzues/openzues#main"
 _OPENCLAW_GATEWAY_SERVICE_MARKER = "openclaw"
 _OPENCLAW_GATEWAY_SERVICE_KIND = "gateway"
+_OPENCLAW_UPDATE_POST_CORE_ENV = "OPENCLAW_UPDATE_POST_CORE"
+_OPENCLAW_UPDATE_POST_CORE_CHANNEL_ENV = "OPENCLAW_UPDATE_POST_CORE_CHANNEL"
+_OPENCLAW_UPDATE_POST_CORE_REQUESTED_CHANNEL_ENV = (
+    "OPENCLAW_UPDATE_POST_CORE_REQUESTED_CHANNEL"
+)
+_OPENCLAW_UPDATE_POST_CORE_RESULT_PATH_ENV = "OPENCLAW_UPDATE_POST_CORE_RESULT_PATH"
 
 
 def _openclaw_update_config_channel(config_snapshot: object) -> str | None:
@@ -105406,34 +105451,314 @@ def _latest_pending_device(payload: dict[str, object]) -> dict[str, object] | No
     return {str(key): value for key, value in latest.items() if isinstance(key, str)}
 
 
+def _devices_string_list(*items: object) -> list[str]:
+    values: set[str] = set()
+    for item in items:
+        candidates: list[object]
+        if isinstance(item, str):
+            candidates = [item]
+        elif isinstance(item, list):
+            candidates = list(item)
+        else:
+            continue
+        for candidate in candidates:
+            text = _optional_cli_string(candidate)
+            if text is not None:
+                values.add(text)
+    return sorted(values)
+
+
+def _devices_normalize_scopes(value: object) -> list[str]:
+    scopes = set(_devices_string_list(value))
+    if "operator.admin" in scopes:
+        scopes.update({"operator.read", "operator.write"})
+    elif "operator.write" in scopes:
+        scopes.add("operator.read")
+    return sorted(scopes)
+
+
+def _devices_access_summary(item: Mapping[str, object]) -> dict[str, list[str]]:
+    return {
+        "roles": _devices_string_list(item.get("roles"), item.get("role")),
+        "scopes": _devices_normalize_scopes(item.get("scopes")),
+    }
+
+
+def _devices_approved_access_summary(item: Mapping[str, object]) -> dict[str, list[str]]:
+    roles = _devices_string_list(item.get("roles"), item.get("role"))
+    tokens = item.get("tokens")
+    if isinstance(tokens, dict):
+        token_items = [token for token in tokens.values() if isinstance(token, Mapping)]
+    elif isinstance(tokens, list):
+        token_items = [token for token in tokens if isinstance(token, Mapping)]
+    else:
+        token_items = []
+    if token_items:
+        token_roles = _devices_string_list(
+            [
+                token.get("role")
+                for token in token_items
+                if not isinstance(token.get("revokedAtMs"), int)
+            ]
+        )
+        roles = [role for role in token_roles if role in roles]
+    return {"roles": roles, "scopes": _devices_normalize_scopes(item.get("scopes"))}
+
+
+def _devices_lookup_paired_for_pending(
+    payload: Mapping[str, object],
+    pending: Mapping[str, object],
+) -> Mapping[str, object] | None:
+    pending_device_id = _optional_cli_string(pending.get("deviceId"))
+    paired_value = payload.get("paired")
+    if pending_device_id is None or not isinstance(paired_value, list):
+        return None
+    for item in paired_value:
+        if not isinstance(item, Mapping):
+            continue
+        if _optional_cli_string(item.get("deviceId")) == pending_device_id:
+            return item
+    return None
+
+
+def _devices_approval_state(
+    payload: Mapping[str, object],
+    pending: Mapping[str, object],
+) -> dict[str, object]:
+    requested = _devices_access_summary(pending)
+    paired = _devices_lookup_paired_for_pending(payload, pending)
+    if paired is None:
+        return {"kind": "new-pairing", "requested": requested, "approved": None}
+    approved = _devices_approved_access_summary(paired)
+    if not set(requested["roles"]).issubset(set(approved["roles"])):
+        kind = "role-upgrade"
+    elif not set(requested["scopes"]).issubset(set(approved["scopes"])):
+        kind = "scope-upgrade"
+    else:
+        kind = "re-approval"
+    return {"kind": kind, "requested": requested, "approved": approved}
+
+
+_DEVICES_DEFAULT_TIMEOUT_MS = 10_000
+
+
+def _devices_gateway_timeout_ms(timeout: str | None) -> int:
+    timeout_value = _optional_cli_string(timeout)
+    if timeout_value is None:
+        return _DEVICES_DEFAULT_TIMEOUT_MS
+    try:
+        timeout_ms = int(timeout_value)
+    except ValueError as exc:
+        raise typer.BadParameter("timeout must be an integer number of milliseconds") from exc
+    if timeout_ms <= 0:
+        raise typer.BadParameter("timeout must be greater than 0")
+    return timeout_ms
+
+
+def _devices_gateway_method_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme == "ws":
+        scheme = "http"
+    elif parsed.scheme == "wss":
+        scheme = "https"
+    elif parsed.scheme in {"http", "https"}:
+        scheme = parsed.scheme
+    else:
+        raise typer.BadParameter("Gateway URL must start with ws://, wss://, http://, or https://")
+    if not parsed.netloc:
+        raise typer.BadParameter("Gateway URL must include a host")
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/gateway/node-methods/call"):
+        endpoint_path = path
+    elif path:
+        endpoint_path = f"{path}/api/gateway/node-methods/call"
+    else:
+        endpoint_path = "/api/gateway/node-methods/call"
+    return urlunparse((scheme, parsed.netloc, endpoint_path, "", "", ""))
+
+
+def _devices_resolve_remote_gateway_options(
+    *,
+    url: str | None,
+    token: str | None,
+    password: str | None,
+) -> tuple[str | None, str | None, str | None, bool]:
+    url_value = _optional_cli_string(url)
+    token_value = _optional_cli_string(token)
+    password_value = _optional_cli_string(password)
+    if url_value is not None:
+        return url_value, token_value, password_value, True
+    try:
+        app_settings = _runtime_settings()
+        config_snapshot = _build_cli_gateway_config_service(app_settings).build_snapshot()
+    except Exception:
+        return None, token_value, password_value, False
+    remote_config = _qr_gateway_remote_config(config_snapshot)
+    configured_url = _qr_config_text(remote_config.get("url"))
+    if configured_url is None:
+        return None, token_value, password_value, False
+    return (
+        _normalize_pairing_config_url(
+            configured_url,
+            invalid_error="Configured gateway.remote.url is invalid.",
+        ),
+        token_value or _qr_config_text(remote_config.get("token")),
+        password_value or _qr_config_text(remote_config.get("password")),
+        False,
+    )
+
+
+def _devices_error_allows_local_pairing_fallback(error: BaseException) -> bool:
+    message = str(error).strip().lower()
+    return "pairing required" in message or "pending approval" in message
+
+
+def _devices_remote_url_is_loopback(url: str) -> bool:
+    try:
+        host = urlparse(url).hostname
+    except ValueError:
+        return False
+    return _is_pairing_loopback_host(host or "")
+
+
+def _run_local_devices_gateway_node_method(
+    method: str,
+    params: dict[str, object],
+) -> dict[str, object]:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, method, params)
+
+    return _run(_run_with_services(_action))
+
+
+async def _call_remote_gateway_node_method(
+    method: str,
+    params: dict[str, object],
+    *,
+    url: str,
+    token: str | None,
+    password: str | None,
+    timeout_ms: int,
+) -> dict[str, object]:
+    headers = {
+        "X-OpenZues-Client-Id": "openzues-cli",
+        "X-OpenClaw-Client-Mode": "cli",
+    }
+    if token:
+        headers["X-OpenClaw-Token"] = token
+    if password:
+        headers["X-OpenClaw-Password"] = password
+    endpoint_url = _devices_gateway_method_url(url)
+    try:
+        async with httpx.AsyncClient(timeout=timeout_ms / 1000) as client:
+            response = await client.post(
+                endpoint_url,
+                json={"method": method, "params": params},
+                headers=headers,
+            )
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Remote gateway request failed: {exc}") from exc
+    if response.status_code >= 400:
+        try:
+            error_payload = response.json()
+        except ValueError:
+            error_payload = response.text
+        message: object = error_payload
+        if isinstance(error_payload, dict):
+            message = error_payload.get("detail") or error_payload.get("error") or error_payload
+        raise RuntimeError(str(message))
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Remote gateway returned non-JSON response") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Remote gateway returned an invalid response")
+    return {str(key): value for key, value in payload.items() if isinstance(key, str)}
+
+
+def _run_devices_gateway_node_method(
+    method: str,
+    params: dict[str, object],
+    *,
+    url: str | None,
+    token: str | None,
+    password: str | None,
+    timeout: str | None,
+) -> dict[str, object]:
+    (
+        remote_url,
+        remote_token,
+        remote_password,
+        explicit_remote_url,
+    ) = _devices_resolve_remote_gateway_options(
+        url=url,
+        token=token,
+        password=password,
+    )
+    if remote_url is not None:
+        try:
+            return _run(
+                _call_remote_gateway_node_method(
+                    method,
+                    params,
+                    url=remote_url,
+                    token=remote_token,
+                    password=remote_password,
+                    timeout_ms=_devices_gateway_timeout_ms(timeout),
+                )
+            )
+        except RuntimeError as exc:
+            if (
+                explicit_remote_url
+                or not _devices_remote_url_is_loopback(remote_url)
+                or not _devices_error_allows_local_pairing_fallback(exc)
+            ):
+                raise
+            return _run_local_devices_gateway_node_method(method, params)
+
+    return _run_local_devices_gateway_node_method(method, params)
+
+
 @devices_app.command("list")
 def devices_list_command(
+    url: str | None = typer.Option(None, "--url", help="Gateway WebSocket URL."),
+    timeout: str | None = typer.Option(None, "--timeout", help="Gateway timeout in ms."),
+    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    password: str | None = typer.Option(None, "--password", help="Gateway password."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
-    async def _action(services: CliServices) -> dict[str, object]:
-        return await _call_gateway_node_method(services, "device.pair.list", {})
-
-    result = _run(_run_with_services(_action))
+    result = _run_devices_gateway_node_method(
+        "device.pair.list",
+        {},
+        url=url,
+        token=token,
+        password=password,
+        timeout=timeout,
+    )
     _emit_devices_list(result, json_output=json_output)
 
 
 @devices_app.command("remove")
 def devices_remove_command(
     device_id: str = typer.Argument(..., help="Paired device id."),
+    url: str | None = typer.Option(None, "--url", help="Gateway WebSocket URL."),
+    timeout: str | None = typer.Option(None, "--timeout", help="Gateway timeout in ms."),
+    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    password: str | None = typer.Option(None, "--password", help="Gateway password."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     normalized_device_id = _optional_cli_string(device_id)
     if normalized_device_id is None:
         raise typer.BadParameter("deviceId is required")
 
-    async def _action(services: CliServices) -> dict[str, object]:
-        return await _call_gateway_node_method(
-            services,
-            "device.pair.remove",
-            {"deviceId": normalized_device_id},
-        )
-
-    result = _run(_run_with_services(_action))
+    result = _run_devices_gateway_node_method(
+        "device.pair.remove",
+        {"deviceId": normalized_device_id},
+        url=url,
+        token=token,
+        password=password,
+        timeout=timeout,
+    )
     if json_output:
         typer.echo(json.dumps(result, indent=2))
         return
@@ -105448,51 +105773,65 @@ def devices_clear_command(
         help="Also reject all pending pairing requests.",
     ),
     yes: bool = typer.Option(False, "--yes", help="Confirm destructive clear."),
+    url: str | None = typer.Option(None, "--url", help="Gateway WebSocket URL."),
+    timeout: str | None = typer.Option(None, "--timeout", help="Gateway timeout in ms."),
+    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    password: str | None = typer.Option(None, "--password", help="Gateway password."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     if not yes:
         typer.echo("Refusing to clear pairing table without --yes", err=True)
         raise typer.Exit(code=1)
 
-    async def _action(services: CliServices) -> dict[str, object]:
-        listing = await _call_gateway_node_method(services, "device.pair.list", {})
-        paired_value = listing.get("paired")
-        pending_value = listing.get("pending")
-        paired_items = paired_value if isinstance(paired_value, list) else []
-        pending_items = pending_value if isinstance(pending_value, list) else []
-        removed_devices: list[str] = []
-        rejected_pending: list[str] = []
-        for item in paired_items:
+    listing = _run_devices_gateway_node_method(
+        "device.pair.list",
+        {},
+        url=url,
+        token=token,
+        password=password,
+        timeout=timeout,
+    )
+    paired_value = listing.get("paired")
+    pending_value = listing.get("pending")
+    paired_items = paired_value if isinstance(paired_value, list) else []
+    pending_items = pending_value if isinstance(pending_value, list) else []
+    removed_devices: list[str] = []
+    rejected_pending: list[str] = []
+    for item in paired_items:
+        if not isinstance(item, dict):
+            continue
+        device_id = _optional_cli_string(item.get("deviceId"))
+        if device_id is None:
+            continue
+        _run_devices_gateway_node_method(
+            "device.pair.remove",
+            {"deviceId": device_id},
+            url=url,
+            token=token,
+            password=password,
+            timeout=timeout,
+        )
+        removed_devices.append(device_id)
+    if pending:
+        for item in pending_items:
             if not isinstance(item, dict):
                 continue
-            device_id = _optional_cli_string(item.get("deviceId"))
-            if device_id is None:
+            request_id = _optional_cli_string(item.get("requestId"))
+            if request_id is None:
                 continue
-            await _call_gateway_node_method(
-                services,
-                "device.pair.remove",
-                {"deviceId": device_id},
+            _run_devices_gateway_node_method(
+                "device.pair.reject",
+                {"requestId": request_id},
+                url=url,
+                token=token,
+                password=password,
+                timeout=timeout,
             )
-            removed_devices.append(device_id)
-        if pending:
-            for item in pending_items:
-                if not isinstance(item, dict):
-                    continue
-                request_id = _optional_cli_string(item.get("requestId"))
-                if request_id is None:
-                    continue
-                await _call_gateway_node_method(
-                    services,
-                    "device.pair.reject",
-                    {"requestId": request_id},
-                )
-                rejected_pending.append(request_id)
-        return {
-            "removedDevices": removed_devices,
-            "rejectedPending": rejected_pending,
-        }
-
-    result = _run(_run_with_services(_action))
+            rejected_pending.append(request_id)
+    result = {
+        "removedDevices": removed_devices,
+        "rejectedPending": rejected_pending,
+    }
     if json_output:
         typer.echo(json.dumps(result, indent=2))
         return
@@ -105500,11 +105839,8 @@ def devices_clear_command(
     removed_count = len(removed_value) if isinstance(removed_value, list) else 0
     typer.echo(f"Cleared {removed_count} paired device{'s' if removed_count != 1 else ''}")
     if pending:
-        rejected_count = (
-            len(result.get("rejectedPending"))
-            if isinstance(result.get("rejectedPending"), list)
-            else 0
-        )
+        rejected_value = result.get("rejectedPending")
+        rejected_count = len(rejected_value) if isinstance(rejected_value, list) else 0
         typer.echo(
             f"Rejected {rejected_count} pending request{'s' if rejected_count != 1 else ''}"
         )
@@ -105530,11 +105866,14 @@ def devices_approve_command(
     token_value = _optional_cli_string(token)
     password_value = _optional_cli_string(password)
     if normalized_request_id is None or latest:
-
-        async def _preview_action(services: CliServices) -> dict[str, object]:
-            return await _call_gateway_node_method(services, "device.pair.list", {})
-
-        listing = _run(_run_with_services(_preview_action))
+        listing = _run_devices_gateway_node_method(
+            "device.pair.list",
+            {},
+            url=url,
+            token=token,
+            password=password,
+            timeout=timeout,
+        )
         selected = _latest_pending_device(listing)
         if selected is None:
             typer.echo("No pending device pairing requests to approve", err=True)
@@ -105552,6 +105891,7 @@ def devices_approve_command(
             approve_args.append("--json")
         preview = {
             "selected": selected,
+            "approvalState": _devices_approval_state(listing, selected),
             "approveCommand": _doctor_format_cli_args(approve_args),
             "requiresAuthFlags": {
                 "token": token_value is not None,
@@ -105567,14 +105907,14 @@ def devices_approve_command(
                 typer.echo("Reuse the same auth flag when running approve.", err=True)
         raise typer.Exit(code=1)
 
-    async def _action(services: CliServices) -> dict[str, object]:
-        return await _call_gateway_node_method(
-            services,
-            "device.pair.approve",
-            {"requestId": normalized_request_id},
-        )
-
-    result = _run(_run_with_services(_action))
+    result = _run_devices_gateway_node_method(
+        "device.pair.approve",
+        {"requestId": normalized_request_id},
+        url=url,
+        token=token,
+        password=password,
+        timeout=timeout,
+    )
     if json_output:
         typer.echo(json.dumps(result, indent=2))
         return
@@ -105586,20 +105926,24 @@ def devices_approve_command(
 @devices_app.command("reject")
 def devices_reject_command(
     request_id: str = typer.Argument(..., help="Pending request id."),
+    url: str | None = typer.Option(None, "--url", help="Gateway WebSocket URL."),
+    timeout: str | None = typer.Option(None, "--timeout", help="Gateway timeout in ms."),
+    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    password: str | None = typer.Option(None, "--password", help="Gateway password."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     normalized_request_id = _optional_cli_string(request_id)
     if normalized_request_id is None:
         raise typer.BadParameter("requestId is required")
 
-    async def _action(services: CliServices) -> dict[str, object]:
-        return await _call_gateway_node_method(
-            services,
-            "device.pair.reject",
-            {"requestId": normalized_request_id},
-        )
-
-    result = _run(_run_with_services(_action))
+    result = _run_devices_gateway_node_method(
+        "device.pair.reject",
+        {"requestId": normalized_request_id},
+        url=url,
+        token=token,
+        password=password,
+        timeout=timeout,
+    )
     if json_output:
         typer.echo(json.dumps(result, indent=2))
         return
@@ -105615,6 +105959,10 @@ def devices_rotate_command(
         list[str] | None,
         typer.Option("--scope", help="Scope to attach to the rotated token."),
     ] = None,
+    url: str | None = typer.Option(None, "--url", help="Gateway WebSocket URL."),
+    timeout: str | None = typer.Option(None, "--timeout", help="Gateway timeout in ms."),
+    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    password: str | None = typer.Option(None, "--password", help="Gateway password."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     normalized_device_id = _optional_cli_string(device_id)
@@ -105633,10 +105981,14 @@ def devices_rotate_command(
     if normalized_scopes:
         params["scopes"] = normalized_scopes
 
-    async def _action(services: CliServices) -> dict[str, object]:
-        return await _call_gateway_node_method(services, "device.token.rotate", params)
-
-    result = _run(_run_with_services(_action))
+    result = _run_devices_gateway_node_method(
+        "device.token.rotate",
+        params,
+        url=url,
+        token=token,
+        password=password,
+        timeout=timeout,
+    )
     if json_output:
         typer.echo(json.dumps(result, indent=2))
         return
@@ -105647,6 +105999,10 @@ def devices_rotate_command(
 def devices_revoke_command(
     device_id: str = typer.Option(..., "--device", help="Device id."),
     role: str = typer.Option(..., "--role", help="Role name."),
+    url: str | None = typer.Option(None, "--url", help="Gateway WebSocket URL."),
+    timeout: str | None = typer.Option(None, "--timeout", help="Gateway timeout in ms."),
+    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    password: str | None = typer.Option(None, "--password", help="Gateway password."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     normalized_device_id = _optional_cli_string(device_id)
@@ -105656,14 +106012,14 @@ def devices_revoke_command(
     if normalized_role is None:
         raise typer.BadParameter("--role is required")
 
-    async def _action(services: CliServices) -> dict[str, object]:
-        return await _call_gateway_node_method(
-            services,
-            "device.token.revoke",
-            {"deviceId": normalized_device_id, "role": normalized_role},
-        )
-
-    result = _run(_run_with_services(_action))
+    result = _run_devices_gateway_node_method(
+        "device.token.revoke",
+        {"deviceId": normalized_device_id, "role": normalized_role},
+        url=url,
+        token=token,
+        password=password,
+        timeout=timeout,
+    )
     if json_output:
         typer.echo(json.dumps(result, indent=2))
         return
@@ -107331,6 +107687,46 @@ def update_root(
         typer.echo(f'--channel must be "stable", "beta", or "dev" (got "{channel}")', err=True)
         raise typer.Exit(code=1)
     timeout_seconds = _parse_openclaw_update_timeout_seconds(timeout)
+    timeout_ms = int(timeout_seconds * 1000) if timeout_seconds is not None else None
+    post_core_resume = os.environ.get(_OPENCLAW_UPDATE_POST_CORE_ENV) == "1"
+    if post_core_resume:
+        if _openclaw_update_normalize_channel(
+            os.environ.get(_OPENCLAW_UPDATE_POST_CORE_CHANNEL_ENV)
+        ) is None:
+            typer.echo("Missing post-core update channel context.", err=True)
+            raise typer.Exit(code=1)
+        requested_channel_input = str(
+            os.environ.get(_OPENCLAW_UPDATE_POST_CORE_REQUESTED_CHANNEL_ENV) or ""
+        ).strip()
+        post_core_requested_channel = (
+            _openclaw_update_normalize_channel(requested_channel_input)
+            if requested_channel_input
+            else None
+        )
+        if requested_channel_input and post_core_requested_channel is None:
+            typer.echo("Invalid post-core requested update channel context.", err=True)
+            raise typer.Exit(code=1)
+
+        root = _openzues_package_root()
+
+        async def run_post_core_resume(services: CliServices) -> dict[str, object]:
+            return await _openclaw_update_run_post_core_resume(
+                services,
+                root=root,
+                requested_channel=post_core_requested_channel,
+            )
+
+        payload = _run(_run_with_services(run_post_core_resume))
+        result_path = _optional_cli_string(
+            os.environ.get(_OPENCLAW_UPDATE_POST_CORE_RESULT_PATH_ENV)
+        )
+        if result_path is not None:
+            _openclaw_update_write_post_core_plugin_result(result_path, payload)
+        else:
+            _emit_update_run_result(payload, json_output=json_output)
+        if payload.get("status") == "error":
+            raise typer.Exit(code=1)
+        return
     if dry_run:
         stored_channel = _openclaw_update_read_stored_channel_for_preview()
         payload = _openclaw_update_dry_run_preview(
@@ -107341,7 +107737,6 @@ def update_root(
         )
         _emit_update_dry_run_preview(payload, json_output=json_output)
         return
-    timeout_ms = int(timeout_seconds * 1000) if timeout_seconds is not None else None
     root = _openzues_package_root()
     install_kind = _openclaw_update_install_kind(root)
     if install_kind == "package":

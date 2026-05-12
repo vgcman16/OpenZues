@@ -15,9 +15,10 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.999991% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
-  post-update completion-cache refresh, all-shell completion write-state,
+  post-core resume mode, package post-update completion-cache refresh,
+  all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
   preflight, devices list/approve CLI, package-update downgrade confirmation,
@@ -148,7 +149,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.99997%
+- The provider-native inbound/outbound breadth family is estimated at ~99.99998%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
   delivery plus postback/media-placeholder/sticker/location delivery and group
@@ -164,9 +165,12 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~5.4% after QR
+- The packaging/companion app breadth family is estimated at ~5.9% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
-  approve-preview gateway/auth flag preservation, and
+  approve-preview gateway/auth flag preservation, remote device list/approve
+  gateway dispatch, remote device mutation dispatch, configured remote URL
+  defaults, loopback pairing-required fallback, approval-state preview
+  metadata, and
   remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
@@ -12114,6 +12118,42 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and packaging/companion app breadth moves to
   ~5.4%. Continue actual remote device CLI fallback/auth dispatch,
   packaging/distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: `openzues devices list --url ...` and
+  explicit `openzues devices approve <requestId> --url ...` now dispatch
+  through the native remote gateway method bridge with `--token`,
+  `--password`, and `--timeout` forwarding, while the default no-URL path stays
+  local. Source/test checkpointed in `fa6d230a`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion app breadth moves to ~5.5%.
+  Continue implicit/default configured remote fallback, the remaining device
+  mutation remote flags, packaging/distribution, provider/runtime, or companion
+  app breadth.
+- Current queue-head adjustment: `openzues devices remove`, `clear`, `reject`,
+  `rotate`, and `revoke` now accept explicit remote gateway/auth/timeout flags
+  and dispatch through the same native remote gateway method bridge. Source/test
+  checkpointed in `c54866d9`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion app breadth moves to ~5.6%. Continue
+  implicit/default configured remote fallback, packaging/distribution,
+  provider/runtime, or companion app breadth.
+- Current queue-head adjustment: device CLI remote dispatch now uses configured
+  `gateway.remote.url` and configured remote auth when explicit `--url`/auth
+  flags are omitted, while preserving the local service path when no configured
+  remote URL exists. Source/test checkpointed in `aa2cbf50`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion app breadth moves to
+  ~5.7%. Continue loopback pairing-required local fallback, packaging/
+  distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: configured loopback device CLI dispatch now
+  retries through the local pairing service when the remote gateway returns a
+  pairing-required or pending-approval style failure. Explicit `--url` and
+  non-loopback remotes still preserve the remote failure. Source/test
+  checkpointed in `3616f48b`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion app breadth moves to ~5.8%. Continue packaging/
+  distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: `openzues devices approve --latest --json`
+  now includes OpenClaw-style approval-state metadata (`kind`, `requested`,
+  `approved`) for new pairing, role-upgrade, scope-upgrade, and re-approval
+  previews. Source/test checkpointed in `a45702fc`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion app breadth moves to ~5.9%.
+  Continue packaging/distribution, provider/runtime, or companion app breadth.
 - Current queue-head adjustment: package-shaped updates now resolve registry
   target versions for dry-run downgrade previews, set `downgradeRisk` for
   explicit semver/dist-tag package targets, and refuse JSON/non-interactive
@@ -12594,3 +12634,59 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity remains estimated at ~99.9%, and packaging/companion app breadth
   moves to ~5.4%. Continue actual remote device CLI fallback/auth dispatch,
   packaging/distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: native `openzues devices list` and explicit
+  `openzues devices approve <requestId>` now use a fakeable production remote
+  gateway method dispatch path whenever `--url` is supplied. The dispatch
+  converts ws/wss gateway URLs to the HTTP method-call endpoint, forwards
+  `--token` / `--password` / `--timeout`, and keeps auth material out of
+  output. Source/test checkpointed in `fa6d230a`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion app breadth moves to ~5.5%.
+  Continue implicit/default configured remote fallback, device mutation remote
+  flags, packaging/distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: native `openzues devices remove`, `clear`,
+  `reject`, `rotate`, and `revoke` now use the fakeable production remote
+  gateway method dispatch path whenever `--url` is supplied, forwarding auth
+  and timeout flags and leaving no-URL local behavior intact. Source/test
+  checkpointed in `c54866d9`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion app breadth moves to ~5.6%. Continue implicit/default
+  configured remote fallback, packaging/distribution, provider/runtime, or
+  companion app breadth.
+- Current queue-head adjustment: native device CLI gateway dispatch now loads
+  saved `gateway.remote.url`, `gateway.remote.token`, and
+  `gateway.remote.password` defaults through the existing config service, with
+  CLI flags taking precedence. Source/test checkpointed in `aa2cbf50`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion app
+  breadth moves to ~5.7%. Continue loopback pairing-required local fallback,
+  packaging/distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: native device CLI dispatch now follows
+  OpenClaw's guarded configured-loopback fallback: pairing-required and
+  pending-approval failures on a configured loopback gateway are retried
+  locally, while explicit `--url` remains remote-strict. Source/test
+  checkpointed in `3616f48b`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion app breadth moves to ~5.8%. Continue packaging/
+  distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: native device approval previews now project
+  upstream-compatible `approvalState` JSON, including normalized roles/scopes
+  and approval kind classification against existing paired records. Source/test
+  checkpointed in `a45702fc`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion app breadth moves to ~5.9%. Continue packaging/
+  distribution, provider/runtime, or companion app breadth.
+- Current queue-head adjustment: Discord provider-native direct video sends now
+  mirror OpenClaw's outbound adapter by sending the caption text first and then
+  a media-only video follow-up. The native route preserves thread query
+  placement, silent flags, final `messageId`, ordered `messageIds`, and
+  provider result metadata. Source/test checkpointed in `90ceab78`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth moves to ~99.99998%. Continue Discord audio-as-voice depth,
+  remaining provider-specific media/reply edges, packaging/distribution, or
+  companion breadth.
+- Current queue-head adjustment: native `openzues update` now supports
+  OpenClaw's post-core resume environment handoff. `OPENCLAW_UPDATE_POST_CORE`
+  skips package/git core update dispatch, validates post-core channel context,
+  runs only post-update plugin sync, preserves the OpenClaw-shaped
+  `postUpdate.plugins` result, and writes the plugin result file for
+  fresh-process parents when requested. Source/test checkpointed in
+  `4f874859`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.999991%. Continue
+  package-update fresh-process handoff, deeper installed plugin activation,
+  ACP bridge lifecycle depth, provider media edges, or companion breadth.
