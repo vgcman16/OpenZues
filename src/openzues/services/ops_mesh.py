@@ -190,6 +190,7 @@ LINE_GROUP_HISTORY_LIMIT = 50
 LINE_HISTORY_CONTEXT_MARKER = "[Chat messages since your last reply - for context]"
 LINE_CURRENT_MESSAGE_MARKER = "[Current message - respond to this]"
 LINE_MAX_HISTORY_KEYS = 1000
+LINE_DEFAULT_MEDIA_MAX_BYTES = 10 * 1024 * 1024
 BLUEBUBBLES_ROUTE_CHANNEL_ALIASES = {"bluebubbles", "imessage"}
 BLUEBUBBLES_AUDIO_MIME_MP3 = {"audio/mpeg", "audio/mp3"}
 BLUEBUBBLES_AUDIO_MIME_CAF = {"audio/x-caf", "audio/caf"}
@@ -587,6 +588,21 @@ class GatewayTlonInboundMediaFetchRequest:
 
 GatewayTlonInboundMediaFetchService = Callable[
     [GatewayTlonInboundMediaFetchRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayLineInboundMediaFetchRequest:
+    message_id: str
+    message_type: str
+    placeholder: str
+    max_bytes: int
+    account_id: str | None
+
+
+GatewayLineInboundMediaFetchService = Callable[
+    [GatewayLineInboundMediaFetchRequest],
     Awaitable[object],
 ]
 
@@ -10159,6 +10175,15 @@ def _line_text_mentions_openzues(text: str) -> bool:
     return "openzues" in normalized or "open zues" in normalized
 
 
+def _line_media_placeholder(message_type: str) -> str | None:
+    return {
+        "image": "<media:image>",
+        "video": "<media:video>",
+        "audio": "<media:audio>",
+        "file": "<media:document>",
+    }.get(message_type)
+
+
 def _line_event_has_native_bot_mention(event: Mapping[str, Any]) -> bool:
     message = _line_inbound_mapping(event.get("message"))
     mention = _line_inbound_mapping(message.get("mention"))
@@ -10299,12 +10324,7 @@ def _line_webhook_event_text(event: Mapping[str, Any]) -> str | None:
         if message_type == "location":
             return _line_location_text(message)
         if message_type != "text":
-            media_placeholder = {
-                "image": "<media:image>",
-                "video": "<media:video>",
-                "audio": "<media:audio>",
-                "file": "<media:document>",
-            }.get(message_type)
+            media_placeholder = _line_media_placeholder(message_type)
             if media_placeholder is not None:
                 return media_placeholder
             return None
@@ -14299,6 +14319,7 @@ class OpsMeshService:
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
     msteams_inbound_media_fetch_service: GatewayMSTeamsInboundMediaFetchService | None = None
     tlon_inbound_media_fetch_service: GatewayTlonInboundMediaFetchService | None = None
+    line_inbound_media_fetch_service: GatewayLineInboundMediaFetchService | None = None
     tlon_approval_queue_service: GatewayTlonApprovalQueueService | None = None
     tlon_monitor_runtime_service: GatewayTlonMonitorRuntimeService | None = None
     msteams_feedback_reflection_service: GatewayMSTeamsFeedbackReflectionService | None = None
@@ -18197,6 +18218,10 @@ class OpsMeshService:
                     skip["inboundMessageId"] = inbound_message_id
                 skips.append(skip)
                 continue
+            staged_media = await self._stage_line_inbound_media(
+                event,
+                account_id=account_id,
+            )
             if self.session_delivery_service is None:
                 raise GatewayOutboundRuntimeUnavailableError(
                     "LINE inbound session delivery is unavailable."
@@ -18220,6 +18245,13 @@ class OpsMeshService:
                 "conversationTarget": context.conversation_target.model_dump(mode="json"),
                 "delivery": {"runtime": "session-backed"},
             }
+            if staged_media:
+                delivery["delivery"] = {
+                    "runtime": "session-backed",
+                    "media": {"staged": len(staged_media)},
+                }
+                delivery.update(_msteams_media_payload(staged_media))
+                delivery["stagedMedia"] = _msteams_staged_media_metadata(staged_media)
             if delivery_message_id is not None:
                 delivery["messageId"] = delivery_message_id
             inbound_message_id = _line_inbound_message_id(event)
@@ -18249,6 +18281,67 @@ class OpsMeshService:
             result["skippedCount"] = len(skips)
             result["skips"] = skips
         return result
+
+    async def _stage_line_inbound_media(
+        self,
+        event: Mapping[str, Any],
+        *,
+        account_id: str | None,
+    ) -> list[_MSTeamsStagedInboundMedia]:
+        fetcher = self.line_inbound_media_fetch_service
+        if fetcher is None:
+            return []
+        if str(event.get("type") or "").strip().lower() != "message":
+            return []
+        message = _line_inbound_mapping(event.get("message"))
+        message_type = str(message.get("type") or "").strip().lower()
+        placeholder = _line_media_placeholder(message_type)
+        if placeholder is None:
+            return []
+        message_id = _line_inbound_optional_string(message.get("id"))
+        if message_id is None:
+            return []
+        request = GatewayLineInboundMediaFetchRequest(
+            message_id=message_id,
+            message_type=message_type,
+            placeholder=placeholder,
+            max_bytes=LINE_DEFAULT_MEDIA_MAX_BYTES,
+            account_id=account_id,
+        )
+        try:
+            response = await fetcher(request)
+        except Exception:
+            return []
+        media_bytes = _msteams_fetch_response_bytes(response)
+        if media_bytes is None or len(media_bytes) > LINE_DEFAULT_MEDIA_MAX_BYTES:
+            return []
+        content_type = _msteams_fetch_response_string(
+            response,
+            "contentType",
+            "content_type",
+            "mimeType",
+            "mime_type",
+        )
+        filename = _msteams_fetch_response_string(
+            response,
+            "filename",
+            "fileName",
+            "name",
+        )
+        candidate = _MSTeamsInboundMediaCandidate(
+            url=f"line://message/{quote(message_id, safe='')}",
+            source_url=f"line://message/{quote(message_id, safe='')}",
+            file_hint=filename,
+            content_type_hint=content_type,
+            placeholder=placeholder,
+        )
+        staged = self._save_msteams_inbound_media(
+            candidate=candidate,
+            response=response,
+            media_bytes=media_bytes,
+            index=1,
+        )
+        return [staged] if staged is not None else []
 
     async def handle_msteams_inbound_activity(
         self,

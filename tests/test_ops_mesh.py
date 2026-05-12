@@ -62,6 +62,7 @@ from openzues.services.memory_protocol import (
 )
 from openzues.services.ops_mesh import (
     OUTBOUND_DELIVERY_MAX_RETRIES,
+    GatewayLineInboundMediaFetchRequest,
     GatewayMSTeamsFeedbackReflectionRequest,
     GatewayMSTeamsInboundMediaFetchRequest,
     OpsMeshService,
@@ -9573,7 +9574,7 @@ async def test_ops_mesh_service_stages_tlon_inbound_image_blocks_for_session() -
     await database.initialize()
 
     session_deliveries: list[tuple[str, str]] = []
-    fetch_requests: list[object] = []
+    fetch_requests: list[GatewayLineInboundMediaFetchRequest] = []
 
     async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
         session_deliveries.append((session_key, message))
@@ -34659,6 +34660,93 @@ async def test_ops_mesh_service_handle_line_webhook_delivers_group_media_without
     assert result["deliveries"][0]["conversationTarget"] == expected_target.model_dump(
         mode="json"
     )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_stages_downloaded_media(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    fetch_requests: list[object] = []
+    png_bytes = b"\x89PNG\r\n\x1a\nline-media"
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-staged-media-session-1"}
+
+    async def fetch_media(request: GatewayLineInboundMediaFetchRequest) -> dict[str, object]:
+        fetch_requests.append(request)
+        return {
+            "bytes": png_bytes,
+            "contentType": "image/png",
+            "filename": "line-photo.png",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        line_inbound_media_fetch_service=fetch_media,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "replyToken": "line-staged-reply-token",
+                    "timestamp": 1760000001700,
+                    "source": {"type": "user", "userId": "USTAGEDMEDIA"},
+                    "message": {
+                        "id": "line-staged-media-1",
+                        "type": "image",
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="direct",
+        peer_id="line:user:USTAGEDMEDIA",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert len(fetch_requests) == 1
+    fetch_request = fetch_requests[0]
+    assert fetch_request.message_id == "line-staged-media-1"
+    assert fetch_request.message_type == "image"
+    assert fetch_request.account_id == "line-bot"
+    delivery = result["deliveries"][0]
+    staged_paths = delivery["MediaPaths"]
+    assert isinstance(staged_paths, list)
+    assert len(staged_paths) == 1
+    assert delivery["MediaPath"] == staged_paths[0]
+    assert delivery["MediaUrl"] == staged_paths[0]
+    assert delivery["MediaType"] == "image/png"
+    assert delivery["MediaTypes"] == ["image/png"]
+    assert Path(str(staged_paths[0])).read_bytes() == png_bytes
+    assert delivery["delivery"] == {"runtime": "session-backed", "media": {"staged": 1}}
+    assert delivery["stagedMedia"][0]["filename"] == "line-photo.png"
+    assert delivery["stagedMedia"][0]["contentType"] == "image/png"
 
 
 @pytest.mark.asyncio
