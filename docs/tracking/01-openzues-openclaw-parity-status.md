@@ -25,6 +25,10 @@ may lag behind this tracker.
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~6.1% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, and device token scope-preserving rotation are landed; companion apps remain mostly open |
 
+Latest verified adjustment: `OZ-PROV-001GX` Google Chat upload-file message
+action moves provider-native inbound/outbound breadth to ~99.9999991%;
+repo-wide OpenClaw parity remains estimated at ~99.9%.
+
 ## Implemented / Locked Bounded Areas
 
 - [x] ACP `resumeSessionId` ownership enforcement for `sessions.spawn`.
@@ -10933,6 +10937,29 @@ may lag behind this tracker.
     had `message_reference`, then `1 passed`), adjacent
     `python -m pytest tests\test_ops_mesh.py -q -k "discord_native_route or discord_media or discord_video or discord_audio_as_voice or discord_reply or discord_thread_query"`
     (`7 passed, 501 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001GX` Google Chat upload-file message action.
+  - Source: `openclaw-main/extensions/googlechat/src/actions.ts`,
+    `openclaw-main/extensions/googlechat/src/actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Google Chat `message.action upload-file` resolves the native
+    route/account, accepts OpenClaw `media` / `filePath` / `path`, caption,
+    filename/title, and thread/reply options, uploads the attachment through
+    the provider-backed upload endpoint, sends `attachmentDataRef`, and returns
+    message, chat, media id, filename, and thread metadata.
+  - Evidence required: focused Google Chat upload-file action proof, adjacent
+    Google Chat provider proof, ruff, mypy
+  - Status: checkpointed in `1b08e340`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_dispatch_googlechat_upload_file_message_action_uses_attachment_upload_path -q`
+    (`1 failed` before implementation because `dispatch_message_action`
+    returned `None`, then `1 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "googlechat and (message_action or direct_channel_message)"`
+    (`4 passed, 505 deselected`), `ruff check
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 

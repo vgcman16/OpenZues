@@ -24622,6 +24622,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `92209e38`.
 
+- Native Google Chat `message.action upload-file` now routes through the same
+  provider-backed attachment upload/send path as direct Google Chat media
+  delivery. The action accepts OpenClaw's `media` / `filePath` / `path`,
+  `message` / `initialComment`, `filename` / `title`, and `threadId` /
+  `replyTo` options, uploads the attachment, sends the message with
+  `attachmentDataRef`, and returns message, chat, media id, filename, and
+  thread metadata. This closes `OZ-PROV-001GX`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.9999991%.
+- Verified the Google Chat upload-file action seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_dispatch_googlechat_upload_file_message_action_uses_attachment_upload_path -q`
+  (`1 failed` before implementation because `dispatch_message_action`
+  returned `None`, then `1 passed`), adjacent Google Chat provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "googlechat and (message_action or direct_channel_message)"`
+  (`4 passed, 505 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `1b08e340`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

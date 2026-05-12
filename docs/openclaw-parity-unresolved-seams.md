@@ -13044,3 +13044,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   native-bridge parity moves to ~99.99999992%. Continue deeper ACP lifecycle
   edges, packaging/distribution, installed plugin activation, provider media
   edges, or companion app breadth.
+- Current queue-head adjustment: native Google Chat `message.action
+  upload-file` now uses the provider-backed attachment upload path, accepts
+  OpenClaw `media` / `filePath` / `path`, caption, filename/title, and
+  thread/reply options, sends `attachmentDataRef` messages, and returns
+  message/chat/media/filename/thread metadata. Source/test checkpointed in
+  `1b08e340`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.9999991%. Continue provider action
+  breadth, packaging/distribution, device-token authz depth, ACP lifecycle, or
+  companion app breadth.
