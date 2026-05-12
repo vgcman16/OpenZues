@@ -8791,10 +8791,25 @@ class GatewayNodeMethodService:
                 if spawn_parent_depth >= max_spawn_depth:
                     return {
                         "status": "forbidden",
+                        "errorCode": "subagent_policy",
                         "error": (
                             "sessions_spawn is not allowed at this depth "
                             f"(current depth: {spawn_parent_depth}, "
                             f"max: {max_spawn_depth})"
+                        ),
+                        **role_context,
+                    }
+                max_children = _sessions_spawn_max_children_per_agent(self._config_service)
+                active_child_count = await self._active_sessions_spawn_child_count(
+                    requester_session_key=spawn_parent_session_key,
+                )
+                if active_child_count >= max_children:
+                    return {
+                        "status": "forbidden",
+                        "errorCode": "subagent_policy",
+                        "error": (
+                            "sessions_spawn has reached max active children for this "
+                            f"session ({active_child_count}/{max_children})"
                         ),
                         **role_context,
                     }
