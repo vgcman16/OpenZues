@@ -51,9 +51,13 @@ snapshot/action/screenshot/profile/tab route adapters. `OZ-CANVAS-001G`
 local lifecycle routes from
 `extensions/browser/src/browser/routes/basic.ts` are checkpointed in
 `d9b5e87d`; they map `POST /start` and `POST /stop` onto native browser
-lifecycle methods with `all` / `allSessions` stop options. Remaining
-browser-request depth is richer local status/doctor/profile/permission/tab
-route breadth beyond the current native adapter.
+lifecycle methods with `all` / `allSessions` stop options. `OZ-CANVAS-001H`
+local tab mutation routes from
+`extensions/browser/src/browser/routes/tabs.ts` are checkpointed in
+`aa7298c6`; they map `POST /tabs/focus` and `DELETE /tabs/:targetId` onto
+native focus/targeted-close methods with decoded path-segment target ids.
+Remaining browser-request depth is richer local status, doctor, profile,
+permission, and tab-action route breadth beyond the current native adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers
