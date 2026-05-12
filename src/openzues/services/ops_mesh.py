@@ -5148,14 +5148,106 @@ def _qqbot_channel_media_content(text: str, media_urls: Sequence[str], media_typ
     return "\n".join(part for part in content_parts if part)
 
 
-_QQBOT_MEDIA_TAG_RE = re.compile(
-    r"<(qqimg|qqvoice|qqvideo|qqfile|qqmedia)>([^<>]+)</(?:qqimg|qqvoice|qqvideo|qqfile|qqmedia|img)>",
+_QQBOT_VALID_MEDIA_TAGS = ("qqimg", "qqvoice", "qqvideo", "qqfile", "qqmedia")
+_QQBOT_MEDIA_TAG_ALIASES = {
+    "qq_img": "qqimg",
+    "qqimage": "qqimg",
+    "qq_image": "qqimg",
+    "qqpic": "qqimg",
+    "qq_pic": "qqimg",
+    "qqpicture": "qqimg",
+    "qq_picture": "qqimg",
+    "qqphoto": "qqimg",
+    "qq_photo": "qqimg",
+    "img": "qqimg",
+    "image": "qqimg",
+    "pic": "qqimg",
+    "picture": "qqimg",
+    "photo": "qqimg",
+    "qq_voice": "qqvoice",
+    "qqaudio": "qqvoice",
+    "qq_audio": "qqvoice",
+    "voice": "qqvoice",
+    "audio": "qqvoice",
+    "qq_video": "qqvideo",
+    "video": "qqvideo",
+    "qq_file": "qqfile",
+    "qqdoc": "qqfile",
+    "qq_doc": "qqfile",
+    "file": "qqfile",
+    "doc": "qqfile",
+    "document": "qqfile",
+    "qq_media": "qqmedia",
+    "media": "qqmedia",
+    "attachment": "qqmedia",
+    "attach": "qqmedia",
+    "qqattachment": "qqmedia",
+    "qq_attachment": "qqmedia",
+    "qqsend": "qqmedia",
+    "qq_send": "qqmedia",
+    "send": "qqmedia",
+}
+_QQBOT_MEDIA_TAG_NAMES = tuple(
+    sorted(
+        [*_QQBOT_VALID_MEDIA_TAGS, *_QQBOT_MEDIA_TAG_ALIASES.keys()],
+        key=len,
+        reverse=True,
+    )
+)
+_QQBOT_MEDIA_TAG_NAME_PATTERN = "|".join(re.escape(tag) for tag in _QQBOT_MEDIA_TAG_NAMES)
+_QQBOT_LEFT_BRACKET_PATTERN = r"(?:<|&lt;|\uff1c)"
+_QQBOT_RIGHT_BRACKET_PATTERN = r"(?:>|&gt;|\uff1e)"
+_QQBOT_MEDIA_TAG_ATTR_VALUE_PATTERN = r"[^\"'\s<>\uff1c\uff1e]+"
+_QQBOT_MEDIA_TAG_EXTRA_ATTR_PATTERN = (
+    r"[a-z_-]+\s*=\s*[\"']?" + _QQBOT_MEDIA_TAG_ATTR_VALUE_PATTERN + r"[\"']?"
+)
+_QQBOT_SELF_CLOSING_MEDIA_TAG_RE = re.compile(
+    "`?"
+    + _QQBOT_LEFT_BRACKET_PATTERN
+    + r"\s*("
+    + _QQBOT_MEDIA_TAG_NAME_PATTERN
+    + r")"
+    + r"(?:\s+(?!(?:file|src|path|url)\s*=)"
+    + _QQBOT_MEDIA_TAG_EXTRA_ATTR_PATTERN
+    + r")*"
+    + r"\s+(?:file|src|path|url)\s*=\s*[\"']?("
+    + _QQBOT_MEDIA_TAG_ATTR_VALUE_PATTERN
+    + r")[\"']?"
+    + r"(?:\s+"
+    + _QQBOT_MEDIA_TAG_EXTRA_ATTR_PATTERN
+    + r")*"
+    + r"\s*/?\s*"
+    + _QQBOT_RIGHT_BRACKET_PATTERN
+    + "`?",
+    flags=re.IGNORECASE,
+)
+_QQBOT_WRAPPED_MEDIA_TAG_RE = re.compile(
+    "`?"
+    + _QQBOT_LEFT_BRACKET_PATTERN
+    + r"\s*("
+    + _QQBOT_MEDIA_TAG_NAME_PATTERN
+    + r")\s*"
+    + _QQBOT_RIGHT_BRACKET_PATTERN
+    + r"[\"']?\s*([\s\S]*?)\s*[\"']?"
+    + _QQBOT_LEFT_BRACKET_PATTERN
+    + r"\s*/?\s*(?:"
+    + _QQBOT_MEDIA_TAG_NAME_PATTERN
+    + r"|img)\s*"
+    + _QQBOT_RIGHT_BRACKET_PATTERN
+    + "`?",
     flags=re.IGNORECASE,
 )
 
 
-def _qqbot_media_tag_kind(tag_name: str) -> str | None:
+def _qqbot_canonical_media_tag(tag_name: str) -> str:
     normalized = str(tag_name or "").strip().lower()
+    if normalized in _QQBOT_VALID_MEDIA_TAGS:
+        return normalized
+    return _QQBOT_MEDIA_TAG_ALIASES.get(normalized, "qqimg")
+
+
+def _qqbot_media_tag_kind(tag_name: str) -> str | None:
+    normalized = _qqbot_canonical_media_tag(tag_name)
     if normalized == "qqimg":
         return "image"
     if normalized == "qqvoice":
@@ -5168,20 +5260,43 @@ def _qqbot_media_tag_kind(tag_name: str) -> str | None:
 
 
 def _qqbot_inline_media_tags(text: str) -> tuple[str, list[tuple[str, str | None]]]:
+    raw_matches: list[tuple[int, int, str, str | None]] = []
+    for pattern in (_QQBOT_SELF_CLOSING_MEDIA_TAG_RE, _QQBOT_WRAPPED_MEDIA_TAG_RE):
+        for match in pattern.finditer(text):
+            raw_matches.append(
+                (
+                    match.start(),
+                    match.end(),
+                    str(match.group(2) or ""),
+                    _qqbot_media_tag_kind(str(match.group(1) or "")),
+                )
+            )
+    if not raw_matches:
+        return text, []
+    raw_matches.sort(key=lambda entry: (entry[0], -(entry[1] - entry[0])))
     entries: list[tuple[str, str | None]] = []
     caption_parts: list[str] = []
+    filtered_matches: list[tuple[int, int, str, str | None]] = []
+    cursor = 0
+    for start, end, media_url, media_kind in raw_matches:
+        if start < cursor:
+            continue
+        filtered_matches.append((start, end, media_url, media_kind))
+        cursor = end
     last_index = 0
-    for match in _QQBOT_MEDIA_TAG_RE.finditer(text):
-        before = text[last_index : match.start()].strip()
+    for start, end, raw_media_url, media_kind in filtered_matches:
+        before = html.unescape(text[last_index:start]).strip()
         if before:
             caption_parts.append(before)
-        media_url = html.unescape(str(match.group(2) or "").strip())
+        media_url = html.unescape(raw_media_url).strip().strip("\"'")
+        if media_url.startswith("MEDIA:"):
+            media_url = media_url[len("MEDIA:") :].strip()
         if media_url:
-            entries.append((media_url, _qqbot_media_tag_kind(str(match.group(1)))))
-        last_index = match.end()
+            entries.append((media_url, media_kind))
+        last_index = end
     if not entries:
         return text, []
-    after = text[last_index:].strip()
+    after = html.unescape(text[last_index:]).strip()
     if after:
         caption_parts.append(after)
     return "\n".join(caption_parts).strip(), entries
