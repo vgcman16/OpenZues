@@ -15,11 +15,12 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.9999992% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.9999993% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
   `resumeSessionId` ownership enforcement, ACP model/thinking override
   propagation, ACP configured runtime agent alias mapping, ACP runtime-agent
-  mismatch preflight, ACP run-timeout runtime propagation, package
+  mismatch preflight, ACP run-timeout runtime propagation, ACP subagent
+  depth/child-cap policy, package
   post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback,
   startup-optimization doctor notes, installed runtime session/control-UI
   contribution capture, package
@@ -12927,3 +12928,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   moves to ~99.9999992%. Continue deeper ACP bridge lifecycle edge cases,
   deeper installed plugin activation, packaging/distribution, provider media
   edges, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now applies
+  configured subagent max-depth and max-active-child limits before ACP runtime
+  dispatch, including OpenClaw's `subagent_policy` error code for ACP depth
+  failures. Source/test checkpointed in `1bd16f72`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.9999993%. Continue deeper ACP bridge lifecycle edge cases, deeper
+  installed plugin activation, packaging/distribution, provider media edges, or
+  companion breadth.
