@@ -73,7 +73,11 @@ from openzues.services.gateway_node_pending_work import (
     NodePendingWorkPriority,
     NodePendingWorkType,
 )
-from openzues.services.gateway_node_registry import GatewayNodeRegistry, KnownNode
+from openzues.services.gateway_node_registry import (
+    GatewayNodeRegistry,
+    KnownNode,
+    NodeSession,
+)
 from openzues.services.gateway_plugin_runtime import (
     GatewayPluginExecutor,
     GatewayPluginRuntimeExecutorResolution,
@@ -189,6 +193,7 @@ _NODE_WAKE_NUDGE_THROTTLE_MS = 10 * 60_000
 _YYYY_MM_DD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _UTC_OFFSET_RE = re.compile(r"^UTC[+-]\d{1,2}(?::[0-5]\d)?$")
 _BROWSER_PROXY_PROFILE_DELETE_RE = re.compile(r"^/profiles/[^/]+$")
+_BROWSER_REQUEST_ALLOWED_METHODS = {"GET", "POST", "DELETE"}
 _PLUGIN_APPROVAL_DEFAULT_TIMEOUT_MS = 120_000
 _PLUGIN_APPROVAL_MAX_TIMEOUT_MS = 600_000
 _PLUGIN_APPROVAL_DECISIONS = {"allow-once", "allow-always", "deny"}
@@ -783,6 +788,76 @@ def _validate_node_invoke_command(command: str, params: object) -> None:
         )
     if command in {"canvas.a2ui.push", "canvas.a2ui.pushJSONL"}:
         _validate_canvas_a2ui_jsonl(params)
+
+
+def _browser_request_invalid(message: str) -> NoReturn:
+    raise GatewayNodeMethodError(
+        code="INVALID_REQUEST",
+        message=message,
+        status_code=400,
+    )
+
+
+def _browser_request_method(payload: Mapping[str, Any]) -> str:
+    method_value = payload.get("method")
+    method = method_value.strip().upper() if isinstance(method_value, str) else ""
+    if not method:
+        _browser_request_invalid("method and path are required")
+    if method not in _BROWSER_REQUEST_ALLOWED_METHODS:
+        _browser_request_invalid("method must be GET, POST, or DELETE")
+    return method
+
+
+def _browser_request_path(payload: Mapping[str, Any]) -> str:
+    path_value = payload.get("path")
+    path = path_value.strip() if isinstance(path_value, str) else ""
+    if not path:
+        _browser_request_invalid("method and path are required")
+    return path
+
+
+def _browser_request_query(payload: Mapping[str, Any]) -> dict[str, object] | None:
+    query = payload.get("query")
+    if not isinstance(query, dict):
+        return None
+    return dict(query)
+
+
+def _browser_request_profile(
+    query: Mapping[str, object] | None,
+    body: object,
+) -> str | None:
+    for source in (query, body):
+        if not isinstance(source, dict):
+            continue
+        profile = source.get("profile")
+        if isinstance(profile, str) and profile.strip():
+            return profile.strip()
+    return None
+
+
+def _is_browser_request_node(node: NodeSession) -> bool:
+    return "browser" in node.caps or "browser.proxy" in node.commands
+
+
+def _browser_request_proxy_result(
+    *,
+    payload: object,
+    payload_json: str | None,
+) -> Any:
+    resolved_payload = payload
+    if isinstance(payload_json, str) and payload_json.strip():
+        try:
+            resolved_payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            resolved_payload = payload
+    if not isinstance(resolved_payload, dict) or "result" not in resolved_payload:
+        raise GatewayNodeMethodError(
+            code="UNAVAILABLE",
+            message="browser proxy failed",
+            status_code=503,
+        )
+    return resolved_payload["result"]
 
 
 def _raise_tools_invoke_not_found(tool_name: str) -> NoReturn:
@@ -2917,6 +2992,120 @@ class GatewayNodeMethodService:
             _normalized_tools_invoke_policy_set(tools.get("deny")),
         )
 
+    def _resolve_browser_request_node_target(self) -> NodeSession | None:
+        browser_nodes = [
+            node for node in self.registry.list_connected() if _is_browser_request_node(node)
+        ]
+        if not browser_nodes:
+            return None
+        if len(browser_nodes) > 1:
+            raise GatewayNodeMethodError(
+                code="UNAVAILABLE",
+                message="multiple browser-capable nodes connected; configure a browser node",
+                status_code=503,
+            )
+        return browser_nodes[0]
+
+    async def _handle_browser_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _validate_exact_keys(
+            "browser.request",
+            payload,
+            allowed_keys=("method", "path", "query", "body", "timeoutMs"),
+        )
+        method = _browser_request_method(payload)
+        path = _browser_request_path(payload)
+        if _is_persistent_browser_proxy_mutation(method, path):
+            _browser_request_invalid(
+                "browser.request cannot mutate persistent browser profiles"
+            )
+        query = _browser_request_query(payload)
+        body = payload.get("body") if "body" in payload else None
+        timeout_ms = _optional_bounded_int(
+            payload.get("timeoutMs"),
+            label="timeoutMs",
+            minimum=0,
+            maximum=_OPENCLAW_MAX_SAFE_TIMEOUT_MS,
+        )
+        if timeout_ms is not None:
+            timeout_ms = max(1, timeout_ms)
+
+        node = self._resolve_browser_request_node_target()
+        if node is None:
+            raise GatewayNodeMethodError(
+                code="UNAVAILABLE",
+                message="browser control is disabled",
+                status_code=503,
+            )
+
+        allowlist = resolve_node_command_allowlist(
+            platform=node.platform,
+            device_family=node.device_family,
+            allow_commands=self._node_allow_commands,
+            deny_commands=self._node_deny_commands,
+        )
+        declared_commands = normalize_declared_node_commands(
+            node.commands,
+            allowlist=allowlist,
+        )
+        allowed, reason = is_node_command_allowed(
+            command="browser.proxy",
+            declared_commands=declared_commands,
+            allowlist=allowlist,
+        )
+        if not allowed:
+            known_node = self.registry.describe_known_node(node.node_id) or KnownNode(
+                node_id=node.node_id,
+                display_name=node.display_name,
+                platform=node.platform,
+                device_family=node.device_family,
+            )
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message=_build_node_command_rejection_hint(
+                    reason,
+                    "browser.proxy",
+                    known_node,
+                ),
+                status_code=400,
+                details={"reason": reason, "command": "browser.proxy"},
+            )
+
+        proxy_params: dict[str, object] = {"method": method, "path": path}
+        if query is not None:
+            proxy_params["query"] = query
+        if "body" in payload:
+            proxy_params["body"] = body
+        if timeout_ms is not None:
+            proxy_params["timeoutMs"] = timeout_ms
+        profile = _browser_request_profile(query, body)
+        if profile is not None:
+            proxy_params["profile"] = profile
+
+        result = await self.registry.invoke(
+            node_id=node.node_id,
+            command="browser.proxy",
+            params=proxy_params,
+            timeout_ms=timeout_ms,
+            idempotency_key=secrets.token_hex(16),
+        )
+        if not result.ok:
+            error_payload = dict(result.error or {})
+            error_code = str(error_payload.get("code") or "UNAVAILABLE")
+            error_message = str(error_payload.get("message") or "browser proxy failed")
+            raise GatewayNodeMethodError(
+                code=error_code,
+                message=error_message,
+                status_code=503,
+            )
+
+        return cast(
+            dict[str, Any],
+            _browser_request_proxy_result(
+                payload=result.payload,
+                payload_json=result.payload_json,
+            ),
+        )
+
     async def call(
         self,
         method: str,
@@ -3150,6 +3339,9 @@ class GatewayNodeMethodService:
                 provider=_optional_non_empty_string(payload.get("provider"), label="provider"),
                 scope=cast(Literal["both", "native", "text"], scope or "both"),
             )
+
+        if resolved_method == "browser.request":
+            return await self._handle_browser_request(payload)
 
         if resolved_method == "browser.status":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())

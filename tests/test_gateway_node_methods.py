@@ -121698,6 +121698,115 @@ async def test_node_invoke_rejects_persistent_browser_proxy_mutations_before_wak
 
 
 @pytest.mark.asyncio
+async def test_browser_request_rejects_persistent_profile_mutations_before_dispatch() -> None:
+    registry = GatewayNodeRegistry()
+    connection = FakeNodeConnection("conn-browser-node")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-browser-node",
+            device_id="browser-node",
+            platform="windows",
+            caps=("browser",),
+            commands=("browser.proxy",),
+        ),
+    )
+    service = GatewayNodeMethodService(registry)
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "browser.request",
+            {
+                "method": "POST",
+                "path": "profiles/create/",
+                "body": {"name": "poc", "cdpUrl": "http://10.0.0.42:9222"},
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.message == (
+        "browser.request cannot mutate persistent browser profiles"
+    )
+    assert connection.sent_events == []
+
+
+@pytest.mark.asyncio
+async def test_browser_request_proxies_to_connected_browser_node_with_profile_selection() -> None:
+    class BrowserProxyNodeConnection(FakeNodeConnection):
+        def __init__(self, registry: GatewayNodeRegistry, conn_id: str) -> None:
+            super().__init__(conn_id)
+            self.registry = registry
+            self.proxy_params: dict[str, object] | None = None
+
+        def send_gateway_event(self, event: str, payload: object) -> None:
+            super().send_gateway_event(event, payload)
+            if event != "node.invoke.request" or not isinstance(payload, dict):
+                return
+            request_id = str(payload.get("id") or "")
+            node_id = str(payload.get("nodeId") or "")
+            params_json = payload.get("paramsJSON")
+            proxy_params = json.loads(params_json) if isinstance(params_json, str) else {}
+            self.proxy_params = proxy_params
+            response = {
+                "result": {
+                    "ok": True,
+                    "path": proxy_params.get("path"),
+                    "profile": proxy_params.get("profile"),
+                }
+            }
+            asyncio.get_running_loop().call_soon(
+                lambda: self.registry.handle_invoke_result(
+                    request_id=request_id,
+                    node_id=node_id,
+                    ok=True,
+                    payload=response,
+                    payload_json=json.dumps(response),
+                    error=None,
+                )
+            )
+
+    registry = GatewayNodeRegistry()
+    connection = BrowserProxyNodeConnection(registry, "conn-browser-node")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-browser-node",
+            device_id="browser-node",
+            display_name="Work Browser",
+            platform="windows",
+            caps=("browser",),
+            commands=("browser.proxy",),
+        ),
+    )
+    service = GatewayNodeMethodService(registry)
+
+    response = await service.call(
+        "browser.request",
+        {
+            "method": "POST",
+            "path": "/act",
+            "query": {"profile": "chrome"},
+            "body": {"profile": "work", "request": {"action": "click", "ref": "btn1"}},
+            "timeoutMs": 250,
+        },
+    )
+
+    assert response == {"ok": True, "path": "/act", "profile": "chrome"}
+    assert connection.proxy_params == {
+        "method": "POST",
+        "path": "/act",
+        "query": {"profile": "chrome"},
+        "body": {"profile": "work", "request": {"action": "click", "ref": "btn1"}},
+        "timeoutMs": 250,
+        "profile": "chrome",
+    }
+    request_payload = connection.sent_events[0]["payload"]
+    assert isinstance(request_payload, dict)
+    assert request_payload["command"] == "browser.proxy"
+    assert request_payload["nodeId"] == "browser-node"
+
+
+@pytest.mark.asyncio
 async def test_node_invoke_rejects_invalid_canvas_a2ui_jsonl_before_dispatch() -> None:
     registry = GatewayNodeRegistry()
     connection = FakeNodeConnection("conn-canvas-a2ui-node")
