@@ -10547,6 +10547,116 @@ def _openclaw_update_fetch_package_target_status(
     }
 
 
+def _openclaw_update_current_node_version() -> str | None:
+    node_path = shutil.which("node")
+    if node_path is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [node_path, "--version"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    version = _optional_cli_string(completed.stdout)
+    return version.lstrip("v") if version is not None else None
+
+
+def _openclaw_update_node_version_satisfies_engine(
+    current_version: str | None,
+    node_engine: str | None,
+) -> bool | None:
+    if node_engine is None:
+        return None
+    current_tuple = _doctor_node_version_tuple(current_version)
+    if current_tuple is None:
+        return None
+    any_decidable = False
+    for clause in node_engine.split("||"):
+        matches = list(
+            re.finditer(
+                r"(>=|<=|>|<|=)?\s*v?(\d+)(?:\.(\d+|x|X|\*))?(?:\.(\d+|x|X|\*))?",
+                clause,
+            )
+        )
+        if not matches:
+            continue
+        any_decidable = True
+        clause_ok = True
+        for match in matches:
+            op = match.group(1) or "="
+            major = int(match.group(2))
+            minor_raw = match.group(3)
+            patch_raw = match.group(4)
+            wildcard = minor_raw in {None, "x", "X", "*"} or patch_raw in {"x", "X", "*"}
+            required = (
+                major,
+                int(minor_raw) if minor_raw not in {None, "x", "X", "*"} else 0,
+                int(patch_raw) if patch_raw not in {None, "x", "X", "*"} else 0,
+            )
+            if wildcard and op == "=":
+                prefix_len = 1 if minor_raw in {None, "x", "X", "*"} else 2
+                if current_tuple[:prefix_len] != required[:prefix_len]:
+                    clause_ok = False
+                    break
+                continue
+            if op == ">=":
+                comparison_ok = current_tuple >= required
+            elif op == ">":
+                comparison_ok = current_tuple > required
+            elif op == "<=":
+                comparison_ok = current_tuple <= required
+            elif op == "<":
+                comparison_ok = current_tuple < required
+            else:
+                comparison_ok = current_tuple == required
+            if not comparison_ok:
+                clause_ok = False
+                break
+        if clause_ok:
+            return True
+    return False if any_decidable else None
+
+
+def _openclaw_update_package_runtime_preflight_error(
+    tag: str,
+    *,
+    timeout_seconds: float | None = None,
+) -> str | None:
+    if not _openclaw_update_can_resolve_registry_version_for_target(tag):
+        return None
+    target = _openclaw_update_normalize_package_target(tag)
+    if not target:
+        return None
+    status = _openclaw_update_fetch_package_target_status(
+        target,
+        timeout_seconds=timeout_seconds,
+    )
+    if _optional_cli_string(status.get("error")) is not None:
+        return None
+    node_engine = _optional_cli_string(status.get("nodeEngine"))
+    current_version = _openclaw_update_current_node_version()
+    satisfies = _openclaw_update_node_version_satisfies_engine(current_version, node_engine)
+    if satisfies is not False:
+        return None
+    target_label = _optional_cli_string(status.get("version")) or target
+    package_name = _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+    return "\n".join(
+        [
+            f"Node {current_version or 'unknown'} is too old for {package_name}@{target_label}.",
+            f"The requested package requires {node_engine}.",
+            "Upgrade Node to 22.14+ or Node 24, then rerun `openzues update`.",
+            f"Bare `npm i -g {package_name}` can silently install an older compatible release.",
+            f"After upgrading Node, use `npm i -g {package_name}@latest`.",
+        ]
+    )
+
+
 def _openclaw_update_semver_prerelease(value: object) -> str | None:
     text = _optional_cli_string(value)
     if text is None:
@@ -106444,6 +106554,13 @@ def update_root(
             package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
             tag=target_tag,
         )
+        runtime_preflight_error = _openclaw_update_package_runtime_preflight_error(
+            target_tag,
+            timeout_seconds=timeout_seconds,
+        )
+        if runtime_preflight_error is not None:
+            typer.echo(runtime_preflight_error, err=True)
+            raise typer.Exit(code=1)
         package_manager = _openclaw_update_package_manager(root)
 
         async def run_package_update_with_plugins(services: CliServices) -> dict[str, object]:

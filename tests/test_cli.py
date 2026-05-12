@@ -26768,6 +26768,82 @@ def test_update_json_uses_stored_channel_for_package_update(
     }
 
 
+def test_update_json_blocks_package_update_when_target_requires_newer_node(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen["dispatched"] = True
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    def fake_fetch(target: str, *, timeout_seconds: float | None = None) -> dict[str, object]:
+        return {"target": target, "version": "9.9.9", "nodeEngine": ">=999.0.0"}
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_openclaw_update_fetch_package_target_status", fake_fetch)
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_current_node_version",
+        lambda: "20.0.0",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_node_version_satisfies_engine",
+        lambda current_version, node_engine: False,
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["update", "--json", "--yes", "--tag", "latest"])
+
+    assert result.exit_code == 1
+    assert "Node 20.0.0 is too old for openzues@9.9.9." in result.stderr
+    assert "The requested package requires >=999.0.0." in result.stderr
+    assert (
+        "Bare `npm i -g openzues` can silently install an older compatible release."
+        in result.stderr
+    )
+    assert seen == {}
+
+
 def test_update_json_blocks_registry_downgrade_without_yes(
     tmp_path,
     monkeypatch,
