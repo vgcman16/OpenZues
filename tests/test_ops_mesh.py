@@ -34410,6 +34410,86 @@ async def test_ops_mesh_service_handle_line_webhook_skips_unmentioned_group_text
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_delivers_group_text_with_native_bot_mention(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-group-mention-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "timestamp": 1760000001333,
+                    "source": {
+                        "type": "group",
+                        "groupId": "CMENTION123",
+                        "userId": "UGROUPMENTION",
+                    },
+                    "message": {
+                        "id": "line-group-mention-1",
+                        "type": "text",
+                        "text": "@Bot please run status",
+                        "mention": {
+                            "mentionees": [
+                                {
+                                    "index": 0,
+                                    "length": 4,
+                                    "type": "user",
+                                    "isSelf": True,
+                                }
+                            ]
+                        },
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="group",
+        peer_id="line:group:CMENTION123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "@Bot please run status")]
+    assert result["deliveredCount"] == 1
+    assert "skips" not in result
+    assert result["deliveries"][0]["messageId"] == "line-group-mention-session-1"
+    assert result["deliveries"][0]["conversationType"] == "group"
+    assert result["deliveries"][0]["conversationTarget"] == expected_target.model_dump(
+        mode="json"
+    )
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_line_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

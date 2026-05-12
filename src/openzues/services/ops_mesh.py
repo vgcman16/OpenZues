@@ -10155,12 +10155,32 @@ def _line_text_mentions_openzues(text: str) -> bool:
     return "openzues" in normalized or "open zues" in normalized
 
 
+def _line_event_has_native_bot_mention(event: Mapping[str, Any]) -> bool:
+    message = _line_inbound_mapping(event.get("message"))
+    mention = _line_inbound_mapping(message.get("mention"))
+    mentionees = mention.get("mentionees")
+    if not isinstance(mentionees, list):
+        return False
+    for mentionee in mentionees:
+        if not isinstance(mentionee, Mapping):
+            continue
+        if mentionee.get("isSelf") is True:
+            return True
+        mention_type = str(mentionee.get("type") or "").strip().lower()
+        if mention_type == "all":
+            return True
+    return False
+
+
 def _line_group_message_requires_mention_skip(
     *,
     context: _LineInboundSessionContext,
+    event: Mapping[str, Any],
     text: str,
 ) -> bool:
     if context.conversation_type not in {"group", "room"}:
+        return False
+    if _line_event_has_native_bot_mention(event):
         return False
     return not _line_text_mentions_openzues(text)
 
@@ -18047,7 +18067,11 @@ class OpsMeshService:
             if text is None:
                 continue
             context = _line_inbound_session_context(event, account_id=account_id)
-            if _line_group_message_requires_mention_skip(context=context, text=text):
+            if _line_group_message_requires_mention_skip(
+                context=context,
+                event=event,
+                text=text,
+            ):
                 skip: dict[str, object] = {
                     "eventType": str(event.get("type") or "").strip() or "message",
                     "reason": "line_group_message_requires_mention",
