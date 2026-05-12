@@ -6138,6 +6138,106 @@ export default {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_executes_source_sdk_alias_runtime_entry_tool(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    plugin_dir = tmp_path / "source-runtime-plugin"
+    runtime_entry = plugin_dir / "src" / "channel.runtime.ts"
+    runtime_entry.parent.mkdir(parents=True)
+    runtime_entry.write_text(
+        """
+import { resolveOutboundSendDep } from "@openclaw/plugin-sdk/outbound-send-deps";
+
+export default {
+  register(api) {
+    api.registerTool({
+      name: resolveOutboundSendDep(),
+      description: "Execute through a source SDK alias",
+      parameters: {
+        type: "object",
+        properties: { message: { type: "string" } }
+      },
+      execute(toolCallId, args) {
+        return {
+          ok: true,
+          toolCallId,
+          tool: resolveOutboundSendDep(),
+          echoed: args.message
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    sdk_shim = plugin_dir / "plugin-sdk" / "outbound-send-deps.ts"
+    sdk_shim.parent.mkdir(parents=True)
+    sdk_shim.write_text(
+        "export function resolveOutboundSendDep() { return 'discord.send'; }\n",
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "discord",
+                    "name": "Discord",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                    "pluginSdkAliasMap": {
+                        "openclaw/plugin-sdk/outbound-send-deps": str(sdk_shim),
+                        "@openclaw/plugin-sdk/outbound-send-deps": str(sdk_shim),
+                    },
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-source-sdk-alias-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["discord.send"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "discord.send", "args": {"message": "hello"}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["ok"] is True
+    assert payload["result"]["tool"] == "discord.send"
+    assert payload["result"]["echoed"] == "hello"
+    assert str(payload["result"]["toolCallId"]).startswith("http-")
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_executes_imported_openclaw_runtime_tool_factory_with_context(
     tmp_path,
 ) -> None:
