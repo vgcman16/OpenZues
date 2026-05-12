@@ -144,7 +144,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.963% after the
   latest requester-scoped `agents_list` spawn-target projection slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.9996%
+- The provider-native inbound/outbound breadth family is estimated at ~99.9997%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
   delivery plus postback/media-placeholder/sticker/location delivery and group
@@ -153,8 +153,8 @@ Current percentage rollup:
   inbound media staging, production credential-backed LINE media download, and
   LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text
   webhook session delivery/replay dedupe, Zalo image webhook media URL
-  delivery, fakeable Zalo inbound image media staging, and production Zalo
-  inbound media fetch.
+  delivery, fakeable Zalo inbound image media staging, production Zalo inbound
+  media fetch, and Zalo direct DM disabled-policy gating.
 - The CLI/operator control-plane family is estimated at ~99.99992% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -294,6 +294,14 @@ and stages bytes through the shared inbound attachment store. Source/test
 checkpointed in `00241ee2`; repo-wide parity remains estimated at ~99.9%, and
 provider-native inbound/outbound breadth moves to ~99.9996%. Continue Zalo
 inbound authorization/group-policy breadth, remaining provider-specific
+media/reply edges, deeper installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo direct inbound authorization now honors
+configured `dmPolicy="disabled"` by skipping direct webhook delivery before
+session dispatch and returning explicit skip metadata. Source/test checkpointed
+in `ac0e17e3`; repo-wide parity remains estimated at ~99.9%, and
+provider-native inbound/outbound breadth moves to ~99.9997%. Continue Zalo
+allowlist and group-policy authorization breadth, remaining provider-specific
 media/reply edges, deeper installed plugin activation, or companion breadth.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded

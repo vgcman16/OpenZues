@@ -136,7 +136,10 @@ storage, and `MediaPath`/`MediaType`/`stagedMedia` projection.
 `extensions/zalo/src/monitor.ts` and `extensions/zalo/src/api.ts` is
 checkpointed in `00241ee2`; it covers default `photo_url` download, 5 MB cap,
 content-type preservation, and shared inbound attachment storage when app state
-storage is configured.
+storage is configured. `OZ-PROV-001FQ` Zalo direct-DM disabled policy from
+`extensions/zalo/src/monitor.ts` and `extensions/zalo/src/config-schema.ts` is
+checkpointed in `ac0e17e3`; it covers configured direct-message disable
+skipping before native session delivery.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
