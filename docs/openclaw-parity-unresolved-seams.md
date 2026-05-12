@@ -15,9 +15,10 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.999994% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.999995% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
-  post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, package
+  post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback,
+  startup-optimization doctor notes, package
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
@@ -12758,3 +12759,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and runtime/CLI/doctor native-bridge parity moves to ~99.999994%. Continue
   deeper installed plugin activation, ACP bridge lifecycle depth, provider
   media edges, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native doctor startup optimization now mirrors
+  OpenClaw's low-power Linux platform note. `openzues doctor --json` reports
+  `doctor:startup-optimization` when `NODE_COMPILE_CACHE` is absent or under
+  `/tmp`, `NODE_DISABLE_COMPILE_CACHE` is set, or `OPENCLAW_NO_RESPAWN` is not
+  `1`, including the upstream note title, warning text, and suggested exports.
+  Source/test checkpointed in `b9400b0c`; repo-wide parity remains estimated at
+  ~99.9%, and runtime/CLI/doctor native-bridge parity moves to ~99.999995%.
+  Continue deeper installed plugin activation, ACP bridge lifecycle depth,
+  QQBot/provider route breadth, packaging/distribution, or companion breadth.

@@ -21,7 +21,7 @@ may lag behind this tracker.
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.999984% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.999994% | High for bounded native bridge | Packaging post-core resume/fresh-process handoff and runtime exit-signal labels plus installed facade registry fallback are checkpointed; ACP bridge depth and deeper installed plugin activation remain |
+| Runtime/CLI/doctor native bridge | ~99.999995% | High for bounded native bridge | Packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, and startup-optimization doctor notes are checkpointed; ACP bridge depth and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.9% | Low, broad parity still open | QR setup-code safety, SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, and approval-state preview metadata are landed; companion apps remain mostly open |
 
@@ -3299,8 +3299,32 @@ may lag behind this tracker.
     `47d73351`, package dist inventory validation checkpointed in `3bf0ff86`,
     update status channel projection checkpointed in `e32d4d47`, update status
     git branch channel label checkpointed in `8673e35d`, and update status
-    package-manager dependency posture checkpointed in `f1ac67da`.
+    package-manager dependency posture checkpointed in `f1ac67da`, and
+    startup-optimization doctor notes checkpointed in `b9400b0c`.
   - Weight: 5
+
+- [x] `OZ-PKG-001DD` Startup optimization doctor note.
+  - Source: `openclaw-main/src/commands/doctor-platform-notes.ts`,
+    `openclaw-main/src/commands/doctor-platform-notes.startup-optimization.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: on low-power Linux targets, `openzues doctor --json` reports a
+    `doctor:startup-optimization` payload when `NODE_COMPILE_CACHE` is missing
+    or under `/tmp`, `NODE_DISABLE_COMPILE_CACHE` is set, or
+    `OPENCLAW_NO_RESPAWN` is not `1`, preserving warning text, the
+    `Startup optimization` note title, and suggested exports.
+  - Evidence required: focused doctor CLI proof, adjacent doctor proof, ruff,
+    mypy
+  - Status: checkpointed in `b9400b0c`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_doctor_json_reports_startup_optimization_hints -q`
+    (`1 failed` before implementation because the startup helper/payload was
+    missing, then `1 passed`), adjacent doctor proof `python -m pytest
+    tests\test_cli.py -q -k "startup_optimization or runtime_bridge_posture or package_distribution"`
+    (`3 passed, 621 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
 
 - [ ] Runtime-control hard gaps.
   - Source: broader OpenClaw runtime/client integration and session runtime

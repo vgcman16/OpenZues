@@ -25,7 +25,7 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.999984% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.999994% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.999995% | Mostly landed; startup optimization, packaging, and installed plugin depth are advancing | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.9% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -219,6 +219,11 @@ Plugin addendum: `OZ-PLUGIN-001ZZA` installed facade registry fallback is
 source/test checkpointed in `19613f06`, moving runtime/CLI/doctor native-bridge
 parity to ~99.999994%. Continue deeper installed plugin activation, ACP bridge
 lifecycle depth, provider media edges, packaging/distribution, or companion
+breadth.
+Doctor addendum: `OZ-PKG-001DD` startup-optimization doctor note is source/test
+checkpointed in `b9400b0c`, moving runtime/CLI/doctor native-bridge parity to
+~99.999995%. Continue deeper installed plugin activation, ACP bridge lifecycle
+depth, QQBot/provider route breadth, packaging/distribution, or companion
 breadth.
 Packaging addendum: `OZ-PKG-001CJ` owning npm-root detection without
 `packageManager` metadata is source/test checkpointed in `76e2a21c`.
