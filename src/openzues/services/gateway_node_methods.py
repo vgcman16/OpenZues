@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import inspect
 import json
@@ -73,7 +74,11 @@ from openzues.services.gateway_node_pending_work import (
     NodePendingWorkPriority,
     NodePendingWorkType,
 )
-from openzues.services.gateway_node_registry import GatewayNodeRegistry, KnownNode
+from openzues.services.gateway_node_registry import (
+    GatewayNodeRegistry,
+    KnownNode,
+    NodeSession,
+)
 from openzues.services.gateway_plugin_runtime import (
     GatewayPluginExecutor,
     GatewayPluginRuntimeExecutorResolution,
@@ -90,7 +95,10 @@ from openzues.services.gateway_session_compaction import (
     GatewaySessionCompactionService,
     GatewaySessionCompactionUnavailableError,
 )
-from openzues.services.gateway_sessions import GatewaySessionsService
+from openzues.services.gateway_sessions import (
+    GatewaySessionsService,
+    openclaw_agent_runtime_metadata_for_session_key,
+)
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
 from openzues.services.gateway_skill_catalog import GatewaySkillCatalogService
 from openzues.services.gateway_skill_clawhub import (
@@ -186,6 +194,15 @@ _NODE_WAKE_NUDGE_THROTTLE_MS = 10 * 60_000
 _YYYY_MM_DD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _UTC_OFFSET_RE = re.compile(r"^UTC[+-]\d{1,2}(?::[0-5]\d)?$")
 _BROWSER_PROXY_PROFILE_DELETE_RE = re.compile(r"^/profiles/[^/]+$")
+_BROWSER_PROXY_MAX_FILE_BYTES = 5 * 1024 * 1024
+_BROWSER_REQUEST_ALLOWED_METHODS = {"GET", "POST", "DELETE"}
+_BROWSER_PROXY_MIME_EXTENSIONS = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "application/pdf": ".pdf",
+    "text/plain": ".txt",
+}
 _PLUGIN_APPROVAL_DEFAULT_TIMEOUT_MS = 120_000
 _PLUGIN_APPROVAL_MAX_TIMEOUT_MS = 600_000
 _PLUGIN_APPROVAL_DECISIONS = {"allow-once", "allow-always", "deny"}
@@ -339,6 +356,13 @@ _OPENCLAW_RUNTIME_CONTEXT_PROMPT_HEADERS = {
     _OPENCLAW_NEXT_TURN_RUNTIME_CONTEXT_HEADER,
     _OPENCLAW_RUNTIME_EVENT_HEADER,
 }
+_OPENCLAW_LEGACY_INTERNAL_CONTEXT_HEADER = (
+    f"OpenClaw runtime context (internal):\n{_OPENCLAW_RUNTIME_CONTEXT_NOTICE}\n\n"
+)
+_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER = "[Internal task completion event]"
+_OPENCLAW_LEGACY_INTERNAL_EVENT_SEPARATOR = "\n\n---\n\n"
+_OPENCLAW_LEGACY_UNTRUSTED_RESULT_BEGIN = "<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>"
+_OPENCLAW_LEGACY_UNTRUSTED_RESULT_END = "<<<END_UNTRUSTED_CHILD_RESULT>>>"
 _CHAT_HISTORY_INLINE_DIRECTIVE_RE = re.compile(
     r"\[\[\s*(?:reply_to(?:_current|\s*:\s*[^\]]+)?|audio_as_voice)\s*\]\]",
     re.IGNORECASE,
@@ -773,6 +797,207 @@ def _validate_node_invoke_command(command: str, params: object) -> None:
         )
     if command in {"canvas.a2ui.push", "canvas.a2ui.pushJSONL"}:
         _validate_canvas_a2ui_jsonl(params)
+
+
+def _browser_request_invalid(message: str) -> NoReturn:
+    raise GatewayNodeMethodError(
+        code="INVALID_REQUEST",
+        message=message,
+        status_code=400,
+    )
+
+
+def _browser_request_method(payload: Mapping[str, Any]) -> str:
+    method_value = payload.get("method")
+    method = method_value.strip().upper() if isinstance(method_value, str) else ""
+    if not method:
+        _browser_request_invalid("method and path are required")
+    if method not in _BROWSER_REQUEST_ALLOWED_METHODS:
+        _browser_request_invalid("method must be GET, POST, or DELETE")
+    return method
+
+
+def _browser_request_path(payload: Mapping[str, Any]) -> str:
+    path_value = payload.get("path")
+    path = path_value.strip() if isinstance(path_value, str) else ""
+    if not path:
+        _browser_request_invalid("method and path are required")
+    return path
+
+
+def _browser_request_query(payload: Mapping[str, Any]) -> dict[str, object] | None:
+    query = payload.get("query")
+    if not isinstance(query, dict):
+        return None
+    return dict(query)
+
+
+def _browser_request_profile(
+    query: Mapping[str, object] | None,
+    body: object,
+) -> str | None:
+    for source in (query, body):
+        if not isinstance(source, dict):
+            continue
+        profile = source.get("profile")
+        if isinstance(profile, str) and profile.strip():
+            return profile.strip()
+    return None
+
+
+def _is_browser_request_node(node: NodeSession) -> bool:
+    return "browser" in node.caps or "browser.proxy" in node.commands
+
+
+def _normalize_browser_node_key(value: str) -> str:
+    normalized = value.strip().lower()
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
+def _resolve_browser_request_node(
+    nodes: Sequence[NodeSession],
+    query: str,
+) -> NodeSession | None:
+    requested = query.strip()
+    if not requested:
+        return None
+    requested_key = _normalize_browser_node_key(requested)
+    matches = [
+        node
+        for node in nodes
+        if node.node_id == requested
+        or (isinstance(node.remote_ip, str) and node.remote_ip == requested)
+        or (
+            isinstance(node.display_name, str)
+            and _normalize_browser_node_key(node.display_name) == requested_key
+        )
+        or (len(requested) >= 6 and node.node_id.startswith(requested))
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        return None
+    labels = ", ".join(
+        node.display_name or node.remote_ip or node.node_id for node in matches
+    )
+    raise GatewayNodeMethodError(
+        code="UNAVAILABLE",
+        message=f"ambiguous node: {requested} (matches: {labels})",
+        status_code=503,
+    )
+
+
+def _browser_request_proxy_payload(
+    *,
+    payload: object,
+    payload_json: str | None,
+) -> dict[str, Any]:
+    resolved_payload = payload
+    if isinstance(payload_json, str) and payload_json.strip():
+        try:
+            resolved_payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            resolved_payload = payload
+    if not isinstance(resolved_payload, dict) or "result" not in resolved_payload:
+        raise GatewayNodeMethodError(
+            code="UNAVAILABLE",
+            message="browser proxy failed",
+            status_code=503,
+        )
+    return cast(dict[str, Any], resolved_payload)
+
+
+def _browser_request_local_response_payload(result: object) -> dict[str, Any]:
+    if not isinstance(result, Mapping):
+        return {"result": result}
+    if "status" not in result or "body" not in result:
+        return cast(dict[str, Any], dict(result))
+    status = _int_or_none(result.get("status")) or 200
+    body = result.get("body")
+    if status >= 400:
+        message: str | None = None
+        if isinstance(body, Mapping):
+            error = body.get("error")
+            if isinstance(error, str) and error.strip():
+                message = error.strip()
+        raise GatewayNodeMethodError(
+            code="UNAVAILABLE" if status >= 500 else "INVALID_REQUEST",
+            message=message or f"browser request failed ({status})",
+            status_code=503 if status >= 500 else 400,
+            details=cast(dict[str, Any], dict(body)) if isinstance(body, Mapping) else None,
+        )
+    if isinstance(body, Mapping):
+        return cast(dict[str, Any], dict(body))
+    return {"result": body}
+
+
+def _browser_proxy_file_extension(source_path: str, mime_type: str | None) -> str:
+    if mime_type is not None:
+        extension = _BROWSER_PROXY_MIME_EXTENSIONS.get(mime_type.strip().lower())
+        if extension is not None:
+            return extension
+    source_suffix = Path(source_path).suffix
+    if source_suffix and len(source_suffix) <= 12:
+        return source_suffix
+    return ".bin"
+
+
+def _persist_browser_proxy_files(
+    files: object,
+    *,
+    media_dir: Path,
+) -> dict[str, str]:
+    if not isinstance(files, list) or not files:
+        return {}
+    media_dir.mkdir(parents=True, exist_ok=True)
+    mapping: dict[str, str] = {}
+    for raw_file in files:
+        if not isinstance(raw_file, dict):
+            continue
+        source_path = raw_file.get("path")
+        encoded = raw_file.get("base64")
+        if not isinstance(source_path, str) or not source_path.strip():
+            continue
+        if not isinstance(encoded, str):
+            continue
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message="browser proxy file has invalid base64 content",
+                status_code=400,
+            ) from exc
+        if len(data) > _BROWSER_PROXY_MAX_FILE_BYTES:
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message="browser proxy file exceeds 5MB limit",
+                status_code=400,
+            )
+        mime_type = raw_file.get("mimeType")
+        mime = mime_type.strip() if isinstance(mime_type, str) and mime_type.strip() else None
+        digest = hashlib.sha256(data).hexdigest()[:24]
+        extension = _browser_proxy_file_extension(source_path, mime)
+        saved_path = media_dir / f"browser-{digest}{extension}"
+        saved_path.write_bytes(data)
+        mapping[source_path] = str(saved_path)
+    return mapping
+
+
+def _apply_browser_proxy_paths(result: object, mapping: Mapping[str, str]) -> None:
+    if not mapping or not isinstance(result, dict):
+        return
+    path = result.get("path")
+    if isinstance(path, str) and path in mapping:
+        result["path"] = mapping[path]
+    image_path = result.get("imagePath")
+    if isinstance(image_path, str) and image_path in mapping:
+        result["imagePath"] = mapping[image_path]
+    download = result.get("download")
+    if isinstance(download, dict):
+        download_path = download.get("path")
+        if isinstance(download_path, str) and download_path in mapping:
+            download["path"] = mapping[download_path]
 
 
 def _raise_tools_invoke_not_found(tool_name: str) -> NoReturn:
@@ -1612,6 +1837,7 @@ class GatewayNodeMethodService:
         node_allow_commands: Iterable[str] = (),
         node_deny_commands: Iterable[str] = (),
         browser_runtime_service: GatewayBrowserRuntimeService | None = None,
+        browser_proxy_media_dir: Path | None = None,
         acp_spawn_service: GatewayAcpSpawnService | None = None,
         exec_approvals_path: Path | None = None,
         tools_invoke_executors: (
@@ -1640,7 +1866,6 @@ class GatewayNodeMethodService:
         self._channel_logout_service = channel_logout_service
         self._list_integration_views = list_integration_views
         self._list_notification_route_views = list_notification_route_views
-        self._commands_service = commands_service or GatewayCommandsService()
         self._config_service = config_service
         self._config_schema_service = config_schema_service or GatewayConfigSchemaService()
         self._create_task_blueprint = create_task_blueprint
@@ -1674,6 +1899,17 @@ class GatewayNodeMethodService:
             executors=self._tools_invoke_executors,
             owner_only=self._tools_invoke_owner_only,
         )
+        self._commands_service = commands_service or GatewayCommandsService(
+            plugin_runtime_service=self._plugin_runtime_service,
+        )
+        if commands_service is not None:
+            set_plugin_runtime_service = getattr(
+                self._commands_service,
+                "set_plugin_runtime_service",
+                None,
+            )
+            if callable(set_plugin_runtime_service):
+                set_plugin_runtime_service(self._plugin_runtime_service)
         self._sessions_service = sessions_service
         if self._sessions_service is None and self._database is not None:
             self._sessions_service = GatewaySessionsService(
@@ -1754,6 +1990,9 @@ class GatewayNodeMethodService:
         self._node_allow_commands = tuple(node_allow_commands)
         self._node_deny_commands = tuple(node_deny_commands)
         self._browser_runtime_service = browser_runtime_service or GatewayBrowserRuntimeService()
+        self._browser_proxy_media_dir = browser_proxy_media_dir or (
+            Path(tempfile.gettempdir()) / "openzues-browser-proxy-media"
+        )
         self._acp_spawn_service = acp_spawn_service
         self._exec_approvals_path = exec_approvals_path
         self._message_action_dispatcher = message_action_dispatcher
@@ -2002,6 +2241,7 @@ class GatewayNodeMethodService:
         remote_ip: str | None,
         silent: bool | None,
         now_ms: int | None,
+        public_key: str | None = None,
     ) -> dict[str, object]:
         if self._pairing_service is None:
             raise GatewayNodeMethodError(
@@ -2023,6 +2263,7 @@ class GatewayNodeMethodService:
             remote_ip=remote_ip,
             silent=silent,
             now_ms=_timestamp_ms(now_ms),
+            public_key=public_key,
         )
         if (
             request_result.get("status") == "pending"
@@ -2101,6 +2342,7 @@ class GatewayNodeMethodService:
             remote_ip=node.remote_ip or paired_node.remote_ip,
             silent=True,
             now_ms=now_ms,
+            public_key=paired_node.public_key,
         )
 
     def _configured_chat_history_max_chars(self) -> int | None:
@@ -2593,6 +2835,12 @@ class GatewayNodeMethodService:
             and "sessionKey" not in tool_args
         ):
             tool_args["sessionKey"] = session_key
+        if (
+            session_key is not None
+            and resolved_tool_method == "agents.list"
+            and "requesterSessionKey" not in tool_args
+        ):
+            tool_args["requesterSessionKey"] = session_key
         if tool_key == "sessions_spawn" and resolved_tool_method == "sessions.spawn":
             tool_args = _openclaw_sessions_spawn_tool_args(tool_args)
         if session_key is not None and resolved_tool_method == "sessions.spawn":
@@ -2894,6 +3142,189 @@ class GatewayNodeMethodService:
             _normalized_tools_invoke_policy_set(tools.get("deny")),
         )
 
+    def _resolve_browser_request_node_target(self) -> NodeSession | None:
+        browser_nodes = [
+            node for node in self.registry.list_connected() if _is_browser_request_node(node)
+        ]
+        browser_policy = self._browser_request_node_policy()
+        browser_mode = str(browser_policy.get("mode") or "auto").strip().lower()
+        if browser_mode == "off":
+            return None
+        if not browser_nodes:
+            return None
+        requested_node = str(browser_policy.get("node") or "").strip()
+        if requested_node:
+            resolved = _resolve_browser_request_node(browser_nodes, requested_node)
+            if resolved is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=f"Configured browser node not connected: {requested_node}",
+                    status_code=503,
+                )
+            return resolved
+        if browser_mode == "manual":
+            return None
+        if len(browser_nodes) == 1:
+            return browser_nodes[0]
+        return None
+
+    def _browser_request_node_policy(self) -> dict[str, object]:
+        if self._config_service is None:
+            return {}
+        try:
+            snapshot = self._config_service.build_snapshot()
+        except Exception:
+            return {}
+        if not isinstance(snapshot, dict):
+            return {}
+        gateway = snapshot.get("gateway")
+        if not isinstance(gateway, dict):
+            return {}
+        nodes = gateway.get("nodes")
+        if not isinstance(nodes, dict):
+            return {}
+        browser = nodes.get("browser")
+        if not isinstance(browser, dict):
+            return {}
+        mode = str(browser.get("mode") or "auto").strip().lower()
+        if mode not in {"auto", "manual", "off"}:
+            mode = "auto"
+        policy: dict[str, object] = {"mode": mode}
+        node = browser.get("node")
+        if isinstance(node, str) and node.strip():
+            policy["node"] = node.strip()
+        return policy
+
+    async def _handle_browser_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _validate_exact_keys(
+            "browser.request",
+            payload,
+            allowed_keys=("method", "path", "query", "body", "timeoutMs"),
+        )
+        method = _browser_request_method(payload)
+        path = _browser_request_path(payload)
+        if _is_persistent_browser_proxy_mutation(method, path):
+            _browser_request_invalid(
+                "browser.request cannot mutate persistent browser profiles"
+            )
+        query = _browser_request_query(payload)
+        body = payload.get("body") if "body" in payload else None
+        timeout_ms = _optional_bounded_int(
+            payload.get("timeoutMs"),
+            label="timeoutMs",
+            minimum=0,
+            maximum=_OPENCLAW_MAX_SAFE_TIMEOUT_MS,
+        )
+        if timeout_ms is not None:
+            timeout_ms = max(1, timeout_ms)
+
+        node = self._resolve_browser_request_node_target()
+        if node is None:
+            request_runner = getattr(self._browser_runtime_service, "request", None)
+            if not callable(request_runner):
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="browser control is disabled",
+                    status_code=503,
+                )
+            try:
+                local_result = request_runner(
+                    method=method,
+                    path=path,
+                    query=query,
+                    body=body,
+                    timeout_ms=timeout_ms,
+                    session=DEFAULT_BROWSER_SESSION,
+                )
+                if inspect.isawaitable(local_result):
+                    local_result = await local_result
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            except Exception as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            return _browser_request_local_response_payload(local_result)
+
+        allowlist = resolve_node_command_allowlist(
+            platform=node.platform,
+            device_family=node.device_family,
+            allow_commands=self._node_allow_commands,
+            deny_commands=self._node_deny_commands,
+        )
+        declared_commands = normalize_declared_node_commands(
+            node.commands,
+            allowlist=allowlist,
+        )
+        allowed, reason = is_node_command_allowed(
+            command="browser.proxy",
+            declared_commands=declared_commands,
+            allowlist=allowlist,
+        )
+        if not allowed:
+            known_node = self.registry.describe_known_node(node.node_id) or KnownNode(
+                node_id=node.node_id,
+                display_name=node.display_name,
+                platform=node.platform,
+                device_family=node.device_family,
+            )
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message=_build_node_command_rejection_hint(
+                    reason,
+                    "browser.proxy",
+                    known_node,
+                ),
+                status_code=400,
+                details={"reason": reason, "command": "browser.proxy"},
+            )
+
+        proxy_params: dict[str, object] = {"method": method, "path": path}
+        if query is not None:
+            proxy_params["query"] = query
+        if "body" in payload:
+            proxy_params["body"] = body
+        if timeout_ms is not None:
+            proxy_params["timeoutMs"] = timeout_ms
+        profile = _browser_request_profile(query, body)
+        if profile is not None:
+            proxy_params["profile"] = profile
+
+        result = await self.registry.invoke(
+            node_id=node.node_id,
+            command="browser.proxy",
+            params=proxy_params,
+            timeout_ms=timeout_ms,
+            idempotency_key=secrets.token_hex(16),
+        )
+        if not result.ok:
+            error_payload = dict(result.error or {})
+            error_code = str(error_payload.get("code") or "UNAVAILABLE")
+            error_message = str(error_payload.get("message") or "browser proxy failed")
+            raise GatewayNodeMethodError(
+                code=error_code,
+                message=error_message,
+                status_code=503,
+            )
+
+        proxy_payload = _browser_request_proxy_payload(
+            payload=result.payload,
+            payload_json=result.payload_json,
+        )
+        proxy_result = proxy_payload["result"]
+        file_mapping = _persist_browser_proxy_files(
+            proxy_payload.get("files"),
+            media_dir=self._browser_proxy_media_dir,
+        )
+        _apply_browser_proxy_paths(proxy_result, file_mapping)
+        return cast(dict[str, Any], proxy_result)
+
     async def call(
         self,
         method: str,
@@ -2985,6 +3416,16 @@ class GatewayNodeMethodService:
                 )
             config = self._voicewake_service.load()
             return {"triggers": list(config.triggers)}
+
+        if resolved_method == "voicewake.routing.get":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            if self._voicewake_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="voice wake routing config unavailable",
+                    status_code=503,
+                )
+            return {"config": self._voicewake_service.load_routing().to_payload()}
 
         if resolved_method == "talk.config":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("includeSecrets",))
@@ -3117,6 +3558,9 @@ class GatewayNodeMethodService:
                 provider=_optional_non_empty_string(payload.get("provider"), label="provider"),
                 scope=cast(Literal["both", "native", "text"], scope or "both"),
             )
+
+        if resolved_method == "browser.request":
+            return await self._handle_browser_request(payload)
 
         if resolved_method == "browser.status":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
@@ -8476,15 +8920,6 @@ class GatewayNodeMethodService:
                 )
             if agent_id is not None and not await self._agents_service.agent_exists(agent_id):
                 raise ValueError(f'unknown agent id "{agent_id}"')
-            if agent_id is None and _sessions_spawn_requires_agent_id(self._config_service):
-                return {
-                    "status": "forbidden",
-                    "error": (
-                        "sessions_spawn requires explicit agentId when requireAgentId is "
-                        "configured. Use agents_list to see allowed agent ids."
-                    ),
-                    **role_context,
-                }
             timestamp_ms = _timestamp_ms(now_ms)
             requester_session_key = _optional_non_empty_string(
                 payload.get("requesterSessionKey"),
@@ -8496,10 +8931,23 @@ class GatewayNodeMethodService:
                 else await self._sessions_service.main_session_key()
             )
             requester_agent_id = resolve_agent_id_from_session_key(spawn_parent_session_key)
+            if agent_id is None and _sessions_spawn_requires_agent_id(
+                self._config_service,
+                requester_agent_id=requester_agent_id,
+            ):
+                return {
+                    "status": "forbidden",
+                    "error": (
+                        "sessions_spawn requires explicit agentId when requireAgentId is "
+                        "configured. Use agents_list to see allowed agent ids."
+                    ),
+                    **role_context,
+                }
             target_agent_id = agent_id or requester_agent_id
             if target_agent_id != requester_agent_id:
                 allow_any_agent, allowed_agent_ids = _sessions_spawn_allowed_agent_policy(
-                    self._config_service
+                    self._config_service,
+                    requester_agent_id=requester_agent_id,
                 )
                 if not allow_any_agent and target_agent_id not in allowed_agent_ids:
                     allowed_text = ", ".join(allowed_agent_ids) if allowed_agent_ids else "none"
@@ -9546,6 +9994,9 @@ class GatewayNodeMethodService:
                 "resolved": {
                     "modelProvider": entry.get("modelProvider"),
                     "model": entry.get("model"),
+                    "agentRuntime": openclaw_agent_runtime_metadata_for_session_key(
+                        canonical_key
+                    ),
                 },
             }
 
@@ -10486,6 +10937,35 @@ class GatewayNodeMethodService:
             await self._publish_gateway_event("voicewake.changed", trigger_payload)
             return trigger_payload
 
+        if resolved_method == "voicewake.routing.set":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("config",))
+            if self._voicewake_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="voice wake routing config unavailable",
+                    status_code=503,
+                )
+            config_value = payload.get("config")
+            if not isinstance(config_value, dict):
+                raise ValueError("voicewake.routing.set requires config: object")
+            routing_config = self._voicewake_service.set_routing(
+                config_value,
+                now_ms=_timestamp_ms(now_ms),
+            )
+            routing_payload = {"config": routing_config.to_payload()}
+            for known_node in self.registry.list_known_nodes():
+                if known_node.connected:
+                    self.registry.send_event(
+                        known_node.node_id,
+                        "voicewake.routing.changed",
+                        routing_payload,
+                    )
+            await self._publish_gateway_event(
+                "voicewake.routing.changed",
+                routing_payload,
+            )
+            return routing_payload
+
         if resolved_method == "skills.bins":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
             return {"bins": self._skill_bins_service.list_bins()}
@@ -10733,6 +11213,7 @@ class GatewayNodeMethodService:
                     "uiVersion",
                     "deviceFamily",
                     "modelIdentifier",
+                    "publicKey",
                     "caps",
                     "commands",
                     "remoteIp",
@@ -10791,6 +11272,7 @@ class GatewayNodeMethodService:
                 remote_ip=_optional_non_empty_string(payload.get("remoteIp"), label="remoteIp"),
                 silent=_optional_bool(payload.get("silent"), label="silent"),
                 now_ms=now_ms,
+                public_key=_optional_non_empty_string(payload.get("publicKey"), label="publicKey"),
             )
             return request_result
 
@@ -14499,7 +14981,10 @@ def _agents_list_sessions_spawn_projection(
             "configured": requester_agent_id == DEFAULT_AGENT_ID,
         },
     )
-    allow_any, allowed_agent_ids = _sessions_spawn_allowed_agent_policy(config_service)
+    allow_any, allowed_agent_ids = _sessions_spawn_allowed_agent_policy(
+        config_service,
+        requester_agent_id=requester_agent_id,
+    )
     visible_ids = {requester_agent_id}
     if allow_any:
         visible_ids.update(configured_by_id)
@@ -14567,10 +15052,17 @@ def _sessions_spawn_default_run_timeout_seconds(
     return max(0, math.floor(float(raw_timeout)))
 
 
-def _sessions_spawn_requires_agent_id(config_service: GatewayConfigService | None) -> bool:
+def _sessions_spawn_requires_agent_id(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_agent_id: str | None = None,
+) -> bool:
     if config_service is None:
         return False
-    subagents_config = _sessions_spawn_subagents_config(config_service)
+    subagents_config = _sessions_spawn_subagents_config(
+        config_service,
+        requester_agent_id=requester_agent_id,
+    )
     return bool(
         isinstance(subagents_config, dict)
         and subagents_config.get("requireAgentId") is True
@@ -14579,10 +15071,15 @@ def _sessions_spawn_requires_agent_id(config_service: GatewayConfigService | Non
 
 def _sessions_spawn_allowed_agent_policy(
     config_service: GatewayConfigService | None,
+    *,
+    requester_agent_id: str | None = None,
 ) -> tuple[bool, tuple[str, ...]]:
     if config_service is None:
         return False, ()
-    subagents_config = _sessions_spawn_subagents_config(config_service)
+    subagents_config = _sessions_spawn_subagents_config(
+        config_service,
+        requester_agent_id=requester_agent_id,
+    )
     if not isinstance(subagents_config, dict):
         return False, ()
     raw_allow_agents = subagents_config.get("allowAgents")
@@ -15611,19 +16108,30 @@ def _sessions_spawn_control_scope(
 
 def _sessions_spawn_subagents_config(
     config_service: GatewayConfigService,
+    *,
+    requester_agent_id: str | None = None,
 ) -> dict[str, Any] | None:
-    snapshot = config_service.build_snapshot()
-    gateway_config = snapshot.get("gateway")
-    if not isinstance(gateway_config, dict):
-        return None
-    agents_config = gateway_config.get("agents")
-    if not isinstance(agents_config, dict):
-        return None
-    defaults_config = agents_config.get("defaults")
-    if not isinstance(defaults_config, dict):
-        return None
-    subagents_config = defaults_config.get("subagents")
-    return subagents_config if isinstance(subagents_config, dict) else None
+    resolved: dict[str, Any] = {}
+    found = False
+    for agents_config in _sessions_spawn_agents_config_roots(config_service):
+        defaults_config = agents_config.get("defaults")
+        if isinstance(defaults_config, dict):
+            defaults_subagents = defaults_config.get("subagents")
+            if isinstance(defaults_subagents, dict):
+                resolved.update(defaults_subagents)
+                found = True
+        if requester_agent_id is None:
+            continue
+        agent_config = _sessions_spawn_agent_config_from_root(
+            agents_config,
+            agent_id=requester_agent_id,
+        )
+        if isinstance(agent_config, dict):
+            agent_subagents = agent_config.get("subagents")
+            if isinstance(agent_subagents, dict):
+                resolved.update(agent_subagents)
+                found = True
+    return resolved if found else None
 
 
 def _sessions_spawn_attachments_config(
@@ -17551,7 +18059,9 @@ def _strip_chat_history_internal_runtime_context(text: str) -> str:
             0,
         )
         if start == -1:
-            return _strip_chat_history_runtime_context_prompt_preface(next_text)
+            return _strip_chat_history_runtime_context_prompt_preface(
+                _strip_chat_history_legacy_internal_runtime_context(next_text)
+            )
         cursor = start + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_BEGIN)
         depth = 1
         finish = -1
@@ -17577,9 +18087,96 @@ def _strip_chat_history_internal_runtime_context(text: str) -> str:
             cursor = next_end + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_END)
         before = next_text[:start].rstrip()
         if finish == -1 or depth != 0:
-            return _strip_chat_history_runtime_context_prompt_preface(before)
+            return _strip_chat_history_runtime_context_prompt_preface(
+                _strip_chat_history_legacy_internal_runtime_context(before)
+            )
         after = next_text[finish + len(_OPENCLAW_INTERNAL_RUNTIME_CONTEXT_END) :].lstrip()
         next_text = f"{before}\n\n{after}" if before and after else f"{before}{after}"
+
+
+def _find_chat_history_legacy_internal_event_end(
+    text: str,
+    start: int,
+) -> int | None:
+    if not text.startswith(_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER, start):
+        return None
+    result_begin = text.find(
+        _OPENCLAW_LEGACY_UNTRUSTED_RESULT_BEGIN,
+        start + len(_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER),
+    )
+    if result_begin == -1:
+        return None
+    result_end = text.find(
+        _OPENCLAW_LEGACY_UNTRUSTED_RESULT_END,
+        result_begin + len(_OPENCLAW_LEGACY_UNTRUSTED_RESULT_BEGIN),
+    )
+    if result_end == -1:
+        return None
+    action_index = text.find(
+        "\n\nAction:\n",
+        result_end + len(_OPENCLAW_LEGACY_UNTRUSTED_RESULT_END),
+    )
+    if action_index == -1:
+        return None
+    after_action = action_index + len("\n\nAction:\n")
+    next_event = text.find(
+        f"{_OPENCLAW_LEGACY_INTERNAL_EVENT_SEPARATOR}"
+        f"{_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER}",
+        after_action,
+    )
+    if next_event != -1:
+        return next_event
+    next_paragraph = text.find("\n\n", after_action)
+    return len(text) if next_paragraph == -1 else next_paragraph
+
+
+def _strip_chat_history_legacy_internal_runtime_context(text: str) -> str:
+    next_text = text
+    search_from = 0
+    while True:
+        header_start = next_text.find(
+            _OPENCLAW_LEGACY_INTERNAL_CONTEXT_HEADER,
+            search_from,
+        )
+        if header_start == -1:
+            return next_text
+        event_start = header_start + len(_OPENCLAW_LEGACY_INTERNAL_CONTEXT_HEADER)
+        if not next_text.startswith(
+            _OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER,
+            event_start,
+        ):
+            search_from = event_start
+            continue
+        block_end = _find_chat_history_legacy_internal_event_end(
+            next_text,
+            event_start,
+        )
+        if block_end is None:
+            next_paragraph = next_text.find(
+                "\n\n",
+                event_start + len(_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER),
+            )
+            block_end = len(next_text) if next_paragraph == -1 else next_paragraph
+        else:
+            while next_text.startswith(
+                f"{_OPENCLAW_LEGACY_INTERNAL_EVENT_SEPARATOR}"
+                f"{_OPENCLAW_LEGACY_INTERNAL_EVENT_MARKER}",
+                block_end,
+            ):
+                next_event_start = block_end + len(
+                    _OPENCLAW_LEGACY_INTERNAL_EVENT_SEPARATOR
+                )
+                next_event_end = _find_chat_history_legacy_internal_event_end(
+                    next_text,
+                    next_event_start,
+                )
+                if next_event_end is None:
+                    break
+                block_end = next_event_end
+        before = next_text[:header_start].rstrip()
+        after = next_text[block_end:].lstrip()
+        next_text = f"{before}\n\n{after}" if before and after else f"{before}{after}"
+        search_from = max(0, len(before) - 1)
 
 
 def _strip_chat_history_runtime_context_prompt_preface(text: str) -> str:
@@ -21407,6 +22004,8 @@ def _known_paired_node_payload(
         payload["lastSeenReason"] = node.last_seen_reason
     if node.bins:
         payload["bins"] = list(node.bins)
+    if node.public_key is not None:
+        payload["publicKey"] = node.public_key
     return payload
 
 
@@ -21542,6 +22141,8 @@ def _stored_paired_node_payload(
         payload["lastSeenReason"] = node.last_seen_reason
     if node.bins:
         payload["bins"] = list(node.bins)
+    if node.public_key is not None:
+        payload["publicKey"] = node.public_key
     return payload
 
 
@@ -21555,6 +22156,7 @@ def _device_pair_pending_payload(payload: dict[str, object]) -> dict[str, object
         ("displayName", "displayName"),
         ("platform", "platform"),
         ("deviceFamily", "deviceFamily"),
+        ("publicKey", "publicKey"),
         ("remoteIp", "remoteIp"),
         ("silent", "silent"),
         ("requiredApproveScopes", "requiredApproveScopes"),
@@ -21577,6 +22179,7 @@ def _device_pair_paired_payload(
         "tokens": tokens or {},
     }
     for value, key in (
+        (node.public_key, "publicKey"),
         (node.display_name, "displayName"),
         (node.platform, "platform"),
         (node.device_family, "deviceFamily"),
@@ -21601,6 +22204,7 @@ def _device_pair_paired_payload_from_node_payload(
         ("displayName", "displayName"),
         ("platform", "platform"),
         ("deviceFamily", "deviceFamily"),
+        ("publicKey", "publicKey"),
         ("remoteIp", "remoteIp"),
     ):
         if source_key in payload and payload[source_key] is not None:

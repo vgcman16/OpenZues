@@ -155,6 +155,25 @@ def test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload(
     assert record["profile"]["scopes"] == list(BOOTSTRAP_HANDOFF_OPERATOR_SCOPES)
 
 
+def test_qr_default_loopback_requires_explicit_reachable_url_before_token_issue(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("OPENZUES_HOST", raising=False)
+    monkeypatch.delenv("OPENZUES_PORT", raising=False)
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Gateway is only bound to loopback" in result.stderr
+    assert "--url" in result.stderr
+    assert "--remote" in result.stderr
+    assert "gateway.tailscale.mode=serve" in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue(
     tmp_path, monkeypatch
 ) -> None:
@@ -176,6 +195,48 @@ def test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue(
     assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
+def test_qr_setup_code_only_rejects_public_cleartext_url_before_token_issue(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--url",
+            "ws://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Tailscale and public mobile pairing require a secure gateway URL" in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_setup_code_only_allows_private_lan_cleartext_url(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--url",
+            "ws://192.168.1.8:18789",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = _decode_base64url_json(result.stdout.strip())
+    assert payload["url"] == "ws://192.168.1.8:18789"
+
+
 def test_qr_remote_requires_explicit_remote_url_before_token_issue(
     tmp_path, monkeypatch
 ) -> None:
@@ -190,6 +251,450 @@ def test_qr_remote_requires_explicit_remote_url_before_token_issue(
         in result.stderr
     )
     assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_remote_uses_gateway_remote_url_and_token_from_config(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {"mode": "token", "token": "local-token"},
+                    "remote": {
+                        "url": "remote.example.com:444",
+                        "token": "remote-token",
+                    },
+                },
+                "plugins": {
+                    "entries": {
+                        "device-pair": {
+                            "config": {
+                                "publicUrl": "wss://device-pair.example.test:443",
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json", "--remote"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "remote-token" not in result.stdout
+    assert "local-token" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://remote.example.com:444"
+    assert payload["auth"] == "token"
+    assert payload["urlSource"] == "gateway.remote.url"
+    setup_payload = _decode_base64url_json(payload["setupCode"])
+    assert setup_payload["url"] == "wss://remote.example.com:444"
+    assert isinstance(setup_payload["bootstrapToken"], str)
+    assert setup_payload["bootstrapToken"]
+
+
+def test_qr_remote_uses_tailscale_serve_dns_when_remote_url_absent(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {"mode": "password", "password": "local-password"},
+                    "tailscale": {"mode": "serve"},
+                },
+            }
+        )
+    )
+    calls: list[list[str]] = []
+
+    def fake_subprocess_run(command, **kwargs):  # noqa: ANN001
+        calls.append([str(part) for part in command])
+        assert kwargs["timeout"] == 5
+        return SimpleNamespace(
+            returncode=0,
+            stdout='noise {"Self":{"DNSName":"mb-server.tailnet.ts.net."}} trailing',
+        )
+
+    monkeypatch.setattr("openzues.cli.subprocess.run", fake_subprocess_run)
+
+    result = runner.invoke(app, ["qr", "--json", "--remote"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [["tailscale", "status", "--json"]]
+    assert "local-password" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://mb-server.tailnet.ts.net"
+    assert payload["auth"] == "password"
+    assert payload["urlSource"] == "gateway.tailscale.mode=serve"
+    setup_payload = _decode_base64url_json(payload["setupCode"])
+    assert setup_payload["url"] == "wss://mb-server.tailnet.ts.net"
+    assert isinstance(setup_payload["bootstrapToken"], str)
+    assert setup_payload["bootstrapToken"]
+
+
+def test_qr_remote_json_resolves_remote_token_secretref_to_stderr(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("QR_REMOTE_TOKEN", "resolved-remote-token")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {},
+                    "remote": {
+                        "url": "wss://remote.example.com:444",
+                        "token": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "QR_REMOTE_TOKEN",
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json", "--remote"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "[secrets] resolved gateway.remote.token" in result.stderr
+    assert "resolved-remote-token" not in result.stdout
+    assert "resolved-remote-token" not in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://remote.example.com:444"
+    assert payload["auth"] == "token"
+    assert payload["urlSource"] == "gateway.remote.url"
+
+
+def test_qr_remote_rejects_unresolved_remote_secretref_before_token_issue(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("QR_REMOTE_TOKEN", raising=False)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {},
+                    "remote": {
+                        "url": "wss://remote.example.com:444",
+                        "token": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "QR_REMOTE_TOKEN",
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only", "--remote"])
+
+    assert result.exit_code == 1
+    assert "gateway.remote.token SecretRef is unresolved" in result.stderr
+    assert "Gateway auth is not configured (no token or password)." in result.stderr
+    assert result.stdout == ""
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_remote_json_resolves_file_secretref_single_value(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    secret_path = tmp_path / "remote-token.txt"
+    secret_path.write_text("file-remote-token\n", encoding="utf-8")
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "secrets": {
+                    "providers": {
+                        "remoteFile": {
+                            "source": "file",
+                            "path": str(secret_path),
+                            "mode": "singleValue",
+                            "allowInsecurePath": True,
+                        },
+                    },
+                },
+                "gateway": {
+                    "auth": {},
+                    "remote": {
+                        "url": "wss://remote.example.com:444",
+                        "token": {
+                            "source": "file",
+                            "provider": "remoteFile",
+                            "id": "value",
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json", "--remote"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "[secrets] resolved gateway.remote.token" in result.stderr
+    assert "file-remote-token" not in result.stdout
+    assert "file-remote-token" not in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://remote.example.com:444"
+    assert payload["auth"] == "token"
+    assert payload["urlSource"] == "gateway.remote.url"
+
+
+def test_qr_remote_json_resolves_exec_secretref_protocol_v1(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "secrets": {
+                    "providers": {
+                        "remoteExec": {
+                            "source": "exec",
+                            "command": sys.executable,
+                            "args": [
+                                "-c",
+                                (
+                                    "import json,sys; sys.stdin.read(); "
+                                    "print(json.dumps({'protocolVersion':1,"
+                                    "'values':{'remote':'exec-remote-token'}}))"
+                                ),
+                            ],
+                            "allowInsecurePath": True,
+                        },
+                    },
+                },
+                "gateway": {
+                    "auth": {},
+                    "remote": {
+                        "url": "wss://remote.example.com:444",
+                        "token": {
+                            "source": "exec",
+                            "provider": "remoteExec",
+                            "id": "remote",
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json", "--remote"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "[secrets] resolved gateway.remote.token" in result.stderr
+    assert "exec-remote-token" not in result.stdout
+    assert "exec-remote-token" not in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://remote.example.com:444"
+    assert payload["auth"] == "token"
+    assert payload["urlSource"] == "gateway.remote.url"
+
+
+def test_qr_remote_json_resolves_secretref_from_live_gateway(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("QR_REMOTE_TOKEN", raising=False)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {},
+                    "remote": {
+                        "url": "wss://remote.example.com:444",
+                        "token": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "QR_REMOTE_TOKEN",
+                        },
+                    },
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_control_plane_metadata_endpoint_is_reachable",
+        lambda *args, **kwargs: True,
+    )
+    gateway_calls: list[dict[str, object]] = []
+
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        timeout_seconds: float = 60.0,
+        allow_timeout: bool = False,
+    ) -> dict[str, object]:
+        del timeout_seconds, allow_timeout
+        gateway_calls.append(
+            {
+                "baseUrl": base_url,
+                "path": path,
+                "method": method,
+                "payload": payload,
+            }
+        )
+        return {
+            "ok": True,
+            "assignments": [
+                {
+                    "path": "gateway.remote.token",
+                    "pathSegments": ["gateway", "remote", "token"],
+                    "value": "gateway-remote-token",
+                }
+            ],
+            "diagnostics": ["active gateway resolved remote token"],
+            "inactiveRefPaths": [],
+        }
+
+    monkeypatch.setattr(cli_module, "_watch_api_json", fake_watch_api_json)
+
+    result = runner.invoke(app, ["qr", "--json", "--remote"])
+
+    assert result.exit_code == 0, result.stdout
+    assert len(gateway_calls) == 1
+    assert gateway_calls[0]["path"] == "/api/gateway/node-methods/call"
+    assert gateway_calls[0]["method"] == "POST"
+    assert gateway_calls[0]["payload"] == {
+        "method": "secrets.resolve",
+        "params": {
+            "commandName": "qr --remote",
+            "targetIds": ["gateway.remote.token", "gateway.remote.password"],
+        },
+    }
+    assert "[secrets] active gateway resolved remote token" in result.stderr
+    assert "[secrets] resolved gateway.remote.token" in result.stderr
+    assert "gateway-remote-token" not in result.stdout
+    assert "gateway-remote-token" not in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://remote.example.com:444"
+    assert payload["auth"] == "token"
+    assert payload["urlSource"] == "gateway.remote.url"
 
 
 def test_qr_json_output_matches_openclaw_setup_code_contract(
@@ -241,6 +746,90 @@ def test_qr_human_output_includes_openclaw_approval_instructions(
     assert "Approve after scan with:" in result.stdout
     assert "openzues devices list" in result.stdout
     assert "openzues devices approve <requestId>" in result.stdout
+
+
+def test_devices_list_json_calls_device_pair_list(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"pending": [], "paired": []}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("device.pair.list", {})]
+    assert json.loads(result.stdout) == {"pending": [], "paired": []}
+
+
+def test_devices_approve_json_calls_device_pair_approve(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"requestId": "req-123", "device": {"deviceId": "device-1"}}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "approve", "req-123", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("device.pair.approve", {"requestId": "req-123"})]
+    assert json.loads(result.stdout) == {
+        "requestId": "req-123",
+        "device": {"deviceId": "device-1"},
+    }
+
+
+def test_devices_approve_latest_json_previews_without_approving(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            assert method == "device.pair.list"
+            return {
+                "pending": [
+                    {"requestId": "req-old", "deviceId": "device-old", "ts": 1000},
+                    {"requestId": "req-new", "deviceId": "device-new", "ts": 2000},
+                ],
+                "paired": [],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "approve", "--latest", "--json"])
+
+    assert result.exit_code == 1
+    assert calls == [("device.pair.list", {})]
+    payload = json.loads(result.stdout)
+    assert payload["selected"]["requestId"] == "req-new"
+    assert payload["approveCommand"] == "openzues devices approve req-new --json"
 
 
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
@@ -13548,6 +14137,86 @@ def test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activat
     assert runtime_activation["missingExecutorPlugins"] == []
 
 
+def test_plugins_doctor_json_imports_source_sdk_alias_runtime_entry_without_fake_adapter(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    bundled_root = tmp_path / "bundled-source"
+    plugin_dir = bundled_root / "discord"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="discord",
+        enabled_by_default=True,
+        contracts={"tools": ["discord.send"]},
+    )
+    runtime_source = plugin_dir / "src" / "channel.runtime.ts"
+    runtime_source.parent.mkdir(parents=True)
+    runtime_source.write_text(
+        "import { resolveOutboundSendDep } from "
+        '"@openclaw/plugin-sdk/outbound-send-deps";\n'
+        "export default {\n"
+        "  register(api) {\n"
+        "    api.registerTool({\n"
+        "      name: resolveOutboundSendDep(),\n"
+        '      description: "Send to Discord"\n'
+        "    });\n"
+        "  }\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    sdk_shim = plugin_dir / "plugin-sdk" / "outbound-send-deps.ts"
+    sdk_shim.parent.mkdir(parents=True)
+    sdk_shim.write_text(
+        "export function resolveOutboundSendDep() { return 'discord.send'; }\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "package.json").write_text(
+        json.dumps({"openclaw": {"extensions": ["./src/channel.runtime.ts"]}}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(bundled_root))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+    list_result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    runtime_activation = json.loads(result.stdout)["runtimeActivation"]
+    assert runtime_activation["status"] == "ok"
+    assert runtime_activation["runtimeExecutorPlugins"] == [
+        {"pluginId": "discord", "tools": ["discord.send"]}
+    ]
+    assert runtime_activation["missingExecutorPlugins"] == []
+    assert list_result.exit_code == 0, list_result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(list_result.stdout)["plugins"]
+    }
+    assert plugins["discord"]["imported"] is True
+
+
 def test_plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract(
     tmp_path,
     monkeypatch,
@@ -21248,6 +21917,36 @@ def test_health_json_surfaces_gateway_readiness_snapshot(monkeypatch) -> None:
     ]
 
 
+def test_health_json_surfaces_gateway_server_version(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "_control_plane_base_url",
+        lambda _settings: "http://gateway.test",
+    )
+
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        timeout_seconds: float,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        del base_url, timeout_seconds
+        if path == "/api/health":
+            return {"status": "ok", "server_version": "2026.4.24"}
+        if path == "/readyz":
+            return {"ready": True, "failing": []}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(cli_module, "_watch_api_json", fake_watch_api_json)
+
+    result = runner.invoke(app, ["health", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["serverVersion"] == "2026.4.24"
+
+
 def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch)
@@ -25465,6 +26164,88 @@ def test_update_status_json_includes_openclaw_channel_projection(
     }
 
 
+def test_doctor_interactive_git_checkout_offers_update_before_doctor(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    seen: list[dict[str, int | None]] = []
+
+    class FakeRuntimeUpdates:
+        async def run_update(
+            self,
+            *,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.append({"timeout_ms": timeout_ms})
+            return {
+                "status": "ok",
+                "mode": "git",
+                "root": str(package_root),
+                "steps": [{"name": "doctor", "status": "ok"}],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(runtime_updates=FakeRuntimeUpdates()))
+
+    monkeypatch.delenv("OPENCLAW_UPDATE_IN_PROGRESS", raising=False)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_doctor_update_offer_is_interactive", lambda: True)
+    monkeypatch.setattr(cli_module, "_doctor_update_detect_git_checkout", lambda _root: "git")
+
+    result = runner.invoke(app, ["doctor"], input="y\n")
+
+    assert result.exit_code == 0, result.stdout
+    assert seen == [{"timeout_ms": None}]
+    assert "Update OpenZues from git before running doctor?" in result.stdout
+    assert "Update completed (doctor already ran as part of the update)." in result.stdout
+
+
+def test_doctor_preflight_update_offer_respects_noninteractive_guards(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    monkeypatch.setattr(cli_module, "_doctor_update_offer_is_interactive", lambda: True)
+    monkeypatch.delenv("OPENCLAW_UPDATE_IN_PROGRESS", raising=False)
+
+    assert cli_module._doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=False,
+        fix=False,
+        non_interactive=False,
+    )
+    assert not cli_module._doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=True,
+        fix=False,
+        non_interactive=False,
+    )
+    assert not cli_module._doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=False,
+        fix=True,
+        non_interactive=False,
+    )
+    assert not cli_module._doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=False,
+        fix=False,
+        non_interactive=True,
+    )
+
+    monkeypatch.setenv("OPENCLAW_UPDATE_IN_PROGRESS", "1")
+    assert not cli_module._doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=False,
+        fix=False,
+        non_interactive=False,
+    )
+
+
 def test_update_dry_run_json_maps_main_package_install_spec(
     tmp_path,
     monkeypatch,
@@ -25587,6 +26368,32 @@ def test_update_dry_run_json_falls_back_beta_channel_to_latest(
     assert payload["targetVersion"] == "2.0.0"
     assert "Run global package manager update with spec openzues@latest" in payload["actions"]
     assert "Beta channel resolves to latest for this run (fallback)." in payload["notes"]
+
+
+def test_update_dry_run_json_flags_registry_downgrade_risk(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "npm@10.0.0", "version": "2.0.0"}),
+        encoding="utf-8",
+    )
+
+    def fake_fetch(target: str, *, timeout_seconds: float | None = None) -> dict[str, object]:
+        return {"target": target, "version": "1.5.0", "nodeEngine": None}
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_openclaw_update_fetch_package_target_status", fake_fetch)
+
+    result = runner.invoke(app, ["update", "--dry-run", "--json", "--tag", "1.5.0"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["currentVersion"] == "2.0.0"
+    assert payload["targetVersion"] == "1.5.0"
+    assert payload["downgradeRisk"] is True
 
 
 def test_update_resolve_npm_channel_tag_falls_back_beta_prerelease_to_latest(
@@ -25897,6 +26704,615 @@ def test_update_json_dispatches_package_update_service(
     assert payload["mode"] == "pnpm"
     assert payload["warnings"] == ["Low disk space near package root: 256 MiB available."]
     assert "Warning: Low disk space near package root: 256 MiB available." in result.stderr
+
+
+def test_update_json_uses_stored_channel_for_package_update(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "update": {"channel": "beta"},
+            }
+        )
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+            raise AssertionError("package-shaped update should not use git updater")
+
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.update(
+                {
+                    "package_root": package_root,
+                    "package_manager": package_manager,
+                    "package_spec": package_spec,
+                    "timeout_ms": timeout_ms,
+                }
+            )
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    channels: list[str] = []
+
+    def fake_resolve(channel: str, timeout_seconds: float | None = None) -> dict[str, str | None]:
+        channels.append(channel)
+        return {"tag": "beta", "version": "2.0.0-beta.1"}
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_openclaw_update_resolve_npm_channel_tag", fake_resolve)
+
+    result = runner.invoke(app, ["update", "--json", "--yes"])
+
+    assert result.exit_code == 0, result.stdout
+    assert channels == ["beta"]
+    assert seen == {
+        "package_root": package_root,
+        "package_manager": "pnpm",
+        "package_spec": "openzues@beta",
+        "timeout_ms": None,
+    }
+
+
+def test_update_json_blocks_package_update_when_target_requires_newer_node(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen["dispatched"] = True
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    def fake_fetch(target: str, *, timeout_seconds: float | None = None) -> dict[str, object]:
+        return {"target": target, "version": "9.9.9", "nodeEngine": ">=999.0.0"}
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_openclaw_update_fetch_package_target_status", fake_fetch)
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_current_node_version",
+        lambda: "20.0.0",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_node_version_satisfies_engine",
+        lambda current_version, node_engine: False,
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["update", "--json", "--yes", "--tag", "latest"])
+
+    assert result.exit_code == 1
+    assert "Node 20.0.0 is too old for openzues@9.9.9." in result.stderr
+    assert "The requested package requires >=999.0.0." in result.stderr
+    assert (
+        "Bare `npm i -g openzues` can silently install an older compatible release."
+        in result.stderr
+    )
+    assert seen == {}
+
+
+def test_update_json_blocks_registry_downgrade_without_yes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0", "version": "2.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen["dispatched"] = True
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    def fake_fetch(target: str, *, timeout_seconds: float | None = None) -> dict[str, object]:
+        return {"target": target, "version": "1.5.0", "nodeEngine": None}
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_openclaw_update_fetch_package_target_status", fake_fetch)
+
+    result = runner.invoke(app, ["update", "--json", "--tag", "1.5.0"])
+
+    assert result.exit_code == 1
+    assert "Downgrade confirmation required." in result.stderr
+    assert seen == {}
+
+
+def test_update_json_allows_registry_downgrade_with_yes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0", "version": "2.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.update(
+                {
+                    "package_root": package_root,
+                    "package_manager": package_manager,
+                    "package_spec": package_spec,
+                    "timeout_ms": timeout_ms,
+                }
+            )
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    def fake_fetch(target: str, *, timeout_seconds: float | None = None) -> dict[str, object]:
+        return {"target": target, "version": "1.5.0", "nodeEngine": None}
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_openclaw_update_fetch_package_target_status", fake_fetch)
+
+    result = runner.invoke(app, ["update", "--json", "--yes", "--tag", "1.5.0"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen == {
+        "package_root": package_root,
+        "package_manager": "pnpm",
+        "package_spec": "openzues@1.5.0",
+        "timeout_ms": None,
+    }
+
+
+def test_update_json_refuses_package_update_inside_gateway_service(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+            raise AssertionError("package-shaped update should not use git updater")
+
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.update(
+                {
+                    "package_root": package_root,
+                    "package_manager": package_manager,
+                    "package_spec": package_spec,
+                    "timeout_ms": timeout_ms,
+                }
+            )
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setenv("OPENCLAW_SERVICE_MARKER", "openclaw")
+    monkeypatch.setenv("OPENCLAW_SERVICE_KIND", "gateway")
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--json", "--tag", "latest", "--yes"])
+
+    assert result.exit_code == 1
+    assert (
+        "Package updates cannot run from inside the gateway service process."
+        in result.stderr
+    )
+    assert seen == {}
+
+
+def test_update_json_detects_owning_npm_root_without_package_manager_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prefix = tmp_path / "npm-prefix"
+    if os.name == "nt":
+        package_root = prefix / "node_modules" / "openzues"
+        npm_command = prefix / "npm.cmd"
+    else:
+        package_root = prefix / "lib" / "node_modules" / "openzues"
+        npm_command = prefix / "bin" / "npm"
+    package_root.mkdir(parents=True)
+    npm_command.parent.mkdir(parents=True, exist_ok=True)
+    npm_command.write_text("", encoding="utf-8")
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "openzues", "version": "9.9.9"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+            raise AssertionError("owning npm package update should not use git updater")
+
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.update(
+                {
+                    "package_root": package_root,
+                    "package_manager": package_manager,
+                    "package_spec": package_spec,
+                    "timeout_ms": timeout_ms,
+                }
+            )
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--json", "--tag", "latest", "--timeout", "9"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen == {
+        "package_root": package_root,
+        "package_manager": "npm",
+        "package_spec": "openzues@latest",
+        "timeout_ms": 9000,
+    }
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "npm"
+
+
+def test_update_json_detects_owning_pnpm_root_without_package_manager_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    global_root = tmp_path / "pnpm-store" / "global" / "node_modules"
+    package_root = global_root / "openzues"
+    package_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "openzues", "version": "9.9.9"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    def fake_subprocess_run(argv, **kwargs):
+        if argv == ["npm", "root", "-g"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="npm unavailable")
+        if argv == ["pnpm", "root", "-g"]:
+            return SimpleNamespace(returncode=0, stdout=f"{global_root}\n", stderr="")
+        raise AssertionError(f"unexpected command: {argv!r}, {kwargs!r}")
+
+    class FakeRuntimeUpdates:
+        async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+            raise AssertionError("owning pnpm package update should not use git updater")
+
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.update(
+                {
+                    "package_root": package_root,
+                    "package_manager": package_manager,
+                    "package_spec": package_spec,
+                    "timeout_ms": timeout_ms,
+                }
+            )
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_subprocess_run)
+
+    result = runner.invoke(app, ["update", "--json", "--tag", "latest", "--timeout", "9"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen == {
+        "package_root": package_root,
+        "package_manager": "pnpm",
+        "package_spec": "openzues@latest",
+        "timeout_ms": 9000,
+    }
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "pnpm"
+
+
+def test_update_json_detects_bun_global_root_without_package_manager_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    bun_install = tmp_path / "bun-home"
+    global_root = bun_install / "install" / "global" / "node_modules"
+    package_root = global_root / "openzues"
+    package_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "openzues", "version": "9.9.9"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    def fake_subprocess_run(argv, **kwargs):
+        if argv in (["npm", "root", "-g"], ["pnpm", "root", "-g"]):
+            return SimpleNamespace(returncode=1, stdout="", stderr="unavailable")
+        raise AssertionError(f"unexpected command: {argv!r}, {kwargs!r}")
+
+    class FakeRuntimeUpdates:
+        async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+            raise AssertionError("bun package update should not use git updater")
+
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            seen.update(
+                {
+                    "package_root": package_root,
+                    "package_manager": package_manager,
+                    "package_spec": package_spec,
+                    "timeout_ms": timeout_ms,
+                }
+            )
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setenv("BUN_INSTALL", str(bun_install))
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_subprocess_run)
+
+    result = runner.invoke(app, ["update", "--json", "--tag", "latest", "--timeout", "9"])
+
+    assert result.exit_code == 0, result.stdout
+    assert seen == {
+        "package_root": package_root,
+        "package_manager": "bun",
+        "package_spec": "openzues@latest",
+        "timeout_ms": 9000,
+    }
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "bun"
 
 
 def test_update_json_persists_requested_package_channel_after_success(
@@ -26310,6 +27726,284 @@ def test_update_json_fails_when_post_update_plugin_sync_fails(
             "message": "Failed to update demo: registry timeout",
         }
     ]
+
+
+def test_update_fails_when_restarted_gateway_reports_activated_plugin_load_errors(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    health_calls: list[float | None] = []
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            del package_spec, timeout_ms
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_restart_health(*, timeout_seconds: float | None = None) -> dict[str, object]:
+        health_calls.append(timeout_seconds)
+        return {
+            "status": "ok",
+            "plugins": {
+                "errors": [
+                    {
+                        "id": "telegram",
+                        "origin": "bundled",
+                        "activated": True,
+                        "error": "failed to load plugin dependency: ENOSPC",
+                    },
+                    {
+                        "id": "qa-lab",
+                        "activated": False,
+                        "error": "disabled plugin should not fail restart health",
+                    },
+                ]
+            },
+        }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+                update_restart_health=fake_restart_health,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--yes", "--tag", "latest"])
+
+    assert result.exit_code == 1, result.stdout
+    assert health_calls == [None]
+    assert "Update error" in result.stdout
+    assert "reason: restart-health" in result.stdout
+    assert "Activated plugin load errors:" in result.stdout
+    assert "- telegram: failed to load plugin dependency: ENOSPC" in result.stdout
+    assert "disabled plugin should not fail restart health" not in result.stdout
+
+
+def test_update_fails_when_restarted_gateway_reports_channel_probe_errors(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            del package_spec, timeout_ms
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_restart_health(*, timeout_seconds: float | None = None) -> dict[str, object]:
+        del timeout_seconds
+        return {
+            "status": "ok",
+            "channels": {
+                "slack": {"probe": {"ok": False, "error": "missing bot token"}},
+                "telegram": {"probe": {"ok": True}},
+            },
+        }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+                update_restart_health=fake_restart_health,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--yes", "--tag", "latest"])
+
+    assert result.exit_code == 1, result.stdout
+    assert "Update error" in result.stdout
+    assert "reason: restart-health" in result.stdout
+    assert "Channel health probe errors:" in result.stdout
+    assert "- slack: missing bot token" in result.stdout
+    assert "telegram" not in result.stdout
+
+
+def test_update_fails_when_restarted_gateway_reports_version_mismatch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            del package_spec, timeout_ms
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "before": {"version": "2026.4.23"},
+                "after": {"version": "2026.4.24"},
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_restart_health(*, timeout_seconds: float | None = None) -> dict[str, object]:
+        del timeout_seconds
+        return {"status": "ok", "serverVersion": "2026.4.23"}
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+                update_restart_health=fake_restart_health,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--yes", "--tag", "latest"])
+
+    assert result.exit_code == 1, result.stdout
+    assert "Update error" in result.stdout
+    assert "reason: restart-health" in result.stdout
+    assert (
+        "Gateway version mismatch: expected 2026.4.24, "
+        "running gateway reported 2026.4.23."
+    ) in result.stdout
+
+
+def test_update_fails_when_restarted_gateway_omits_gateway_version(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            del package_spec, timeout_ms
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "before": {"version": "2026.4.23"},
+                "after": {"version": "2026.4.24"},
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+            }
+
+    async def fake_restart_health(*, timeout_seconds: float | None = None) -> dict[str, object]:
+        del timeout_seconds
+        return {"status": "ok"}
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+                update_restart_health=fake_restart_health,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--yes", "--tag", "latest"])
+
+    assert result.exit_code == 1, result.stdout
+    assert "Update error" in result.stdout
+    assert "reason: restart-health" in result.stdout
+    assert "Gateway did not become healthy after restart." in result.stdout
+    assert "Gateway version mismatch:" not in result.stdout
+
 
 def test_update_status_json_detects_package_manager_deps(
     tmp_path,
@@ -32860,6 +34554,26 @@ def test_doctor_json_warns_when_shell_completion_uses_slow_dynamic_profile(
     assert "slow dynamic completion" in warning
     assert "openzues doctor --fix" in warning
     assert warning in payload["warnings"]
+
+
+def test_completion_write_state_generates_native_cache(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(cli_module, "settings", SimpleNamespace(data_dir=tmp_path))
+    cache_dir = tmp_path / "completions"
+
+    result = runner.invoke(app, ["completion", "--write-state"])
+
+    assert result.exit_code == 0, result.stdout
+    assert result.stdout == ""
+    assert sorted(path.name for path in cache_dir.iterdir()) == [
+        "openzues.bash",
+        "openzues.fish",
+        "openzues.ps1",
+        "openzues.zsh",
+    ]
+    assert all(path.read_text(encoding="utf-8").strip() for path in cache_dir.iterdir())
 
 
 def test_doctor_fix_regenerates_shell_completion_cache_and_upgrades_slow_profile(

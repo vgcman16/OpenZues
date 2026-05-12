@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginCommandSpec,
+    GatewayPluginRuntimeService,
+)
+
 _SUPPORTED_AGENT_ID = "openzues"
 
 
@@ -12,6 +17,7 @@ class GatewayCommandArgSpec:
     description: str
     type: Literal["array", "boolean", "integer", "number", "string"]
     required: bool = False
+    choices: tuple[tuple[str, str], ...] = ()
 
     def as_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -21,6 +27,10 @@ class GatewayCommandArgSpec:
         }
         if self.required:
             payload["required"] = True
+        if self.choices:
+            payload["choices"] = [
+                {"value": value, "label": label} for value, label in self.choices
+            ]
         return payload
 
 
@@ -34,10 +44,15 @@ class GatewayCommandSpec:
     source: Literal["native", "plugin", "skill"] = "native"
     scope: Literal["native", "text", "both"] = "native"
 
-    def as_payload(self, *, include_args: bool) -> dict[str, Any]:
+    def as_payload(
+        self,
+        *,
+        include_args: bool,
+        native_name: str | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "name": self.name,
-            "nativeName": self.name,
+            "nativeName": native_name or self.name,
             "description": self.description,
             "category": self.category,
             "source": self.source,
@@ -51,6 +66,37 @@ class GatewayCommandSpec:
 
 def _bool_arg(name: str, description: str) -> GatewayCommandArgSpec:
     return GatewayCommandArgSpec(name=name, description=description, type="boolean")
+
+
+_PROVIDER_NATIVE_COMMAND_ALIASES: dict[str, dict[str, str]] = {
+    "slack": {
+        "status": "agentstatus",
+    },
+}
+
+
+def _provider_native_command_name(spec: GatewayCommandSpec, provider: str | None) -> str:
+    normalized_provider = str(provider or "").strip().lower()
+    if not normalized_provider:
+        return spec.name
+    return _PROVIDER_NATIVE_COMMAND_ALIASES.get(normalized_provider, {}).get(
+        spec.name,
+        spec.name,
+    )
+
+
+def _plugin_provider_native_command_name(
+    spec: GatewayPluginCommandSpec,
+    provider: str | None,
+) -> str:
+    native_names = spec.native_names or {}
+    normalized_provider = str(provider or "").strip().casefold()
+    if normalized_provider:
+        provider_name = native_names.get(normalized_provider)
+        if provider_name:
+            return provider_name
+    default_name = native_names.get("default")
+    return default_name or spec.name
 
 
 def _array_arg(
@@ -100,12 +146,14 @@ def _str_arg(
     description: str,
     *,
     required: bool = False,
+    choices: tuple[tuple[str, str], ...] = (),
 ) -> GatewayCommandArgSpec:
     return GatewayCommandArgSpec(
         name=name,
         description=description,
         type="string",
         required=required,
+        choices=choices,
     )
 
 
@@ -330,7 +378,17 @@ _COMMAND_SPECS: tuple[GatewayCommandSpec, ...] = (
         category="browser",
         accepts_args=True,
         args=(
-            _str_arg("direction", "Swipe direction: up, down, left, or right.", required=True),
+            _str_arg(
+                "direction",
+                "Swipe direction: up, down, left, or right.",
+                required=True,
+                choices=(
+                    ("up", "up"),
+                    ("down", "down"),
+                    ("left", "left"),
+                    ("right", "right"),
+                ),
+            ),
             _int_arg("distance", "Optional swipe distance in pixels."),
             _str_arg("session", "agent-browser session name to update."),
             _bool_arg("json", "Emit the iOS swipe result as JSON."),
@@ -1105,6 +1163,19 @@ _COMMAND_SPECS: tuple[GatewayCommandSpec, ...] = (
 
 
 class GatewayCommandsService:
+    def __init__(
+        self,
+        *,
+        plugin_runtime_service: GatewayPluginRuntimeService | None = None,
+    ) -> None:
+        self._plugin_runtime_service = plugin_runtime_service
+
+    def set_plugin_runtime_service(
+        self,
+        plugin_runtime_service: GatewayPluginRuntimeService,
+    ) -> None:
+        self._plugin_runtime_service = plugin_runtime_service
+
     def build_catalog(
         self,
         *,
@@ -1113,15 +1184,72 @@ class GatewayCommandsService:
         provider: str | None = None,
         scope: Literal["both", "native", "text"] = "both",
     ) -> dict[str, Any]:
-        del provider
         if agent_id is not None and agent_id != _SUPPORTED_AGENT_ID:
             raise ValueError(f'unknown agent id "{agent_id}"')
-        if scope == "text":
-            return {"commands": []}
-        return {
-            "commands": [
-                spec.as_payload(include_args=include_args)
-                for spec in _COMMAND_SPECS
-                if spec.scope in {"native", "both"}
-            ]
-        }
+        commands: list[dict[str, Any]] = []
+        seen_native_names: set[str] = set()
+        if scope != "text":
+            for spec in _COMMAND_SPECS:
+                if spec.scope not in {"native", "both"}:
+                    continue
+                native_name = _provider_native_command_name(spec, provider)
+                commands.append(
+                    spec.as_payload(
+                        include_args=include_args,
+                        native_name=native_name,
+                    )
+                )
+                seen_native_names.add(native_name.casefold())
+        commands.extend(
+            self._plugin_command_payloads(
+                provider=provider,
+                scope=scope,
+                seen_native_names=seen_native_names,
+            )
+        )
+        return {"commands": commands}
+
+    def _plugin_command_payloads(
+        self,
+        *,
+        provider: str | None,
+        scope: Literal["both", "native", "text"],
+        seen_native_names: set[str],
+    ) -> list[dict[str, Any]]:
+        if self._plugin_runtime_service is None:
+            return []
+        payloads: list[dict[str, Any]] = []
+        provider_native_commands_enabled = (
+            self._plugin_runtime_service.native_commands_auto_enabled(provider)
+        )
+        for spec in self._plugin_runtime_service.command_specs():
+            native_name = (
+                _plugin_provider_native_command_name(spec, provider)
+                if provider_native_commands_enabled
+                else None
+            )
+            if scope == "native" and native_name is None:
+                continue
+            if scope != "text" and native_name is not None:
+                native_key = native_name.casefold()
+                if native_key in seen_native_names:
+                    continue
+                seen_native_names.add(native_key)
+            payload: dict[str, Any] = {
+                "name": spec.name if scope == "text" or native_name is None else native_name,
+                "textAliases": [f"/{spec.name}"],
+                "description": spec.description,
+                "source": "plugin",
+                "scope": "both",
+                "acceptsArgs": spec.accepts_args,
+            }
+            if native_name is not None:
+                payload["nativeName"] = native_name
+            if spec.description_localizations:
+                payload["descriptionLocalizations"] = dict(spec.description_localizations)
+            if spec.plugin_id is not None:
+                payload["pluginId"] = spec.plugin_id
+            if spec.plugin_name is not None:
+                payload["pluginName"] = spec.plugin_name
+            payloads.append(payload)
+        return payloads

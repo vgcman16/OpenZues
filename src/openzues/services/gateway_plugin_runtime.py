@@ -57,6 +57,19 @@ class GatewayPluginControlUiDescriptorSpec:
     source: str = "plugin"
 
 
+@dataclass(frozen=True, slots=True)
+class GatewayPluginCommandSpec:
+    name: str
+    description: str
+    accepts_args: bool = False
+    native_names: Mapping[str, str] | None = None
+    description_localizations: Mapping[str, str] | None = None
+    plugin_id: str | None = None
+    plugin_name: str | None = None
+    enabled: bool = True
+    source: str = "plugin"
+
+
 type GatewayPluginRuntimeExecutorEntry = (
     GatewayPluginRuntimeExecutorSpec
     | Mapping[str, object]
@@ -70,6 +83,7 @@ type GatewayPluginControlUiDescriptorEntry = (
     | Mapping[str, object]
     | tuple[str, Mapping[str, object]]
 )
+type GatewayPluginCommandEntry = GatewayPluginCommandSpec | Mapping[str, object]
 
 
 class GatewayPluginRuntimeExecutorRegistry(Protocol):
@@ -84,6 +98,10 @@ class GatewayPluginControlUiDescriptorRegistry(Protocol):
     def list_control_ui_descriptors(
         self,
     ) -> Iterable[GatewayPluginControlUiDescriptorEntry]: ...
+
+
+class GatewayPluginCommandRegistry(Protocol):
+    def list_command_specs(self) -> Iterable[GatewayPluginCommandEntry]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,12 +128,20 @@ class GatewayPluginRuntimeService:
         session_extension_registry: GatewayPluginSessionExtensionRegistry | None = None,
         control_ui_descriptors: Iterable[GatewayPluginControlUiDescriptorEntry] | None = None,
         control_ui_descriptor_registry: GatewayPluginControlUiDescriptorRegistry | None = None,
+        command_specs: Iterable[GatewayPluginCommandEntry] | None = None,
+        command_registry: GatewayPluginCommandRegistry | None = None,
+        native_command_enabled_providers: Iterable[str] = (),
         owner_only: Iterable[str] = (),
     ) -> None:
         self._owner_only = {
             str(tool or "").strip()
             for tool in owner_only
             if str(tool or "").strip()
+        }
+        self._native_command_enabled_providers = {
+            str(provider or "").strip().casefold()
+            for provider in native_command_enabled_providers
+            if str(provider or "").strip()
         }
         self._configured_executors: list[GatewayPluginRuntimeExecutorSpec] = []
         if executors is not None:
@@ -148,6 +174,12 @@ class GatewayPluginRuntimeService:
             if descriptor_spec is not None:
                 self._control_ui_descriptors.append(descriptor_spec)
         self._control_ui_descriptor_registry = control_ui_descriptor_registry
+        self._command_specs: list[GatewayPluginCommandSpec] = []
+        for command_entry in command_specs or ():
+            command_spec = _normalize_command_spec(command_entry)
+            if command_spec is not None:
+                self._command_specs.append(command_spec)
+        self._command_registry = command_registry
 
     def resolve_executor(
         self,
@@ -235,6 +267,15 @@ class GatewayPluginRuntimeService:
                 payload["pluginName"] = spec.plugin_name
             descriptors.append(payload)
         return tuple(descriptors)
+
+    def command_specs(self) -> tuple[GatewayPluginCommandSpec, ...]:
+        return tuple(self._iter_command_specs())
+
+    def native_commands_auto_enabled(self, provider: str | None) -> bool:
+        normalized_provider = str(provider or "").strip().casefold()
+        if not normalized_provider:
+            return True
+        return normalized_provider in self._native_command_enabled_providers
 
     def has_session_extension(self, plugin_id: str, namespace: str) -> bool:
         return self._resolve_session_extension(plugin_id, namespace) is not None
@@ -328,6 +369,28 @@ class GatewayPluginRuntimeService:
             descriptor_spec = _normalize_control_ui_descriptor_spec(entry)
             if descriptor_spec is not None and descriptor_spec.enabled:
                 yield descriptor_spec
+
+    def _iter_command_specs(self) -> Iterable[GatewayPluginCommandSpec]:
+        seen: set[str] = set()
+        for spec in self._command_specs:
+            if not spec.enabled:
+                continue
+            key = spec.name.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            yield spec
+        if self._command_registry is None:
+            return
+        for entry in self._command_registry.list_command_specs():
+            command_spec = _normalize_command_spec(entry)
+            if command_spec is None or not command_spec.enabled:
+                continue
+            key = command_spec.name.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            yield command_spec
 
 
 def _normalize_executor_spec(
@@ -474,6 +537,51 @@ def _normalize_control_ui_descriptor_spec(
     )
 
 
+def _normalize_command_spec(
+    entry: GatewayPluginCommandEntry,
+) -> GatewayPluginCommandSpec | None:
+    if isinstance(entry, GatewayPluginCommandSpec):
+        name = _optional_string(entry.name)
+        description = _optional_string(entry.description)
+        if name is None or description is None:
+            return None
+        return GatewayPluginCommandSpec(
+            name=name,
+            description=description,
+            accepts_args=entry.accepts_args,
+            native_names=_normalize_string_mapping(entry.native_names),
+            description_localizations=_normalize_string_mapping(
+                entry.description_localizations
+            ),
+            plugin_id=_optional_string(entry.plugin_id),
+            plugin_name=_optional_string(entry.plugin_name),
+            enabled=entry.enabled,
+            source=str(entry.source or "plugin").strip() or "plugin",
+        )
+    name = _optional_string(entry.get("name", entry.get("command")))
+    description = _optional_string(entry.get("description"))
+    if name is None or description is None:
+        return None
+    return GatewayPluginCommandSpec(
+        name=name,
+        description=description,
+        accepts_args=bool(entry.get("accepts_args", entry.get("acceptsArgs", False))),
+        native_names=_normalize_string_mapping(
+            entry.get("native_names", entry.get("nativeNames"))
+        ),
+        description_localizations=_normalize_string_mapping(
+            entry.get(
+                "description_localizations",
+                entry.get("descriptionLocalizations"),
+            )
+        ),
+        plugin_id=_optional_string(entry.get("plugin_id", entry.get("pluginId"))),
+        plugin_name=_optional_string(entry.get("plugin_name", entry.get("pluginName"))),
+        enabled=bool(entry.get("enabled", True)),
+        source=str(entry.get("source") or "plugin").strip() or "plugin",
+    )
+
+
 def _normalize_control_ui_descriptor_payload(
     descriptor: Mapping[str, object],
 ) -> Mapping[str, object] | None:
@@ -587,6 +695,41 @@ def build_plugin_runtime_executor_specs_from_active_registry(
     return tuple(specs)
 
 
+def build_plugin_runtime_session_extension_specs_from_active_registry(
+    registry: Mapping[str, object],
+) -> tuple[GatewayPluginSessionExtensionSpec, ...]:
+    raw_extensions = registry.get("sessionExtensions", registry.get("session_extensions"))
+    if not isinstance(raw_extensions, list):
+        return ()
+    specs: list[GatewayPluginSessionExtensionSpec] = []
+    for entry in raw_extensions:
+        if not isinstance(entry, Mapping):
+            continue
+        spec = _normalize_session_extension_spec(entry)
+        if spec is not None:
+            specs.append(spec)
+    return tuple(specs)
+
+
+def build_plugin_runtime_control_ui_descriptor_specs_from_active_registry(
+    registry: Mapping[str, object],
+) -> tuple[GatewayPluginControlUiDescriptorSpec, ...]:
+    raw_descriptors = registry.get(
+        "controlUiDescriptors",
+        registry.get("control_ui_descriptors"),
+    )
+    if not isinstance(raw_descriptors, list):
+        return ()
+    specs: list[GatewayPluginControlUiDescriptorSpec] = []
+    for entry in raw_descriptors:
+        if not isinstance(entry, Mapping):
+            continue
+        spec = _normalize_control_ui_descriptor_spec(entry)
+        if spec is not None:
+            specs.append(spec)
+    return tuple(specs)
+
+
 def _optional_string(value: object) -> str | None:
     if value is None:
         return None
@@ -622,6 +765,19 @@ def _optional_tool_allowed(
 
 def _optional_mapping(value: object) -> Mapping[str, object] | None:
     return value if isinstance(value, Mapping) else None
+
+
+def _normalize_string_mapping(value: object) -> Mapping[str, str] | None:
+    if not isinstance(value, Mapping):
+        return None
+    normalized: dict[str, str] = {}
+    for raw_key, raw_entry in value.items():
+        key = _optional_string(raw_key)
+        entry = _optional_string(raw_entry)
+        if key is None or entry is None:
+            continue
+        normalized[key.casefold()] = entry
+    return normalized or None
 
 
 def _plugin_requester_is_owner(requester: object) -> bool:

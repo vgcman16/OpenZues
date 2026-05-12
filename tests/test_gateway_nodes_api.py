@@ -1010,6 +1010,13 @@ def test_managed_node_sync_emits_voicewake_snapshot_only_on_fresh_connect(
     )
     voicewake_service = GatewayVoiceWakeService(tmp_path)
     voicewake_service.set_triggers(["zues", "builder"], now_ms=123)
+    voicewake_service.set_routing(
+        {
+            "defaultTarget": {"mode": "current"},
+            "routes": [{"trigger": "Robot Wake", "target": {"agentId": "main"}}],
+        },
+        now_ms=456,
+    )
     service = GatewayNodeService(
         _FakeManager([instance]),
         voicewake_service=voicewake_service,
@@ -1038,8 +1045,32 @@ def test_managed_node_sync_emits_voicewake_snapshot_only_on_fresh_connect(
         },
         {
             "node_id": "7",
+            "event": "voicewake.routing.changed",
+            "payload": {
+                "config": {
+                    "version": 1,
+                    "defaultTarget": {"mode": "current"},
+                    "routes": [{"trigger": "robot wake", "target": {"agentId": "main"}}],
+                    "updatedAtMs": 456,
+                }
+            },
+        },
+        {
+            "node_id": "7",
             "event": "voicewake.changed",
             "payload": {"triggers": ["zues", "builder"]},
+        },
+        {
+            "node_id": "7",
+            "event": "voicewake.routing.changed",
+            "payload": {
+                "config": {
+                    "version": 1,
+                    "defaultTarget": {"mode": "current"},
+                    "routes": [{"trigger": "robot wake", "target": {"agentId": "main"}}],
+                    "updatedAtMs": 456,
+                }
+            },
         },
     ]
 
@@ -1089,6 +1120,28 @@ def test_create_app_wires_managed_node_voicewake_snapshot_only_on_fresh_connect(
             {"triggers": ["zues", "builder"]},
         )
         assert set_result == {"triggers": ["zues", "builder"]}
+        async def set_voicewake_routing() -> dict[str, object]:
+            return await client.app.state.gateway_node_method_service.call(
+                "voicewake.routing.set",
+                {
+                    "config": {
+                        "defaultTarget": {"mode": "current"},
+                        "routes": [{"trigger": "Robot Wake", "target": {"agentId": "main"}}],
+                    }
+                },
+                now_ms=456,
+            )
+
+        routing_result = client.portal.call(set_voicewake_routing)
+        assert routing_result["config"]["routes"] == [
+            {"trigger": "robot wake", "target": {"agentId": "main"}}
+        ]
+        assert routing_result["config"] == {
+            "version": 1,
+            "defaultTarget": {"mode": "current"},
+            "routes": [{"trigger": "robot wake", "target": {"agentId": "main"}}],
+            "updatedAtMs": 456,
+        }
 
         runtime.connected = True
         client.portal.call(client.app.state.gateway_node_service.sync)
@@ -1106,8 +1159,32 @@ def test_create_app_wires_managed_node_voicewake_snapshot_only_on_fresh_connect(
         },
         {
             "node_id": "7",
+            "event": "voicewake.routing.changed",
+            "payload": {
+                "config": {
+                    "version": 1,
+                    "defaultTarget": {"mode": "current"},
+                    "routes": [{"trigger": "robot wake", "target": {"agentId": "main"}}],
+                    "updatedAtMs": 456,
+                }
+            },
+        },
+        {
+            "node_id": "7",
             "event": "voicewake.changed",
             "payload": {"triggers": ["zues", "builder"]},
+        },
+        {
+            "node_id": "7",
+            "event": "voicewake.routing.changed",
+            "payload": {
+                "config": {
+                    "version": 1,
+                    "defaultTarget": {"mode": "current"},
+                    "routes": [{"trigger": "robot wake", "target": {"agentId": "main"}}],
+                    "updatedAtMs": 456,
+                }
+            },
         },
     ]
 
@@ -2897,6 +2974,28 @@ def test_gateway_node_method_call_endpoint_supports_voicewake_get_and_set(tmp_pa
             "/api/gateway/node-methods/call",
             json={"method": "voicewake.get", "params": {}},
         )
+        routing_get_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "voicewake.routing.get", "params": {}},
+        )
+        routing_set_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "voicewake.routing.set",
+                "params": {
+                    "config": {
+                        "defaultTarget": {"mode": "current"},
+                        "routes": [
+                            {"trigger": "  Robot   Wake! ", "target": {"agentId": "MAIN"}}
+                        ],
+                    }
+                },
+            },
+        )
+        routing_after_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "voicewake.routing.get", "params": {}},
+        )
 
     assert get_response.status_code == 200
     assert get_response.json() == {"triggers": ["openclaw", "claude"]}
@@ -2904,6 +3003,22 @@ def test_gateway_node_method_call_endpoint_supports_voicewake_get_and_set(tmp_pa
     assert set_response.json() == {"triggers": ["zues", "builder"]}
     assert after_response.status_code == 200
     assert after_response.json() == {"triggers": ["zues", "builder"]}
+    assert routing_get_response.status_code == 200
+    assert routing_get_response.json() == {
+        "config": {
+            "version": 1,
+            "defaultTarget": {"mode": "current"},
+            "routes": [],
+            "updatedAtMs": 0,
+        }
+    }
+    assert routing_set_response.status_code == 200
+    assert routing_set_response.json()["config"]["routes"] == [
+        {"trigger": "robot wake", "target": {"agentId": "main"}}
+    ]
+    assert isinstance(routing_set_response.json()["config"]["updatedAtMs"], int)
+    assert routing_after_response.status_code == 200
+    assert routing_after_response.json() == routing_set_response.json()
 
 
 def test_gateway_node_method_call_endpoint_supports_gateway_identity_get(tmp_path) -> None:
@@ -3352,6 +3467,7 @@ def test_gateway_node_method_call_endpoint_supports_device_pair_lifecycle(tmp_pa
                 "method": "node.pair.request",
                 "params": {
                     "nodeId": "device-api-node",
+                    "publicKey": "device-api-public-key",
                     "displayName": "API Device",
                     "platform": "windows",
                     "deviceFamily": "desktop",
@@ -3375,9 +3491,11 @@ def test_gateway_node_method_call_endpoint_supports_device_pair_lifecycle(tmp_pa
 
     assert list_response.status_code == 200
     assert list_response.json()["pending"][0]["deviceId"] == "device-api-node"
+    assert list_response.json()["pending"][0]["publicKey"] == "device-api-public-key"
     assert approve_response.status_code == 200
     approved_device = approve_response.json()["device"]
     assert approved_device["deviceId"] == "device-api-node"
+    assert approved_device["publicKey"] == "device-api-public-key"
     assert "token" not in approved_device
     assert approved_device["tokens"] == {}
     assert remove_response.status_code == 200

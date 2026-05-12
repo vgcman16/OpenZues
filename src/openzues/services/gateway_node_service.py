@@ -302,6 +302,11 @@ class GatewayNodeService:
                     "voicewake.changed",
                     {"triggers": list(self._voicewake_service.load().triggers)},
                 )
+                self.registry.send_event(
+                    node_id,
+                    "voicewake.routing.changed",
+                    {"config": self._voicewake_service.load_routing().to_payload()},
+                )
             if fresh_connection and self._talk_mode_service is not None:
                 talk_mode = self._talk_mode_service.load()
                 if talk_mode.updated_at_ms > 0:
@@ -374,6 +379,7 @@ class GatewayNodeService:
             remote_ip=node.remote_ip or paired_node.remote_ip,
             silent=True,
             now_ms=_now_ms(),
+            public_key=paired_node.public_key,
         )
 
     async def wake_node(self, node_id: str) -> dict[str, object]:

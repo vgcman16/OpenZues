@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import copy
 import hashlib
 import hmac
 import html
@@ -23,7 +24,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -93,6 +94,7 @@ from openzues.services.gateway_channels import (
     imessage_account_configured,
     resolve_imessage_account_config,
 )
+from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_cron import cron_expression_next_run_at
 from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
@@ -163,9 +165,45 @@ OPENCLAW_PARITY_BASELINE_TOOLSETS = (
 OUTBOUND_DELIVERY_MAX_RETRIES = 5
 OUTBOUND_DELIVERY_BACKOFF_SECONDS = (5, 25, 120, 600)
 SLACK_API_BASE_URL = "https://slack.com/api"
+SLACK_COMMAND_ARG_ACTION_ID = "openclaw_cmdarg"
+SLACK_EXTERNAL_ARG_MENU_PREFIX = "openclaw_cmdarg_ext:"
+SLACK_COMMAND_ARG_VALUE_PREFIX = "cmdarg"
+SLACK_EXTERNAL_ARG_MENU_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{24}$")
+SLACK_EXTERNAL_ARG_MENU_TTL_MS = 10 * 60 * 1000
+SLACK_COMMAND_ARG_BUTTON_ROW_SIZE = 5
+SLACK_COMMAND_ARG_OVERFLOW_MIN = 3
+SLACK_COMMAND_ARG_OVERFLOW_MAX = 5
+SLACK_COMMAND_ARG_SELECT_OPTIONS_MAX = 100
+SLACK_COMMAND_ARG_SELECT_OPTION_TEXT_MAX = 75
+SLACK_COMMAND_ARG_SELECT_OPTION_VALUE_MAX = 150
+SLACK_COMMAND_ARG_BUTTON_TEXT_MAX = 75
+SLACK_COMMAND_ARG_BUTTON_VALUE_MAX = 2000
+SLACK_COMMAND_ARG_CONFIRM_TEXT_MAX = 300
+SLACK_HEADER_TEXT_MAX = 150
+SLACK_MAX_BLOCKS = 50
+SLACK_COMMAND_ARG_CHROME_BLOCKS = 3
+SLACK_COMMAND_ARG_ACTION_BLOCKS_MAX = SLACK_MAX_BLOCKS - SLACK_COMMAND_ARG_CHROME_BLOCKS
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
+LINE_GROUP_HISTORY_LIMIT = 50
+LINE_HISTORY_CONTEXT_MARKER = "[Chat messages since your last reply - for context]"
+LINE_CURRENT_MESSAGE_MARKER = "[Current message - respond to this]"
+LINE_MAX_HISTORY_KEYS = 1000
+LINE_WEBHOOK_REPLAY_WINDOW_SECONDS = 10 * 60
+LINE_WEBHOOK_REPLAY_MAX_ENTRIES = 4096
+LINE_DEFAULT_MEDIA_MAX_BYTES = 10 * 1024 * 1024
+LINE_MEDIA_CONTENT_ENDPOINT = "https://api-data.line.me/v2/bot/message/{message_id}/content"
+LINE_AUDIO_FTYP_BRANDS = frozenset(
+    {
+        "m4a ",
+        "m4b ",
+        "m4p ",
+        "m4r ",
+        "f4a ",
+        "f4b ",
+    }
+)
 BLUEBUBBLES_ROUTE_CHANNEL_ALIASES = {"bluebubbles", "imessage"}
 BLUEBUBBLES_AUDIO_MIME_MP3 = {"audio/mpeg", "audio/mp3"}
 BLUEBUBBLES_AUDIO_MIME_CAF = {"audio/x-caf", "audio/caf"}
@@ -431,6 +469,13 @@ OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _SlackExternalArgMenuEntry:
+    choices: tuple[tuple[str, str], ...]
+    user_id: str
+    expires_at_ms: float
+
+
 @dataclass(frozen=True)
 class _IrcRouteConfig:
     host: str
@@ -556,6 +601,21 @@ class GatewayTlonInboundMediaFetchRequest:
 
 GatewayTlonInboundMediaFetchService = Callable[
     [GatewayTlonInboundMediaFetchRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayLineInboundMediaFetchRequest:
+    message_id: str
+    message_type: str
+    placeholder: str
+    max_bytes: int
+    account_id: str | None
+
+
+GatewayLineInboundMediaFetchService = Callable[
+    [GatewayLineInboundMediaFetchRequest],
     Awaitable[object],
 ]
 
@@ -1438,6 +1498,1184 @@ def _slack_bearer_token(secret_token: str | None) -> str:
     return f"Bearer {token}"
 
 
+def _slack_inbound_mapping(value: object) -> Mapping[str, Any]:
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _slack_inbound_optional_string(value: object) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return None
+
+
+def _slack_truncate_text(value: object, limit: int) -> str:
+    return str(value or "")[:limit]
+
+
+def _slack_escape_mrkdwn(value: str) -> str:
+    return html.escape(value, quote=False)
+
+
+def _slack_chunk_items(
+    values: Sequence[dict[str, str]],
+    size: int,
+) -> list[list[dict[str, str]]]:
+    return [list(values[index : index + size]) for index in range(0, len(values), size)]
+
+
+def _slack_command_label(value: object) -> str | None:
+    normalized = _slack_inbound_optional_string(value)
+    if normalized is None:
+        return None
+    return normalized.removeprefix("/").strip() or None
+
+
+def _slack_encode_command_arg_value(
+    *,
+    command: str,
+    arg: str,
+    value: str,
+    user_id: str,
+) -> str:
+    return "|".join(
+        (
+            SLACK_COMMAND_ARG_VALUE_PREFIX,
+            quote(command, safe=""),
+            quote(arg, safe=""),
+            quote(value, safe=""),
+            quote(user_id, safe=""),
+        )
+    )
+
+
+def _slack_command_arg_confirm(command: str, arg: str) -> dict[str, object]:
+    escaped_command = _slack_escape_mrkdwn(command)
+    escaped_arg = _slack_escape_mrkdwn(arg)
+    return {
+        "title": {"type": "plain_text", "text": "Confirm selection"},
+        "text": {
+            "type": "mrkdwn",
+            "text": _slack_truncate_text(
+                f"Run */{escaped_command}* with *{escaped_arg}* set to this value?",
+                SLACK_COMMAND_ARG_CONFIRM_TEXT_MAX,
+            ),
+        },
+        "confirm": {"type": "plain_text", "text": "Run command"},
+        "deny": {"type": "plain_text", "text": "Cancel"},
+    }
+
+
+def _slack_command_arg_option(choice: Mapping[str, str]) -> dict[str, object]:
+    return {
+        "text": {
+            "type": "plain_text",
+            "text": _slack_truncate_text(
+                choice["label"],
+                SLACK_COMMAND_ARG_SELECT_OPTION_TEXT_MAX,
+            ),
+        },
+        "value": choice["value"],
+    }
+
+
+def _slack_command_arg_options(
+    choices: Sequence[dict[str, str]],
+) -> list[dict[str, object]]:
+    return [_slack_command_arg_option(choice) for choice in choices]
+
+
+def _slack_command_arg_action_value(action: Mapping[str, Any]) -> str | None:
+    value = _slack_inbound_optional_string(action.get("value"))
+    if value is not None:
+        return value
+    selected_option = _slack_inbound_mapping(action.get("selected_option"))
+    return _slack_inbound_optional_string(selected_option.get("value"))
+
+
+def _slack_parse_command_arg_value(raw: object) -> dict[str, str] | None:
+    value = _slack_inbound_optional_string(raw)
+    if value is None:
+        return None
+    parts = value.split("|")
+    if len(parts) != 5 or parts[0] != SLACK_COMMAND_ARG_VALUE_PREFIX:
+        return None
+    _, command, arg, selected_value, user_id = parts
+    decoded: list[str] = []
+    for part in (command, arg, selected_value, user_id):
+        try:
+            decoded_part = unquote(part)
+        except ValueError:
+            return None
+        if not decoded_part:
+            return None
+        decoded.append(decoded_part)
+    return {
+        "command": decoded[0],
+        "arg": decoded[1],
+        "value": decoded[2],
+        "userId": decoded[3],
+    }
+
+
+def _slack_external_arg_menu_token(raw: object) -> str | None:
+    value = _slack_inbound_optional_string(raw)
+    if value is None or not value.startswith(SLACK_EXTERNAL_ARG_MENU_PREFIX):
+        return None
+    token = value.removeprefix(SLACK_EXTERNAL_ARG_MENU_PREFIX).strip()
+    if SLACK_EXTERNAL_ARG_MENU_TOKEN_PATTERN.fullmatch(token) is None:
+        return None
+    return token
+
+
+def _slack_external_arg_menu_choice(value: object) -> tuple[str, str] | None:
+    if not isinstance(value, Mapping):
+        return None
+    label = _slack_inbound_optional_string(value.get("label"))
+    choice_value = _slack_inbound_optional_string(value.get("value"))
+    if label is None or choice_value is None:
+        return None
+    return label, choice_value
+
+
+def _slack_command_arg_menu_choices(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    choices: list[dict[str, str]] = []
+    for raw_choice in value:
+        normalized = _slack_external_arg_menu_choice(raw_choice)
+        if normalized is None:
+            continue
+        label, choice_value = normalized
+        choices.append({"label": label, "value": choice_value})
+    return choices
+
+
+def _slack_build_command_arg_menu_blocks(
+    *,
+    title: str,
+    command: str,
+    arg: str,
+    choices: Sequence[Mapping[str, str]],
+    user_id: str,
+    supports_external_select: bool,
+    create_external_menu_token: Callable[[Sequence[Mapping[str, object]]], str],
+) -> list[dict[str, object]]:
+    encoded_choices = [
+        {
+            "label": str(choice["label"]),
+            "value": _slack_encode_command_arg_value(
+                command=command,
+                arg=arg,
+                value=str(choice["value"]),
+                user_id=user_id,
+            ),
+        }
+        for choice in choices
+    ]
+    can_use_static_select = all(
+        len(choice["value"]) <= SLACK_COMMAND_ARG_SELECT_OPTION_VALUE_MAX
+        for choice in encoded_choices
+    )
+    can_use_overflow = (
+        can_use_static_select
+        and SLACK_COMMAND_ARG_OVERFLOW_MIN
+        <= len(encoded_choices)
+        <= SLACK_COMMAND_ARG_OVERFLOW_MAX
+    )
+    can_use_external_select = (
+        supports_external_select
+        and can_use_static_select
+        and len(encoded_choices) > SLACK_COMMAND_ARG_SELECT_OPTIONS_MAX
+    )
+    confirm = _slack_command_arg_confirm(command, arg)
+    rows: list[dict[str, object]]
+    if can_use_overflow:
+        rows = [
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "overflow",
+                        "action_id": SLACK_COMMAND_ARG_ACTION_ID,
+                        "confirm": confirm,
+                        "options": _slack_command_arg_options(encoded_choices),
+                    }
+                ],
+            }
+        ]
+    elif can_use_external_select:
+        token = create_external_menu_token(
+            [
+                {"label": choice["label"], "value": choice["value"]}
+                for choice in encoded_choices
+            ]
+        )
+        rows = [
+            {
+                "type": "actions",
+                "block_id": f"{SLACK_EXTERNAL_ARG_MENU_PREFIX}{token}",
+                "elements": [
+                    {
+                        "type": "external_select",
+                        "action_id": SLACK_COMMAND_ARG_ACTION_ID,
+                        "confirm": confirm,
+                        "min_query_length": 0,
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": f"Search {arg}",
+                        },
+                    }
+                ],
+            }
+        ]
+    elif len(encoded_choices) <= SLACK_COMMAND_ARG_BUTTON_ROW_SIZE or not can_use_static_select:
+        button_choices = [
+            choice
+            for choice in encoded_choices
+            if len(choice["value"]) <= SLACK_COMMAND_ARG_BUTTON_VALUE_MAX
+        ]
+        rows = [
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "action_id": f"{SLACK_COMMAND_ARG_ACTION_ID}_{row_index}_{col_index}",
+                        "text": {
+                            "type": "plain_text",
+                            "text": _slack_truncate_text(
+                                choice["label"],
+                                SLACK_COMMAND_ARG_BUTTON_TEXT_MAX,
+                            ),
+                        },
+                        "value": choice["value"],
+                        "confirm": confirm,
+                    }
+                    for col_index, choice in enumerate(row_choices)
+                ],
+            }
+            for row_index, row_choices in enumerate(
+                _slack_chunk_items(button_choices, SLACK_COMMAND_ARG_BUTTON_ROW_SIZE)
+            )
+        ]
+    else:
+        rows = [
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "static_select",
+                        "action_id": SLACK_COMMAND_ARG_ACTION_ID,
+                        "confirm": confirm,
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": f"Choose {arg}"
+                            if index == 0
+                            else f"Choose {arg} ({index + 1})",
+                        },
+                        "options": _slack_command_arg_options(row_choices),
+                    }
+                ],
+            }
+            for index, row_choices in enumerate(
+                _slack_chunk_items(encoded_choices, SLACK_COMMAND_ARG_SELECT_OPTIONS_MAX)
+            )
+        ]
+    visible_rows = rows[:SLACK_COMMAND_ARG_ACTION_BLOCKS_MAX]
+    return [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": _slack_truncate_text(
+                    f"/{command}: choose {arg}",
+                    SLACK_HEADER_TEXT_MAX,
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": _slack_truncate_text(title, 3000)},
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": _slack_truncate_text(
+                        f"Select one option to continue /{command} ({arg})",
+                        3000,
+                    ),
+                }
+            ],
+        },
+        *visible_rows,
+    ]
+
+
+def _slack_inbound_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    entries: list[str] = []
+    for item in value:
+        normalized = _slack_inbound_optional_string(item)
+        if normalized is not None:
+            entries.append(normalized)
+    return entries
+
+
+def _slack_interaction_unique_strings(values: list[object]) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _slack_inbound_optional_string(value)
+        if normalized is None:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        unique.append(normalized)
+    return unique
+
+
+def _slack_interaction_option_values(value: object) -> list[object]:
+    if not isinstance(value, list):
+        return []
+    values: list[object] = []
+    for item in value:
+        option = _slack_inbound_mapping(item)
+        option_value = _slack_inbound_optional_string(option.get("value"))
+        if option_value is not None:
+            values.append(option_value)
+    return values
+
+
+def _slack_interaction_option_labels(value: object) -> list[object]:
+    if not isinstance(value, list):
+        return []
+    labels: list[object] = []
+    for item in value:
+        option = _slack_inbound_mapping(item)
+        text = _slack_inbound_mapping(option.get("text"))
+        label = _slack_inbound_optional_string(text.get("text"))
+        if label is not None:
+            labels.append(label)
+    return labels
+
+
+def _slack_summarize_interaction_action(action: Mapping[str, Any]) -> dict[str, object]:
+    action_type = _slack_inbound_optional_string(action.get("type"))
+    selected_option = _slack_inbound_mapping(action.get("selected_option"))
+    selected_option_text = _slack_inbound_mapping(selected_option.get("text"))
+    selected_users = _slack_interaction_unique_strings(
+        [
+            action.get("selected_user"),
+            *_slack_inbound_string_list(action.get("selected_users")),
+        ]
+    )
+    selected_channels = _slack_interaction_unique_strings(
+        [
+            action.get("selected_channel"),
+            *_slack_inbound_string_list(action.get("selected_channels")),
+        ]
+    )
+    selected_conversations = _slack_interaction_unique_strings(
+        [
+            action.get("selected_conversation"),
+            *_slack_inbound_string_list(action.get("selected_conversations")),
+        ]
+    )
+    selected_values = _slack_interaction_unique_strings(
+        [
+            selected_option.get("value"),
+            *_slack_interaction_option_values(action.get("selected_options")),
+            *selected_users,
+            *selected_channels,
+            *selected_conversations,
+        ]
+    )
+    selected_labels = _slack_interaction_unique_strings(
+        [
+            selected_option_text.get("text"),
+            *_slack_interaction_option_labels(action.get("selected_options")),
+        ]
+    )
+    value = _slack_inbound_optional_string(action.get("value"))
+    summary: dict[str, object] = {}
+    if action_type is not None:
+        summary["actionType"] = action_type
+    if value is not None:
+        if action_type == "number_input":
+            try:
+                parsed_number = float(value)
+            except ValueError:
+                parsed_number = math.nan
+            if math.isfinite(parsed_number):
+                summary["inputKind"] = "number"
+                summary["inputNumber"] = parsed_number
+        elif action_type == "email_text_input" and "@" in value:
+            summary["inputKind"] = "email"
+            summary["inputEmail"] = value
+        elif action_type == "url_text_input":
+            parsed = urlparse(value)
+            if parsed.scheme and parsed.netloc:
+                summary["inputKind"] = "url"
+                summary["inputUrl"] = value
+        elif action_type == "rich_text_input":
+            summary["inputKind"] = "rich_text"
+        else:
+            summary["inputKind"] = "text"
+        summary["value"] = value
+        summary["inputValue"] = value
+    if selected_values:
+        summary["selectedValues"] = selected_values
+    if selected_users:
+        summary["selectedUsers"] = selected_users
+    if selected_channels:
+        summary["selectedChannels"] = selected_channels
+    if selected_conversations:
+        summary["selectedConversations"] = selected_conversations
+    if selected_labels:
+        summary["selectedLabels"] = selected_labels
+    selected_date = _slack_inbound_optional_string(action.get("selected_date"))
+    selected_time = _slack_inbound_optional_string(action.get("selected_time"))
+    selected_date_time = action.get("selected_date_time")
+    if selected_date is not None:
+        summary["selectedDate"] = selected_date
+    if selected_time is not None:
+        summary["selectedTime"] = selected_time
+    if isinstance(selected_date_time, (int, float)) and not isinstance(
+        selected_date_time, bool
+    ):
+        summary["selectedDateTime"] = selected_date_time
+    workflow = _slack_inbound_mapping(action.get("workflow"))
+    workflow_trigger_url = _slack_inbound_optional_string(workflow.get("trigger_url"))
+    workflow_id = _slack_inbound_optional_string(workflow.get("workflow_id"))
+    if workflow_trigger_url is not None:
+        summary["workflowTriggerUrl"] = workflow_trigger_url
+    if workflow_id is not None:
+        summary["workflowId"] = workflow_id
+    return summary
+
+
+def _slack_modal_private_metadata(raw: object) -> Mapping[str, str]:
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, Mapping):
+        return {}
+    metadata: dict[str, str] = {}
+    for key in ("sessionKey", "channelId", "channelType", "userId"):
+        value = _slack_inbound_optional_string(parsed.get(key))
+        if value is not None:
+            metadata[key] = value
+    return metadata
+
+
+def _slack_modal_input_summaries(values: object) -> list[dict[str, object]]:
+    if not isinstance(values, Mapping):
+        return []
+    inputs: list[dict[str, object]] = []
+    for block_id, block_value in values.items():
+        block = _slack_inbound_mapping(block_value)
+        if not block:
+            continue
+        for action_id, raw_action in block.items():
+            action = _slack_inbound_mapping(raw_action)
+            if not action:
+                continue
+            entry: dict[str, object] = {
+                "blockId": str(block_id),
+                "actionId": str(action_id),
+            }
+            entry.update(_slack_summarize_interaction_action(action))
+            inputs.append(entry)
+    return inputs
+
+
+_SLACK_INTERACTION_REDACTED_KEYS = {
+    "triggerId",
+    "responseUrl",
+    "workflowTriggerUrl",
+    "privateMetadata",
+    "viewHash",
+}
+
+
+def _slack_sanitize_interaction_payload_value(
+    value: object,
+    *,
+    key: str | None = None,
+) -> object | None:
+    if key in _SLACK_INTERACTION_REDACTED_KEYS:
+        if _slack_inbound_optional_string(value) is None:
+            return None
+        return "[redacted]"
+    if isinstance(value, Mapping):
+        output: dict[str, object] = {}
+        for entry_key, entry_value in value.items():
+            sanitized = _slack_sanitize_interaction_payload_value(
+                entry_value,
+                key=str(entry_key),
+            )
+            if sanitized is None or sanitized == "" or sanitized == []:
+                continue
+            output[str(entry_key)] = sanitized
+        return output
+    if isinstance(value, list):
+        entries = [
+            sanitized
+            for item in value
+            if (sanitized := _slack_sanitize_interaction_payload_value(item))
+            is not None
+        ]
+        return entries
+    return value
+
+
+def _slack_sanitize_interaction_payload(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    sanitized = _slack_sanitize_interaction_payload_value(payload)
+    return cast(dict[str, object], sanitized if isinstance(sanitized, dict) else {})
+
+
+def _slack_inbound_event_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    event = payload.get("event")
+    if isinstance(event, Mapping):
+        return cast(Mapping[str, Any], event)
+    return payload
+
+
+def _slack_reaction_action(event_type: str | None) -> str | None:
+    if event_type == "reaction_added":
+        return "added"
+    if event_type == "reaction_removed":
+        return "removed"
+    return None
+
+
+def _slack_member_action(event_type: str | None) -> str | None:
+    if event_type == "member_joined_channel":
+        return "joined"
+    if event_type == "member_left_channel":
+        return "left"
+    return None
+
+
+def _slack_channel_action(event_type: str | None) -> str | None:
+    if event_type == "channel_created":
+        return "created"
+    if event_type == "channel_rename":
+        return "renamed"
+    return None
+
+
+def _slack_pin_action(event_type: str | None) -> tuple[str, str] | None:
+    if event_type == "pin_added":
+        return ("pinned", "added")
+    if event_type == "pin_removed":
+        return ("unpinned", "removed")
+    return None
+
+
+def _slack_message_subtype_action(subtype: str | None) -> tuple[str, str] | None:
+    if subtype == "message_changed":
+        return ("edited", "changed")
+    if subtype == "message_deleted":
+        return ("deleted", "deleted")
+    return None
+
+
+def _slack_home_view() -> dict[str, Any]:
+    return {
+        "type": "home",
+        "callback_id": "openzues:home",
+        "blocks": [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": "OpenZues"},
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        "Send a DM, mention OpenZues in a channel, or use "
+                        "`/openzues` to start a session."
+                    ),
+                },
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": (
+                            "This Home tab is safe to show to any workspace "
+                            "member who opens the app."
+                        ),
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def _slack_infer_channel_type(channel_id: str, raw_type: object = None) -> str:
+    normalized_type = str(raw_type or "").strip().lower()
+    if normalized_type in {"im", "mpim", "channel", "group"}:
+        return normalized_type
+    if channel_id.startswith("D"):
+        return "im"
+    if channel_id.startswith("G"):
+        return "group"
+    return "channel"
+
+
+def _slack_channel_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> Mapping[str, Any]:
+    channels = _slack_inbound_mapping(snapshot.get("channels"))
+    slack_config = _slack_inbound_mapping(channels.get("slack"))
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    accounts = _slack_inbound_mapping(slack_config.get("accounts"))
+    account_config = _slack_inbound_mapping(
+        accounts.get(normalized_account_id) or accounts.get(DEFAULT_ACCOUNT_ID)
+    )
+    if not account_config:
+        return slack_config
+    merged = dict(slack_config)
+    merged.update(account_config)
+    root_channels = _slack_inbound_mapping(slack_config.get("channels"))
+    account_channels = _slack_inbound_mapping(account_config.get("channels"))
+    if root_channels or account_channels:
+        merged["channels"] = {**root_channels, **account_channels}
+    return merged
+
+
+def _slack_channel_config_entry(
+    channel_config: Mapping[str, Any],
+    channel_id: str,
+) -> Mapping[str, Any]:
+    channels = _slack_inbound_mapping(channel_config.get("channels"))
+    if not channels:
+        return {}
+    direct = channels.get(channel_id)
+    if isinstance(direct, Mapping):
+        return cast(Mapping[str, Any], direct)
+    lowered = channel_id.strip().lower()
+    for key, entry in channels.items():
+        if str(key).strip().lower() == lowered and isinstance(entry, Mapping):
+            return cast(Mapping[str, Any], entry)
+    return {}
+
+
+def _slack_allow_from(channel_config: Mapping[str, Any]) -> list[str]:
+    allow_from = _slack_inbound_string_list(channel_config.get("allowFrom"))
+    dm_config = _slack_inbound_mapping(channel_config.get("dm"))
+    allow_from.extend(_slack_inbound_string_list(dm_config.get("allowFrom")))
+    return allow_from
+
+
+def _slack_allowlist_allows_sender(allow_from: list[str], sender_id: str) -> bool:
+    if not allow_from:
+        return True
+    normalized = {entry.strip().lower() for entry in allow_from if entry.strip()}
+    return "*" in normalized or sender_id.strip().lower() in normalized
+
+
+def _slack_channel_event_allowed(
+    *,
+    channel_config: Mapping[str, Any],
+    channel_id: str | None,
+    channel_name: str | None,
+) -> bool:
+    for candidate in (channel_id, channel_name):
+        if candidate is None:
+            continue
+        channel_entry = _slack_channel_config_entry(channel_config, candidate)
+        if channel_entry.get("enabled") is False:
+            return False
+    return True
+
+
+def _slack_account_config_entry(
+    slack_config: Mapping[str, Any],
+    account_id: str | None,
+) -> Mapping[str, Any]:
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    accounts = _slack_inbound_mapping(slack_config.get("accounts"))
+    direct = accounts.get(normalized_account_id)
+    if isinstance(direct, Mapping):
+        return cast(Mapping[str, Any], direct)
+    lowered = normalized_account_id.strip().lower()
+    for key, entry in accounts.items():
+        if str(key).strip().lower() == lowered and isinstance(entry, Mapping):
+            return cast(Mapping[str, Any], entry)
+    return {}
+
+
+def _slack_config_writes_enabled(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> bool:
+    channels = _slack_inbound_mapping(snapshot.get("channels"))
+    slack_config = _slack_inbound_mapping(channels.get("slack"))
+    account_config = _slack_account_config_entry(slack_config, account_id)
+    configured = account_config.get("configWrites")
+    if configured is None:
+        configured = slack_config.get("configWrites")
+    return configured is True
+
+
+def _migrate_slack_channel_map(
+    channels: object,
+    *,
+    old_channel_id: str,
+    new_channel_id: str,
+) -> tuple[bool, bool]:
+    if not isinstance(channels, dict) or old_channel_id == new_channel_id:
+        return False, False
+    if old_channel_id not in channels:
+        return False, False
+    if new_channel_id in channels:
+        return False, True
+    channels[new_channel_id] = channels.pop(old_channel_id)
+    return True, False
+
+
+def _migrate_slack_channel_ids_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+    old_channel_id: str,
+    new_channel_id: str,
+) -> tuple[bool, bool, list[str]]:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, dict):
+        return False, False, []
+    slack_config = channels.get("slack")
+    if not isinstance(slack_config, dict):
+        return False, False, []
+    migrated = False
+    skipped_existing = False
+    scopes: list[str] = []
+    account_config = _slack_account_config_entry(slack_config, account_id)
+    account_channels = account_config.get("channels")
+    account_migrated, account_skipped = _migrate_slack_channel_map(
+        account_channels,
+        old_channel_id=old_channel_id,
+        new_channel_id=new_channel_id,
+    )
+    if account_migrated:
+        migrated = True
+        scopes.append("account")
+    if account_skipped:
+        skipped_existing = True
+    global_migrated, global_skipped = _migrate_slack_channel_map(
+        slack_config.get("channels"),
+        old_channel_id=old_channel_id,
+        new_channel_id=new_channel_id,
+    )
+    if global_migrated:
+        migrated = True
+        scopes.append("global")
+    if global_skipped:
+        skipped_existing = True
+    return migrated, skipped_existing, scopes
+
+
+def _slack_reaction_sender_allowed(
+    *,
+    channel_config: Mapping[str, Any],
+    channel_id: str,
+    channel_type: str,
+    sender_id: str,
+) -> bool:
+    if channel_type == "im":
+        dm_config = _slack_inbound_mapping(channel_config.get("dm"))
+        dm_enabled = channel_config.get("dmEnabled")
+        if dm_enabled is None:
+            dm_enabled = dm_config.get("enabled")
+        if dm_enabled is False:
+            return False
+        dm_policy = str(
+            channel_config.get("dmPolicy") or dm_config.get("policy") or "open"
+        ).strip().lower()
+        if dm_policy == "disabled":
+            return False
+        return _slack_allowlist_allows_sender(_slack_allow_from(channel_config), sender_id)
+
+    channel_entry = _slack_channel_config_entry(channel_config, channel_id)
+    if channel_entry.get("enabled") is False:
+        return False
+    channel_users = _slack_inbound_string_list(channel_entry.get("users"))
+    if channel_users:
+        return _slack_allowlist_allows_sender(channel_users, sender_id)
+    return True
+
+
+@dataclass(frozen=True, slots=True)
+class _SlackReactionSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    channel_id: str
+    channel_type: str
+    sender_id: str
+    message_ts: str
+    reaction: str
+    action: str
+    event_type: str
+    item_user: str | None
+
+
+def _slack_reaction_session_context(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _SlackReactionSessionContext | None:
+    event_type = _slack_inbound_optional_string(event.get("type"))
+    action = _slack_reaction_action(event_type)
+    if action is None or event_type is None:
+        return None
+    item = _slack_inbound_mapping(event.get("item"))
+    if _slack_inbound_optional_string(item.get("type")) != "message":
+        return None
+    sender_id = _slack_inbound_optional_string(event.get("user"))
+    channel_id = _slack_inbound_optional_string(item.get("channel"))
+    message_ts = _slack_inbound_optional_string(item.get("ts"))
+    if sender_id is None or channel_id is None or message_ts is None:
+        return None
+    channel_type = _slack_infer_channel_type(channel_id, event.get("channel_type"))
+    if channel_type == "im":
+        peer_kind: ConversationTargetPeerKind = "direct"
+        peer_id = sender_id
+    elif channel_type == "mpim":
+        peer_kind = "group"
+        peer_id = channel_id
+    else:
+        peer_kind = "channel"
+        peer_id = channel_id
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="slack",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    return _SlackReactionSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        channel_id=channel_id,
+        channel_type=channel_type,
+        sender_id=sender_id,
+        message_ts=message_ts,
+        reaction=_slack_inbound_optional_string(event.get("reaction")) or "emoji",
+        action=action,
+        event_type=event_type,
+        item_user=_slack_inbound_optional_string(event.get("item_user")),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SlackMemberSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    channel_id: str
+    channel_type: str
+    sender_id: str
+    action: str
+    event_type: str
+
+
+def _slack_member_session_context(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _SlackMemberSessionContext | None:
+    event_type = _slack_inbound_optional_string(event.get("type"))
+    action = _slack_member_action(event_type)
+    if action is None or event_type is None:
+        return None
+    sender_id = _slack_inbound_optional_string(event.get("user"))
+    channel_id = _slack_inbound_optional_string(event.get("channel"))
+    if sender_id is None or channel_id is None:
+        return None
+    channel_type = _slack_infer_channel_type(channel_id, event.get("channel_type"))
+    if channel_type == "im":
+        peer_kind: ConversationTargetPeerKind = "direct"
+        peer_id = sender_id
+    elif channel_type == "mpim":
+        peer_kind = "group"
+        peer_id = channel_id
+    else:
+        peer_kind = "channel"
+        peer_id = channel_id
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="slack",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    return _SlackMemberSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        channel_id=channel_id,
+        channel_type=channel_type,
+        sender_id=sender_id,
+        action=action,
+        event_type=event_type,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SlackChannelSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    channel_id: str | None
+    channel_name: str | None
+    channel_label: str
+    action: str
+    event_type: str
+
+
+def _slack_channel_session_context(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _SlackChannelSessionContext | None:
+    event_type = _slack_inbound_optional_string(event.get("type"))
+    action = _slack_channel_action(event_type)
+    if action is None or event_type is None:
+        return None
+    channel = _slack_inbound_mapping(event.get("channel"))
+    channel_id = _slack_inbound_optional_string(channel.get("id"))
+    channel_name = _slack_inbound_optional_string(
+        channel.get("name_normalized")
+    ) or _slack_inbound_optional_string(channel.get("name"))
+    peer_id = channel_id or channel_name
+    if peer_id is None:
+        return None
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="slack",
+        account_id=normalized_account_id,
+        peer_kind="channel",
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    return _SlackChannelSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        channel_id=channel_id,
+        channel_name=channel_name,
+        channel_label=channel_name or channel_id or "unknown",
+        action=action,
+        event_type=event_type,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SlackPinSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    channel_id: str
+    channel_type: str
+    sender_id: str
+    action: str
+    context_suffix: str
+    event_type: str
+    item_type: str
+    message_id: str
+
+
+def _slack_pin_session_context(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _SlackPinSessionContext | None:
+    event_type = _slack_inbound_optional_string(event.get("type"))
+    action = _slack_pin_action(event_type)
+    if action is None or event_type is None:
+        return None
+    sender_id = _slack_inbound_optional_string(event.get("user"))
+    channel_id = _slack_inbound_optional_string(event.get("channel_id"))
+    if sender_id is None or channel_id is None:
+        return None
+    channel_type = _slack_infer_channel_type(channel_id, event.get("channel_type"))
+    if channel_type == "im":
+        peer_kind: ConversationTargetPeerKind = "direct"
+        peer_id = sender_id
+    elif channel_type == "mpim":
+        peer_kind = "group"
+        peer_id = channel_id
+    else:
+        peer_kind = "channel"
+        peer_id = channel_id
+    item = _slack_inbound_mapping(event.get("item"))
+    item_type = _slack_inbound_optional_string(item.get("type")) or "item"
+    item_message = _slack_inbound_mapping(item.get("message"))
+    message_id = (
+        _slack_inbound_optional_string(item_message.get("ts"))
+        or _slack_inbound_optional_string(event.get("event_ts"))
+        or "unknown"
+    )
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="slack",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    return _SlackPinSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        channel_id=channel_id,
+        channel_type=channel_type,
+        sender_id=sender_id,
+        action=action[0],
+        context_suffix=action[1],
+        event_type=event_type,
+        item_type=item_type,
+        message_id=message_id,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SlackMessageSubtypeSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    channel_id: str
+    channel_type: str
+    sender_id: str
+    action: str
+    context_kind: str
+    event_type: str
+    subtype: str
+    message_id: str
+
+
+def _slack_message_subtype_session_context(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _SlackMessageSubtypeSessionContext | None:
+    event_type = _slack_inbound_optional_string(event.get("type"))
+    subtype = _slack_inbound_optional_string(event.get("subtype"))
+    action = _slack_message_subtype_action(subtype)
+    if event_type != "message" or subtype is None or action is None:
+        return None
+    channel_id = _slack_inbound_optional_string(event.get("channel"))
+    if channel_id is None:
+        return None
+    message = _slack_inbound_mapping(event.get("message"))
+    previous = _slack_inbound_mapping(event.get("previous_message"))
+    if subtype == "message_changed":
+        sender_id = (
+            _slack_inbound_optional_string(message.get("user"))
+            or _slack_inbound_optional_string(previous.get("user"))
+            or _slack_inbound_optional_string(message.get("bot_id"))
+            or _slack_inbound_optional_string(previous.get("bot_id"))
+        )
+        message_id = (
+            _slack_inbound_optional_string(message.get("ts"))
+            or _slack_inbound_optional_string(previous.get("ts"))
+            or _slack_inbound_optional_string(event.get("event_ts"))
+            or "unknown"
+        )
+    else:
+        sender_id = _slack_inbound_optional_string(
+            previous.get("user")
+        ) or _slack_inbound_optional_string(previous.get("bot_id"))
+        message_id = (
+            _slack_inbound_optional_string(event.get("deleted_ts"))
+            or _slack_inbound_optional_string(event.get("event_ts"))
+            or "unknown"
+        )
+    if sender_id is None:
+        return None
+    channel_type = _slack_infer_channel_type(channel_id, event.get("channel_type"))
+    if channel_type == "im":
+        peer_kind: ConversationTargetPeerKind = "direct"
+        peer_id = sender_id
+    elif channel_type == "mpim":
+        peer_kind = "group"
+        peer_id = channel_id
+    else:
+        peer_kind = "channel"
+        peer_id = channel_id
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="slack",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    return _SlackMessageSubtypeSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        channel_id=channel_id,
+        channel_type=channel_type,
+        sender_id=sender_id,
+        action=action[0],
+        context_kind=action[1],
+        event_type=event_type,
+        subtype=subtype,
+        message_id=message_id,
+    )
+
+
 def _slack_channel_id(target: str | None) -> str | None:
     normalized = str(target or "").strip()
     while ":" in normalized:
@@ -1462,6 +2700,107 @@ def _resolve_slack_thread_ts(*, reply_to_id: object, thread_id: object) -> str |
     return _normalize_slack_thread_ts_candidate(
         reply_to_id
     ) or _normalize_slack_thread_ts_candidate(thread_id)
+
+
+def _normalize_reply_to_mode(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized if normalized in {"off", "first", "all", "batched"} else None
+
+
+def _normalize_reply_to_id_source(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized if normalized in {"explicit", "implicit"} else None
+
+
+def _reply_to_fanout_id(
+    *,
+    reply_to_id: str,
+    reply_to_id_source: object,
+    reply_to_mode: object,
+    index: int,
+) -> str:
+    normalized_reply_to_id = reply_to_id.strip()
+    if not normalized_reply_to_id:
+        return ""
+    normalized_source = _normalize_reply_to_id_source(reply_to_id_source)
+    normalized_mode = _normalize_reply_to_mode(reply_to_mode)
+    if normalized_source != "explicit" and normalized_mode in {"first", "batched"}:
+        return normalized_reply_to_id if index == 0 else ""
+    return normalized_reply_to_id
+
+
+def _slack_target_is_channel_like(target: str | None) -> bool:
+    normalized = str(target or "").strip()
+    if not normalized:
+        return False
+    prefix = normalized.split(":", 1)[0].strip().lower() if ":" in normalized else ""
+    return prefix not in {"dm", "direct", "user"}
+
+
+def _slack_same_channel_target(left: str | None, right: str | None) -> bool:
+    left_id = _slack_channel_id(left)
+    right_id = _slack_channel_id(right)
+    if left_id is None or right_id is None:
+        return False
+    return left_id.strip().lower() == right_id.strip().lower()
+
+
+def _slack_action_has_replied_ref(tool_context: object) -> dict[str, Any] | None:
+    if not isinstance(tool_context, Mapping):
+        return None
+    has_replied_ref = tool_context.get("hasRepliedRef")
+    if not isinstance(has_replied_ref, dict):
+        return None
+    return has_replied_ref
+
+
+def _mark_slack_action_has_replied_if_current_channel(
+    *,
+    target: str | None,
+    tool_context: object,
+) -> None:
+    if not isinstance(tool_context, Mapping):
+        return
+    has_replied_ref = _slack_action_has_replied_ref(tool_context)
+    if has_replied_ref is None:
+        return
+    current_channel_id = str(tool_context.get("currentChannelId") or "").strip()
+    if not _slack_same_channel_target(target, current_channel_id):
+        return
+    has_replied_ref["value"] = True
+
+
+def _resolve_slack_action_auto_thread_id(
+    *,
+    target: str | None,
+    tool_context: object,
+) -> str | None:
+    if not isinstance(tool_context, Mapping):
+        return None
+    if not _slack_target_is_channel_like(target):
+        return None
+    current_thread_ts = _normalize_slack_thread_ts_candidate(
+        tool_context.get("currentThreadTs")
+    )
+    current_channel_id = str(tool_context.get("currentChannelId") or "").strip()
+    if current_thread_ts is None or not current_channel_id:
+        return None
+    if not _slack_same_channel_target(target, current_channel_id):
+        return None
+    reply_to_mode = str(tool_context.get("replyToMode") or "off").strip().lower()
+    if reply_to_mode == "all":
+        return current_thread_ts
+    if reply_to_mode not in {"first", "batched"}:
+        return None
+    has_replied_ref = _slack_action_has_replied_ref(tool_context)
+    if has_replied_ref is None or has_replied_ref.get("value") is True:
+        return None
+    has_replied_ref["value"] = True
+    return current_thread_ts
 
 
 def _slack_reaction_name(raw: str | None) -> str:
@@ -2499,6 +3838,18 @@ def _telegram_result_payload(result: object) -> dict[str, Any]:
 def _telegram_terminal_result_payload(result: object) -> dict[str, Any]:
     items = _telegram_result_items(result)
     return items[-1] if items else {}
+
+
+def _telegram_result_is_thread_not_found(result: object) -> bool:
+    if not isinstance(result, Mapping) or result.get("ok") is not False:
+        return False
+    return _telegram_error_text_is_thread_not_found(
+        str(result.get("description") or result.get("error") or result.get("error_code") or "")
+    )
+
+
+def _telegram_error_text_is_thread_not_found(description: str) -> bool:
+    return "message thread not found" in description.lower()
 
 
 def _telegram_message_id(result: object) -> str | None:
@@ -8756,6 +10107,467 @@ def _line_chat_id_is_user(chat_id: str | None) -> bool:
     return str(chat_id or "").strip().upper().startswith("U")
 
 
+def _line_inbound_mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _line_inbound_optional_string(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _line_account_config_pair(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> tuple[Mapping[str, Any] | None, Mapping[str, Any] | None, str]:
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    channels = _line_inbound_mapping(snapshot.get("channels"))
+    line_config = _line_inbound_mapping(channels.get("line"))
+    if not line_config:
+        return None, None, normalized_account_id
+    account_config: Mapping[str, Any] | None = None
+    if normalized_account_id != DEFAULT_ACCOUNT_ID:
+        accounts = line_config.get("accounts")
+        if isinstance(accounts, Mapping):
+            direct = accounts.get(normalized_account_id)
+            if isinstance(direct, Mapping):
+                account_config = cast(Mapping[str, Any], direct)
+            else:
+                lowered = normalized_account_id.casefold()
+                for key, value in accounts.items():
+                    if str(key).strip().casefold() == lowered and isinstance(value, Mapping):
+                        account_config = cast(Mapping[str, Any], value)
+                        break
+    return line_config, account_config, normalized_account_id
+
+
+def _line_read_secret_file(value: object) -> str | None:
+    raw_path = _line_inbound_optional_string(value)
+    if raw_path is None:
+        return None
+    path = Path(raw_path)
+    try:
+        if path.is_symlink():
+            return None
+        secret = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return secret or None
+
+
+def _line_configured_channel_access_token(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> str | None:
+    line_config, account_config, normalized_account_id = _line_account_config_pair(
+        snapshot,
+        account_id=account_id,
+    )
+    if account_config is not None:
+        token = _line_inbound_optional_string(account_config.get("channelAccessToken"))
+        if token is not None:
+            return token
+        token = _line_read_secret_file(account_config.get("tokenFile"))
+        if token is not None:
+            return token
+    if normalized_account_id != DEFAULT_ACCOUNT_ID or line_config is None:
+        return None
+    token = _line_inbound_optional_string(line_config.get("channelAccessToken"))
+    if token is not None:
+        return token
+    token = _line_read_secret_file(line_config.get("tokenFile"))
+    if token is not None:
+        return token
+    return _line_inbound_optional_string(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN"))
+
+
+def _line_detect_media_content_type(buffer: bytes) -> str:
+    if len(buffer) >= 2 and buffer[0] == 0xFF and buffer[1] == 0xD8:
+        return "image/jpeg"
+    if len(buffer) >= 4 and buffer[:4] == b"\x89PNG":
+        return "image/png"
+    if len(buffer) >= 3 and buffer[:3] == b"GIF":
+        return "image/gif"
+    if len(buffer) >= 12 and buffer[:4] == b"RIFF" and buffer[8:12] == b"WEBP":
+        return "image/webp"
+    if len(buffer) >= 12 and buffer[4:8] == b"ftyp":
+        major_brand = buffer[8:12].decode("ascii", errors="ignore").lower()
+        if major_brand in LINE_AUDIO_FTYP_BRANDS:
+            return "audio/mp4"
+        return "video/mp4"
+    return "application/octet-stream"
+
+
+_LINE_STICKER_PACKAGES = {
+    "1": "Moon & James",
+    "2": "Cony & Brown",
+    "3": "Brown & Friends",
+    "4": "Moon Special",
+    "789": "LINE Characters",
+    "6136": "Cony's Happy Life",
+    "6325": "Brown's Life",
+    "6359": "Choco",
+    "6362": "Sally",
+    "6370": "Edward",
+    "11537": "Cony",
+    "11538": "Brown",
+    "11539": "Moon",
+}
+
+
+def _line_sticker_keywords(message: Mapping[str, Any]) -> str | None:
+    keywords = message.get("keywords")
+    if isinstance(keywords, list):
+        normalized_keywords = [
+            str(keyword).strip()
+            for keyword in keywords
+            if str(keyword).strip()
+        ]
+        if normalized_keywords:
+            return ", ".join(normalized_keywords[:3])
+    return _line_inbound_optional_string(message.get("text"))
+
+
+def _line_sticker_text(message: Mapping[str, Any]) -> str:
+    package_id = _line_inbound_optional_string(message.get("packageId"))
+    package_name = _LINE_STICKER_PACKAGES.get(package_id or "", "sticker")
+    keywords = _line_sticker_keywords(message)
+    if keywords is not None:
+        return f"[Sent a {package_name} sticker: {keywords}]"
+    return f"[Sent a {package_name} sticker]"
+
+
+def _line_location_text(message: Mapping[str, Any]) -> str | None:
+    try:
+        latitude = float(message.get("latitude"))  # type: ignore[arg-type]
+        longitude = float(message.get("longitude"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(latitude) or not math.isfinite(longitude):
+        return None
+    accuracy = ""
+    raw_accuracy = message.get("accuracy")
+    if raw_accuracy is not None:
+        try:
+            accuracy_value = float(raw_accuracy)
+        except (TypeError, ValueError):
+            accuracy_value = math.nan
+        if math.isfinite(accuracy_value):
+            accuracy = f" \u00b1{round(accuracy_value)}m"
+    return f"\U0001f4cd {latitude:.6f}, {longitude:.6f}{accuracy}"
+
+
+def _line_inbound_message_id(event: Mapping[str, Any]) -> str | None:
+    message = _line_inbound_mapping(event.get("message"))
+    inbound_message_id = _line_inbound_optional_string(message.get("id"))
+    if inbound_message_id is not None:
+        return inbound_message_id
+    return _line_inbound_optional_string(event.get("webhookEventId"))
+
+
+def _line_text_mentions_openzues(text: str) -> bool:
+    normalized = text.casefold()
+    return "openzues" in normalized or "open zues" in normalized
+
+
+def _line_media_placeholder(message_type: str) -> str | None:
+    return {
+        "image": "<media:image>",
+        "video": "<media:video>",
+        "audio": "<media:audio>",
+        "file": "<media:document>",
+    }.get(message_type)
+
+
+def _line_event_has_native_bot_mention(event: Mapping[str, Any]) -> bool:
+    message = _line_inbound_mapping(event.get("message"))
+    mention = _line_inbound_mapping(message.get("mention"))
+    mentionees = mention.get("mentionees")
+    if not isinstance(mentionees, list):
+        return False
+    for mentionee in mentionees:
+        if not isinstance(mentionee, Mapping):
+            continue
+        if mentionee.get("isSelf") is True:
+            return True
+        mention_type = str(mentionee.get("type") or "").strip().lower()
+        if mention_type == "all":
+            return True
+    return False
+
+
+def _line_event_can_detect_mention(event: Mapping[str, Any]) -> bool:
+    event_type = str(event.get("type") or "").strip().lower()
+    if event_type != "message":
+        return False
+    message = _line_inbound_mapping(event.get("message"))
+    return str(message.get("type") or "").strip().lower() == "text"
+
+
+def _line_group_message_requires_mention_skip(
+    *,
+    context: _LineInboundSessionContext,
+    event: Mapping[str, Any],
+    text: str,
+) -> bool:
+    if context.conversation_type not in {"group", "room"}:
+        return False
+    if not _line_event_can_detect_mention(event):
+        return False
+    if _line_event_has_native_bot_mention(event):
+        return False
+    return not _line_text_mentions_openzues(text)
+
+
+def _line_group_history_key(context: _LineInboundSessionContext) -> str | None:
+    if context.conversation_type not in {"group", "room"}:
+        return None
+    return context.conversation_id or None
+
+
+def _line_group_history_entry(
+    *,
+    context: _LineInboundSessionContext,
+    event: Mapping[str, Any],
+    text: str,
+) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "sender": f"user:{context.sender_id or 'unknown'}",
+        "body": text,
+    }
+    timestamp = event.get("timestamp")
+    if isinstance(timestamp, int):
+        entry["timestamp"] = timestamp
+    return entry
+
+
+def _line_record_pending_history(
+    histories: dict[str, list[dict[str, object]]],
+    *,
+    context: _LineInboundSessionContext,
+    event: Mapping[str, Any],
+    text: str,
+) -> None:
+    history_key = _line_group_history_key(context)
+    if history_key is None or LINE_GROUP_HISTORY_LIMIT <= 0:
+        return
+    history = list(histories.get(history_key, []))
+    history.append(_line_group_history_entry(context=context, event=event, text=text))
+    while len(history) > LINE_GROUP_HISTORY_LIMIT:
+        history.pop(0)
+    if history_key in histories:
+        del histories[history_key]
+    histories[history_key] = history
+    while len(histories) > LINE_MAX_HISTORY_KEYS:
+        oldest_key = next(iter(histories))
+        del histories[oldest_key]
+
+
+def _line_pending_history(
+    histories: Mapping[str, list[dict[str, object]]],
+    context: _LineInboundSessionContext,
+) -> list[dict[str, object]]:
+    history_key = _line_group_history_key(context)
+    if history_key is None or LINE_GROUP_HISTORY_LIMIT <= 0:
+        return []
+    return [dict(entry) for entry in histories.get(history_key, [])]
+
+
+def _line_clear_pending_history(
+    histories: dict[str, list[dict[str, object]]],
+    context: _LineInboundSessionContext,
+) -> None:
+    history_key = _line_group_history_key(context)
+    if history_key is None or LINE_GROUP_HISTORY_LIMIT <= 0:
+        return
+    if history_key in histories:
+        histories[history_key] = []
+
+
+def _line_text_with_pending_history(
+    history: Sequence[Mapping[str, object]],
+    text: str,
+) -> str:
+    if not history:
+        return text
+    history_lines = []
+    for entry in history:
+        sender = _line_inbound_optional_string(entry.get("sender")) or "unknown"
+        body = _line_inbound_optional_string(entry.get("body")) or ""
+        if body:
+            history_lines.append(f"{sender}: {body}")
+    if not history_lines:
+        return text
+    return "\n".join(
+        [
+            LINE_HISTORY_CONTEXT_MARKER,
+            *history_lines,
+            "",
+            LINE_CURRENT_MESSAGE_MARKER,
+            text,
+        ]
+    )
+
+
+def _line_webhook_event_text(event: Mapping[str, Any]) -> str | None:
+    event_type = str(event.get("type") or "").strip().lower()
+    if event_type == "message":
+        message = _line_inbound_mapping(event.get("message"))
+        message_type = str(message.get("type") or "").strip().lower()
+        if message_type == "sticker":
+            return _line_sticker_text(message)
+        if message_type == "location":
+            return _line_location_text(message)
+        if message_type != "text":
+            media_placeholder = _line_media_placeholder(message_type)
+            if media_placeholder is not None:
+                return media_placeholder
+            return None
+        text = _line_inbound_optional_string(message.get("text"))
+        return text
+    if event_type != "postback":
+        return None
+    postback = _line_inbound_mapping(event.get("postback"))
+    raw_data = _line_inbound_optional_string(postback.get("data"))
+    if raw_data is None:
+        return None
+    if "line.action=" not in raw_data:
+        return raw_data
+    params = dict(parse_qsl(raw_data, keep_blank_values=True))
+    action = str(params.get("line.action") or "").strip()
+    device = str(params.get("line.device") or "").strip()
+    return f"line action {action} device {device}" if device else f"line action {action}"
+
+
+@dataclass(frozen=True, slots=True)
+class _LineWebhookReplayCandidate:
+    key: str
+    replay_id: str
+    inbound_message_id: str | None
+
+
+def _line_webhook_replay_source_id(event: Mapping[str, Any]) -> str:
+    source = _line_inbound_mapping(event.get("source"))
+    source_type = str(source.get("type") or "").strip().lower()
+    if source_type == "group":
+        return f"group:{_line_inbound_optional_string(source.get('groupId')) or ''}"
+    if source_type == "room":
+        return f"room:{_line_inbound_optional_string(source.get('roomId')) or ''}"
+    return f"user:{_line_inbound_optional_string(source.get('userId')) or ''}"
+
+
+def _line_webhook_replay_candidate(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _LineWebhookReplayCandidate | None:
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    event_type = str(event.get("type") or "").strip().lower()
+    if event_type == "message":
+        message = _line_inbound_mapping(event.get("message"))
+        message_id = _line_inbound_optional_string(message.get("id"))
+        if message_id is not None:
+            replay_id = f"message:{message_id}"
+            return _LineWebhookReplayCandidate(
+                key=f"{normalized_account_id}|{replay_id}",
+                replay_id=replay_id,
+                inbound_message_id=message_id,
+            )
+    webhook_event_id = _line_inbound_optional_string(event.get("webhookEventId"))
+    if webhook_event_id is None:
+        return None
+    replay_id = f"event:{webhook_event_id}"
+    return _LineWebhookReplayCandidate(
+        key=(
+            f"{normalized_account_id}|{event_type or 'event'}|"
+            f"{_line_webhook_replay_source_id(event)}|{webhook_event_id}"
+        ),
+        replay_id=replay_id,
+        inbound_message_id=_line_inbound_message_id(event),
+    )
+
+
+def _line_webhook_replay_skip(
+    event: Mapping[str, Any],
+    candidate: _LineWebhookReplayCandidate,
+) -> dict[str, object]:
+    skip: dict[str, object] = {
+        "eventType": str(event.get("type") or "").strip() or "event",
+        "reason": "line_webhook_replay_duplicate",
+        "replayId": candidate.replay_id,
+    }
+    if candidate.inbound_message_id is not None:
+        skip["inboundMessageId"] = candidate.inbound_message_id
+    return skip
+
+
+@dataclass(frozen=True, slots=True)
+class _LineInboundSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    sender_id: str
+    conversation_id: str
+    conversation_type: str
+
+
+def _line_inbound_session_context(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _LineInboundSessionContext:
+    source = _line_inbound_mapping(event.get("source"))
+    source_type = (
+        _line_inbound_optional_string(source.get("type")) or "user"
+    ).lower()
+    user_id = _line_inbound_optional_string(source.get("userId"))
+    group_id = _line_inbound_optional_string(source.get("groupId"))
+    room_id = _line_inbound_optional_string(source.get("roomId"))
+    if source_type == "group" or group_id is not None:
+        conversation_type = "group"
+        conversation_id = group_id
+        peer_kind: ConversationTargetPeerKind = "group"
+        peer_id = f"line:group:{group_id}" if group_id is not None else None
+    elif source_type == "room" or room_id is not None:
+        conversation_type = "room"
+        conversation_id = room_id
+        peer_kind = "group"
+        peer_id = f"line:room:{room_id}" if room_id is not None else None
+    else:
+        conversation_type = "direct"
+        conversation_id = user_id
+        peer_kind = "direct"
+        peer_id = f"line:user:{user_id}" if user_id is not None else None
+    if peer_id is None or conversation_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "LINE inbound message is missing conversation source id."
+        )
+    sender_id = user_id or conversation_id
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="line",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    return _LineInboundSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        sender_id=sender_id,
+        conversation_id=conversation_id,
+        conversation_type=conversation_type,
+    )
+
+
 def _line_validate_media_url(media_url: str) -> None:
     parsed = urlparse(media_url)
     if parsed.scheme.lower() != "https" or not parsed.netloc:
@@ -12666,11 +14478,13 @@ class OpsMeshService:
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
     msteams_inbound_media_fetch_service: GatewayMSTeamsInboundMediaFetchService | None = None
     tlon_inbound_media_fetch_service: GatewayTlonInboundMediaFetchService | None = None
+    line_inbound_media_fetch_service: GatewayLineInboundMediaFetchService | None = None
     tlon_approval_queue_service: GatewayTlonApprovalQueueService | None = None
     tlon_monitor_runtime_service: GatewayTlonMonitorRuntimeService | None = None
     msteams_feedback_reflection_service: GatewayMSTeamsFeedbackReflectionService | None = None
     discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
     gateway_config_service: GatewayConfigService | None = None
+    gateway_commands_service: GatewayCommandsService | None = None
     canvas_state_dir: Path | None = None
     _task: asyncio.Task[None] | None = field(init=False, default=None)
     _stop_event: asyncio.Event = field(init=False, default_factory=asyncio.Event)
@@ -12688,6 +14502,18 @@ class OpsMeshService:
         default_factory=dict,
     )
     _tlon_monitor_handles: dict[str, GatewayTlonMonitorHandle] = field(
+        init=False,
+        default_factory=dict,
+    )
+    _slack_external_arg_menus: dict[str, _SlackExternalArgMenuEntry] = field(
+        init=False,
+        default_factory=dict,
+    )
+    _line_group_histories: dict[str, list[dict[str, object]]] = field(
+        init=False,
+        default_factory=dict,
+    )
+    _line_webhook_replay_cache: dict[str, float] = field(
         init=False,
         default_factory=dict,
     )
@@ -15170,6 +16996,1600 @@ class OpsMeshService:
             result["senderName"] = context.sender_name
         return result
 
+    def _slack_channel_config(
+        self,
+        *,
+        account_id: str | None,
+    ) -> Mapping[str, Any]:
+        if self.gateway_config_service is None:
+            return {}
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return {}
+        if not isinstance(snapshot, Mapping):
+            return {}
+        return _slack_channel_config_from_snapshot(snapshot, account_id=account_id)
+
+    async def handle_slack_reaction_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        context = _slack_reaction_session_context(event, account_id=account_id)
+        if context is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_reaction_event_without_message_item",
+            }
+        channel_config = self._slack_channel_config(account_id=account_id)
+        if not _slack_reaction_sender_allowed(
+            channel_config=channel_config,
+            channel_id=context.channel_id,
+            channel_type=context.channel_type,
+            sender_id=context.sender_id,
+        ):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": context.event_type,
+                "skipped": True,
+                "reason": "slack_reaction_sender_unauthorized",
+            }
+        if self.wake_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack reaction system-event wake is unavailable."
+            )
+        base_text = (
+            f"Slack reaction {context.action}: :{context.reaction}: by "
+            f"{context.sender_id} in {context.channel_id} msg {context.message_ts}"
+        )
+        text = (
+            f"{base_text} from {context.item_user}"
+            if context.item_user is not None
+            else base_text
+        )
+        context_key = (
+            f"slack:reaction:{context.action}:{context.channel_id}:"
+            f"{context.message_ts}:{context.sender_id}:{context.reaction}"
+        )
+        await self.wake_service.wake(
+            mode="next-heartbeat",
+            text=text,
+            reason=context_key,
+            session_key=context.session_key,
+        )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "eventType": context.event_type,
+            "action": context.action,
+            "sessionKey": context.session_key,
+            "senderId": context.sender_id,
+            "channelId": context.channel_id,
+            "messageTs": context.message_ts,
+            "reaction": context.reaction,
+            "text": text,
+            "contextKey": context_key,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+
+    async def handle_slack_member_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        context = _slack_member_session_context(event, account_id=account_id)
+        if context is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_member_event_without_channel",
+            }
+        channel_config = self._slack_channel_config(account_id=account_id)
+        if not _slack_reaction_sender_allowed(
+            channel_config=channel_config,
+            channel_id=context.channel_id,
+            channel_type=context.channel_type,
+            sender_id=context.sender_id,
+        ):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": context.event_type,
+                "skipped": True,
+                "reason": "slack_member_sender_unauthorized",
+            }
+        if self.wake_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack member system-event wake is unavailable."
+            )
+        text = f"Slack: {context.sender_id} {context.action} {context.channel_id}."
+        context_key = (
+            f"slack:member:{context.action}:{context.channel_id}:{context.sender_id}"
+        )
+        await self.wake_service.wake(
+            mode="next-heartbeat",
+            text=text,
+            reason=context_key,
+            session_key=context.session_key,
+        )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "eventType": context.event_type,
+            "action": context.action,
+            "sessionKey": context.session_key,
+            "senderId": context.sender_id,
+            "channelId": context.channel_id,
+            "text": text,
+            "contextKey": context_key,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+
+    async def handle_slack_channel_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        context = _slack_channel_session_context(event, account_id=account_id)
+        if context is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_channel_event_without_channel",
+            }
+        channel_config = self._slack_channel_config(account_id=account_id)
+        if not _slack_channel_event_allowed(
+            channel_config=channel_config,
+            channel_id=context.channel_id,
+            channel_name=context.channel_name,
+        ):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": context.event_type,
+                "skipped": True,
+                "reason": "slack_channel_event_unauthorized",
+            }
+        if self.wake_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack channel system-event wake is unavailable."
+            )
+        context_id = context.channel_id or context.channel_name or "unknown"
+        text = f"Slack channel {context.action}: {context.channel_label}."
+        context_key = f"slack:channel:{context.action}:{context_id}"
+        await self.wake_service.wake(
+            mode="next-heartbeat",
+            text=text,
+            reason=context_key,
+            session_key=context.session_key,
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "slack",
+            "eventType": context.event_type,
+            "action": context.action,
+            "sessionKey": context.session_key,
+            "text": text,
+            "contextKey": context_key,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+        if context.channel_id is not None:
+            result["channelId"] = context.channel_id
+        if context.channel_name is not None:
+            result["channelName"] = context.channel_name
+        return result
+
+    async def handle_slack_channel_id_changed_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        old_channel_id = _slack_inbound_optional_string(event.get("old_channel_id"))
+        new_channel_id = _slack_inbound_optional_string(event.get("new_channel_id"))
+        if event_type != "channel_id_changed" or old_channel_id is None or new_channel_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_channel_id_change_missing_ids",
+            }
+        if self.gateway_config_service is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "status": "unavailable",
+                "reason": "slack_channel_config_unavailable",
+            }
+        current = self.gateway_config_service.build_snapshot()
+        if not _slack_config_writes_enabled(current, account_id=account_id):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_channel_config_writes_disabled",
+            }
+        next_snapshot = copy.deepcopy(current)
+        migrated, skipped_existing, scopes = _migrate_slack_channel_ids_in_snapshot(
+            next_snapshot,
+            account_id=account_id,
+            old_channel_id=old_channel_id,
+            new_channel_id=new_channel_id,
+        )
+        if migrated:
+            base = self.gateway_config_service.patch_object({})
+            self.gateway_config_service.set_raw(
+                json.dumps(next_snapshot),
+                base_hash=str(base.get("hash") or ""),
+            )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "eventType": event_type,
+            "oldChannelId": old_channel_id,
+            "newChannelId": new_channel_id,
+            "migrated": migrated,
+            "skippedExisting": skipped_existing,
+            "scopes": scopes,
+        }
+
+    async def handle_slack_pin_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        context = _slack_pin_session_context(event, account_id=account_id)
+        if context is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_pin_event_without_channel",
+            }
+        channel_config = self._slack_channel_config(account_id=account_id)
+        if not _slack_reaction_sender_allowed(
+            channel_config=channel_config,
+            channel_id=context.channel_id,
+            channel_type=context.channel_type,
+            sender_id=context.sender_id,
+        ):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": context.event_type,
+                "skipped": True,
+                "reason": "slack_pin_sender_unauthorized",
+            }
+        if self.wake_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack pin system-event wake is unavailable."
+            )
+        text = (
+            f"Slack: {context.sender_id} {context.action} a "
+            f"{context.item_type} in {context.channel_id}."
+        )
+        context_key = (
+            f"slack:pin:{context.context_suffix}:"
+            f"{context.channel_id}:{context.message_id}"
+        )
+        await self.wake_service.wake(
+            mode="next-heartbeat",
+            text=text,
+            reason=context_key,
+            session_key=context.session_key,
+        )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "eventType": context.event_type,
+            "action": context.action,
+            "sessionKey": context.session_key,
+            "senderId": context.sender_id,
+            "channelId": context.channel_id,
+            "messageId": context.message_id,
+            "itemType": context.item_type,
+            "text": text,
+            "contextKey": context_key,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+
+    async def handle_slack_message_subtype_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        subtype = _slack_inbound_optional_string(event.get("subtype"))
+        context = _slack_message_subtype_session_context(
+            event,
+            account_id=account_id,
+        )
+        if context is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "subtype": subtype,
+                "skipped": True,
+                "reason": "slack_message_subtype_event_without_message",
+            }
+        channel_config = self._slack_channel_config(account_id=account_id)
+        if not _slack_reaction_sender_allowed(
+            channel_config=channel_config,
+            channel_id=context.channel_id,
+            channel_type=context.channel_type,
+            sender_id=context.sender_id,
+        ):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": context.event_type,
+                "subtype": context.subtype,
+                "skipped": True,
+                "reason": "slack_message_subtype_sender_unauthorized",
+            }
+        if self.wake_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack message subtype system-event wake is unavailable."
+            )
+        text = f"Slack message {context.action} in {context.channel_id}."
+        context_key = (
+            f"slack:message:{context.context_kind}:"
+            f"{context.channel_id}:{context.message_id}"
+        )
+        await self.wake_service.wake(
+            mode="next-heartbeat",
+            text=text,
+            reason=context_key,
+            session_key=context.session_key,
+        )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "eventType": context.event_type,
+            "subtype": context.subtype,
+            "action": context.action,
+            "sessionKey": context.session_key,
+            "senderId": context.sender_id,
+            "channelId": context.channel_id,
+            "messageId": context.message_id,
+            "text": text,
+            "contextKey": context_key,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+
+    def _publish_slack_home_view(
+        self,
+        *,
+        route: dict[str, Any],
+        user_id: str,
+        view: dict[str, Any],
+        secret_token: str,
+    ) -> dict[str, object]:
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "views.publish"),
+            {
+                "user_id": user_id,
+                "view": view,
+            },
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        return {
+            key: value
+            for key, value in result.items()
+            if key in {"ok", "view", "warning", "response_metadata"}
+        }
+
+    async def handle_slack_home_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        user_id = _slack_inbound_optional_string(event.get("user"))
+        if event_type != "app_home_opened" or user_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_home_event_without_user",
+            }
+        if _slack_inbound_optional_string(event.get("tab")) == "messages":
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "skipped": True,
+                "reason": "slack_home_messages_tab",
+            }
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        route = await self._provider_route_for_channel_account(
+            channel="slack",
+            account_id=normalized_account_id,
+        )
+        view = _slack_home_view()
+        if route is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "status": "unavailable",
+                "reason": "slack_home_route_unavailable",
+                "userId": user_id,
+                "view": view,
+            }
+        secret_token = await self._notification_route_secret_token(route)
+        if not secret_token:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "eventType": event_type,
+                "status": "unavailable",
+                "reason": "slack_home_secret_unavailable",
+                "userId": user_id,
+                "view": view,
+            }
+        provider_result = await asyncio.to_thread(
+            self._publish_slack_home_view,
+            route=route,
+            user_id=user_id,
+            view=view,
+            secret_token=str(secret_token),
+        )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "eventType": event_type,
+            "userId": user_id,
+            "view": view,
+            "providerResult": provider_result,
+            "delivery": {
+                "runtime": "native-provider-backed",
+                "method": "views.publish",
+            },
+        }
+
+    def _prune_slack_external_arg_menus(self, now_ms: float | None = None) -> None:
+        now = now_ms if now_ms is not None else time.time() * 1000
+        expired = [
+            token
+            for token, entry in self._slack_external_arg_menus.items()
+            if entry.expires_at_ms <= now
+        ]
+        for token in expired:
+            self._slack_external_arg_menus.pop(token, None)
+
+    def create_slack_external_arg_menu(
+        self,
+        *,
+        choices: Sequence[Mapping[str, object]],
+        user_id: str,
+        now_ms: float | None = None,
+    ) -> str:
+        requester = _slack_inbound_optional_string(user_id)
+        if requester is None:
+            raise ValueError("Slack external arg menu user id is required.")
+        normalized_choices = tuple(
+            choice
+            for raw_choice in choices
+            if (choice := _slack_external_arg_menu_choice(raw_choice)) is not None
+        )
+        if not normalized_choices:
+            raise ValueError("Slack external arg menu choices are required.")
+        now = now_ms if now_ms is not None else time.time() * 1000
+        self._prune_slack_external_arg_menus(now)
+        token = secrets.token_urlsafe(18)
+        while (
+            SLACK_EXTERNAL_ARG_MENU_TOKEN_PATTERN.fullmatch(token) is None
+            or token in self._slack_external_arg_menus
+        ):
+            token = secrets.token_urlsafe(18)
+        self._slack_external_arg_menus[token] = _SlackExternalArgMenuEntry(
+            choices=normalized_choices,
+            user_id=requester,
+            expires_at_ms=now + SLACK_EXTERNAL_ARG_MENU_TTL_MS,
+        )
+        return token
+
+    def _slack_external_arg_menu_entry(
+        self,
+        token: str,
+        *,
+        now_ms: float | None = None,
+    ) -> _SlackExternalArgMenuEntry | None:
+        self._prune_slack_external_arg_menus(now_ms)
+        return self._slack_external_arg_menus.get(token)
+
+    def _build_slack_slash_arg_menu_response(
+        self,
+        *,
+        command_name: str,
+        raw_text: str,
+        sender_id: str,
+    ) -> dict[str, object] | None:
+        if raw_text.strip():
+            return None
+        commands_service = self.gateway_commands_service
+        if commands_service is None:
+            return None
+        command_label = _slack_command_label(command_name)
+        if command_label is None:
+            return None
+        try:
+            catalog = commands_service.build_catalog(
+                include_args=True,
+                provider="slack",
+                scope="native",
+            )
+        except ValueError:
+            return None
+        commands = catalog.get("commands")
+        if not isinstance(commands, list):
+            return None
+        normalized_label = command_label.casefold()
+        command_spec: Mapping[str, Any] | None = None
+        for raw_candidate in commands:
+            candidate = _slack_inbound_mapping(raw_candidate)
+            candidate_label = (
+                _slack_command_label(candidate.get("nativeName"))
+                or _slack_command_label(candidate.get("name"))
+                or ""
+            )
+            if candidate_label.casefold() == normalized_label:
+                command_spec = candidate
+                break
+        if command_spec is None:
+            return None
+        args = command_spec.get("args")
+        if not isinstance(args, list):
+            return None
+        selected_arg: Mapping[str, Any] | None = None
+        choices: list[dict[str, str]] = []
+        for raw_arg in args:
+            arg = _slack_inbound_mapping(raw_arg)
+            arg_choices = _slack_command_arg_menu_choices(arg.get("choices"))
+            if arg_choices:
+                selected_arg = arg
+                choices = arg_choices
+                break
+        if selected_arg is None or not choices:
+            return None
+        arg_name = _slack_inbound_optional_string(selected_arg.get("name"))
+        if arg_name is None:
+            return None
+        title_subject = (
+            _slack_inbound_optional_string(selected_arg.get("description")) or arg_name
+        )
+        title = f"Choose {title_subject} for /{command_label}."
+        blocks = _slack_build_command_arg_menu_blocks(
+            title=title,
+            command=command_label,
+            arg=arg_name,
+            choices=choices,
+            user_id=sender_id,
+            supports_external_select=True,
+            create_external_menu_token=lambda encoded_choices: (
+                self.create_slack_external_arg_menu(
+                    choices=encoded_choices,
+                    user_id=sender_id,
+                )
+            ),
+        )
+        return {
+            "response_type": "ephemeral",
+            "text": title,
+            "blocks": blocks,
+        }
+
+    async def _handle_slack_command_arg_options(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        interaction_type: str | None,
+    ) -> dict[str, object]:
+        actions_value = payload.get("actions")
+        first_action = (
+            _slack_inbound_mapping(actions_value[0])
+            if isinstance(actions_value, list) and actions_value
+            else {}
+        )
+        action_id = _slack_inbound_optional_string(
+            payload.get("action_id")
+        ) or _slack_inbound_optional_string(first_action.get("action_id"))
+        block_id = _slack_inbound_optional_string(
+            payload.get("block_id")
+        ) or _slack_inbound_optional_string(first_action.get("block_id"))
+        token = _slack_external_arg_menu_token(block_id)
+        entry = (
+            self._slack_external_arg_menu_entry(token) if token is not None else None
+        )
+        requester_user_id = _slack_inbound_optional_string(
+            _slack_inbound_mapping(payload.get("user")).get("id")
+        )
+        query = (
+            _slack_inbound_optional_string(payload.get("value")) or ""
+        ).casefold()
+        if entry is not None and requester_user_id == entry.user_id:
+            options = [
+                {
+                    "text": {
+                        "type": "plain_text",
+                        "text": label[:SLACK_COMMAND_ARG_SELECT_OPTION_TEXT_MAX],
+                    },
+                    "value": value,
+                }
+                for label, value in entry.choices
+                if not query or query in label.casefold()
+            ][:SLACK_COMMAND_ARG_SELECT_OPTIONS_MAX]
+            result: dict[str, object] = {
+                "ok": True,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "options": options,
+                "menuToken": token,
+            }
+            if action_id is not None:
+                result["actionId"] = action_id
+            return result
+        if entry is not None:
+            reason = "slack_command_arg_options_sender_unauthorized"
+        elif token is not None:
+            reason = "slack_command_arg_options_unavailable"
+        else:
+            reason = "slack_command_arg_options_missing_token"
+        result = {
+            "ok": True,
+            "channel": "slack",
+            "interactionType": interaction_type,
+            "options": [],
+            "reason": reason,
+        }
+        if action_id is not None:
+            result["actionId"] = action_id
+        if token is not None:
+            result["menuToken"] = token
+        return result
+
+    async def _handle_slack_command_arg_interaction(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        interaction_type: str | None,
+        action_id: str,
+        action: Mapping[str, Any],
+        sender_id: str,
+        channel_id: str,
+        channel_type: str,
+        conversation_target: ConversationTargetView,
+        session_key: str,
+    ) -> dict[str, object] | None:
+        if not action_id.startswith(SLACK_COMMAND_ARG_ACTION_ID):
+            return None
+        parsed = _slack_parse_command_arg_value(
+            _slack_command_arg_action_value(action)
+        )
+        if parsed is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "actionId": action_id,
+                "skipped": True,
+                "reason": "slack_command_arg_invalid",
+                "response": {
+                    "response_type": "ephemeral",
+                    "text": "Sorry, that button is no longer valid.",
+                },
+            }
+        if parsed["userId"] != sender_id:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "actionId": action_id,
+                "skipped": True,
+                "reason": "slack_command_arg_sender_unauthorized",
+                "response": {
+                    "response_type": "ephemeral",
+                    "text": "That menu is for another user.",
+                },
+            }
+        if self.session_delivery_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack slash command session delivery is unavailable."
+            )
+        prompt = f"/{parsed['command']} {parsed['value']}"
+        delivery_result = await self.session_delivery_service(session_key, prompt)
+        message_id = _session_delivery_message_id(delivery_result)
+        user = _slack_inbound_mapping(payload.get("user"))
+        team = _slack_inbound_mapping(payload.get("team"))
+        channel = _slack_inbound_mapping(payload.get("channel"))
+        trigger_id = _slack_inbound_optional_string(payload.get("trigger_id"))
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "slack",
+            "interactionType": interaction_type,
+            "actionId": action_id,
+            "command": parsed["command"],
+            "arg": parsed["arg"],
+            "value": parsed["value"],
+            "text": prompt,
+            "sessionKey": session_key,
+            "senderId": sender_id,
+            "channelId": channel_id,
+            "channelType": channel_type,
+            "conversationTarget": conversation_target.model_dump(mode="json"),
+            "delivery": {
+                "runtime": "session-backed",
+                "commandSource": "native-slack-arg-menu",
+            },
+            "response": {
+                "response_type": "ephemeral",
+                "text": "Queued for OpenZues.",
+            },
+        }
+        if message_id is not None:
+            result["messageId"] = message_id
+        sender_name = _slack_inbound_optional_string(user.get("name")) or (
+            _slack_inbound_optional_string(user.get("username"))
+        )
+        if sender_name is not None:
+            result["senderName"] = sender_name
+        channel_name = _slack_inbound_optional_string(channel.get("name"))
+        if channel_name is not None:
+            result["channelName"] = channel_name
+        team_id = _slack_inbound_optional_string(team.get("id"))
+        if team_id is not None:
+            result["teamId"] = team_id
+        if trigger_id is not None:
+            result["triggerId"] = "[redacted]"
+        return result
+
+    async def handle_slack_interaction(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        interaction_type = _slack_inbound_optional_string(payload.get("type"))
+        if interaction_type in {"view_submission", "view_closed"}:
+            return await self._handle_slack_modal_interaction(
+                payload,
+                interaction_type=interaction_type,
+                account_id=account_id,
+            )
+        if interaction_type == "block_suggestion":
+            return await self._handle_slack_command_arg_options(
+                payload,
+                interaction_type=interaction_type,
+            )
+        if interaction_type != "block_actions":
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_unsupported",
+            }
+        actions_value = payload.get("actions")
+        first_action = (
+            _slack_inbound_mapping(actions_value[0])
+            if isinstance(actions_value, list) and actions_value
+            else {}
+        )
+        user = _slack_inbound_mapping(payload.get("user"))
+        team = _slack_inbound_mapping(payload.get("team"))
+        channel = _slack_inbound_mapping(payload.get("channel"))
+        container = _slack_inbound_mapping(payload.get("container"))
+        sender_id = _slack_inbound_optional_string(user.get("id"))
+        channel_id = _slack_inbound_optional_string(
+            container.get("channel_id")
+        ) or _slack_inbound_optional_string(channel.get("id"))
+        action_id = _slack_inbound_optional_string(first_action.get("action_id"))
+        if sender_id is None or channel_id is None or action_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_missing_action",
+            }
+        channel_type = _slack_infer_channel_type(channel_id, payload.get("channel_type"))
+        channel_config = self._slack_channel_config(account_id=account_id)
+        if not _slack_reaction_sender_allowed(
+            channel_config=channel_config,
+            channel_id=channel_id,
+            channel_type=channel_type,
+            sender_id=sender_id,
+        ):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_sender_unauthorized",
+            }
+        if channel_type == "im":
+            peer_kind: ConversationTargetPeerKind = "direct"
+            peer_id = sender_id
+        elif channel_type == "mpim":
+            peer_kind = "group"
+            peer_id = channel_id
+        else:
+            peer_kind = "channel"
+            peer_id = channel_id
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        conversation_target = ConversationTargetView(
+            channel="slack",
+            account_id=normalized_account_id,
+            peer_kind=peer_kind,
+            peer_id=peer_id,
+        )
+        session_key = build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=conversation_target,
+        )
+        command_arg_result = await self._handle_slack_command_arg_interaction(
+            payload,
+            interaction_type=interaction_type,
+            action_id=action_id,
+            action=first_action,
+            sender_id=sender_id,
+            channel_id=channel_id,
+            channel_type=channel_type,
+            conversation_target=conversation_target,
+            session_key=session_key,
+        )
+        if command_arg_result is not None:
+            return command_arg_result
+        message_ts = _slack_inbound_optional_string(container.get("message_ts"))
+        thread_ts = _slack_inbound_optional_string(container.get("thread_ts"))
+        event_payload: dict[str, object] = {
+            "interactionType": "block_action",
+            "actionId": action_id,
+        }
+        block_id = _slack_inbound_optional_string(first_action.get("block_id"))
+        action_type = _slack_inbound_optional_string(first_action.get("type"))
+        value = _slack_inbound_optional_string(first_action.get("value"))
+        team_id = _slack_inbound_optional_string(team.get("id"))
+        trigger_id = _slack_inbound_optional_string(payload.get("trigger_id"))
+        response_url = _slack_inbound_optional_string(payload.get("response_url"))
+        if block_id is not None:
+            event_payload["blockId"] = block_id
+        if action_type is not None:
+            event_payload["actionType"] = action_type
+        if value is not None:
+            event_payload["value"] = value
+        event_payload["userId"] = sender_id
+        if team_id is not None:
+            event_payload["teamId"] = team_id
+        if trigger_id is not None:
+            event_payload["triggerId"] = "[redacted]"
+        if response_url is not None:
+            event_payload["responseUrl"] = "[redacted]"
+        event_payload["channelId"] = channel_id
+        if message_ts is not None:
+            event_payload["messageTs"] = message_ts
+        if thread_ts is not None:
+            event_payload["threadTs"] = thread_ts
+        text = f"Slack interaction: {json.dumps(event_payload, separators=(',', ':'))}"
+        context_key = ":".join(
+            part
+            for part in ["slack:interaction", channel_id, message_ts, action_id]
+            if part
+        )
+        if self.wake_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack interaction system-event wake is unavailable."
+            )
+        await self.wake_service.wake(
+            mode="next-heartbeat",
+            text=text,
+            reason=context_key,
+            session_key=session_key,
+        )
+        return {
+            "ok": True,
+            "channel": "slack",
+            "interactionType": interaction_type,
+            "actionId": action_id,
+            "sessionKey": session_key,
+            "text": text,
+            "contextKey": context_key,
+            "conversationTarget": conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+
+    async def _handle_slack_modal_interaction(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        interaction_type: str,
+        account_id: str | None,
+    ) -> dict[str, object]:
+        user = _slack_inbound_mapping(payload.get("user"))
+        team = _slack_inbound_mapping(payload.get("team"))
+        view = _slack_inbound_mapping(payload.get("view"))
+        sender_id = _slack_inbound_optional_string(user.get("id"))
+        callback_id = _slack_inbound_optional_string(view.get("callback_id")) or "unknown"
+        view_id = _slack_inbound_optional_string(view.get("id"))
+        if not callback_id.startswith("openclaw:"):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_unsupported_callback",
+            }
+        if sender_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_missing_user",
+            }
+        private_metadata_raw = _slack_inbound_optional_string(
+            view.get("private_metadata")
+        )
+        metadata = _slack_modal_private_metadata(private_metadata_raw)
+        expected_user_id = metadata.get("userId")
+        if expected_user_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_missing_expected_user",
+            }
+        channel_id = metadata.get("channelId")
+        channel_type = (
+            metadata.get("channelType")
+            if metadata.get("channelType") in {"im", "mpim", "channel", "group"}
+            else None
+        )
+        if channel_id is not None and channel_type is None:
+            channel_type = _slack_infer_channel_type(channel_id)
+        if sender_id != expected_user_id:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "interactionType": interaction_type,
+                "skipped": True,
+                "reason": "slack_interaction_sender_unauthorized",
+            }
+        if channel_id is not None and channel_type is not None:
+            channel_config = self._slack_channel_config(account_id=account_id)
+            if not _slack_reaction_sender_allowed(
+                channel_config=channel_config,
+                channel_id=channel_id,
+                channel_type=channel_type,
+                sender_id=sender_id,
+            ):
+                return {
+                    "ok": False,
+                    "channel": "slack",
+                    "interactionType": interaction_type,
+                    "skipped": True,
+                    "reason": "slack_interaction_sender_unauthorized",
+                }
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        conversation_target: ConversationTargetView | None = None
+        if channel_id is not None:
+            if channel_type == "im":
+                peer_kind: ConversationTargetPeerKind = "direct"
+                peer_id = sender_id
+            elif channel_type == "mpim":
+                peer_kind = "group"
+                peer_id = channel_id
+            else:
+                peer_kind = "channel"
+                peer_id = channel_id
+            conversation_target = ConversationTargetView(
+                channel="slack",
+                account_id=normalized_account_id,
+                peer_kind=peer_kind,
+                peer_id=peer_id,
+            )
+        session_key = metadata.get("sessionKey")
+        if session_key is None and conversation_target is not None:
+            session_key = build_launch_session_key(
+                mode="workspace_affinity",
+                preferred_instance_id=None,
+                task_id=None,
+                project_id=None,
+                operator_id=None,
+                conversation_target=conversation_target,
+            )
+        if session_key is None:
+            conversation_target = ConversationTargetView(
+                channel="slack",
+                account_id=normalized_account_id,
+                peer_kind="direct",
+                peer_id=sender_id,
+            )
+            session_key = build_launch_session_key(
+                mode="workspace_affinity",
+                preferred_instance_id=None,
+                task_id=None,
+                project_id=None,
+                operator_id=None,
+                conversation_target=conversation_target,
+            )
+        state = _slack_inbound_mapping(view.get("state"))
+        event_payload: dict[str, object] = {
+            "interactionType": interaction_type,
+            "actionId": f"view:{callback_id}",
+            "callbackId": callback_id,
+        }
+        if view_id is not None:
+            event_payload["viewId"] = view_id
+        event_payload["userId"] = sender_id
+        team_id = _slack_inbound_optional_string(team.get("id"))
+        if team_id is not None:
+            event_payload["teamId"] = team_id
+        root_view_id = _slack_inbound_optional_string(view.get("root_view_id"))
+        previous_view_id = _slack_inbound_optional_string(view.get("previous_view_id"))
+        external_id = _slack_inbound_optional_string(view.get("external_id"))
+        view_hash = _slack_inbound_optional_string(view.get("hash"))
+        if root_view_id is not None:
+            event_payload["rootViewId"] = root_view_id
+        if previous_view_id is not None:
+            event_payload["previousViewId"] = previous_view_id
+        if external_id is not None:
+            event_payload["externalId"] = external_id
+        if view_hash is not None:
+            event_payload["viewHash"] = view_hash
+        event_payload["isStackedView"] = previous_view_id is not None
+        if private_metadata_raw is not None:
+            event_payload["privateMetadata"] = private_metadata_raw
+        if channel_id is not None:
+            event_payload["routedChannelId"] = channel_id
+        if channel_type is not None:
+            event_payload["routedChannelType"] = channel_type
+        inputs = _slack_modal_input_summaries(state.get("values"))
+        if inputs:
+            event_payload["inputs"] = inputs
+        if interaction_type == "view_closed":
+            event_payload["isCleared"] = payload.get("is_cleared") is True
+        sanitized_event_payload = _slack_sanitize_interaction_payload(event_payload)
+        text = (
+            "Slack interaction: "
+            f"{json.dumps(sanitized_event_payload, separators=(',', ':'))}"
+        )
+        context_prefix = (
+            "slack:interaction:view-closed"
+            if interaction_type == "view_closed"
+            else "slack:interaction:view"
+        )
+        context_key = ":".join(
+            part
+            for part in [context_prefix, callback_id, view_id, sender_id]
+            if part
+        )
+        if self.wake_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack interaction system-event wake is unavailable."
+            )
+        await self.wake_service.wake(
+            mode="next-heartbeat",
+            text=text,
+            reason=context_key,
+            session_key=session_key,
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "slack",
+            "interactionType": interaction_type,
+            "actionId": f"view:{callback_id}",
+            "sessionKey": session_key,
+            "text": text,
+            "contextKey": context_key,
+            "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+        }
+        if conversation_target is not None:
+            result["conversationTarget"] = conversation_target.model_dump(mode="json")
+        return result
+
+    async def handle_slack_slash_command(
+        self,
+        command: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        command_name = _slack_inbound_optional_string(command.get("command")) or ""
+        sender_id = _slack_inbound_optional_string(command.get("user_id"))
+        channel_id = _slack_inbound_optional_string(command.get("channel_id"))
+        if sender_id is None or channel_id is None:
+            return {
+                "ok": False,
+                "channel": "slack",
+                "command": command_name or None,
+                "skipped": True,
+                "reason": "slack_slash_missing_sender_or_channel",
+                "response": {
+                    "response_type": "ephemeral",
+                    "text": "Sorry, that command payload was incomplete.",
+                },
+            }
+        channel_name = _slack_inbound_optional_string(command.get("channel_name"))
+        sender_name = _slack_inbound_optional_string(command.get("user_name"))
+        team_id = _slack_inbound_optional_string(command.get("team_id"))
+        trigger_id = _slack_inbound_optional_string(command.get("trigger_id"))
+        channel_type = _slack_infer_channel_type(channel_id)
+        channel_config = self._slack_channel_config(account_id=account_id)
+        if not _slack_channel_event_allowed(
+            channel_config=channel_config,
+            channel_id=channel_id,
+            channel_name=channel_name,
+        ):
+            return {
+                "ok": False,
+                "channel": "slack",
+                "command": command_name or None,
+                "skipped": True,
+                "reason": "slack_slash_channel_unauthorized",
+                "response": {
+                    "response_type": "ephemeral",
+                    "text": "This channel is not allowed.",
+                },
+            }
+        if not _slack_reaction_sender_allowed(
+            channel_config=channel_config,
+            channel_id=channel_id,
+            channel_type=channel_type,
+            sender_id=sender_id,
+        ):
+            response_text = (
+                "Slack DMs are disabled."
+                if channel_type == "im"
+                else "You are not authorized to use this command."
+            )
+            return {
+                "ok": False,
+                "channel": "slack",
+                "command": command_name or None,
+                "skipped": True,
+                "reason": "slack_slash_sender_unauthorized",
+                "response": {
+                    "response_type": "ephemeral",
+                    "text": response_text,
+                },
+            }
+        raw_text = _slack_inbound_optional_string(command.get("text")) or ""
+        arg_menu_response = self._build_slack_slash_arg_menu_response(
+            command_name=command_name,
+            raw_text=raw_text,
+            sender_id=sender_id,
+        )
+        if arg_menu_response is not None:
+            return {
+                "ok": True,
+                "channel": "slack",
+                "command": command_name or None,
+                "senderId": sender_id,
+                "channelId": channel_id,
+                "channelType": channel_type,
+                "skipped": True,
+                "reason": "slack_slash_command_arg_menu",
+                "delivery": {
+                    "runtime": "slack-interactive",
+                    "commandSource": "native-arg-menu",
+                },
+                "response": arg_menu_response,
+            }
+        if self.session_delivery_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Slack slash command session delivery is unavailable."
+            )
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        if channel_type == "im":
+            peer_kind: ConversationTargetPeerKind = "direct"
+            peer_id = sender_id
+        elif channel_type == "mpim":
+            peer_kind = "group"
+            peer_id = channel_id
+        else:
+            peer_kind = "channel"
+            peer_id = channel_id
+        conversation_target = ConversationTargetView(
+            channel="slack",
+            account_id=normalized_account_id,
+            peer_kind=peer_kind,
+            peer_id=peer_id,
+        )
+        session_key = build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=conversation_target,
+        )
+        prompt = raw_text or command_name
+        delivery_result = await self.session_delivery_service(session_key, prompt)
+        message_id = _session_delivery_message_id(delivery_result)
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "slack",
+            "command": command_name or None,
+            "text": prompt,
+            "sessionKey": session_key,
+            "senderId": sender_id,
+            "channelId": channel_id,
+            "channelType": channel_type,
+            "conversationTarget": conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "session-backed", "commandSource": "native"},
+            "response": {
+                "response_type": "ephemeral",
+                "text": "Queued for OpenZues.",
+            },
+        }
+        if message_id is not None:
+            result["messageId"] = message_id
+        if sender_name is not None:
+            result["senderName"] = sender_name
+        if channel_name is not None:
+            result["channelName"] = channel_name
+        if team_id is not None:
+            result["teamId"] = team_id
+        if trigger_id is not None:
+            result["triggerId"] = "[redacted]"
+        return result
+
+    async def handle_slack_system_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _slack_inbound_event_payload(payload)
+        event_type = _slack_inbound_optional_string(event.get("type"))
+        if _slack_reaction_action(event_type) is not None:
+            return await self.handle_slack_reaction_event(
+                payload,
+                account_id=account_id,
+            )
+        if _slack_member_action(event_type) is not None:
+            return await self.handle_slack_member_event(
+                payload,
+                account_id=account_id,
+            )
+        if _slack_channel_action(event_type) is not None:
+            return await self.handle_slack_channel_event(
+                payload,
+                account_id=account_id,
+            )
+        if event_type == "channel_id_changed":
+            return await self.handle_slack_channel_id_changed_event(
+                payload,
+                account_id=account_id,
+            )
+        if _slack_pin_action(event_type) is not None:
+            return await self.handle_slack_pin_event(
+                payload,
+                account_id=account_id,
+            )
+        if event_type == "message" and _slack_message_subtype_action(
+            _slack_inbound_optional_string(event.get("subtype"))
+        ) is not None:
+            return await self.handle_slack_message_subtype_event(
+                payload,
+                account_id=account_id,
+            )
+        if event_type == "app_home_opened":
+            return await self.handle_slack_home_event(
+                payload,
+                account_id=account_id,
+            )
+        return {
+            "ok": False,
+            "channel": "slack",
+            "eventType": event_type,
+            "skipped": True,
+            "reason": "slack_event_unsupported",
+        }
+
+    def _claim_line_webhook_replay(self, candidate: _LineWebhookReplayCandidate) -> bool:
+        now = time.monotonic()
+        cache = self._line_webhook_replay_cache
+        for key, expires_at in list(cache.items()):
+            if expires_at <= now:
+                del cache[key]
+        if candidate.key in cache:
+            return False
+        cache[candidate.key] = now + LINE_WEBHOOK_REPLAY_WINDOW_SECONDS
+        while len(cache) > LINE_WEBHOOK_REPLAY_MAX_ENTRIES:
+            oldest_key = min(cache, key=cache.__getitem__)
+            del cache[oldest_key]
+        return True
+
+    async def handle_line_webhook(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        events_value = payload.get("events")
+        event_count = len(events_value) if isinstance(events_value, list) else 0
+        events: list[Mapping[str, Any]] = []
+        if isinstance(events_value, list):
+            events = [
+                cast(Mapping[str, Any], event)
+                for event in events_value
+                if isinstance(event, Mapping)
+            ]
+        deliveries: list[dict[str, object]] = []
+        skips: list[dict[str, object]] = []
+        for event in events:
+            replay_candidate = _line_webhook_replay_candidate(
+                event,
+                account_id=account_id,
+            )
+            if replay_candidate is not None and not self._claim_line_webhook_replay(
+                replay_candidate
+            ):
+                skips.append(_line_webhook_replay_skip(event, replay_candidate))
+                continue
+            text = _line_webhook_event_text(event)
+            if text is None:
+                continue
+            context = _line_inbound_session_context(event, account_id=account_id)
+            if _line_group_message_requires_mention_skip(
+                context=context,
+                event=event,
+                text=text,
+            ):
+                _line_record_pending_history(
+                    self._line_group_histories,
+                    context=context,
+                    event=event,
+                    text=text,
+                )
+                skip: dict[str, object] = {
+                    "eventType": str(event.get("type") or "").strip() or "message",
+                    "reason": "line_group_message_requires_mention",
+                    "conversationId": context.conversation_id,
+                    "conversationType": context.conversation_type,
+                }
+                inbound_message_id = _line_inbound_message_id(event)
+                if inbound_message_id is not None:
+                    skip["inboundMessageId"] = inbound_message_id
+                skips.append(skip)
+                continue
+            staged_media = await self._stage_line_inbound_media(
+                event,
+                account_id=account_id,
+            )
+            if self.session_delivery_service is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "LINE inbound session delivery is unavailable."
+                )
+            pending_history = _line_pending_history(self._line_group_histories, context)
+            delivery_text = _line_text_with_pending_history(pending_history, text)
+            delivery_result = await self.session_delivery_service(
+                context.session_key,
+                delivery_text,
+            )
+            if pending_history:
+                _line_clear_pending_history(self._line_group_histories, context)
+            delivery_message_id = _session_delivery_message_id(delivery_result)
+            delivery: dict[str, object] = {
+                "eventType": str(event.get("type") or "").strip() or "message",
+                "sessionKey": context.session_key,
+                "text": text,
+                "senderId": context.sender_id,
+                "conversationId": context.conversation_id,
+                "conversationType": context.conversation_type,
+                "conversationTarget": context.conversation_target.model_dump(mode="json"),
+                "delivery": {"runtime": "session-backed"},
+            }
+            if staged_media:
+                delivery["delivery"] = {
+                    "runtime": "session-backed",
+                    "media": {"staged": len(staged_media)},
+                }
+                delivery.update(_msteams_media_payload(staged_media))
+                delivery["stagedMedia"] = _msteams_staged_media_metadata(staged_media)
+            if delivery_message_id is not None:
+                delivery["messageId"] = delivery_message_id
+            inbound_message_id = _line_inbound_message_id(event)
+            if inbound_message_id is not None:
+                delivery["inboundMessageId"] = inbound_message_id
+            reply_token = _line_inbound_optional_string(event.get("replyToken"))
+            if reply_token is not None:
+                delivery["replyToken"] = "[redacted]"
+            timestamp = event.get("timestamp")
+            if isinstance(timestamp, int):
+                delivery["timestamp"] = timestamp
+            if pending_history:
+                delivery["inboundHistory"] = pending_history
+            deliveries.append(delivery)
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "line",
+            "eventCount": event_count,
+            "deliveredCount": len(deliveries),
+        }
+        normalized_account_id = str(account_id or "").strip()
+        if normalized_account_id:
+            result["accountId"] = normalized_account_id
+        if deliveries:
+            result["deliveries"] = deliveries
+        if skips:
+            result["skippedCount"] = len(skips)
+            result["skips"] = skips
+        return result
+
+    async def _stage_line_inbound_media(
+        self,
+        event: Mapping[str, Any],
+        *,
+        account_id: str | None,
+    ) -> list[_MSTeamsStagedInboundMedia]:
+        fetcher = self._line_inbound_media_fetcher()
+        if str(event.get("type") or "").strip().lower() != "message":
+            return []
+        message = _line_inbound_mapping(event.get("message"))
+        message_type = str(message.get("type") or "").strip().lower()
+        placeholder = _line_media_placeholder(message_type)
+        if placeholder is None:
+            return []
+        message_id = _line_inbound_optional_string(message.get("id"))
+        if message_id is None:
+            return []
+        request = GatewayLineInboundMediaFetchRequest(
+            message_id=message_id,
+            message_type=message_type,
+            placeholder=placeholder,
+            max_bytes=LINE_DEFAULT_MEDIA_MAX_BYTES,
+            account_id=account_id,
+        )
+        try:
+            response = await fetcher(request)
+        except Exception:
+            return []
+        media_bytes = _msteams_fetch_response_bytes(response)
+        if media_bytes is None or len(media_bytes) > LINE_DEFAULT_MEDIA_MAX_BYTES:
+            return []
+        content_type = _msteams_fetch_response_string(
+            response,
+            "contentType",
+            "content_type",
+            "mimeType",
+            "mime_type",
+        )
+        filename = _msteams_fetch_response_string(
+            response,
+            "filename",
+            "fileName",
+            "name",
+        )
+        candidate = _MSTeamsInboundMediaCandidate(
+            url=f"line://message/{quote(message_id, safe='')}",
+            source_url=f"line://message/{quote(message_id, safe='')}",
+            file_hint=filename,
+            content_type_hint=content_type,
+            placeholder=placeholder,
+        )
+        staged = self._save_msteams_inbound_media(
+            candidate=candidate,
+            response=response,
+            media_bytes=media_bytes,
+            index=1,
+        )
+        return [staged] if staged is not None else []
+
+    def _line_inbound_media_fetcher(self) -> GatewayLineInboundMediaFetchService:
+        return self.line_inbound_media_fetch_service or self._default_line_inbound_media_fetch
+
+    async def _default_line_inbound_media_fetch(
+        self,
+        request: GatewayLineInboundMediaFetchRequest,
+    ) -> object:
+        return await asyncio.to_thread(self._download_line_inbound_media, request)
+
+    def _download_line_inbound_media(
+        self,
+        request: GatewayLineInboundMediaFetchRequest,
+    ) -> dict[str, object]:
+        if self.gateway_config_service is None:
+            raise RuntimeError("LINE channel access token is unavailable.")
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception as exc:
+            raise RuntimeError("LINE channel access token is unavailable.") from exc
+        token = _line_configured_channel_access_token(
+            snapshot,
+            account_id=request.account_id,
+        )
+        if token is None:
+            raise RuntimeError("LINE channel access token is unavailable.")
+        endpoint = LINE_MEDIA_CONTENT_ENDPOINT.format(
+            message_id=quote(request.message_id, safe="")
+        )
+        http_request = Request(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "OpenZues-LINE-Media/1.0",
+            },
+            method="GET",
+        )
+        try:
+            with urlopen(http_request, timeout=30) as response:
+                status = int(getattr(response, "status", 200) or 200)
+                if status >= 400:
+                    raise RuntimeError(f"LINE media content returned HTTP {status}.")
+                media_bytes = response.read(request.max_bytes + 1)
+                if len(media_bytes) > request.max_bytes:
+                    raise RuntimeError("LINE media attachment is too large.")
+                content_type = None
+                headers = getattr(response, "headers", None)
+                if headers is not None:
+                    raw_content_type = headers.get("Content-Type")
+                    if isinstance(raw_content_type, str) and raw_content_type.strip():
+                        content_type = raw_content_type.strip()
+        except HTTPError as exc:
+            message = _http_error_message("LINE media content returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"LINE media content failed: {exc.reason}") from exc
+        if content_type is None:
+            content_type = _line_detect_media_content_type(media_bytes)
+        return {
+            "bytes": media_bytes,
+            "contentType": content_type,
+            "filename": f"line-{request.message_type}-{request.message_id}",
+        }
+
     async def handle_msteams_inbound_activity(
         self,
         activity: Mapping[str, Any],
@@ -15815,6 +19235,14 @@ class OpsMeshService:
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
+                    reply_to_id_source=cast(
+                        Literal["explicit", "implicit"] | None,
+                        _normalize_reply_to_id_source(payload.get("replyToIdSource")),
+                    ),
+                    reply_to_mode=cast(
+                        Literal["off", "first", "all", "batched"] | None,
+                        _normalize_reply_to_mode(payload.get("replyToMode")),
+                    ),
                     reply_token=str(payload.get("replyToken") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
@@ -22793,7 +26221,13 @@ class OpsMeshService:
         thread_id = _message_action_param_string(
             request.params,
             "threadId",
-        ) or _message_action_param_string(request.params, "replyTo")
+        ) or _message_action_param_string(
+            request.params,
+            "replyTo",
+        ) or _resolve_slack_action_auto_thread_id(
+            target=target,
+            tool_context=request.tool_context,
+        )
         if media_url is not None:
             media_ids = self._upload_slack_media_files(
                 route=route,
@@ -22803,6 +26237,11 @@ class OpsMeshService:
                 thread_id=thread_id,
                 secret_token=secret_token or "",
             )
+            if thread_id:
+                _mark_slack_action_has_replied_if_current_channel(
+                    target=target,
+                    tool_context=request.tool_context,
+                )
             return {
                 "ok": True,
                 "result": {
@@ -22832,6 +26271,11 @@ class OpsMeshService:
         message_id = _slack_message_id(result)
         if message_id is None:
             raise RuntimeError("Slack API response did not include a message timestamp.")
+        if thread_id:
+            _mark_slack_action_has_replied_if_current_channel(
+                target=target,
+                tool_context=request.tool_context,
+            )
         return {
             "ok": True,
             "result": {
@@ -22968,7 +26412,13 @@ class OpsMeshService:
         thread_id = _message_action_param_string(
             request.params,
             "threadId",
-        ) or _message_action_param_string(request.params, "replyTo")
+        ) or _message_action_param_string(
+            request.params,
+            "replyTo",
+        ) or _resolve_slack_action_auto_thread_id(
+            target=target,
+            tool_context=request.tool_context,
+        )
         file_bytes = self._download_slack_media_url(file_path)
         ticket = self._post_slack_form(
             _slack_api_endpoint(str(route.get("target") or ""), "files.getUploadURLExternal"),
@@ -22999,6 +26449,11 @@ class OpsMeshService:
             complete_payload,
             secret_token=secret_token or "",
         )
+        if thread_id:
+            _mark_slack_action_has_replied_if_current_channel(
+                target=target,
+                tool_context=request.tool_context,
+            )
         return {
             "ok": True,
             "result": {
@@ -25505,6 +28960,10 @@ class OpsMeshService:
             payload["audioAsVoice"] = request.audio_as_voice
         if request.reply_to_id is not None:
             payload["replyToId"] = request.reply_to_id
+        if request.reply_to_id_source is not None:
+            payload["replyToIdSource"] = request.reply_to_id_source
+        if request.reply_to_mode is not None:
+            payload["replyToMode"] = request.reply_to_mode
         if request.reply_token is not None:
             payload["replyToken"] = request.reply_token
         if request.silent is not None:
@@ -25876,6 +29335,14 @@ class OpsMeshService:
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
+                    reply_to_id_source=cast(
+                        Literal["explicit", "implicit"] | None,
+                        _normalize_reply_to_id_source(payload.get("replyToIdSource")),
+                    ),
+                    reply_to_mode=cast(
+                        Literal["off", "first", "all", "batched"] | None,
+                        _normalize_reply_to_mode(payload.get("replyToMode")),
+                    ),
                     reply_token=str(payload.get("replyToken") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
@@ -25969,6 +29436,8 @@ class OpsMeshService:
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
+        reply_to_id_source: Literal["explicit", "implicit"] | None = None,
+        reply_to_mode: Literal["off", "first", "all", "batched"] | None = None,
         reply_token: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
@@ -26003,18 +29472,23 @@ class OpsMeshService:
         normalized_template_message = _normalize_line_template_message_payload(
             template_message
         )
+        normalized_channel_data = dict(channel_data) if channel_data is not None else None
+        has_channel_data_payload = bool(normalized_channel_data)
+        normalized_message = "" if has_channel_data_payload and not message.strip() else message
         if (
             not message.strip()
             and not normalized_media_urls
             and normalized_location is None
             and normalized_flex_message is None
             and normalized_template_message is None
+            and not has_channel_data_payload
         ):
             raise ValueError(
-                "send requires text, media, location, flex message, or template message"
+                "send requires text, media, location, flex message, "
+                "template message, or channel data"
             )
         payload: dict[str, Any] = {
-            "message": message,
+            "message": normalized_message,
             "channel": conversation_target.channel,
             "to": str(to).strip(),
             "gatewayClientScopes": list(_normalize_gateway_client_scopes(gateway_client_scopes)),
@@ -26052,6 +29526,13 @@ class OpsMeshService:
         normalized_reply_to_id = str(reply_to_id or "").strip() or None
         if normalized_reply_to_id is not None:
             payload["replyToId"] = normalized_reply_to_id
+            normalized_reply_to_id_source = (
+                _normalize_reply_to_id_source(reply_to_id_source) or "explicit"
+            )
+            payload["replyToIdSource"] = normalized_reply_to_id_source
+        normalized_reply_to_mode = _normalize_reply_to_mode(reply_to_mode)
+        if normalized_reply_to_mode is not None:
+            payload["replyToMode"] = normalized_reply_to_mode
         normalized_reply_token = str(reply_token or "").strip() or None
         if normalized_reply_token is not None:
             payload["replyToken"] = normalized_reply_token
@@ -26059,8 +29540,8 @@ class OpsMeshService:
             payload["silent"] = silent
         if force_document is not None:
             payload["forceDocument"] = force_document
-        if channel_data is not None:
-            payload["channelData"] = dict(channel_data)
+        if normalized_channel_data is not None:
+            payload["channelData"] = normalized_channel_data
         if account_id is not None:
             payload["accountId"] = account_id
         if agent_id is not None:
@@ -26106,7 +29587,7 @@ class OpsMeshService:
             event_type="gateway/send",
             payload=payload,
             message=_format_direct_channel_send_message(
-                message=message,
+                message=normalized_message,
                 media_urls=normalized_media_urls,
                 gif_playback=gif_playback if normalized_media_urls else None,
                 audio_as_voice=audio_as_voice if normalized_media_urls else None,
@@ -29100,12 +32581,37 @@ class OpsMeshService:
         token = _telegram_bot_token(secret_token)
         thread_id = str(event.get("threadId") or parsed_target.get("threadId") or "").strip()
         reply_to_id = str(event.get("replyToId") or "").strip()
+        reply_to_id_source = event.get("replyToIdSource")
+        reply_to_mode = event.get("replyToMode")
         silent = _optional_bool_payload_value(event, "silent")
         force_document = _optional_bool_payload_value(event, "forceDocument") is True
         gif_playback = _optional_bool_payload_value(event, "gifPlayback")
         audio_as_voice = _optional_bool_payload_value(event, "audioAsVoice")
         media_kind = event.get("mediaKind")
         inline_keyboard = _telegram_inline_keyboard(event.get("channelData"))
+
+        def post_telegram_json(method: str, payload: dict[str, Any]) -> object:
+            endpoint = _telegram_api_endpoint(str(route.get("target") or ""), token, method)
+            try:
+                result = self._post_json_webhook(endpoint, payload)
+            except RuntimeError as exc:
+                if (
+                    "message_thread_id" in payload
+                    and _telegram_error_text_is_thread_not_found(str(exc))
+                ):
+                    threadless_payload = dict(payload)
+                    threadless_payload.pop("message_thread_id", None)
+                    return self._post_json_webhook(endpoint, threadless_payload)
+                raise
+            if (
+                "message_thread_id" in payload
+                and _telegram_result_is_thread_not_found(result)
+            ):
+                threadless_payload = dict(payload)
+                threadless_payload.pop("message_thread_id", None)
+                return self._post_json_webhook(endpoint, threadless_payload)
+            return result
+
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
@@ -29146,10 +32652,7 @@ class OpsMeshService:
                 payload["reply_to_message_id"] = reply_to_id
             if thread_id:
                 payload["message_thread_id"] = thread_id
-            result = self._post_json_webhook(
-                _telegram_api_endpoint(str(route.get("target") or ""), token, "sendPoll"),
-                payload,
-            )
+            result = post_telegram_json("sendPoll", payload)
         else:
             raw_media_urls = event.get("mediaUrls")
             media_urls = _normalize_direct_channel_media_urls(
@@ -29181,6 +32684,16 @@ class OpsMeshService:
                         audio_as_voice=audio_as_voice,
                     )
                     media_payload = dict(payload)
+                    fanout_reply_to_id = _reply_to_fanout_id(
+                        reply_to_id=reply_to_id,
+                        reply_to_id_source=reply_to_id_source,
+                        reply_to_mode=reply_to_mode,
+                        index=index,
+                    )
+                    if fanout_reply_to_id:
+                        media_payload["reply_to_message_id"] = fanout_reply_to_id
+                    else:
+                        media_payload.pop("reply_to_message_id", None)
                     media_payload[media_payload_key] = media_url
                     if media_payload_key == "document" and force_document:
                         media_payload["disable_content_type_detection"] = True
@@ -29188,14 +32701,7 @@ class OpsMeshService:
                         media_payload["caption"] = text[:1024]
                     if index == 0 and inline_keyboard is not None:
                         media_payload["reply_markup"] = inline_keyboard
-                    media_result = self._post_json_webhook(
-                        _telegram_api_endpoint(
-                            str(route.get("target") or ""),
-                            token,
-                            telegram_method,
-                        ),
-                        media_payload,
-                    )
+                    media_result = post_telegram_json(telegram_method, media_payload)
                     if not isinstance(media_result, dict):
                         raise RuntimeError("Telegram API returned a non-JSON response.")
                     if media_result.get("ok") is False:
@@ -29228,26 +32734,12 @@ class OpsMeshService:
                     payload["caption"] = text[:1024]
                 if inline_keyboard is not None:
                     payload["reply_markup"] = inline_keyboard
-                result = self._post_json_webhook(
-                    _telegram_api_endpoint(
-                        str(route.get("target") or ""),
-                        token,
-                        telegram_method,
-                    ),
-                    payload,
-                )
+                result = post_telegram_json(telegram_method, payload)
             else:
                 payload["text"] = text
                 if inline_keyboard is not None:
                     payload["reply_markup"] = inline_keyboard
-                result = self._post_json_webhook(
-                    _telegram_api_endpoint(
-                        str(route.get("target") or ""),
-                        token,
-                        "sendMessage",
-                    ),
-                    payload,
-                )
+                result = post_telegram_json("sendMessage", payload)
         if not isinstance(result, dict):
             raise RuntimeError("Telegram API returned a non-JSON response.")
         if result.get("ok") is False:
@@ -29509,6 +33001,8 @@ class OpsMeshService:
             }
         else:
             reply_to_id = str(event.get("replyToId") or "").strip()
+            reply_to_id_source = event.get("replyToIdSource")
+            reply_to_mode = event.get("replyToMode")
             force_document = _optional_bool_payload_value(event, "forceDocument") is True
             gif_playback = _optional_bool_payload_value(event, "gifPlayback") is True
             audio_as_voice = _optional_bool_payload_value(event, "audioAsVoice")
@@ -29552,8 +33046,15 @@ class OpsMeshService:
                             "type": media_payload_key,
                             media_payload_key: media_payload,
                         }
-                        if index == 0:
-                            _whatsapp_apply_reply_context(message_payload, reply_to_id)
+                        _whatsapp_apply_reply_context(
+                            message_payload,
+                            _reply_to_fanout_id(
+                                reply_to_id=reply_to_id,
+                                reply_to_id_source=reply_to_id_source,
+                                reply_to_mode=reply_to_mode,
+                                index=index,
+                            ),
+                        )
                         result = self._post_json_webhook(
                             endpoint,
                             message_payload,

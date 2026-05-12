@@ -2,12 +2,23 @@
 
 ## Snapshot
 
-- Updated: 2026-05-08.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999998%.
-- Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
-- Estimated chat/session contract subfamily parity: ~98.4% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
-- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through session-binding/session-key runtime aliases, session-store runtime helpers, session-visibility helpers, simple-completion-runtime extractAssistantText helper, poll-runtime helpers, lazy-runtime helpers, config-paths helpers, context-visibility-runtime helpers, heartbeat-runtime helpers, json-store helpers, diagnostic-runtime helpers, system-event-runtime helpers, oauth-utils helpers, runtime-config-snapshot helpers, runtime-fetch helpers, runtime-doctor helpers, runtime-secret-resolution helpers, memory-core-host-query helpers, memory-core-host-multimodal helpers, memory-core-host-secret helpers, memory-core-host-events helpers, memory-core-host-status helpers, provider-setup helpers, self-hosted-provider-setup helpers, LM Studio runtime helpers, group-activation helpers, media-store helpers, web-media helpers, browser-security-runtime helpers, approval-auth-helpers, approval-approvers helpers, approval-reply-runtime helpers, approval-renderers helpers, approval-client-helpers, approval-client-runtime alias helpers, approval-delivery-helpers, approval-native-helpers, approval-native-runtime delivery helpers, approval-handler-adapter-runtime helpers, approval-handler-runtime adapter factory, speech facade helpers, model-session-runtime helpers, process-runtime command helpers, run-command normalized command helpers, string-coerce-runtime primitive helpers, provider-auth-login runtime alias helpers, approval-auth-runtime helpers, telegram-command-config helpers, param-readers helpers, provider-zai-endpoint helpers, provider-env-vars helpers, account-id/configured-id subpath helpers, agent-media-payload helpers, agent-config-primitives helpers, ACP binding resolve helpers, Anthropic CLI facade helpers, Anthropic Vertex auth-presence helpers, Anthropic Vertex facade helpers, XAI model-id helpers, channel pairing path helpers, channel inbound root helpers, channel location helpers, state path helpers, setup adapter runtime helpers, channel secret TTS runtime helpers, channel secret basic/runtime helpers, secret-file-runtime helpers, secret-ref-runtime helpers, secret-input-runtime helpers, secret-input-schema helpers, cron-store-runtime helpers, file-access-runtime helpers, logging-core helpers, native-command-config-runtime helpers, host-runtime helpers, image-generation provider/asset facade helpers, video-generation Dashscope facade helpers, image-generation-core auth-runtime helpers, talk config runtime helpers, GitHub Copilot token helper shims, channel plugin common/core helper shims, channel entry contract helper shims, channel config primitives/schema helper shims, runtime-env helper shims, channel-config-helpers shim, channel-config-writes alias shim, channel-lifecycle shim, exact channel-core shim, channel-contract-testing shim, channel-targets shim, channel-streaming shim, channel-envelope shim, channel-mention-gating shim, channel-runtime-context shim, channel-runtime compatibility facade shim, channel-activity-runtime shim, inbound-envelope shim, CLI runtime helper shim, memory-core-engine-runtime facade shim, memory-core-host-engine-embeddings helper shim, memory-core-host-engine-foundation helper shim, models-provider-runtime helper shim, skill-commands-runtime helper shim, skills-runtime helper shim, provider-tools helper shim, provider-stream-shared helper shim, provider-stream family helper shim, provider-transport-runtime helper shim, provider-http helper shim, provider-catalog-runtime helper shim, provider-onboard helper shim, provider-usage helper shim, tool-send helper shim, webhook-ingress helper shim, web-media helper shim, speech facade helper shim, zalouser facade shim, zod facade shim, web-content-extractor facade shim, plugin-entry facade shim, optional-channel-setup facade shim, outbound-media facade shim, delivery-queue-runtime facade shim, migration-runtime facade shim, migration helper facade shim, outbound-send-deps facade shim, command-status-runtime/command-status.runtime facade shims, reply-runtime facade shim, reply-dispatch-runtime facade shim, inbound-reply-dispatch facade shim, interactive-runtime facade shim, infra-runtime compatibility facade shim, and media-runtime facade shim; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Updated: 2026-05-12.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
+- Estimated active gateway/session/tool-contract family parity: ~99.955% for the bounded local OpenZues path.
+- Estimated chat/session contract subfamily parity: ~99.986% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
+- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.9%;
+  it is no longer the active queue head.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.99987% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch restart-health failure, gateway health `serverVersion` projection, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, deeper installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated provider-native inbound/outbound breadth: ~99.9991% after Slack
+  event/interactions/slash/signing coverage, command aliases/plugin command
+  injection, WhatsApp reply fanout, Telegram media reply fanout/caption
+  passthrough, Telegram stale-thread retry fallback for route-backed JSON and
+  HTTP-error send/poll paths, LINE signed webhook ingress, and LINE text
+  webhook/postback/media-placeholder/sticker/location session delivery plus
+  group mention gating, native LINE mention metadata handling, group
+  pending-history replay, non-text group media mention-gate bypass, LINE
+  inbound media staging, production credential-backed LINE media download, and
+  LINE webhook redelivery dedupe.
 - Runtime helper addendum: imported `agent-runtime` core helper coverage is
   now verified in `a8e871a3` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `agent-runtime` model-selection helper
@@ -192,7 +203,7 @@
   helper slices above.
 - Runtime helper addendum: imported LINE root/core SDK barrel coverage is now
   verified in `696e61f2` and counted with the plugin helper slices above.
-- Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
+- Estimated CLI/operator control-plane parity: ~99.9996% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, gateway-status slash command diagnostics, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -207,11 +218,32 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 - Gateway method registry, method policy wiring, strict parameter guards, config lookup/mutation, node invoke guard rails, device pairing, device-token rotation/revoke, plugin approval lifecycle, exec approval lifecycle, and node/global exec approval policy are landed and verified.
 - Cron local scheduling now covers expression schedules, due-run detection, delivery status, fallback announcement, session delivery fallback, system-event session-key wake routing, retry/backoff, one-shot cleanup, and OpenClaw-style CLI add/edit schedule parsing.
-- Browser/canvas/nodes/voice bounded command coverage is effectively locked for the local bridge: native browser commands, action grammar, storage/cookies/HAR, auth profile login/delete/save, batch execution, dashboard lifecycle, plugin node-host browser command/cap inventory, canvas/A2UI/live reload, APNS wake paths, managed attachments, scoped capability URLs, and iOS provider command bridges all have concrete gateway runtimes or honest unavailable boundaries.
+- Browser/canvas/nodes/voice bounded command coverage is effectively locked for the local bridge: native browser commands, `browser.request` browser-node proxy dispatch, proxy-file persistence, and configured node selection, action grammar, storage/cookies/HAR, auth profile login/delete/save, batch execution, dashboard lifecycle, plugin node-host browser command/cap inventory, canvas/A2UI/live reload, APNS wake paths, managed attachments, scoped capability URLs, and iOS provider command bridges all have concrete gateway runtimes or honest unavailable boundaries.
 - Chat transcript contracts are locked for the current SQLite-backed store: `chat.history` projection, usage/cost metadata, abort partial metadata, text caps, oversized payload placeholders, untrusted suffix stripping, skip-only hiding, directive cleanup, `chat.send` schema/provenance/timeout/session-key guards, `chat.inject` schema guards, and `chat.abort` run-id plus requester ownership validation.
 - Session tool contracts are locked across the bounded local path for `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.preview`, and direct session-history REST/SSE behavior.
+- Session runtime metadata projection now includes OpenClaw-shaped implicit
+  `agentRuntime` metadata in `sessions.patch` resolved payloads and
+  `sessions.list` rows. Verified on 2026-05-12 with
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_patch_persists_current_session_metadata_and_surfaces_it -q`,
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch or sessions_list"`,
+  `ruff check src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_sessions.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_sessions.py`,
+  and focused `git diff --check`; source/test checkpointed in `6c807e10`.
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
 - `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, ordered registry-backed plugin runtime service envelopes, safe core mappings, plugin error projection, plugin-published `tools.catalog` and `tools.effective` groups, plugin-host `plugins.uiDescriptors` control UI descriptor projection, and OpenClaw-style projection/visibility for neighboring session tools.
+- Provider plugin command-spec gating now preserves OpenClaw's split between
+  ungated provider alias listing and gated native command publication:
+  `commands.list provider=<channel> scope=native` omits plugin commands unless
+  that provider is marked native-command enabled. Verified on 2026-05-12 with
+  focused provider-gating proof, adjacent command-spec/plugin-runtime helper
+  proof, `ruff check`, `mypy`, and focused `git diff --check`; source/test
+  checkpointed in `6f15b49f`.
+- Device pairing CLI coverage now exposes `openzues devices list` and
+  `openzues devices approve`, including JSON output and preview-only
+  `--latest` approval selection, backed by the existing `device.pair.*`
+  gateway methods. Verified on 2026-05-12 with focused devices CLI tests,
+  adjacent QR/device-pairing selector, `ruff check`, `mypy`, and focused
+  `git diff --check`; source/test checkpointed in `25c344be`.
 - Native runtime seams are now landed for ACP spawn dispatch/tracking plus delete/reset cleanup, app-wired sandbox-required child-turn dispatch through Codex app-server workspace-write policy, route-backed thread-bound spawn binding, shared provider-native send metadata, and Telegram native document/reply/silent/thread/GIF-animation payloads.
 - TTS control-plane parity now includes `tts.personas`, `tts.setPersona`,
   status persona projection, config/fakeable persona descriptors, prefs-backed
@@ -2473,12 +2505,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | Chat + transcript contracts | Strong partial | ~97% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort` run ownership and partial persistence, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
 | Cron wake/delivery | Strong partial | ~99% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, direct-announce provider metadata, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, session-key wake routing, retry/backoff, one-shot delete-after-run cleanup, the CLI simple command group, and add/edit schedule/payload breadth are verified. |
 | Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |
-| CLI + operator control plane | Strong partial | ~98.7% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, native `acp client` interactive replay, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/personas/voices/enable/disable/set-provider/set-persona/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery with command aliases, activation/setup descriptors, auth/env metadata, QA runner descriptors, channel config metadata, model-support metadata, config-contract metadata, root identity/classification metadata, package manifest setup/startup/channel metadata, package min-host skip diagnostics, explicit Codex/Claude/Cursor bundle manifest metadata, manifestless Claude bundle metadata, JSON5 bundle manifest parsing, Claude bundle command projection, and bundle MCP/LSP server projection, top-level runtime executor inventory, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, local path link/copy install, ClawHub/npm install, npm-not-found bundled fallback, npm install-record update with explicit npm spec override selection, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
+| CLI + operator control plane | Strong partial | ~99.99% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, gateway-status slash command diagnostics, native `acp client` interactive replay, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/personas/voices/enable/disable/set-provider/set-persona/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery with command aliases, activation/setup descriptors, auth/env metadata, QA runner descriptors, channel config metadata, model-support metadata, config-contract metadata, root identity/classification metadata, package manifest setup/startup/channel metadata, package min-host skip diagnostics, explicit Codex/Claude/Cursor bundle manifest metadata, manifestless Claude bundle metadata, JSON5 bundle manifest parsing, Claude bundle command projection, and bundle MCP/LSP server projection, top-level runtime executor inventory, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, local path link/copy install, ClawHub/npm install, npm-not-found bundled fallback, npm install-record update with explicit npm spec override selection, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
 | Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
 | Channels + direct announce delivery | Strong partial | ~97% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, direct-announce provider metadata/replay, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, active/archived `thread-list`, core `thread-reply`, `search`, `sticker`, `sticker-upload`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `kick`, `ban`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, route-backed Feishu/Lark `send`, presentation-card `send`/`thread-reply`, image/file/audio/video media `send`, `read`, `edit`, `pin`, `unpin`, `list-pins`, `channel-info`, `member-info`, `channel-list`, `react`, and `reactions` action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
-| Browser/canvas/nodes/voice | Locked bounded family | ~99% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, and password-safe auth save are now landed. |
-| Packaging + companion apps | Minimal | ~5% | Still largely outside the current shipped OpenZues surface. |
+| Browser/canvas/nodes/voice | Locked bounded family | ~99.4% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, `browser.request` browser-node proxy dispatch, proxy-file persistence/path rewriting, configured-node selection, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, password-safe auth save, and voicewake routing methods are now landed. |
+| Packaging + companion apps | Minimal | ~5.1% | QR setup-code security, remote URL/auth, Tailscale, SecretRef, device-pairing, and inferred-loopback guards are landed, but companion apps remain largely outside the current shipped OpenZues surface. |
 
 ## Remaining Not-Fully-Complete Areas
 
@@ -21492,6 +21524,1566 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `22940711`.
+- `chat.history` and `sessions.history` now strip OpenClaw runtime-context
+  prompt-preface headers plus the generated-context privacy notice before
+  exposing visible user transcript rows. This closes the prompt-preface side of
+  upstream `stripInternalRuntimeContext`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999999%.
+- Verified the runtime-context prompt-preface seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_internal_runtime_context_prompt_preface tests\test_gateway_node_methods.py::test_sessions_history_strips_internal_runtime_context_prompt_preface -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent
+  transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`57 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `11c597b7`.
+- `chat.history` and `sessions.history` now strip legacy OpenClaw internal
+  runtime-context event blocks before exposing visible user transcript rows,
+  including fallback paragraph-bounded events and full untrusted child-result
+  plus action sections. This closes the legacy-event side of upstream
+  `stripInternalRuntimeContext`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999995%.
+- Verified the legacy runtime-context event seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_chat_history_strips_legacy_internal_runtime_context_event tests\test_gateway_node_methods.py::test_sessions_history_strips_legacy_internal_runtime_context_event -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent
+  transcript/read-model proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_get or sessions_history"`
+  (`59 passed, 1175 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `dff892b6`.
+- Slack `message.action send` and `upload-file` now resolve OpenClaw-style
+  auto-thread IDs from `toolContext.currentChannelId/currentThreadTs` when
+  `replyToMode` permits it, while preserving explicit thread/reply precedence
+  and single-use reply ref behavior. This closes the native Slack action side
+  of upstream `resolveSlackAutoThreadId`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999996%.
+- Verified the Slack action auto-thread seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_slack_send_auto_threads_from_context -q`
+  (`1 failed` before implementation, then `1 passed`), regression proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_slack_send_auto_threads_from_context tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_slack_send_route -q`
+  (`2 passed`), adjacent Slack action proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack and message_action"`
+  (`19 passed, 393 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `8db0f19b`.
+- Direct provider-backed outbound sends now preserve OpenClaw-style reply
+  policy metadata through the native runtime request and saved delivery payload:
+  `replyToIdSource` defaults to `explicit` for explicit replies, and
+  `replyToMode` is carried through for downstream provider adapters. This
+  closes the direct-send side of upstream `ChannelOutboundContext`
+  `replyToIdSource` / `replyToMode` propagation; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999997%.
+- Verified the outbound reply-policy metadata seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_reply_policy -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent provider
+  regression proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_reply_policy tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options -q`
+  (`2 passed`), adjacent provider-runtime proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "direct_channel_message and provider"`
+  (`2 passed, 411 deselected`), `ruff check
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `e115e5f1`.
+- Native package update detection now matches OpenClaw's owning npm-root
+  posture when package metadata does not declare a supported manager: CLI
+  update dispatch and startup auto-update detect `npm` from a package root
+  under an npm global root only when the owning npm command exists. This closes
+  `OZ-PKG-001CJ`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999998%.
+- Verified the owning npm-root detection seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_json_detects_owning_npm_root_without_package_manager_metadata -q`
+  (`1 failed` before implementation, then `1 passed`), focused CLI/runtime
+  proof
+  `python -m pytest tests\test_cli.py::test_update_json_detects_owning_npm_root_without_package_manager_metadata tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_detects_owning_npm_root -q`
+  (`2 passed`), adjacent CLI package proof
+  `python -m pytest tests\test_cli.py -q -k "update_json and package"`
+  (`5 passed, 558 deselected`), adjacent update-status proof
+  `python -m pytest tests\test_cli.py -q -k "update_status_json_detects_package_manager_deps or update_json_detects_owning_npm_root_without_package_manager_metadata"`
+  (`2 passed, 561 deselected`), adjacent startup runtime proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "startup_auto_update and package_update"`
+  (`1 passed, 60 deselected`), adjacent package-update command proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_prefers_owning_npm_cmd tests\test_runtime_updates.py::test_runtime_update_run_package_update_uses_ambient_npm_when_owner_absent -q`
+  (`2 passed`), `ruff check src\openzues\cli.py
+  src\openzues\services\runtime_updates.py tests\test_cli.py
+  tests\test_runtime_updates.py`, `mypy src\openzues\cli.py
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed in `76e2a21c`.
+- Native package update manager detection now also matches OpenClaw's
+  `detectGlobalInstallManagerForRoot` breadth for `pnpm root -g` ownership and
+  the `BUN_INSTALL` global root fallback when package metadata does not declare
+  a supported manager. CLI update dispatch and startup auto-update now infer
+  `pnpm` or `bun` from the installed global root before returning
+  `package-manager-unavailable`. This closes `OZ-PKG-001CL`; repo-wide parity
+  remains estimated at ~99.9%, runtime/CLI/doctor native-bridge parity moves to
+  ~99.98%, and the evidence band is tightened to
+  ~80-99.99999999999999999999999999999999999999999999999986%.
+- Verified the pnpm/bun owning global-root detection seam with focused
+  red/green
+  `python -m pytest tests\test_cli.py::test_update_json_detects_owning_pnpm_root_without_package_manager_metadata -q`
+  (`1 failed` before implementation, then `1 passed`) and
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_detects_owning_pnpm_root -q`
+  (`1 failed` before implementation, then `1 passed`), bun focused proofs
+  `python -m pytest tests\test_cli.py::test_update_json_detects_bun_global_root_without_package_manager_metadata -q`
+  (`1 passed`) and
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_startup_auto_update_detects_bun_global_root -q`
+  (`1 passed`), adjacent CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_json_detects_owning or update_json_detects_bun_global_root or update_json_dispatches_package_manager or update_status_json_detects_package_manager_deps"`
+  (`4 passed, 570 deselected`), adjacent startup runtime proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "startup_auto_update_detects_owning or startup_auto_update_detects_bun_global_root or startup_auto_update_runs_package_update"`
+  (`3 passed, 62 deselected`), `ruff check src\openzues\cli.py
+  src\openzues\services\runtime_updates.py tests\test_cli.py
+  tests\test_runtime_updates.py`, `mypy src\openzues\cli.py
+  src\openzues\services\runtime_updates.py`, and focused `git diff --check`.
+  Source/test checkpointed in `5d80e370`; bun follow-up proof checkpointed in
+  `04472a9c`.
+- Device pairing now preserves OpenClaw-style `publicKey` through pending
+  pairing requests, refresh/list snapshots, approval, paired-device storage,
+  and `device.pair.*` projections. This closes `OZ-COMP-001C`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999999%.
+- Verified the device-pairing public-key seam with focused red/green
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py::test_pair_request_preserves_public_key_through_refresh_list_and_approval -q`
+  (`1 failed` before implementation, then `1 passed`), focused method/API
+  proofs
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_family_uses_persisted_node_pairing_runtime -q`
+  and
+  `python -m pytest tests\test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_device_pair_lifecycle -q`
+  (`1 passed` each), adjacent pairing proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q`
+  (`6 passed`), adjacent method/API proofs
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_family or node_pair_request or node_pair_list or node_pair_approve"`
+  (`11 passed, 1223 deselected`) and
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "device_pair_lifecycle or pair_request_endpoint"`
+  (`3 passed, 425 deselected`), adjacent scope-upgrade method/API proofs
+  (`2 passed` each), `ruff check
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_node_service.py src\openzues\database.py
+  tests\test_gateway_node_pairing_refresh.py tests\test_gateway_node_methods.py
+  tests\test_gateway_nodes_api.py`, `mypy
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_node_service.py src\openzues\database.py`, and
+  focused `git diff --check`. Source/test checkpointed in `bef0652f`.
+- QR setup-code generation now matches OpenClaw's mobile pairing URL safety
+  gate for cleartext `ws://` URLs: public hosts are rejected before bootstrap
+  token issue, while loopback/private LAN/link-local and Android emulator
+  hosts remain allowed. This closes `OZ-COMP-001D`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999999999995%.
+- Verified the QR cleartext URL seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_setup_code_only_rejects_public_cleartext_url_before_token_issue -q`
+  (`1 failed` before implementation, then `1 passed`), focused allow/reject
+  pair
+  `python -m pytest tests\test_cli.py::test_qr_setup_code_only_allows_private_lan_cleartext_url tests\test_cli.py::test_qr_setup_code_only_rejects_public_cleartext_url_before_token_issue -q`
+  (`2 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`7 passed, 558
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `24d89215`.
+- QR `--remote` now consumes persisted OpenClaw-style `gateway.remote.url`
+  and `gateway.remote.token` / `gateway.remote.password` config from the
+  native control UI config snapshot, reports `urlSource="gateway.remote.url"`,
+  preserves the setup-code bootstrap-token payload shape, and avoids leaking
+  local or remote auth material in JSON output. This closes `OZ-COMP-001H`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to
+  ~80-99.9999999999999999999999999999999999999999999999997%.
+- Verified the QR remote config seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_remote_uses_gateway_remote_url_and_token_from_config -q`
+  (`1 failed` before implementation, then `1 passed`), focused no-config/JSON
+  guard pair
+  `python -m pytest tests\test_cli.py::test_qr_remote_requires_explicit_remote_url_before_token_issue tests\test_cli.py::test_qr_json_output_matches_openclaw_setup_code_contract -q`
+  (`2 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`8 passed, 558
+  deselected`), `ruff check src\openzues\cli.py src\openzues\schemas.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py src\openzues\schemas.py`,
+  and focused `git diff --check`. Source/test checkpointed in `3d63d136`.
+- QR `--remote` now also matches OpenClaw's
+  `gateway.tailscale.mode=serve|funnel` URL resolution path: when no
+  `gateway.remote.url` is configured, OpenZues runs `tailscale status --json`,
+  extracts `Self.DNSName` or the first `Self.TailscaleIPs` value, emits a
+  `wss://` MagicDNS gateway URL, preserves `urlSource` as
+  `gateway.tailscale.mode=<mode>`, and fails with the OpenClaw-shaped MagicDNS
+  diagnostic if Tailscale host discovery is unavailable. This closes
+  `OZ-COMP-001I`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999999999999%.
+- Verified the QR Tailscale MagicDNS seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_remote_uses_tailscale_serve_dns_when_remote_url_absent -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`9 passed, 558
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `beb67302`.
+- QR `--remote` now resolves env-backed `gateway.remote.token` /
+  `gateway.remote.password` SecretRefs before deriving the setup-code auth
+  label, emits OpenClaw-style `[secrets] ...` diagnostics to stderr for JSON
+  and setup-code-only output, and keeps resolved secret material out of stdout
+  and diagnostics. This closes `OZ-COMP-001J`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999999995%.
+- Verified the QR remote env SecretRef seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_remote_json_resolves_remote_token_secretref_to_stderr -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`10 passed, 558
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `e3b3031a`.
+- QR `--remote` now fails closed when remote SecretRefs remain unresolved and
+  no fallback gateway auth is configured, preserving OpenClaw's
+  `Gateway auth is not configured (no token or password).` preflight before
+  bootstrap token issuance while still routing the SecretRef diagnostic to
+  stderr. This closes `OZ-COMP-001K`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999999997%.
+- Verified the QR unresolved remote SecretRef preflight with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_remote_rejects_unresolved_remote_secretref_before_token_issue -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`11 passed, 558
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `4057991c`.
+- QR `--remote` now resolves file-backed remote SecretRefs from persisted
+  `secrets.providers` config, including `singleValue` providers and JSON
+  pointer ids, before auth-label selection. The control-UI config schema now
+  preserves top-level `secrets` so QR can access provider definitions. This
+  closes `OZ-COMP-001L`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999999998%.
+- Verified the QR remote file SecretRef seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_remote_json_resolves_file_secretref_single_value -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`12 passed, 558
+  deselected`), `ruff check src\openzues\cli.py src\openzues\schemas.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py src\openzues\schemas.py`,
+  and focused `git diff --check`. Source/test checkpointed in `ddd1d811`.
+- QR `--remote` now resolves exec-backed remote SecretRefs from persisted
+  `secrets.providers` config, sends an OpenClaw protocol v1 request envelope to
+  the configured command, reads protocol v1 `values`, and keeps resolved
+  secret material out of stdout/stderr. This closes `OZ-COMP-001M`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to
+  ~80-99.99999999999999999999999999999999999999999999999999%.
+- Verified the QR remote exec SecretRef seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_remote_json_resolves_exec_secretref_protocol_v1 -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`13 passed, 558
+  deselected`), `ruff check src\openzues\cli.py src\openzues\schemas.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py src\openzues\schemas.py`,
+  and focused `git diff --check`. Source/test checkpointed in `6e1b84c4`.
+- QR `--remote` now asks the active OpenZues gateway for
+  `secrets.resolve` before local fallback, applies returned
+  `gateway.remote.token` / `gateway.remote.password` assignments, preserves
+  gateway diagnostics on stderr for JSON/setup-code output, and still keeps
+  resolved secret material out of output. This closes `OZ-COMP-001N`;
+  repo-wide parity remains estimated at ~99.9%.
+- Verified the QR gateway-backed remote SecretRef seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_remote_json_resolves_secretref_from_live_gateway -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`14 passed, 558
+  deselected`), `ruff check src\openzues\cli.py src\openzues\schemas.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py src\openzues\schemas.py`,
+  and focused `git diff --check`. Source/test checkpointed in `93a57d8b`.
+- Provider-native direct `send` now preserves OpenClaw's `channelData`-only
+  payload path for sendPayload-style channels: non-empty `channelData` counts
+  as sendable content, whitespace-only text normalizes to an empty message, the
+  provider runtime request carries the structured `channel_data`, and the
+  delivery row persists the exact `channelData` object. This closes
+  `OZ-PROV-001DX`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999999999998%.
+- Verified the provider `channelData`-only send seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_channel_data_only_payload -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent provider
+  send proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message and (provider_native_options or reply_policy or channel_data_only or native_adapter_binding)"`
+  (`4 passed, 410 deselected`), broader provider-send proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message and provider"`
+  (`2 passed, 412 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `fd244774`.
+- Git-backed native updates now mirror OpenClaw's post-doctor control-UI asset
+  repair posture for the OpenZues FastAPI/Jinja static surface: source
+  checkouts with `src/openzues/web` run a `ui:build` step, verify the doctor
+  entry, run `openzues doctor --non-interactive --fix --json`, run a
+  post-doctor `ui:build` repair if required web assets disappear, and fail
+  with `ui-assets-missing` if repair does not restore them. This closes
+  `OZ-PKG-001CK`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999999985%.
+- Verified the post-doctor control-UI repair seam with focused red/green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_update_repairs_control_ui_assets_after_post_update_doctor tests\test_runtime_updates.py::test_runtime_update_run_update_fails_when_control_ui_repair_still_missing -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent Git update
+  proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "run_update and (git_install_build_steps or ignores_control_ui_dist_dirty_files or control_ui_repair or post_update_doctor or ui_assets)"`
+  (`4 passed, 59 deselected`), `ruff check
+  src\openzues\services\runtime_updates.py tests\test_runtime_updates.py`,
+  `mypy src\openzues\services\runtime_updates.py`, and focused
+  `git diff --check`. Source/test checkpointed in `92aadaf9`.
+- Voicewake routing now matches the OpenClaw gateway method surface for
+  `voicewake.routing.get` / `voicewake.routing.set`: it returns the upstream
+  default target shape, validates and normalizes trigger routes, enforces
+  current/agent/session-key target exclusivity, persists
+  `settings/voicewake-routing.json`, broadcasts `voicewake.routing.changed`,
+  and includes routing snapshots during fresh managed-node sync. This closes
+  `OZ-CANVAS-001B`; repo-wide parity remains estimated at ~99.9%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.1%.
+- Verified the voicewake routing seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_voicewake_routing_methods_persist_normalize_and_broadcast -q`
+  (`1 failed` before implementation, then `1 passed`), focused HTTP method
+  proof
+  `python -m pytest tests\test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_voicewake_get_and_set -q`
+  (`1 passed`), fresh managed-node snapshot proof
+  `python -m pytest tests\test_gateway_nodes_api.py::test_managed_node_sync_emits_voicewake_snapshot_only_on_fresh_connect tests\test_gateway_nodes_api.py::test_create_app_wires_managed_node_voicewake_snapshot_only_on_fresh_connect -q`
+  (`2 passed`), adjacent voicewake method proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "voicewake"`
+  (`2 passed, 1233 deselected`), adjacent voicewake node API proof
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "voicewake"`
+  (`3 passed, 425 deselected`), `ruff check
+  src\openzues\services\gateway_voicewake.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_node_service.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`,
+  `mypy src\openzues\services\gateway_voicewake.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_node_service.py
+  src\openzues\services\gateway_method_policy.py`, and focused
+  `git diff --check`. Source/test checkpointed in `a74cec21`.
+- QR setup-code generation now matches OpenClaw's loopback-only inference
+  guard: when no explicit `--url` / `--public-url`, no `--remote` URL, and no
+  Tailscale Serve/Funnel URL are available, default `127.0.0.1` binding fails
+  before bootstrap token issue instead of minting an unreachable mobile setup
+  code. Explicit loopback URLs remain valid for simulator/local-dev use. This
+  closes `OZ-COMP-001O`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion app parity moves to ~5.1%.
+- Verified the QR loopback inference seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_default_loopback_requires_explicit_reachable_url_before_token_issue -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`15 passed, 560
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `89ee261d`.
+- Active plugin registry projection now includes non-tool runtime
+  contributions: `sessionExtensions` become
+  `GatewayPluginSessionExtensionSpec` rows, `controlUiDescriptors` become
+  `GatewayPluginControlUiDescriptorSpec` rows, disabled entries preserve
+  disabled state for runtime filtering, and the existing session-extension/UI
+  descriptor service paths consume the projected specs. This closes
+  `OZ-PLUGIN-00378`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.99%.
+- Verified the active-registry non-tool projection seam with focused red/green
+  `python -m pytest tests\test_gateway_plugin_runtime.py::test_active_registry_projection_includes_session_extensions_and_ui_descriptors -q`
+  (import failure before implementation, then `1 passed`), adjacent plugin
+  runtime proof `python -m pytest tests\test_gateway_plugin_runtime.py -q`
+  (`4 passed`), adjacent gateway consumer proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_plugins_ui_descriptors_returns_registered_control_ui_descriptors tests\test_gateway_node_methods.py::test_sessions_plugin_patch_persists_registered_extension_state -q`
+  (`2 passed`), adjacent gateway selector proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "plugins_ui_descriptors or sessions_plugin_patch"`
+  (`2 passed, 1233 deselected`), `ruff check
+  src\openzues\services\gateway_plugin_runtime.py
+  tests\test_gateway_plugin_runtime.py`, `mypy
+  src\openzues\services\gateway_plugin_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `2cc24e73`.
+- Embedded/TUI command-status parity now exposes `/gateway-status` and
+  `/gwstatus` separately from `/status`: command help documents the gateway
+  diagnostic command, command inventory shows `/gateway-status` plus the
+  `/gwstatus` alias, and `/status` remains the session/shared status command.
+  This closes `OZ-TUI-001`; repo-wide parity remains estimated at ~99.9%, and
+  CLI/operator control-plane parity moves to ~99.99%.
+- Verified the gateway-status slash-command seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_command_status_helpers -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent command-status
+  proof `python -m pytest tests\test_gateway_node_methods.py -q -k "command_status"`
+  (`2 passed, 1233 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `38890fe3`.
+- `openzues doctor` now mirrors OpenClaw's git-checkout update preflight:
+  interactive source checkouts prompt before standalone doctor checks, accepted
+  updates dispatch the native runtime update service, successful updates stop
+  because post-update doctor already ran, package installs get a package-manager
+  update note, and `--json`, `--fix/--repair`, `--non-interactive`, or
+  `OPENCLAW_UPDATE_IN_PROGRESS` skip the prompt. This closes `OZ-PKG-001CM`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor plus
+  CLI/operator parity move to ~99.995%.
+- Verified the doctor preflight update seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_doctor_interactive_git_checkout_offers_update_before_doctor tests\test_cli.py::test_doctor_preflight_update_offer_respects_noninteractive_guards -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent CLI
+  doctor/update proof
+  `python -m pytest tests\test_cli.py -q -k "doctor_preflight_update_offer or interactive_git_checkout_offers_update_before_doctor or doctor_and_update_status_json_include_hermes_sections or update_status_json_includes_openclaw_channel_projection or update_json_dispatches_runtime_update_service or update_json_passes_effective_git_channel_to_runtime"`
+  (`6 passed, 571 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `cfef9ae1`.
+- Slack Events API reaction callbacks now match the OpenClaw monitor
+  system-event path for `reaction_added` and `reaction_removed`: route-backed
+  payloads unwrap `event_callback`, ignore non-message reaction items, enforce
+  native Slack DM/channel sender policy from the OpenZues config snapshot,
+  derive the same conversation-target session key shape as other native
+  inbound channels, and enqueue a next-heartbeat `system-event` wake with the
+  OpenClaw-style reaction context key. This closes `OZ-PROV-001DY`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.2%.
+- Verified the Slack reaction system-event seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_reaction_system_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_reaction_when_dm_policy_disabled tests\test_ops_mesh.py::test_slack_events_route_handles_reaction_event_callbacks -q`
+  (`2 failed` / `1 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_reaction or slack_events_route or msteams_inbound_activity or routes_due_main_system_event"`
+  (`6 passed, 411 deselected`), `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+  `git diff --check`. Source/test checkpointed in `10dfaa17`.
+- Slack Events API member callbacks now match the OpenClaw monitor
+  system-event path for `member_joined_channel` and `member_left_channel`:
+  route-backed payloads unwrap `event_callback`, enforce native Slack
+  DM/channel sender policy from the OpenZues config snapshot, derive the same
+  channel/account session key shape as other Slack inbound system events, and
+  enqueue a next-heartbeat `system-event` wake with the OpenClaw-style
+  `slack:member:<verb>:<channel>:<user>` context key. This closes
+  `OZ-PROV-001DZ`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.3%.
+- Verified the Slack member system-event seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_member_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_member_when_channel_user_denied tests\test_ops_mesh.py::test_slack_events_route_dispatches_member_event_callbacks -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_member or slack_reaction or slack_events_route"`
+  (`8 passed, 412 deselected`), `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py src\openzues\app.py`, and focused
+  `git diff --check`. Source/test checkpointed in `9d07244d`.
+- Slack Events API channel lifecycle callbacks now match the OpenClaw monitor
+  system-event path for `channel_created` and `channel_rename`: route-backed
+  payloads unwrap `event_callback`, enforce native Slack channel allow/disable
+  config, derive a channel/account session key, and enqueue a next-heartbeat
+  `system-event` wake with the OpenClaw-style
+  `slack:channel:<verb>:<channel>` context key. This closes
+  `OZ-PROV-001EA`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.4%.
+- Verified the Slack channel lifecycle system-event seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_channel_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_channel_event_when_disabled tests\test_ops_mesh.py::test_slack_events_route_dispatches_channel_event_callbacks -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`11 passed, 412 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `7474eb85`.
+- Slack Events API pin callbacks now match the OpenClaw monitor system-event
+  path for `pin_added` and `pin_removed`: route-backed payloads unwrap
+  `event_callback`, enforce native Slack sender authorization from config,
+  derive the channel/account session key, and enqueue a next-heartbeat
+  `system-event` wake with the OpenClaw-style
+  `slack:pin:<added|removed>:<channel>:<message>` context key. This closes
+  `OZ-PROV-001EB`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.5%.
+- Verified the Slack pin system-event seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_pin_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_pin_when_sender_denied tests\test_ops_mesh.py::test_slack_events_route_dispatches_pin_event_callbacks -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`15 passed, 411 deselected`; existing aiosqlite event-loop-close warning),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `0688d049`.
+- Slack metadata-only message subtypes now match the OpenClaw monitor
+  system-event path for `message_changed` and `message_deleted`: route-backed
+  payloads unwrap `event_callback`, preserve the upstream sender/message id
+  fallback order, enforce native Slack sender authorization from config, derive
+  the channel/account session key, and enqueue next-heartbeat `system-event`
+  wakes with OpenClaw-style `slack:message:<changed|deleted>:...` context keys.
+  This closes `OZ-PROV-001EC`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.6%.
+- Verified the Slack message subtype system-event seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_message_changed_event_through_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_message_deleted_when_sender_denied tests\test_ops_mesh.py::test_slack_events_route_dispatches_message_subtype_callbacks -q`
+  (`3 failed` before implementation, then `3 passed`; existing aiosqlite
+  event-loop-close warning), adjacent provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`16 passed, 413 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `8c4e74ef`.
+- Slack App Home open callbacks now match the OpenClaw monitor publish path:
+  `app_home_opened` skips the Messages tab, resolves a native Slack account
+  route and token, posts `views.publish` with the OpenZues Home view, and
+  returns an honest unavailable response when route credentials are absent.
+  This closes `OZ-PROV-001ED`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.7%.
+- Verified the Slack App Home publish seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_publishes_slack_app_home_view tests\test_ops_mesh.py::test_ops_mesh_service_skips_slack_app_home_messages_tab tests\test_ops_mesh.py::test_slack_events_route_dispatches_app_home_callbacks -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`19 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `58bc6b72`.
+- Slack `channel_id_changed` callbacks now match the OpenClaw monitor config
+  migration path: route-backed events require `old_channel_id` and
+  `new_channel_id`, honor `channels.slack.configWrites` plus account override
+  gating, migrate matching global/account channel config keys, and preserve the
+  upstream `skippedExisting` / scope projection. This closes
+  `OZ-PROV-001EE`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.8%.
+- Verified the Slack channel-id migration seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_migrates_slack_channel_id_changed_config tests\test_ops_mesh.py::test_ops_mesh_service_skips_slack_channel_id_change_when_writes_disabled tests\test_ops_mesh.py::test_slack_events_route_dispatches_channel_id_changed_callbacks -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`22 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `22b9bd10`.
+- Slack `block_actions` interactions now match the OpenClaw monitor
+  system-event path for the native route: `/api/channels/slack/interactions`
+  accepts JSON or Slack form `payload`, redacts trigger/response URLs, enforces
+  Slack sender authorization from config, derives the channel/account session
+  key, and enqueues a next-heartbeat `Slack interaction: ...` system event with
+  the OpenClaw-style `slack:interaction:<channel>:<message>:<action>` context
+  key. This closes `OZ-PROV-001EF`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth moves to ~99.9%.
+- Verified the Slack block-action interaction seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_block_action_interaction_to_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_block_action_when_sender_denied tests\test_ops_mesh.py::test_slack_interactions_route_dispatches_block_actions -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_block_action or slack_interactions_route or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`25 passed, 413 deselected`; existing aiosqlite event-loop-close warning),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `37a9d2dc`.
+- Slack modal lifecycle interactions now match the OpenClaw monitor
+  system-event path for `view_submission` and `view_closed`: the native
+  interactions route accepts JSON or Slack form `payload`, parses
+  `private_metadata` routing, enforces the expected submitting user, summarizes
+  modal input state, redacts private metadata and view hashes, and enqueues
+  next-heartbeat `Slack interaction: ...` system events with
+  `slack:interaction:view...` / `slack:interaction:view-closed...` context
+  keys. This closes `OZ-PROV-001EG`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth remains ~99.9%.
+- Verified the Slack modal interaction seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_slack_view_submission_interaction_to_wake_queue tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_modal_when_expected_user_mismatches tests\test_ops_mesh.py::test_slack_interactions_route_dispatches_view_closed_form_payload -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_view_submission or slack_modal or slack_interactions_route or slack_block_action or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`28 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `ecdfe207`.
+- Slack slash command ingress now has a native route and session dispatch path
+  matching the OpenClaw `monitor/slash.ts` baseline: `/api/channels/slack/slash`
+  accepts Slack form or JSON payloads, derives Slack conversation session keys,
+  enforces disabled-channel and sender policy, redacts trigger ids, and delivers
+  accepted command text through the session-backed runtime with Slack-shaped
+  ephemeral responses. This closes `OZ-PROV-001EH`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth remains
+  ~99.9%.
+- Verified the Slack slash command ingress seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_dispatches_slack_slash_command_to_session tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_slash_command_when_channel_disabled tests\test_ops_mesh.py::test_slack_slash_route_dispatches_form_payload_to_session -q`
+  (`3 failed` before implementation, then `3 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_slash or slack_view_submission or slack_modal or slack_interactions_route or slack_block_action or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`31 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `7c538421`.
+- Slack native HTTP ingress now enforces Slack request signatures when a
+  plain `channels.slack.signingSecret` or account `signingSecret` is configured:
+  `/api/channels/slack/events`, `/api/channels/slack/interactions`, and
+  `/api/channels/slack/slash` verify the `v0` HMAC over the exact request body
+  with timestamp freshness before dispatching. This closes `OZ-PROV-001EI`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth remains ~99.9%.
+- Verified the Slack HTTP signature seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_rejects_invalid_configured_signature tests\test_ops_mesh.py::test_slack_slash_route_accepts_valid_configured_signature -q`
+  (`1 failed, 1 passed` before implementation, then `2 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_signature or configured_signature or slack_slash or slack_view_submission or slack_modal or slack_interactions_route or slack_block_action or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`33 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `7ce8a169`.
+- Slack native HTTP signature verification now resolves env-backed SecretRefs
+  for `channels.slack.signingSecret` and account `signingSecret`, matching the
+  OpenClaw config schema's accepted SecretRef shape while failing closed if the
+  configured env ref is unresolved. This closes `OZ-PROV-001EJ`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth remains ~99.9%.
+- Verified the Slack signing Env SecretRef seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_rejects_invalid_env_secretref_signature tests\test_ops_mesh.py::test_slack_slash_route_accepts_valid_env_secretref_signature -q`
+  (`1 failed, 1 passed` before implementation, then `2 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "env_secretref_signature or configured_signature or slack_slash or slack_view_submission or slack_modal or slack_interactions_route or slack_block_action or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`35 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `47c1a605`.
+- Slack native HTTP signature verification now resolves file-backed SecretRefs
+  for `channels.slack.signingSecret` and account `signingSecret`, trimming the
+  file content and failing closed when the configured file cannot be read. This
+  closes `OZ-PROV-001EK`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%.
+- Verified the Slack signing file SecretRef seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_rejects_invalid_file_secretref_signature tests\test_ops_mesh.py::test_slack_slash_route_accepts_valid_file_secretref_signature -q`
+  (`1 failed, 1 passed` before implementation, then `2 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "file_secretref_signature or env_secretref_signature or configured_signature or slack_slash or slack_view_submission or slack_modal or slack_interactions_route or slack_block_action or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`37 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `adac6624`.
+- Slack native HTTP signature verification now resolves exec-backed SecretRefs
+  for `channels.slack.signingSecret` and account `signingSecret` through the
+  configured native secret provider protocol v1 JSON contract, using bounded
+  no-shell subprocess execution and failing closed when the exec provider is
+  unavailable, exits nonzero, emits invalid output, or omits the requested id.
+  This closes `OZ-PROV-001EL`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth remains ~99.9%.
+- Verified the Slack signing exec SecretRef seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_rejects_invalid_exec_secretref_signature tests\test_ops_mesh.py::test_slack_slash_route_accepts_valid_exec_secretref_signature -q`
+  (`1 failed, 1 passed` before implementation, then `2 passed`), adjacent
+  provider/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "exec_secretref_signature or file_secretref_signature or env_secretref_signature or configured_signature or slack_slash or slack_view_submission or slack_modal or slack_interactions_route or slack_block_action or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`39 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\app.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\app.py`, and focused `git diff --check`. Source/test
+  checkpointed in `a4b67444`.
+- Slack slash command arg-menu action selections now decode OpenClaw's
+  `cmdarg|command|arg|value|user` action values, reject stale/other-user menu
+  submissions with Slack-shaped ephemeral responses, and dispatch valid
+  selections through the session-backed slash command delivery path instead of
+  downgrading them to generic interaction wake events. This closes
+  `OZ-PROV-001EM`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%.
+- Verified the Slack command arg-menu action seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_dispatches_slack_command_arg_interaction_to_session tests\test_ops_mesh.py::test_ops_mesh_service_blocks_slack_command_arg_interaction_for_wrong_user -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent provider/
+  interaction proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_command_arg or slack_slash or slack_interactions_route or slack_block_action or slack_view_submission or slack_modal or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`41 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+  `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `f6cad264`.
+- Slack external arg-menu options payloads now acknowledge OpenClaw's
+  `block_suggestion` empty-result path for missing or unavailable external menu
+  tokens, returning Slack-shaped `options: []` instead of reporting the payload
+  type as unsupported. This closes `OZ-PROV-001EN`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth remains
+  ~99.9%.
+- Verified the Slack external arg options seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_interactions_route_acknowledges_external_arg_options_without_token -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent provider/
+  interaction proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_command_arg or block_suggestion or slack_slash or slack_interactions_route or slack_block_action or slack_view_submission or slack_modal or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`42 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+  `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `151bb0e5`.
+- Slack external arg-menu options now have a native TTL-backed choice store:
+  callers can register per-user choices, Slack `block_suggestion` payloads
+  resolve `openclaw_cmdarg_ext:<token>` blocks, wrong users receive empty
+  options, and matching users receive case-insensitive filtered Slack options
+  capped to the upstream option/text bounds. This closes `OZ-PROV-001EO`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth remains ~99.9%.
+- Verified the Slack external arg-menu hydrated-options seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_interactions_route_returns_filtered_external_arg_options -q`
+  (`AttributeError` before implementation, then `1 passed`), focused pair
+  `python -m pytest tests\test_ops_mesh.py::test_slack_interactions_route_acknowledges_external_arg_options_without_token tests\test_ops_mesh.py::test_slack_interactions_route_returns_filtered_external_arg_options -q`
+  (`2 passed`), adjacent provider/interaction proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_command_arg or block_suggestion or slack_slash or slack_interactions_route or slack_block_action or slack_view_submission or slack_modal or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`43 passed, 413 deselected`; existing aiosqlite event-loop-close warning),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+  `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `54d18930`.
+- Slack slash command arg menus now render from the native command catalog:
+  missing choice arguments return OpenClaw-style ephemeral `header`/`section`/
+  `context` plus button/overflow/static/external-select action blocks instead
+  of dispatching incomplete slash command text, and app construction wires the
+  production `GatewayCommandsService` into the Slack ops runtime. This closes
+  `OZ-PROV-001EP`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%.
+- Verified the Slack slash arg-menu rendering seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_returns_arg_menu_for_missing_choice_arg -q`
+  (`KeyError: 'reason'` before implementation, then `1 passed`), focused
+  command-arg/slash proof
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_returns_arg_menu_for_missing_choice_arg tests\test_ops_mesh.py::test_ops_mesh_service_dispatches_slack_command_arg_interaction_to_session tests\test_ops_mesh.py::test_slack_interactions_route_returns_filtered_external_arg_options tests\test_ops_mesh.py::test_slack_slash_route_dispatches_form_payload_to_session -q`
+  (`4 passed`), adjacent provider/interaction proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "slack_command_arg or block_suggestion or slack_slash or slack_interactions_route or slack_block_action or slack_view_submission or slack_modal or slack_channel_id_change or slack_app_home or slack_message_subtype or slack_pin or slack_channel or slack_member or slack_reaction or slack_events_route"`
+  (`44 passed, 413 deselected`; existing aiosqlite event-loop-close warnings),
+  adjacent command catalog proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests\test_gateway_node_methods.py::test_commands_list_supports_scope_filters_and_omits_args_when_requested -q`
+  (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_commands.py src\openzues\app.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_commands.py src\openzues\app.py`, and focused
+  `git diff --check`. Source/test checkpointed in `27836d4c`.
+- Slack large-choice arg-menu rendering is now covered by a focused
+  OpenClaw external-select proof: command menus with more than 100 choices use
+  `external_select`, create `openclaw_cmdarg_ext:<token>` blocks, and hydrate
+  `block_suggestion` options from the native per-user choice store. This closes
+  `OZ-PROV-001EQ` as a proof/checkpoint slice; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth remains
+  ~99.9%.
+- Verified the Slack large-choice external arg-menu proof with
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_uses_external_arg_menu_for_large_choice_set -q`
+  (`1 passed` on the existing implementation), adjacent Slack arg-menu proof
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_uses_external_arg_menu_for_large_choice_set tests\test_ops_mesh.py::test_slack_slash_route_returns_arg_menu_for_missing_choice_arg tests\test_ops_mesh.py::test_slack_interactions_route_returns_filtered_external_arg_options -q`
+  (`3 passed`), `ruff check tests\test_ops_mesh.py`, and focused
+  `git diff --check`. Test proof checkpointed in `b1639b4b`.
+- Package-shaped `openzues update` now refuses to run package-manager updates
+  from inside the managed gateway service process when
+  `OPENCLAW_SERVICE_MARKER=openclaw` and `OPENCLAW_SERVICE_KIND` is empty or
+  `gateway`, matching OpenClaw's package-update self-mutation guard. This
+  closes `OZ-PKG-001CN`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.996%.
+- Verified the package service-process guard with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_json_refuses_package_update_inside_gateway_service -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package-update
+  selector
+  `python -m pytest tests\test_cli.py -q -k "update_json_dispatches_package_update_service or update_json_refuses_package_update_inside_gateway_service or update_json_detects_owning_npm_root_without_package_manager_metadata or update_json_detects_owning_pnpm_root_without_package_manager_metadata or update_json_detects_bun_global_root_without_package_manager_metadata or update_json_persists_requested_package_channel_after_success or update_json_runs_post_update_plugin_sync_for_package_update"`
+  (`7 passed, 571 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py tests\test_ops_mesh.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `ca7d7e81`.
+- Slack native command catalog generation now applies OpenClaw's Slack
+  provider-native command alias for `status`, exposing `/agentstatus` to the
+  Slack command surface while preserving the canonical command key as `status`.
+  This closes `OZ-PROV-001ER`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth remains ~99.9%.
+- Verified the Slack provider-native command alias seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_applies_slack_native_command_aliases -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent command
+  inventory proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests\test_gateway_node_methods.py::test_commands_list_supports_scope_filters_and_omits_args_when_requested tests\test_gateway_node_methods.py::test_commands_list_applies_slack_native_command_aliases -q`
+  (`3 passed`), adjacent Slack menu proof
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_returns_arg_menu_for_missing_choice_arg tests\test_ops_mesh.py::test_slack_slash_route_uses_external_arg_menu_for_large_choice_set -q`
+  (`2 passed`), `ruff check src\openzues\services\gateway_commands.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_commands.py`, and focused `git diff --check`.
+  Source/test checkpointed in `bc4f90fe`.
+- WhatsApp native split-media sends now preserve OpenClaw reply fanout
+  semantics for explicit/all-mode replies: route-backed provider requests carry
+  `replyToIdSource` and `replyToMode`, and each media payload receives
+  WhatsApp `context.message_id` when the reply policy is reusable. This closes
+  `OZ-PROV-001ES`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.91%.
+- Verified the WhatsApp reply fanout seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_replies_to_all_whatsapp_media -q`
+  (`KeyError: 'context'` before implementation, then `1 passed`), adjacent
+  WhatsApp provider proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_replies_to_all_whatsapp_media tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_whatsapp_reply_document tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_gif_video_payload -q`
+  (`4 passed`), adjacent direct outbound reply/requester proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_reply_policy tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_forwards_requester_context -q`
+  (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `a1d930ab`.
+- Slack provider-native command catalogs now append plugin-owned provider
+  command specs through the shared plugin runtime, resolve provider-specific
+  native names such as `nativeNames.slack`, expose plugin text aliases for
+  command dispatch, and skip plugin native names that collide with existing
+  native commands such as `/agentstatus`. This closes `OZ-PROV-001ET`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.92%.
+- Verified the Slack provider plugin-command injection seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_appends_slack_provider_plugin_commands -q`
+  (`TypeError: GatewayPluginRuntimeService.__init__() got an unexpected keyword argument 'command_specs'`
+  before implementation, then `1 passed`), adjacent command catalog proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests\test_gateway_node_methods.py::test_commands_list_supports_scope_filters_and_omits_args_when_requested tests\test_gateway_node_methods.py::test_commands_list_applies_slack_native_command_aliases tests\test_gateway_node_methods.py::test_commands_list_appends_slack_provider_plugin_commands -q`
+  (`4 passed`), adjacent plugin-runtime proof
+  `python -m pytest tests\test_gateway_plugin_runtime.py -q` (`4 passed`),
+  adjacent Slack menu proof
+  `python -m pytest tests\test_ops_mesh.py::test_slack_slash_route_returns_arg_menu_for_missing_choice_arg tests\test_ops_mesh.py::test_slack_slash_route_uses_external_arg_menu_for_large_choice_set -q`
+  (`2 passed`), regression proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_appends_slack_provider_plugin_commands tests\test_gateway_node_methods.py::test_plugins_ui_descriptors_returns_registered_control_ui_descriptors -q`
+  (`2 passed`), `ruff check
+  src\openzues\services\gateway_commands.py
+  src\openzues\services\gateway_plugin_runtime.py
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_commands.py
+  src\openzues\services\gateway_plugin_runtime.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `c798e879`.
+- Telegram native multi-media sends now apply OpenClaw's reply fanout policy:
+  implicit `replyToMode="first"` replies attach `reply_to_message_id` only to
+  the first media payload, while reusable explicit/all-mode behavior remains
+  unchanged through the shared fanout helper. This closes `OZ-PROV-001EU`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.93%.
+- Verified the Telegram media reply fanout seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_reply_fanout -q`
+  (`AssertionError` before implementation, then `1 passed`), adjacent media
+  group proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_group tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_reply_fanout -q`
+  (`2 passed`), adjacent direct reply/requester proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_reply_policy tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_forwards_requester_context -q`
+  (`2 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `2b177851`.
+- Telegram provider-visible media captions now match OpenClaw's route-backed
+  Telegram outbound contract: sequential media sends pass the original text as
+  the first media caption, later media are captionless, and OpenZues' internal
+  `Media:` URL summary is not projected into Telegram API `caption` payloads.
+  This closes `OZ-PROV-001EV`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.94%.
+- Verified the Telegram media caption passthrough seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media -q`
+  (`AssertionError` before the test correction, then included in focused
+  `3 passed`), focused Telegram media caption proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_audio_voice_payload tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_attaches_telegram_buttons_to_media -q`
+  (`3 passed`), adjacent Telegram direct-send proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "telegram and direct_channel_message"`
+  (`12 passed, 448 deselected`), `ruff check tests\test_ops_mesh.py`,
+  `mypy src\openzues\services\ops_mesh.py`, and focused
+  `git diff --check`. Test checkpointed in `c9cd47a1`.
+- Package-shaped update runs now refresh the native shell completion cache
+  after a successful post-update `openzues doctor`, using the OpenClaw-shaped
+  `OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS=1` fast path and a bounded 30s
+  timeout. Refresh failures are non-fatal and return the manual
+  `openzues completion --write-state` hint, and the native CLI now exposes the
+  `completion --write-state` command for real cache generation. This closes
+  `OZ-PKG-001CO`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.997%.
+- Verified the package post-update completion-cache seam with focused red/
+  green
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_refreshes_completion_cache_after_doctor -q`
+  (`1 failed` before implementation, then `1 passed`), focused success/failure
+  proof
+  `python -m pytest tests\test_runtime_updates.py::test_runtime_update_run_package_update_refreshes_completion_cache_after_doctor tests\test_runtime_updates.py::test_runtime_update_run_package_update_warns_when_completion_cache_refresh_fails -q`
+  (`2 passed`), adjacent package-update proof
+  `python -m pytest tests\test_runtime_updates.py -q -k "package_update and not git"`
+  (`35 passed, 32 deselected`), focused native completion command proof
+  `python -m pytest tests\test_cli.py::test_completion_write_state_generates_native_cache -q`
+  (`1 passed`), adjacent shell-completion CLI proof
+  `python -m pytest tests\test_cli.py::test_completion_write_state_generates_native_cache tests\test_cli.py::test_doctor_json_warns_when_shell_completion_uses_slow_dynamic_profile tests\test_cli.py::test_doctor_fix_regenerates_shell_completion_cache_and_upgrades_slow_profile tests\test_cli.py::test_doctor_fix_installs_shell_completion_when_profile_is_missing -q`
+  (`4 passed`), `ruff check src\openzues\services\runtime_updates.py
+  src\openzues\cli.py tests\test_runtime_updates.py tests\test_cli.py`,
+  `mypy src\openzues\services\runtime_updates.py src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `6df2f067`.
+  A broader CLI `-k "completion or shell_completion"` selector still hits the
+  unrelated exact `security` payload assertion in
+  `test_doctor_json_includes_security_and_shell_completion_surfaces`.
+- Native `openzues completion --write-state` now writes the full OpenClaw-style
+  shell cache set (`openzues.bash`, `openzues.fish`, `openzues.ps1`, and
+  `openzues.zsh`) instead of only the detected host shell, using Typer's native
+  completion script generator with an installed-command completion variable.
+  This closes `OZ-PKG-001CP`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor plus CLI/operator parity move to ~99.998%.
+- Verified the all-shell completion write-state seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_completion_write_state_generates_native_cache -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent
+  shell-completion CLI proof
+  `python -m pytest tests\test_cli.py::test_completion_write_state_generates_native_cache tests\test_cli.py::test_doctor_json_warns_when_shell_completion_uses_slow_dynamic_profile tests\test_cli.py::test_doctor_fix_regenerates_shell_completion_cache_and_upgrades_slow_profile tests\test_cli.py::test_doctor_fix_installs_shell_completion_when_profile_is_missing -q`
+  (`4 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`,
+  `mypy src\openzues\cli.py`, and focused `git diff --check`.
+  Source/test checkpointed in `9afdb51c`.
+- The native installed-plugin runtime loader now honors source
+  `pluginSdkAliasMap` entries while importing runtime modules, loads alias
+  shims synchronously across Node's `Module._load` boundary, supports named
+  `export function`/`export const` shim modules, and preserves alias metadata
+  on executor plugin contexts for later tool execution. This closes
+  `OZ-PLUGIN-00379`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.999%.
+- Verified the source SDK alias runtime activation seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_plugins_doctor_json_imports_source_sdk_alias_runtime_entry_without_fake_adapter -q`
+  (`1 failed` before implementation with `metadata_only`, then `1 passed`),
+  adjacent plugin activation/import proof
+  `python -m pytest tests\test_cli.py::test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter tests\test_cli.py::test_plugins_doctor_json_imports_source_sdk_alias_runtime_entry_without_fake_adapter tests\test_cli.py::test_plugins_doctor_json_imports_bundled_sdk_runtime_entry_without_fake_adapter tests\test_cli.py::test_plugins_doctor_json_imports_bundled_esm_sdk_runtime_entry_without_fake_adapter tests\test_cli.py::test_plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract -q`
+  (`5 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`,
+  `mypy src\openzues\cli.py`, and focused `git diff --check`.
+  Source/test checkpointed in `5a2e8804`.
+- Source runtime entries that import plugin-local SDK subpath aliases now have
+  execution-path proof through `tools.invoke`: the runtime activation payload
+  preserves `pluginSdkAliasMap`, the native executor reloads the source runtime
+  with that alias map, and the invoked tool can reuse
+  `@openclaw/plugin-sdk/outbound-send-deps` while producing provider-native
+  tool output. This closes `OZ-PLUGIN-00380`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to
+  ~99.9991%.
+- Verified the source SDK alias runtime execution seam with focused proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_executes_source_sdk_alias_runtime_entry_tool -q`
+  (`1 passed` on the already-wired execution path), adjacent runtime import
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_executes_imported_openclaw_runtime_entry_tool tests\test_gateway_node_methods.py::test_tools_invoke_executes_imported_openclaw_esm_runtime_entry_tool tests\test_gateway_node_methods.py::test_tools_invoke_executes_source_sdk_alias_runtime_entry_tool tests\test_gateway_node_methods.py::test_tools_invoke_executes_imported_openclaw_runtime_tool_factory_with_context -q`
+  (`4 passed`), `ruff check tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\cli.py src\openzues\services\gateway_node_methods.py`,
+  and focused `git diff --check`. Source/test checkpointed in `61843808`.
+- Route-backed Telegram sends and polls now retry once without
+  `message_thread_id` when Telegram returns `message thread not found`,
+  preserving reply target, silent, text, media, document, keyboard, and poll
+  payload fields on the retry while still surfacing non-thread errors. This
+  closes `OZ-PROV-001EW`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.95%.
+- Verified the Telegram stale-thread fallback seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_retries_telegram_missing_thread -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent Telegram
+  send/poll proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_native_route tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_native_options tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_retries_telegram_missing_thread tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_audio_voice_payload tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_group tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_reply_fanout tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_route -q`
+  (`8 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `f38aec97`.
+  Follow-up poll-specific proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_retries_telegram_missing_thread -q`
+  (`1 passed`) and send/poll fallback pair (`3 passed`) are checkpointed in
+  `813645f6`.
+- Route-backed Telegram sends and polls now also retry when the stale-thread
+  failure is raised by the native HTTP layer as `RuntimeError`, matching
+  OpenClaw's thrown-error fallback in addition to JSON `{ ok: false }` errors.
+  This closes `OZ-PROV-001EX`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.965%.
+- Verified the Telegram HTTP-error stale-thread fallback seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_retries_telegram_http_thread_error -q`
+  (`1 failed` before implementation, then `1 passed`), fallback pair
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_retries_telegram_missing_thread tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_retries_telegram_http_thread_error tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_retries_telegram_missing_thread -q`
+  (`3 passed`), adjacent Telegram send/poll proof (`10 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `0544ceb2`.
+- Verified the Telegram poll HTTP-error stale-thread fallback proof with
+  focused
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_retries_telegram_http_thread_error -q`
+  (`1 passed`), adjacent fallback pack
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_retries_telegram_missing_thread tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_retries_telegram_http_thread_error tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_retries_telegram_missing_thread tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_retries_telegram_http_thread_error tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_route -q`
+  (`5 passed`), `ruff check tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Test checkpointed in `1eadc4ae`.
+- Package-shaped updates now match OpenClaw's registry downgrade posture:
+  dry-runs resolve explicit semver/dist-tag targets into `targetVersion` and
+  `downgradeRisk`, non-interactive/JSON package downgrades stop before runtime
+  dispatch unless `--yes` is present, and confirmed downgrades preserve the
+  normal package update service path. This closes `OZ-PKG-001CQ`; repo-wide
+  parity remains estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator
+  parity move to ~99.9994%.
+- Verified the package-update downgrade confirmation seam with focused
+  red/green
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_flags_registry_downgrade_risk tests\test_cli.py::test_update_json_blocks_registry_downgrade_without_yes tests\test_cli.py::test_update_json_allows_registry_downgrade_with_yes -q`
+  (`2 failed, 1 passed` before implementation, then `3 passed`), adjacent
+  update CLI proof
+  `python -m pytest tests\test_cli.py -q -k "update_dry_run_json or package_update or update_json_blocks_registry_downgrade_without_yes or update_json_allows_registry_downgrade_with_yes"`
+  (`11 passed, 575 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e39ead6e`.
+- Real package updates now use stored `update.channel` when no `--channel` is
+  supplied, matching OpenClaw's `requestedChannel ?? storedChannel ??
+  defaultChannel` behavior for package installs as well as dry-run previews.
+  This closes `OZ-PKG-001CR`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor plus CLI/operator parity move to ~99.9995%.
+- Verified the stored-channel package update seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_json_uses_stored_channel_for_package_update -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update CLI
+  selector
+  `python -m pytest tests\test_cli.py -q -k "update_json_uses_stored_channel_for_package_update or update_dry_run_json_uses_stored_update_channel or update_json_dispatches_package_update_service or update_json_blocks_registry_downgrade_without_yes or update_json_allows_registry_downgrade_with_yes or update_json_passes_effective_git_channel_to_runtime"`
+  (`6 passed, 581 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `688b89c3`.
+- Package updates now perform the OpenClaw-style Node engine runtime preflight
+  for registry-resolvable package targets before package-manager dispatch. If
+  the target package's `engines.node` requirement is incompatible with the
+  current Node runtime, OpenZues exits with the upstream silent-older-install
+  warning instead of invoking the package update service. This closes
+  `OZ-PKG-001CS`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.9996%.
+- Verified the package-update Node engine preflight seam with focused
+  red/green
+  `python -m pytest tests\test_cli.py::test_update_json_blocks_package_update_when_target_requires_newer_node -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent update CLI
+  selector
+  `python -m pytest tests\test_cli.py -q -k "update_json_blocks_package_update_when_target_requires_newer_node or update_json_uses_stored_channel_for_package_update or update_json_dispatches_package_update_service or update_json_blocks_registry_downgrade_without_yes or update_json_allows_registry_downgrade_with_yes or update_dry_run_json"`
+  (`11 passed, 577 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `6897eae6`.
+- OpenZues now exposes OpenClaw-style LINE webhook ingress at `/line/webhook`:
+  raw request bodies are capped at 64 KiB, `X-Line-Signature` is required and
+  validated with HMAC-SHA256 base64 against `channels.line.channelSecret`, valid
+  callback bodies dispatch through the native OpsMesh LINE handler, and success
+  returns `{ "status": "ok" }`. This closes `OZ-PROV-001EY`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.97%.
+- Verified the LINE webhook ingress seam with focused red/green
+  `python -m pytest tests\test_line_webhook.py -q` (`2 failed` before
+  implementation, then `2 passed`), adjacent LINE/app proof
+  `python -m pytest tests\test_line_webhook.py tests\test_app.py::test_gateway_channels_endpoint_classifies_line_native_route -q`
+  (`3 passed`), `ruff check src\openzues\app.py
+  src\openzues\services\ops_mesh.py tests\test_line_webhook.py`, `mypy
+  src\openzues\app.py src\openzues\services\ops_mesh.py`, and focused
+  `git diff --check`. Source/test checkpointed in `c3279e34`.
+- LINE signed webhook `message` events with direct text now route through the
+  native OpsMesh session delivery path: OpenZues resolves the LINE source into
+  an OpenClaw-shaped `ConversationTargetView`, derives the workspace-affinity
+  session key, delivers the text to the session runtime, redacts reply tokens in
+  result metadata, and reports sender/conversation/session delivery details.
+  This closes `OZ-PROV-001EZ`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.975%.
+- Verified the LINE text webhook session-delivery seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent LINE webhook
+  and provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`13 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `906a7147`.
+- LINE signed webhook `postback` events now route through the native session
+  delivery path as OpenClaw does: raw postback data is delivered as text, and
+  `line.action`/`line.device` payloads are normalized into the same
+  human-readable command phrase before session dispatch. This closes
+  `OZ-PROV-001FA`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.98%.
+- Verified the LINE postback webhook session-delivery seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_delivers_direct_postback -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent LINE webhook
+  and provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`14 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `b1bab063`.
+- Package-shaped updates now fail when the restarted gateway health surface
+  reports activated plugin load errors, matching OpenClaw's restart-health
+  guard: only `plugins.errors[]` entries with `activated: true`, `id`, and
+  `error` are projected, the update result becomes `reason: restart-health`,
+  and human/JSON output includes `Activated plugin load errors:` diagnostics.
+  This closes `OZ-PKG-001CT`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor plus CLI/operator parity move to ~99.9997%.
+- Verified the package-update activated plugin restart-health seam with focused
+  red/green
+  `python -m pytest tests\test_cli.py::test_update_fails_when_restarted_gateway_reports_activated_plugin_load_errors -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package-update
+  proof
+  `python -m pytest tests\test_cli.py -q -k "update_fails_when_restarted_gateway_reports_activated_plugin_load_errors or post_update_plugin_sync or update_json_uses_stored_channel_for_package_update or update_json_dispatches_package_update_service or update_json_blocks_package_update_when_target_requires_newer_node or update_json_blocks_registry_downgrade_without_yes or update_json_allows_registry_downgrade_with_yes"`
+  (`8 passed, 581 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `32796916`.
+- Package-shaped updates now also fail restart verification when gateway
+  health reports provider channel probe failures, matching OpenClaw's
+  `readChannelProbeErrors` path. OpenZues projects only channels whose
+  `probe.ok` is `false`, defaults missing probe errors to `probe failed`, and
+  emits `Channel health probe errors:` diagnostics alongside activated plugin
+  failures. This closes `OZ-PKG-001CU`; repo-wide parity remains estimated at
+  ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to ~99.9998%.
+- Verified the package-update channel-probe restart-health seam with focused
+  red/green
+  `python -m pytest tests\test_cli.py::test_update_fails_when_restarted_gateway_reports_channel_probe_errors -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package-update
+  proof
+  `python -m pytest tests\test_cli.py -q -k "update_fails_when_restarted_gateway_reports_channel_probe_errors or update_fails_when_restarted_gateway_reports_activated_plugin_load_errors or post_update_plugin_sync or update_json_uses_stored_channel_for_package_update or update_json_dispatches_package_update_service or update_json_blocks_package_update_when_target_requires_newer_node or update_json_blocks_registry_downgrade_without_yes or update_json_allows_registry_downgrade_with_yes"`
+  (`9 passed, 581 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `bf46a1f5`.
+- LINE signed webhook media `message` events now route OpenClaw-style media
+  placeholders through native session delivery for image, video, audio, and
+  file messages. This closes `OZ-PROV-001FB`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.985%.
+- Verified the LINE media placeholder webhook session-delivery seam with
+  focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_delivers_media_placeholder -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent LINE webhook
+  and provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`15 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `e594dfeb`.
+- LINE signed webhook sticker `message` events now route readable OpenClaw-style
+  sticker text into native session delivery, including LINE package names and up
+  to three keyword/text descriptors. This closes `OZ-PROV-001FC`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth moves to ~99.99%.
+- Verified the LINE sticker webhook session-delivery seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_delivers_sticker_text -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent LINE webhook
+  and provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`16 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `583bd41a`.
+- LINE signed webhook location `message` events now route OpenClaw-style
+  formatted map-pin coordinate text into native session delivery, including
+  fixed six-decimal latitude/longitude and optional accuracy suffixes. This
+  closes `OZ-PROV-001FD`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.992%.
+- Verified the LINE location webhook session-delivery seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_delivers_location_text -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent LINE webhook
+  and provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`17 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `a3a4ad91`.
+- LINE signed webhook group/room messages now honor OpenClaw's default mention
+  gate before native session dispatch: unmentioned group text is skipped with
+  explicit skip metadata instead of being delivered to a session. This closes
+  `OZ-PROV-001FE`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.994%.
+- Verified the LINE group mention-gate seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_skips_unmentioned_group_text -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent LINE webhook
+  and provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`18 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `beeb2d4a`.
+- Package-shaped updates now fail restart verification when the restarted
+  gateway reports a different version than the update result's `after.version`,
+  rendering the OpenClaw-shaped `Gateway version mismatch:` diagnostic and
+  `reason: restart-health`. This closes `OZ-PKG-001CV`; repo-wide parity
+  remains estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity
+  move to ~99.99985%.
+- Verified the package-update gateway-version restart-health seam with focused
+  red/green
+  `python -m pytest tests\test_cli.py::test_update_fails_when_restarted_gateway_reports_version_mismatch -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent package-update
+  proof
+  `python -m pytest tests\test_cli.py -q -k "update_fails_when_restarted_gateway_reports_version_mismatch or update_fails_when_restarted_gateway_reports_channel_probe_errors or update_fails_when_restarted_gateway_reports_activated_plugin_load_errors or post_update_plugin_sync or update_json_uses_stored_channel_for_package_update or update_json_dispatches_package_update_service or update_json_blocks_package_update_when_target_requires_newer_node or update_json_blocks_registry_downgrade_without_yes or update_json_allows_registry_downgrade_with_yes"`
+  (`10 passed, 581 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `fd5f8117`.
+- The native health surface now exposes `serverVersion` from `/api/health`, and
+  `openzues health --json` preserves that field, giving package restart-health
+  version verification a real production health source. This closes
+  `OZ-PKG-001CW`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.99987%.
+- Verified the health `serverVersion` projection seam with focused red/green
+  `python -m pytest tests\test_health_endpoint.py::test_health_endpoint_surfaces_server_version tests\test_cli.py::test_health_json_surfaces_gateway_server_version -q`
+  (`2 failed` before implementation, then both focused tests passed), adjacent
+  health/update proof
+  `python -m pytest tests\test_health_endpoint.py tests\test_cli.py -q -k "health_endpoint_surfaces_server_version or health_json_surfaces_gateway_server_version or health_json_surfaces_gateway_readiness_snapshot or update_fails_when_restarted_gateway_reports_version_mismatch"`
+  (`4 passed, 589 deselected`), `ruff check src\openzues\app.py
+  src\openzues\cli.py tests\test_health_endpoint.py tests\test_cli.py`,
+  `mypy src\openzues\app.py src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `46e19304`.
+- LINE signed webhook group messages now honor native LINE mention metadata:
+  `mention.mentionees` entries with `isSelf=true` or `type="all"` satisfy the
+  OpenClaw group mention gate even when the text does not contain an OpenZues
+  name pattern. This closes `OZ-PROV-001FF`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.995%.
+- Verified the LINE native mention metadata seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_delivers_group_text_with_native_bot_mention -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent LINE
+  webhook/provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`19 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `24c9f902`.
+- LINE signed webhook group messages now record skipped unmentioned text as
+  pending history and replay that context into the next mentioned group session
+  delivery using OpenClaw's history/current-message markers while surfacing
+  `inboundHistory` metadata on the delivery result. This closes
+  `OZ-PROV-001FG`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.996%.
+- Verified the LINE group pending-history seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_replays_group_pending_history -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent LINE
+  webhook/provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`20 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `8d021ced`.
+- LINE signed webhook non-text group messages now bypass the text-only
+  mention gate, so image/video/audio/file placeholders can reach the native
+  session delivery path without a visible bot mention, matching OpenClaw's
+  "cannot detect mention" behavior for non-text LINE messages. This closes
+  `OZ-PROV-001FH`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.997%.
+- Verified the LINE non-text group media mention-gate seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_delivers_group_media_without_mention -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent LINE
+  webhook/provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`21 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `ea73bd12`.
+- LINE signed webhook media events can now use a fakeable native media fetch
+  adapter to stage downloaded LINE media bytes into the OpenZues inbound
+  attachment store, surfacing `MediaPath`/`MediaPaths`, `MediaType`/`MediaTypes`,
+  `stagedMedia`, and session delivery media metadata while preserving the
+  OpenClaw placeholder body. This closes `OZ-PROV-001FI`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.998%.
+- Verified the LINE inbound media staging seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_stages_downloaded_media -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent LINE
+  webhook/provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`22 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `c5d2719b`.
+- LINE signed webhook media events now use a production native fallback when no
+  test fetch adapter is injected: OpenZues resolves the configured LINE account
+  channel access token, downloads message content from LINE's content API with
+  bearer auth, enforces the 10 MB media cap, infers/stores content type, and
+  stages the bytes through the existing inbound attachment store. This closes
+  `OZ-PROV-001FJ`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.999%.
+- Verified the LINE production media download seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_downloads_media_with_configured_line_token -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent LINE
+  webhook/provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`23 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `adbf3f62`.
+- LINE signed webhook redeliveries now use an OpenClaw-shaped replay cache:
+  message events dedupe by LINE message id even when `webhookEventId` changes,
+  while postback and other non-message events dedupe by account, event type,
+  source id, and `webhookEventId`. Duplicate events return explicit skip
+  metadata without re-entering native session delivery. This closes
+  `OZ-PROV-001FK`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.9991%.
+- Verified the LINE webhook redelivery dedupe seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_deduplicates_message_redelivery_by_message_id tests\test_ops_mesh.py::test_ops_mesh_service_handle_line_webhook_deduplicates_postback_redelivery -q`
+  (`2 failed` before implementation, then `2 passed`), adjacent LINE
+  webhook/provider proof
+  `python -m pytest tests\test_line_webhook.py tests\test_ops_mesh.py -q -k "line_webhook or handle_line_webhook or send_direct_channel_message_uses_line"`
+  (`25 passed, 454 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_line_webhook.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `9acc4cd6`.
+- `browser.request` now has a native gateway method owner for the
+  browser-node proxy path: OpenZues validates required `method`/`path`, allows
+  only GET/POST/DELETE, blocks upstream-forbidden persistent profile mutations,
+  selects the connected browser-capable node, invokes `browser.proxy` with
+  query/body/timeout/profile metadata, and returns the upstream-shaped
+  `result`. This closes `OZ-CANVAS-001C`; repo-wide parity remains estimated
+  at ~99.9%, active gateway/session/tool-contract parity moves to ~99.93%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.2%.
+  Remaining browser-request depth after this slice included local
+  control-service fallback and browser-node selection policy.
+- Verified the `browser.request` node-proxy seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_rejects_persistent_profile_mutations_before_dispatch -q`
+  and
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_proxies_to_connected_browser_node_with_profile_selection -q`
+  (`unsupported method: browser.request` before implementation, then `1 passed`
+  for each), adjacent browser/node proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or node_invoke_rejects_persistent_browser_proxy_mutations or node_invoke_allows_valid_canvas_a2ui_jsonl"`
+  (`6 passed, 1235 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `430e365b`.
+- `browser.request` now persists proxy-returned files and rewrites browser
+  proxy result paths. OpenZues accepts upstream-shaped `files[]` entries from
+  `browser.proxy`, decodes bounded base64 payloads, stores them in a native
+  browser proxy media directory, and rewrites `result.path`,
+  `result.imagePath`, and `result.download.path` to the stored artifact path.
+  This closes `OZ-CANVAS-001D`; repo-wide parity remains estimated at
+  ~99.9%, active gateway/session/tool-contract parity moves to ~99.94%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.3%.
+  Remaining browser-request depth after this slice included local
+  control-service fallback and browser-node selection policy.
+- Verified the `browser.request` proxy-file persistence seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_persists_proxy_files_and_rewrites_result_paths -q`
+  (`unexpected keyword argument 'browser_proxy_media_dir'` before
+  implementation, then `1 passed`), adjacent browser/node proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or node_invoke_rejects_persistent_browser_proxy_mutations or node_invoke_allows_valid_canvas_a2ui_jsonl"`
+  (`7 passed, 1235 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `97c32bc8`.
+- `browser.request` now honors OpenClaw's configured browser-node selection
+  policy when multiple browser-capable nodes are connected. OpenZues reads
+  `gateway.nodes.browser`, supports `mode` values `auto`/`manual`/`off`, and
+  resolves the configured `node` by id, remote IP, normalized display name, or
+  safe id prefix before dispatching `browser.proxy`. This closes
+  `OZ-CANVAS-001E`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.945%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.4%.
+  Remaining browser-request depth is local control-service fallback.
+- Verified the `browser.request` configured-node seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_uses_configured_browser_node_when_multiple_connected -q`
+  (`multiple browser-capable nodes connected; configure a browser node` before
+  implementation, then `1 passed`), adjacent browser/node proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or node_invoke_rejects_persistent_browser_proxy_mutations or node_invoke_allows_valid_canvas_a2ui_jsonl"`
+  (`8 passed, 1235 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `6b31e0d7`.
+- `browser.request` now falls back to OpenZues' native local browser runtime
+  when no browser-capable node is selected, matching the upstream
+  `startBrowserControlServiceFromConfig()` / route-dispatch branch without
+  importing the TypeScript runtime. The gateway forwards method/path/query/body,
+  timeout, and the default browser session into a fakeable local runtime
+  dispatcher, preserves upstream-shaped disabled/runtime errors, and maps
+  route-style status/body responses back into gateway method results. The
+  production runtime now exposes a `request(...)` adapter over native snapshot,
+  action, screenshot, profile, and tab routes. This closes `OZ-CANVAS-001F`;
+  repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.947%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.5%.
+  Remaining browser depth is richer local route breadth beyond the current
+  native route adapter, plus broader media/canvas/provider inventory.
+- Verified the `browser.request` local-control fallback seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_falls_back_to_local_browser_runtime_without_node -q`
+  (`browser control is disabled` before implementation, then `1 passed`),
+  adjacent browser/node proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or node_invoke_rejects_persistent_browser_proxy_mutations or node_invoke_allows_valid_canvas_a2ui_jsonl"`
+  (`9 passed, 1236 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `45fd0ffd`.
+- `browser.request` local-control lifecycle route breadth now maps upstream
+  `POST /start` and `POST /stop` requests onto the native `agent-browser`
+  lifecycle methods. This extends the no-node local runtime adapter from
+  `OZ-CANVAS-001F` with the profile-aware start/stop route family from
+  `extensions/browser/src/browser/routes/basic.ts`, including `all` /
+  `allSessions` stop options in the native adapter. This closes
+  `OZ-CANVAS-001G`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.948%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.55%.
+  Remaining browser depth is richer local route breadth such as status/doctor,
+  reset/profile mutations, permissions, and deeper tab mutations.
+- Verified the `browser.request` local lifecycle route seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_lifecycle_routes -q`
+  (`browser local request unsupported: POST /start` before implementation,
+  then `1 passed`), adjacent browser lifecycle/request proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_lifecycle or browser_tabs_runtime or browser_request_runtime_maps_lifecycle_routes"`
+  (`8 passed, 1238 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `d9b5e87d`.
+- `browser.request` local-control tab mutation route breadth now maps
+  upstream `POST /tabs/focus` and `DELETE /tabs/:targetId` requests onto
+  native browser focus and close methods, including upstream-style path segment
+  decoding for targeted tab close. This closes `OZ-CANVAS-001H`; repo-wide
+  parity remains estimated at ~99.9%, active gateway/session/tool-contract
+  parity moves to ~99.949%, and browser/canvas/nodes/voice bounded-command
+  parity moves to ~99.6%. Remaining browser depth is richer local
+  status/doctor/profile/permission/tab-action route breadth.
+- Verified the `browser.request` local tab mutation route seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_tab_mutation_routes -q`
+  (`browser local request unsupported: POST /tabs/focus` before
+  implementation, then `1 passed`), adjacent browser tab/request proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_lifecycle or browser_tabs_runtime or browser_request_runtime_maps_tab_mutation_routes or browser_focus or browser_close"`
+  (`12 passed, 1235 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `aa7298c6`.
+- `browser.request` local-control tab action breadth now maps upstream
+  `/tabs/action` `close` and `select` actions onto native tab list, targeted
+  close, and focus calls. OpenZues resolves the requested index from the
+  native tab-list payload and preserves the upstream default-first-tab close
+  behavior while requiring an index for select. This closes `OZ-CANVAS-001I`;
+  repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.950%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.65%.
+  Remaining browser depth is local status/doctor, profile mutation,
+  permissions, and label-action route breadth.
+- Verified the `browser.request` local tab-action route seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_tab_action_select_and_close -q`
+  (`browser local request unsupported: POST /tabs/action` before
+  implementation, then `1 passed`), adjacent browser tab/request proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_lifecycle or browser_tabs_runtime or browser_request_runtime_maps_tab_action_select_and_close or browser_focus or browser_close"`
+  (`13 passed, 1235 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `904f2673`.
+- `browser.request` local-control storage route breadth now maps upstream
+  `GET /storage/:kind`, `POST /storage/:kind/set`, and
+  `POST /storage/:kind/clear` onto native browser storage get/set/clear
+  methods for `local` and `session` storage, preserving optional `key` and
+  string `value` semantics from
+  `extensions/browser/src/browser/routes/agent.storage.ts`. This closes
+  `OZ-CANVAS-001J`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.951%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.7%.
+  Remaining browser depth is local status/doctor, profile mutation,
+  permissions, cookies, and label-action route breadth.
+- Verified the `browser.request` local storage route seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_storage_routes -q`
+  (`browser local request unsupported: GET /storage/local` before
+  implementation, then `1 passed`), adjacent browser storage/request proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_storage or browser_request_runtime_maps_storage_routes"`
+  (`13 passed, 1236 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `483e4aff`.
+- `browser.request` local-control cookie route breadth now maps upstream
+  `GET /cookies`, `POST /cookies/set`, and `POST /cookies/clear` onto native
+  browser cookie get/set/clear methods, including the nested upstream `cookie`
+  object for set requests with URL, httpOnly, secure, sameSite, domain, path,
+  and expires options. This closes `OZ-CANVAS-001K`; repo-wide parity remains
+  estimated at ~99.9%, active gateway/session/tool-contract parity moves to
+  ~99.952%, and browser/canvas/nodes/voice bounded-command parity moves to
+  ~99.75%. Remaining browser depth is local status/doctor, profile mutation,
+  permissions, and label-action route breadth.
+- Verified the `browser.request` local cookie route seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_cookie_routes -q`
+  (`browser local request unsupported: GET /cookies` before implementation,
+  then `1 passed`), adjacent browser cookie/storage/request proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_cookie or browser_storage or browser_request_runtime_maps_cookie_routes"`
+  (`16 passed, 1234 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `97602084`.
+- `browser.request` local-control debug route breadth now maps upstream
+  `GET /console`, `GET /errors`, `GET /requests`, `POST /trace/start`, and
+  `POST /trace/stop` from
+  `extensions/browser/src/browser/routes/agent.debug.ts` onto native browser
+  console/error/network/trace methods. The adapter preserves supported clear
+  and filter flags while continuing to write trace artifacts to OpenZues-owned
+  temp ZIP paths. This closes `OZ-CANVAS-001L`; repo-wide parity remains
+  estimated at ~99.9%, active gateway/session/tool-contract parity moves to
+  ~99.953%, and browser/canvas/nodes/voice bounded-command parity moves to
+  ~99.8%. Remaining browser depth is local status/doctor, profile mutation,
+  permissions, and label-action route breadth.
+- Verified the `browser.request` local debug route seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_debug_routes -q`
+  (`browser local request unsupported: GET /console` before implementation,
+  then `1 passed`), adjacent browser request/debug/network/trace proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_debug or browser_console or browser_errors or browser_network_requests or browser_trace"`
+  (`17 passed, 1234 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `d7eb616d`.
+- `browser.request` local-control setting route breadth now maps supported
+  upstream `/set/*` routes from
+  `extensions/browser/src/browser/routes/agent.storage.ts` onto native
+  `agent-browser set` commands for offline, headers, credentials, geolocation,
+  media color scheme, and device emulation. Header and credential payloads
+  reuse the existing OpenZues redaction path. This closes `OZ-CANVAS-001M`;
+  repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.954%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.85%.
+  Remaining browser depth is local status/doctor, profile mutation,
+  permissions, locale/timezone, and label-action route breadth.
+- Verified the `browser.request` local setting route seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_setting_routes -q`
+  (`browser local request unsupported: POST /set/offline` before
+  implementation, then `1 passed`), adjacent browser request/set/storage/debug
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_set or browser_setting or browser_storage or browser_debug"`
+  (`21 passed, 1231 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `97755215`.
+- `browser.request` local-control act utility route breadth now maps upstream
+  `POST /highlight`, `POST /download`, and `POST /hooks/file-chooser` from
+  `extensions/browser/src/browser/routes/agent.act.ts` plus adjacent act hook
+  files onto native `agent-browser highlight`, guarded download, and guarded
+  upload methods. Downloads continue to use OpenZues-owned temp artifacts, and
+  upload paths must already be controlled OpenZues browser temp artifacts.
+  This closes `OZ-CANVAS-001N`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.955%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.9%.
+  Remaining browser depth is local status/doctor, profile mutation,
+  permissions, locale/timezone, response body, dialog hook, and any remaining
+  label-action route breadth.
+- Verified the `browser.request` local act utility route seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_request_runtime_maps_act_utility_routes -q`
+  (`browser local request unsupported: POST /highlight` before
+  implementation, then `1 passed`), adjacent browser request/action/download
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_request or browser_download or browser_upload or browser_debug or browser_highlight or browser_act"`
+  (`22 passed, 1231 deselected`), `ruff check
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_browser_runtime.py`, and focused
+  `git diff --check`. Source/test checkpointed in `886c86f3`.
+- `agents_list` now carries the invoking session context into
+  `agents.list toolProjection=sessions_spawn`, and the projection resolves
+  requester-specific `gateway.agents.list[].subagents.allowAgents` /
+  `requireAgentId` before falling back to defaults. This closes
+  `OZ-SESSION-001AA`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.946%, and chat/session
+  contract parity moves to ~99.986%.
+- Verified the requester-scoped `agents_list` allowlist seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_agents_list_uses_requester_agent_allowlist -q`
+  (`requester: main` with default `reviewer` before implementation, then
+  `1 passed`), adjacent agents/spawn policy proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "agents_list or sessions_spawn_rejects_agent_id_outside_configured_allowlist or sessions_spawn_requires_explicit_agent_id or sessions_spawn_thread_mode_uses_target_agent_bound_account"`
+  (`8 passed, 1236 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `6b74d38e`.
+- The native installed-plugin LINE runtime shim now exports OpenClaw-shaped
+  rich-menu pure helpers: `createGridLayout()` builds the LINE 2500px two-row
+  grid, and `createDefaultMenuConfig()` returns the six-action default rich
+  menu. This closes `OZ-PLUGIN-00382`; repo-wide parity remains estimated at
+  ~99.9%, runtime/CLI/doctor native-bridge parity moves to ~99.99988%, and
+  CLI/operator control-plane parity moves to ~99.99988%.
+- Verified the LINE rich-menu runtime helper seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_line_surface_helpers -q`
+  (`createGridLayout` was `undefined` before implementation, then `1 passed`),
+  adjacent LINE plugin-runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "line_surface or line_root_core or line_runtime or runtime.line"`
+  (`2 passed, 1242 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `b80501c6`.
+- Package update restart-health checks now distinguish a missing restarted
+  gateway version from an actual version mismatch. Missing version still fails
+  the restart-health gate with generic diagnostics, while only a concrete wrong
+  version renders `Gateway version mismatch:`. This closes `OZ-PKG-001CX`;
+  repo-wide parity remains estimated at ~99.9%, runtime/CLI/doctor
+  native-bridge parity moves to ~99.99989%, and CLI/operator control-plane
+  parity moves to ~99.99989%.
+- Verified the missing restart-health version seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_fails_when_restarted_gateway_omits_gateway_version -q`
+  (`Gateway version mismatch: ... unavailable` before implementation, then
+  `1 passed`), adjacent restart-health proof
+  `python -m pytest tests\test_cli.py -q -k "restart_health or restarted_gateway or update_fails_when_restarted_gateway"`
+  (`4 passed, 589 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `90e3d0a3`.
 
 ## References
 

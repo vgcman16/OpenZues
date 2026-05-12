@@ -2,7 +2,7 @@
 
 Agent report source: Banach
 
-Last updated: 2026-05-08
+Last updated: 2026-05-12
 
 OpenClaw is the upstream source of truth for repo-wide parity. Each domain below
 should become one or more bounded OpenZues parity seams before it can affect the
@@ -29,6 +29,73 @@ repo-wide percentage.
 | [ ] | QA, tests, scenarios | unit/e2e/live/docker tests, QA Lab, scenario catalog, provider/channel regressions | `test/vitest`, `scripts/e2e`, `qa/scenarios`, `extensions/qa-lab` |
 | [~] | Packaging, distribution, release | packageDistribution doctor JSON, dist inventory validation, exact missing-inventory diagnostics, missing/unexpected file drift warnings, legacy `.openclaw-install-stage*` debris warnings, mixed-case staging path proof, local build metadata/dependency omission, unsafe symlinked dist path warnings, externalized bundled extension dist omission, private QA dist omission, source-checkout package-root warnings, bundled runtime sidecar enforcement, and private-QA sidecar omission verified; source-install pnpm workspace warnings, update-status channel projection, registry/git availability, human update-available hints, git metadata envelope, config channel precedence, git branch channel labeling, loose/packed git-tag stable/beta channel labeling, update-status timeout, update status inherited parent options, update package-spec env override, explicit update install-spec preservation, root update runtime dispatch, package update runtime path, npm omit-optional fallback, package update version verification, package update failedStep projection, staged npm package swap, staged npm crash cleanup, npm shim rollback, git update control-ui clean-check exclusion, git update no-upstream guard, git preflight candidate/worktree/selection/rebase-abort/cleanup-repair/dev-target-ref/dev-branch-normalization guards, beta package latest fallback, post-update plugin sync, package update doctor repair, non-interactive update doctor, stale global rename-dir cleanup, low package-update disk warning, requested update-channel persistence, post-update package doctor env, stored update-channel dry-run preview, Corepack prompt suppression/preservation, Windows package install env, portable Git PATH prepending, owning/ambient npm command resolution, missing-version verifier wording, source-checkout package update verifier, package update missing dist-inventory gate, package update invalid dist-inventory rejection, package update dist inventory file drift, package update runtime staging-debris verifier, package update supplemental sidecar enforcement, package update inventory omission filters, package update unsafe dist path rejection, package update externalized extension omission, package update includeInCore inventory guard, package update private QA omission proof, package update malformed extension manifest rejection, doctor malformed extension manifest warning, package update legacy sidecar fallback, package update omitted-subtree safety ordering, and update dry-run package-spec preview verified; plugin packages, Docker/Podman, macOS DMG/Sparkle, CI release workflows, broader update channels remain | `src/flows/doctor-health.ts`, `src/commands/doctor-install.ts`, `src/infra/update-global.ts`, `src/infra/package-update-steps.ts`, `src/cli/update-cli/update-command.ts`, `src/cli/update-cli/status.ts`, `src/cli/update-cli.option-collisions.test.ts`, `src/infra/update-runner.ts`, `scripts/openclaw-npm-publish.sh`, `scripts/package-mac-dist.sh`, `Dockerfile`, `.github/workflows` |
 | [ ] | Observability, diagnostics, ops | logging, OpenTelemetry/Prometheus, health/status, proxy capture, runtime reports | `src/logging`, `extensions/diagnostics-otel`, `extensions/diagnostics-prometheus`, `docs/logging.md` |
+
+Gateway/browser addendum: `OZ-CANVAS-001C` `browser.request` node-proxy
+dispatch from `extensions/browser/src/gateway/browser-request.ts` is
+checkpointed in `430e365b`; it covers native OpenZues validation,
+persistent-profile mutation rejection, connected browser-node `browser.proxy`
+dispatch, query/body/timeout/profile propagation, and upstream-shaped `result`
+projection. `OZ-CANVAS-001D` proxy-file persistence/path rewriting from
+`extensions/browser/src/browser/proxy-files.ts` is checkpointed in `97c32bc8`;
+it covers `files[]` base64 decoding, native browser proxy media persistence,
+and `path` / `imagePath` / `download.path` rewrites. `OZ-CANVAS-001E`
+configured browser-node selection from
+`extensions/browser/src/gateway/browser-request.ts` is checkpointed in
+`6b31e0d7`; it covers `gateway.nodes.browser` `auto`/`manual`/`off` policy
+plus configured node resolution by id, remote IP, normalized display name, or
+safe id prefix. `OZ-CANVAS-001F` local browser runtime fallback from
+`extensions/browser/src/gateway/browser-request.ts` is checkpointed in
+`45fd0ffd`; it covers the no-node local request branch, fakeable native
+runtime dispatch, route-style status/body mapping, and native
+snapshot/action/screenshot/profile/tab route adapters. `OZ-CANVAS-001G`
+local lifecycle routes from
+`extensions/browser/src/browser/routes/basic.ts` are checkpointed in
+`d9b5e87d`; they map `POST /start` and `POST /stop` onto native browser
+lifecycle methods with `all` / `allSessions` stop options. `OZ-CANVAS-001H`
+local tab mutation routes from
+`extensions/browser/src/browser/routes/tabs.ts` are checkpointed in
+`aa7298c6`; they map `POST /tabs/focus` and `DELETE /tabs/:targetId` onto
+native focus/targeted-close methods with decoded path-segment target ids.
+`OZ-CANVAS-001I` local tab-action close/select breadth from
+`extensions/browser/src/browser/routes/tabs.ts` is checkpointed in
+`904f2673`; it resolves tab indexes from native tab list output and dispatches
+targeted close/focus. `OZ-CANVAS-001J` storage route breadth from
+`extensions/browser/src/browser/routes/agent.storage.ts` is checkpointed in
+`483e4aff`; it maps `GET /storage/:kind`, `POST /storage/:kind/set`, and
+`POST /storage/:kind/clear` onto native local/session storage get/set/clear.
+`OZ-CANVAS-001K` cookie route breadth from
+`extensions/browser/src/browser/routes/agent.storage.ts` is checkpointed in
+`97602084`; it maps `GET /cookies`, `POST /cookies/set`, and
+`POST /cookies/clear` onto native cookie get/set/clear, including nested
+upstream `cookie` set fields. `OZ-CANVAS-001L` debug route breadth from
+`extensions/browser/src/browser/routes/agent.debug.ts` is checkpointed in
+`d7eb616d`; it maps `GET /console`, `GET /errors`, `GET /requests`,
+`POST /trace/start`, and `POST /trace/stop` onto native console/error,
+network-request, and trace artifact methods with supported clear/filter flags.
+`OZ-CANVAS-001M` setting route breadth from
+`extensions/browser/src/browser/routes/agent.storage.ts` is checkpointed in
+`97755215`; it maps supported `/set/*` routes onto native offline, headers,
+credentials, geolocation, media, and device settings with existing redaction.
+`OZ-CANVAS-001N` act utility route breadth from
+`extensions/browser/src/browser/routes/agent.act.ts` and adjacent hook/download
+files is checkpointed in `886c86f3`; it maps `POST /highlight`,
+`POST /download`, and `POST /hooks/file-chooser` onto native highlight,
+guarded download, and guarded upload methods.
+Remaining browser-request depth is richer local status, doctor, profile,
+permission, locale/timezone, response body, dialog hook, and label-action route
+breadth beyond the current native adapter.
+
+LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
+`extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers
+message-id dedupe for message redeliveries plus account/type/source/event-id
+dedupe for postback and other non-message events.
+
+Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
+spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
+`src/agents/subagent-target-policy.ts` is checkpointed in `6b74d38e`; it covers
+`tools.invoke` session context forwarding plus requester-specific
+`gateway.agents.list[].subagents.allowAgents` / `requireAgentId` policy before
+default subagent policy.
 
 Packaging row addendum: `OZ-PKG-001CA` release-channel git update coverage
 from `src/infra/update-runner.ts`, `src/infra/update-channels.ts`, and
@@ -66,6 +133,11 @@ persisted `lastCheckedAt`.
 `src/commands/status.update.ts` is checkpointed in `1d19a46c`; it covers the
 OpenClaw ` · ` separator for combined git/npm availability details.
 
+`OZ-PKG-001CX` missing restart-health gateway-version diagnostics from
+`src/cli/daemon-cli/restart-health.ts` is checkpointed in `90e3d0a3`; it covers
+generic restart-health failure when the restarted gateway omits its version
+without rendering a version-mismatch diagnostic.
+
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is
 verified in `884c9afb`; `@openclaw/memory-host-sdk/engine` aggregate coverage
@@ -73,6 +145,11 @@ is verified in `fa5ad046`; `@openclaw/memory-host-sdk/runtime` aggregate
 coverage is verified in `ebd215d5`; memory-host package facade coverage for
 `query`, `multimodal`, `secret`, and `status` is verified in `c95e0129`. All
 are counted with the SDK helper/runtime set above.
+The imported `line-runtime` rich-menu helper coverage from
+`src/plugin-sdk/line-runtime.ts` plus `extensions/line/src/rich-menu.ts` is
+verified in `b80501c6`; it covers `createGridLayout()` and
+`createDefaultMenuConfig()` and is counted with the plugin/extension system row
+above.
 The imported `agent-runtime` core SDK helper coverage from
 `src/plugin-sdk/agent-runtime.ts` and adjacent agent scope/path/time/defaults/
 identity/provider-id helpers is verified in `a8e871a3` and counted with the

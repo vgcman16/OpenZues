@@ -5,6 +5,7 @@ import base64
 import codecs
 import copy
 import inspect
+import ipaddress
 import json
 import math
 import os
@@ -29,6 +30,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
 import uvicorn
+from typer.completion import get_completion_script
 
 from openzues import __version__
 from openzues.app import build_brief, build_launchpad, build_radar
@@ -574,6 +576,7 @@ hermes_app = typer.Typer(help="Inspect and tune Hermes runtime posture.")
 routes_app = typer.Typer(help="Inspect and test notification routes.")
 agents_app = typer.Typer(help="Inspect configured agent inventory.")
 channels_app = typer.Typer(help="Inspect notification route channels.")
+devices_app = typer.Typer(help="Device pairing and auth tokens.")
 acp_app = typer.Typer(
     help="Run an ACP bridge backed by the Gateway.",
     invoke_without_command=True,
@@ -625,6 +628,7 @@ app.add_typer(hermes_app, name="hermes")
 app.add_typer(routes_app, name="routes")
 app.add_typer(agents_app, name="agents")
 app.add_typer(channels_app, name="channels")
+app.add_typer(devices_app, name="devices")
 app.add_typer(acp_app, name="acp")
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(sandbox_app, name="sandbox")
@@ -756,6 +760,19 @@ def _normalize_local_control_plane_host(host: str) -> str | None:
     return None
 
 
+def _build_cli_gateway_config_service(app_settings: Settings) -> GatewayConfigService:
+    return GatewayConfigService(
+        assistant_name=app_settings.app_name,
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version=__version__,
+        local_media_preview_roots=[],
+        embed_sandbox="scripts",
+        allow_external_embed_urls=False,
+        data_dir=app_settings.data_dir,
+    )
+
+
 def _try_live_api_model(
     base_url: str,
     path: str,
@@ -838,7 +855,14 @@ async def _build_live_health_payload(
     runtime_update = health.get("runtimeUpdate")
     if not isinstance(runtime_update, dict):
         runtime_update = health.get("runtime_update")
-    return {
+    server_version = _optional_cli_string(
+        health.get("serverVersion", health.get("server_version"))
+    )
+    if server_version is None:
+        server = health.get("server")
+        if isinstance(server, dict):
+            server_version = _optional_cli_string(server.get("version"))
+    payload: dict[str, object] = {
         "ok": status == "ok",
         "status": status,
         "controlPlane": control_plane,
@@ -846,6 +870,11 @@ async def _build_live_health_payload(
         "lockPath": health.get("lockPath", health.get("lock_path")),
         "runtimeUpdate": dict(runtime_update) if isinstance(runtime_update, dict) else {},
         "readiness": dict(readiness),
+    }
+    if server_version is not None:
+        payload["serverVersion"] = server_version
+    return {
+        **payload,
     }
 
 
@@ -1084,16 +1113,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
     launch_routing = LaunchRoutingService(database, manager)
     mission_service = MissionService(database, manager, hub)
     project_service = ProjectService(GitHubService())
-    gateway_config = GatewayConfigService(
-        assistant_name=app_settings.app_name,
-        assistant_avatar="/static/favicon.svg",
-        assistant_agent_id="openzues",
-        server_version=__version__,
-        local_media_preview_roots=[],
-        embed_sandbox="scripts",
-        allow_external_embed_urls=False,
-        data_dir=app_settings.data_dir,
-    )
+    gateway_config = _build_cli_gateway_config_service(app_settings)
     ops_mesh = OpsMeshService(
         database,
         manager,
@@ -6055,6 +6075,7 @@ _DOCTOR_COMPLETION_SHELL_EXTENSIONS = {
     "powershell": "ps1",
     "zsh": "zsh",
 }
+_DOCTOR_COMPLETION_WRITE_STATE_SHELLS = ("bash", "fish", "powershell", "zsh")
 
 
 def _doctor_completion_shell_from_env(env: Mapping[str, str] | None = None) -> str:
@@ -6146,23 +6167,25 @@ def _doctor_completion_source_line(*, shell: str, cache_path: Path) -> str:
     return f'source "{cache_path}"'
 
 
-def _doctor_completion_generate_cache(cache_path: Path) -> bool:
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
+def _doctor_completion_script_for_shell(shell: str) -> str | None:
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "openzues.cli", "--show-completion"],
-            capture_output=True,
-            check=False,
-            encoding="utf-8",
-            errors="replace",
-            timeout=20,
+        return get_completion_script(
+            prog_name="openzues",
+            complete_var="_OPENZUES_COMPLETE",
+            shell=shell,
         )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if result.returncode != 0 or not result.stdout.strip():
+    except Exception:
+        return None
+
+
+def _doctor_completion_generate_cache(cache_path: Path, *, shell: str | None = None) -> bool:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    shell_name = shell or _doctor_completion_shell_from_env()
+    script = _doctor_completion_script_for_shell(shell_name)
+    if not script:
         return False
     try:
-        cache_path.write_text(result.stdout, encoding="utf-8")
+        cache_path.write_text(script, encoding="utf-8")
     except OSError:
         return False
     return True
@@ -8247,6 +8270,68 @@ def _doctor_path_exists(path: Path) -> bool:
         return False
 
 
+def _doctor_env_value_is_truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _doctor_update_offer_is_interactive() -> bool:
+    isatty = getattr(sys.stdin, "isatty", None)
+    return bool(isatty()) if callable(isatty) else False
+
+
+def _doctor_update_detect_git_checkout(root: Path | None) -> Literal["git", "not-git", "unknown"]:
+    if root is None:
+        return "unknown"
+    try:
+        root_path = root.resolve(strict=False)
+    except OSError:
+        root_path = root
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        return "git" if _doctor_path_exists(root_path / ".git") else "unknown"
+    try:
+        completed = subprocess.run(
+            [git_executable, "-C", str(root_path), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "git" if _doctor_path_exists(root_path / ".git") else "unknown"
+    if completed.returncode != 0:
+        stderr = str(completed.stderr or "").strip().lower()
+        if "not a git repository" in stderr:
+            return "not-git"
+        return "unknown"
+    git_root = str(completed.stdout or "").strip()
+    if not git_root:
+        return "unknown"
+    try:
+        git_root_path = Path(git_root).resolve(strict=False)
+    except OSError:
+        git_root_path = Path(git_root)
+    normalized_root = os.path.normcase(os.path.normpath(str(root_path)))
+    normalized_git_root = os.path.normcase(os.path.normpath(str(git_root_path)))
+    return "git" if normalized_root == normalized_git_root else "not-git"
+
+
+def _doctor_should_offer_update_before_checks(
+    *,
+    root: Path | None,
+    json_output: bool,
+    fix: bool,
+    non_interactive: bool,
+) -> bool:
+    if root is None or json_output or fix or non_interactive:
+        return False
+    if _doctor_env_value_is_truthy(os.environ.get("OPENCLAW_UPDATE_IN_PROGRESS")):
+        return False
+    return _doctor_update_offer_is_interactive()
+
+
 def _doctor_package_distribution_check(
     *,
     key: str,
@@ -10122,9 +10207,19 @@ def _emit_update_run_result(payload: dict[str, object], *, json_output: bool) ->
         for warning in _object_list(payload.get("warnings"))
         if str(warning).strip()
     ]
+    restart_health = payload.get("restartHealth")
+    restart_diagnostics: list[str] = []
+    if isinstance(restart_health, Mapping):
+        restart_diagnostics = [
+            str(line)
+            for line in _object_list(restart_health.get("diagnostics"))
+            if str(line).strip()
+        ]
     if json_output:
         for warning in warnings:
             typer.echo(f"Warning: {warning}", err=True)
+        for line in restart_diagnostics:
+            typer.echo(line, err=True)
         _emit_payload(payload, json_output=True)
         return
     status = str(payload.get("status") or "unknown")
@@ -10144,6 +10239,10 @@ def _emit_update_run_result(payload: dict[str, object], *, json_output: bool) ->
         typer.echo("warnings:")
         for warning in warnings:
             typer.echo(f"  - {warning}")
+    if restart_diagnostics:
+        typer.echo("diagnostics:")
+        for line in restart_diagnostics:
+            typer.echo(f"  {line}")
 
 
 def _openclaw_post_update_plugins_payload(
@@ -10195,6 +10294,252 @@ async def _openclaw_update_attach_post_update_plugins(
     if projected_plugins.get("status") == "error":
         result["status"] = "error"
         result["reason"] = "post-update-plugins"
+    return result
+
+
+def _openclaw_update_activated_plugin_errors(
+    health_payload: Mapping[str, object],
+) -> list[dict[str, object]]:
+    raw_plugins = health_payload.get("plugins")
+    if not isinstance(raw_plugins, Mapping):
+        raw_health = health_payload.get("health")
+        raw_plugins = raw_health.get("plugins") if isinstance(raw_health, Mapping) else None
+    if not isinstance(raw_plugins, Mapping):
+        return []
+    raw_errors = raw_plugins.get("errors")
+    if not isinstance(raw_errors, list):
+        return []
+    errors: list[dict[str, object]] = []
+    for entry in raw_errors:
+        if not isinstance(entry, Mapping):
+            continue
+        plugin_id = _optional_cli_string(entry.get("id"))
+        error = _optional_cli_string(entry.get("error"))
+        if entry.get("activated") is not True or plugin_id is None or error is None:
+            continue
+        projected: dict[str, object] = {
+            "id": plugin_id,
+            "origin": _optional_cli_string(entry.get("origin")) or "unknown",
+            "activated": True,
+            "error": error,
+        }
+        for key in ("activationSource", "activationReason", "failurePhase"):
+            value = _optional_cli_string(entry.get(key))
+            if value is not None:
+                projected[key] = value
+        errors.append(projected)
+    return errors
+
+
+def _openclaw_update_channel_probe_errors(
+    health_payload: Mapping[str, object],
+) -> list[dict[str, object]]:
+    raw_channels = health_payload.get("channels")
+    if not isinstance(raw_channels, Mapping):
+        raw_health = health_payload.get("health")
+        raw_channels = raw_health.get("channels") if isinstance(raw_health, Mapping) else None
+    if not isinstance(raw_channels, Mapping):
+        return []
+    errors: list[dict[str, object]] = []
+    for channel_id, summary in raw_channels.items():
+        if not isinstance(summary, Mapping):
+            continue
+        probe = summary.get("probe")
+        if not isinstance(probe, Mapping) or probe.get("ok") is not False:
+            continue
+        normalized_channel_id = _optional_cli_string(channel_id)
+        if normalized_channel_id is None:
+            continue
+        errors.append(
+            {
+                "id": normalized_channel_id,
+                "error": _optional_cli_string(probe.get("error")) or "probe failed",
+            }
+        )
+    return errors
+
+
+def _openclaw_update_expected_gateway_version(
+    payload: Mapping[str, object],
+) -> str | None:
+    after = payload.get("after")
+    if not isinstance(after, Mapping):
+        return None
+    return _optional_cli_string(after.get("version"))
+
+
+def _openclaw_update_health_gateway_version(
+    health_payload: Mapping[str, object],
+) -> str | None:
+    for key in ("serverVersion", "gatewayVersion", "version"):
+        version = _optional_cli_string(health_payload.get(key))
+        if version is not None:
+            return version
+    server = health_payload.get("server")
+    if isinstance(server, Mapping):
+        return _optional_cli_string(server.get("version"))
+    raw_health = health_payload.get("health")
+    if isinstance(raw_health, Mapping):
+        return _openclaw_update_health_gateway_version(raw_health)
+    return None
+
+
+def _openclaw_update_restart_version_mismatch(
+    payload: Mapping[str, object],
+    health_payload: Mapping[str, object],
+) -> dict[str, object] | None:
+    expected = _openclaw_update_expected_gateway_version(payload)
+    if expected is None:
+        return None
+    actual = _openclaw_update_health_gateway_version(health_payload)
+    if actual == expected:
+        return None
+    if actual is None:
+        return None
+    return {"expected": expected, "actual": actual}
+
+
+def _openclaw_update_restart_missing_gateway_version(
+    payload: Mapping[str, object],
+    health_payload: Mapping[str, object],
+) -> bool:
+    expected = _openclaw_update_expected_gateway_version(payload)
+    return (
+        expected is not None
+        and _openclaw_update_health_gateway_version(health_payload) is None
+    )
+
+
+def _openclaw_update_restart_health_diagnostics(
+    version_mismatch: Mapping[str, object] | None,
+    activated_plugin_errors: Sequence[Mapping[str, object]],
+    channel_probe_errors: Sequence[Mapping[str, object]],
+    *,
+    missing_gateway_version: bool = False,
+) -> list[str]:
+    if (
+        version_mismatch is None
+        and not activated_plugin_errors
+        and not channel_probe_errors
+        and not missing_gateway_version
+    ):
+        return []
+    lines = ["Gateway did not become healthy after restart."]
+    if version_mismatch is not None:
+        expected = _optional_cli_string(version_mismatch.get("expected")) or "unknown"
+        actual = _optional_cli_string(version_mismatch.get("actual")) or "unavailable"
+        lines.append(
+            "Gateway version mismatch: "
+            f"expected {expected}, running gateway reported {actual}."
+        )
+    if activated_plugin_errors:
+        lines.append("Activated plugin load errors:")
+        for plugin in activated_plugin_errors:
+            plugin_id = _optional_cli_string(plugin.get("id")) or "unknown"
+            error = _optional_cli_string(plugin.get("error")) or "plugin load failed"
+            lines.append(f"- {plugin_id}: {error}")
+    if channel_probe_errors:
+        lines.append("Channel health probe errors:")
+        for channel in channel_probe_errors:
+            channel_id = _optional_cli_string(channel.get("id")) or "unknown"
+            error = _optional_cli_string(channel.get("error")) or "probe failed"
+            lines.append(f"- {channel_id}: {error}")
+    return lines
+
+
+async def _openclaw_update_fetch_restart_health_payload(
+    services: object,
+    *,
+    timeout_seconds: float | None,
+) -> dict[str, object] | None:
+    fakeable_probe = getattr(services, "update_restart_health", None)
+    if callable(fakeable_probe):
+        result = fakeable_probe(timeout_seconds=timeout_seconds)
+        if inspect.isawaitable(result):
+            result = await result
+        return dict(result) if isinstance(result, Mapping) else None
+    app_settings = getattr(services, "settings", None)
+    if not isinstance(app_settings, Settings):
+        return None
+    timeout = timeout_seconds if timeout_seconds is not None else 3.0
+    base_url = _control_plane_base_url(app_settings)
+    try:
+        health = await asyncio.to_thread(
+            _watch_api_json,
+            base_url,
+            "/api/health",
+            timeout_seconds=timeout,
+        )
+    except RuntimeError:
+        return None
+    return dict(health) if isinstance(health, Mapping) else None
+
+
+async def _openclaw_update_attach_restart_health(
+    services: object,
+    payload: dict[str, object],
+    *,
+    restart: bool,
+    timeout_seconds: float | None,
+) -> dict[str, object]:
+    if not restart or payload.get("status") != "ok":
+        return payload
+    health_payload = await _openclaw_update_fetch_restart_health_payload(
+        services,
+        timeout_seconds=timeout_seconds,
+    )
+    if health_payload is None:
+        return payload
+    activated_plugin_errors = _openclaw_update_activated_plugin_errors(health_payload)
+    channel_probe_errors = _openclaw_update_channel_probe_errors(health_payload)
+    version_mismatch = _openclaw_update_restart_version_mismatch(
+        payload,
+        health_payload,
+    )
+    missing_gateway_version = _openclaw_update_restart_missing_gateway_version(
+        payload,
+        health_payload,
+    )
+    restart_health: dict[str, object] = {
+        "status": "error"
+        if (
+            version_mismatch is not None
+            or missing_gateway_version
+            or activated_plugin_errors
+            or channel_probe_errors
+        )
+        else "ok",
+        "activatedPluginErrors": activated_plugin_errors,
+        "channelProbeErrors": channel_probe_errors,
+    }
+    if version_mismatch is not None:
+        restart_health["versionMismatch"] = dict(version_mismatch)
+    if missing_gateway_version:
+        restart_health["gatewayVersionMissing"] = True
+        expected_version = _openclaw_update_expected_gateway_version(payload)
+        if expected_version is not None:
+            restart_health["expectedVersion"] = expected_version
+    health_status = _optional_cli_string(health_payload.get("status"))
+    if health_status is not None:
+        restart_health["gatewayStatus"] = health_status
+    diagnostics = _openclaw_update_restart_health_diagnostics(
+        version_mismatch,
+        activated_plugin_errors,
+        channel_probe_errors,
+        missing_gateway_version=missing_gateway_version,
+    )
+    if diagnostics:
+        restart_health["diagnostics"] = diagnostics
+    result = dict(payload)
+    result["restartHealth"] = restart_health
+    if (
+        version_mismatch is not None
+        or missing_gateway_version
+        or activated_plugin_errors
+        or channel_probe_errors
+    ):
+        result["status"] = "error"
+        result["reason"] = "restart-health"
     return result
 
 
@@ -10275,7 +10620,10 @@ def _openclaw_update_available_hint(payload: Mapping[str, object]) -> str | None
 _OPENCLAW_UPDATE_CHANNELS = {"stable", "beta", "dev"}
 _OPENCLAW_UPDATE_PACKAGE_MANAGERS = {"pnpm", "bun", "npm"}
 _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME = "openzues"
+_OPENCLAW_UPDATE_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS = 2.0
 _OPENZUES_MAIN_PACKAGE_SPEC = "github:openzues/openzues#main"
+_OPENCLAW_GATEWAY_SERVICE_MARKER = "openclaw"
+_OPENCLAW_GATEWAY_SERVICE_KIND = "gateway"
 
 
 def _openclaw_update_config_channel(config_snapshot: object) -> str | None:
@@ -10300,6 +10648,17 @@ def _openclaw_update_dev_target_ref_for_channel(channel: str | None) -> str | No
         return None
     target_ref = os.environ.get("OPENCLAW_UPDATE_DEV_TARGET_REF", "").strip()
     return target_ref or None
+
+
+def _openclaw_update_running_inside_gateway_service(
+    env: Mapping[str, str | None] | None = None,
+) -> bool:
+    environ = env or os.environ
+    marker = str(environ.get("OPENCLAW_SERVICE_MARKER") or "").strip()
+    if marker != _OPENCLAW_GATEWAY_SERVICE_MARKER:
+        return False
+    service_kind = str(environ.get("OPENCLAW_SERVICE_KIND") or "").strip()
+    return not service_kind or service_kind == _OPENCLAW_GATEWAY_SERVICE_KIND
 
 
 def _openclaw_update_install_kind(root: Path) -> str:
@@ -10350,6 +10709,48 @@ def _openclaw_update_can_resolve_registry_version_for_target(value: object) -> b
     return not _openclaw_update_is_main_package_target(
         target
     ) and not _openclaw_update_is_explicit_package_install_spec(target)
+
+
+def _openclaw_update_normalize_version_tag(value: object) -> str | None:
+    target = _openclaw_update_normalize_package_target(value)
+    if not target:
+        return None
+    cleaned = target[1:] if target.startswith("v") else target
+    return cleaned if _openclaw_update_semver_tuple(cleaned) is not None else None
+
+
+def _openclaw_update_resolve_target_version(
+    tag: str,
+    *,
+    timeout_seconds: float | None = None,
+) -> str | None:
+    if not _openclaw_update_can_resolve_registry_version_for_target(tag):
+        return None
+    direct = _openclaw_update_normalize_version_tag(tag)
+    if direct is not None:
+        return direct
+    status = _openclaw_update_fetch_package_target_status(
+        tag,
+        timeout_seconds=timeout_seconds,
+    )
+    return _optional_cli_string(status.get("version"))
+
+
+def _openclaw_update_package_downgrade_risk(
+    *,
+    tag: str,
+    current_version: str | None,
+    target_version: str | None,
+    fallback_to_latest: bool,
+) -> bool:
+    if not _openclaw_update_can_resolve_registry_version_for_target(tag):
+        return False
+    if fallback_to_latest or current_version is None:
+        return False
+    if target_version is None:
+        return True
+    comparison = _openclaw_update_compare_semver_strings(current_version, target_version)
+    return comparison is not None and comparison > 0
 
 
 def _openclaw_update_resolve_global_install_spec(*, package_name: str, tag: str) -> str:
@@ -10416,6 +10817,116 @@ def _openclaw_update_fetch_package_target_status(
             _optional_cli_string(engines.get("node")) if isinstance(engines, Mapping) else None
         ),
     }
+
+
+def _openclaw_update_current_node_version() -> str | None:
+    node_path = shutil.which("node")
+    if node_path is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [node_path, "--version"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    version = _optional_cli_string(completed.stdout)
+    return version.lstrip("v") if version is not None else None
+
+
+def _openclaw_update_node_version_satisfies_engine(
+    current_version: str | None,
+    node_engine: str | None,
+) -> bool | None:
+    if node_engine is None:
+        return None
+    current_tuple = _doctor_node_version_tuple(current_version)
+    if current_tuple is None:
+        return None
+    any_decidable = False
+    for clause in node_engine.split("||"):
+        matches = list(
+            re.finditer(
+                r"(>=|<=|>|<|=)?\s*v?(\d+)(?:\.(\d+|x|X|\*))?(?:\.(\d+|x|X|\*))?",
+                clause,
+            )
+        )
+        if not matches:
+            continue
+        any_decidable = True
+        clause_ok = True
+        for match in matches:
+            op = match.group(1) or "="
+            major = int(match.group(2))
+            minor_raw = match.group(3)
+            patch_raw = match.group(4)
+            wildcard = minor_raw in {None, "x", "X", "*"} or patch_raw in {"x", "X", "*"}
+            required = (
+                major,
+                int(minor_raw) if minor_raw not in {None, "x", "X", "*"} else 0,
+                int(patch_raw) if patch_raw not in {None, "x", "X", "*"} else 0,
+            )
+            if wildcard and op == "=":
+                prefix_len = 1 if minor_raw in {None, "x", "X", "*"} else 2
+                if current_tuple[:prefix_len] != required[:prefix_len]:
+                    clause_ok = False
+                    break
+                continue
+            if op == ">=":
+                comparison_ok = current_tuple >= required
+            elif op == ">":
+                comparison_ok = current_tuple > required
+            elif op == "<=":
+                comparison_ok = current_tuple <= required
+            elif op == "<":
+                comparison_ok = current_tuple < required
+            else:
+                comparison_ok = current_tuple == required
+            if not comparison_ok:
+                clause_ok = False
+                break
+        if clause_ok:
+            return True
+    return False if any_decidable else None
+
+
+def _openclaw_update_package_runtime_preflight_error(
+    tag: str,
+    *,
+    timeout_seconds: float | None = None,
+) -> str | None:
+    if not _openclaw_update_can_resolve_registry_version_for_target(tag):
+        return None
+    target = _openclaw_update_normalize_package_target(tag)
+    if not target:
+        return None
+    status = _openclaw_update_fetch_package_target_status(
+        target,
+        timeout_seconds=timeout_seconds,
+    )
+    if _optional_cli_string(status.get("error")) is not None:
+        return None
+    node_engine = _optional_cli_string(status.get("nodeEngine"))
+    current_version = _openclaw_update_current_node_version()
+    satisfies = _openclaw_update_node_version_satisfies_engine(current_version, node_engine)
+    if satisfies is not False:
+        return None
+    target_label = _optional_cli_string(status.get("version")) or target
+    package_name = _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+    return "\n".join(
+        [
+            f"Node {current_version or 'unknown'} is too old for {package_name}@{target_label}.",
+            f"The requested package requires {node_engine}.",
+            "Upgrade Node to 22.14+ or Node 24, then rerun `openzues update`.",
+            f"Bare `npm i -g {package_name}` can silently install an older compatible release.",
+            f"After upgrading Node, use `npm i -g {package_name}@latest`.",
+        ]
+    )
 
 
 def _openclaw_update_semver_prerelease(value: object) -> str | None:
@@ -10528,16 +11039,25 @@ def _openclaw_update_dry_run_preview(
     target_version: str | None = None
     fallback_to_latest = False
     mode = "unknown"
+    downgrade_risk = False
 
     if update_install_kind == "git":
         mode = "git"
     elif update_install_kind == "package":
         mode = _openclaw_update_package_manager(root)
-        if not explicit_tag:
+        if explicit_tag:
+            target_version = _openclaw_update_resolve_target_version(target_tag)
+        else:
             resolved = _openclaw_update_resolve_npm_channel_tag(effective_channel)
             target_tag = _optional_cli_string(resolved.get("tag")) or target_tag
             target_version = _optional_cli_string(resolved.get("version"))
             fallback_to_latest = effective_channel == "beta" and target_tag == "latest"
+        downgrade_risk = _openclaw_update_package_downgrade_risk(
+            tag=target_tag,
+            current_version=current_version,
+            target_version=target_version,
+            fallback_to_latest=fallback_to_latest,
+        )
         package_install_spec = _openclaw_update_resolve_global_install_spec(
             package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
             tag=target_tag,
@@ -10589,7 +11109,7 @@ def _openclaw_update_dry_run_preview(
         "tag": package_install_spec or target_tag,
         "currentVersion": current_version,
         "targetVersion": target_version,
-        "downgradeRisk": False,
+        "downgradeRisk": downgrade_risk,
         "actions": actions,
         "notes": notes,
     }
@@ -10617,7 +11137,125 @@ def _openclaw_update_package_manager(root: Path) -> str:
     for filename, manager in lockfile_managers:
         if _doctor_path_exists(root / filename):
             return manager
+    detected_manager = _openclaw_update_detect_global_package_manager_for_root(root)
+    if detected_manager is not None:
+        return detected_manager
     return "unknown"
+
+
+def _openclaw_update_package_name(root: Path) -> str:
+    package_json = root / "package.json"
+    if not _doctor_path_exists(package_json):
+        return _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+    try:
+        parsed = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+    if not isinstance(parsed, Mapping):
+        return _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+    name = str(parsed.get("name") or "").strip()
+    return name or _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+
+
+def _openclaw_update_package_name_parts(package_name: str) -> tuple[str, ...]:
+    return tuple(part for part in package_name.strip().split("/") if part)
+
+
+def _openclaw_update_resolve_path(target: Path) -> Path:
+    try:
+        return target.resolve(strict=False)
+    except OSError:
+        return target.absolute()
+
+
+def _openclaw_update_global_root_from_package_root(root: Path, package_name: str) -> Path:
+    global_root = root
+    for _part in _openclaw_update_package_name_parts(package_name) or (root.name,):
+        global_root = global_root.parent
+    return global_root
+
+
+def _openclaw_update_global_root_owns_package(
+    *,
+    package_root: Path,
+    global_root: Path,
+    package_name: str,
+) -> bool:
+    parts = _openclaw_update_package_name_parts(package_name) or (
+        _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
+    )
+    expected_root = global_root.joinpath(*parts)
+    return _openclaw_update_resolve_path(expected_root) == _openclaw_update_resolve_path(
+        package_root
+    )
+
+
+def _openclaw_update_global_root_from_command(command: str) -> Path | None:
+    try:
+        result = subprocess.run(
+            [command, "root", "-g"],
+            capture_output=True,
+            text=True,
+            timeout=_OPENCLAW_UPDATE_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    stdout = str(result.stdout or "").strip()
+    return Path(stdout) if stdout else None
+
+
+def _openclaw_update_bun_global_root() -> Path:
+    bun_install = str(os.environ.get("BUN_INSTALL") or "").strip()
+    root = Path(bun_install) if bun_install else Path.home() / ".bun"
+    return root / "install" / "global" / "node_modules"
+
+
+def _openclaw_update_detect_global_package_manager_for_root(root: Path) -> str | None:
+    package_name = _openclaw_update_package_name(root)
+    for manager in ("npm", "pnpm"):
+        global_root = _openclaw_update_global_root_from_command(manager)
+        if global_root is None:
+            continue
+        if _openclaw_update_global_root_owns_package(
+            package_root=root,
+            global_root=global_root,
+            package_name=package_name,
+        ):
+            return manager
+    if _openclaw_update_global_root_owns_package(
+        package_root=root,
+        global_root=_openclaw_update_bun_global_root(),
+        package_name=package_name,
+    ):
+        return "bun"
+    if _openclaw_update_has_owning_npm_command(root):
+        return "npm"
+    return None
+
+
+def _openclaw_update_owning_npm_command_candidates(root: Path) -> tuple[Path, ...]:
+    package_name = _openclaw_update_package_name(root)
+    global_root = _openclaw_update_global_root_from_package_root(root, package_name)
+    resolved_global_root = global_root.resolve(strict=False)
+    if resolved_global_root.name != "node_modules":
+        return ()
+    parent = resolved_global_root.parent
+    if parent.name == "lib":
+        prefix = parent.parent
+        return (prefix / "bin" / "npm", prefix / "bin" / "npm.cmd")
+    if os.name == "nt":
+        return (parent / "npm.cmd", parent / "npm")
+    return ()
+
+
+def _openclaw_update_has_owning_npm_command(root: Path) -> bool:
+    return any(
+        _doctor_path_exists(candidate)
+        for candidate in _openclaw_update_owning_npm_command_candidates(root)
+    )
 
 
 def _openclaw_update_deps_marker(root: Path, manager: str) -> tuple[Path | None, Path | None]:
@@ -19337,6 +19975,7 @@ const CHAT_COMMANDS = [
   { key: "tools", aliases: ["/tools"], acceptsArgs: true },
   { key: "skill", aliases: ["/skill"], acceptsArgs: true },
   { key: "status", aliases: ["/status"], acceptsArgs: false },
+  { key: "gateway-status", aliases: ["/gateway-status", "/gwstatus"], acceptsArgs: false },
   { key: "diagnostics", aliases: ["/diagnostics"], acceptsArgs: true },
   { key: "crestodian", aliases: ["/crestodian"], acceptsArgs: true },
   { key: "tasks", aliases: ["/tasks"], acceptsArgs: false },
@@ -38020,6 +38659,20 @@ function listBuiltinCommandStatusEntries() {
       category: "status",
     }),
     defineCommandStatusEntry({
+      key: "gateway-status",
+      nativeName: "gateway-status",
+      description: "Show gateway status summary.",
+      textAlias: "/gateway-status",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "gwstatus",
+      description: "Alias for /gateway-status.",
+      textAlias: "/gwstatus",
+      scope: "both",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
       key: "tasks",
       nativeName: "tasks",
       description: "List background tasks for this session.",
@@ -38266,7 +38919,7 @@ function buildHelpMessage(cfg) {
   lines.push(`  ${optionParts.join("  |  ")}`);
   lines.push("");
   lines.push("Status");
-  lines.push("  /status  |  /tasks  |  /whoami  |  /context");
+  lines.push("  /status  |  /gateway-status (/gwstatus)  |  /tasks  |  /whoami  |  /context");
   lines.push("");
   lines.push("Skills");
   lines.push("  /skill <name> [input]");
@@ -47785,6 +48438,38 @@ function datetimePickerAction(label, data, mode, options = {}) {
   };
 }
 
+function createGridLayout(height, actions = []) {
+  const colWidth = Math.floor(2500 / 3);
+  const rowHeight = Math.floor(Number(height) / 2);
+  const slots = Array.isArray(actions) ? actions.slice(0, 6) : [];
+  return [0, 1, 2, 3, 4, 5].map((index) => ({
+    bounds: {
+      x: (index % 3) * colWidth,
+      y: Math.floor(index / 3) * rowHeight,
+      width: colWidth,
+      height: rowHeight,
+    },
+    action: slots[index],
+  }));
+}
+
+function createDefaultMenuConfig() {
+  return {
+    size: { width: 2500, height: 843 },
+    selected: false,
+    name: "Default Menu",
+    chatBarText: "Menu",
+    areas: createGridLayout(843, [
+      messageAction("Help", "/help"),
+      messageAction("Status", "/status"),
+      messageAction("Settings", "/settings"),
+      messageAction("About", "/about"),
+      messageAction("Feedback", "/feedback"),
+      messageAction("Contact", "/contact"),
+    ]),
+  };
+}
+
 function createQuickReplyItems(labels = []) {
   return {
     items: labels.slice(0, 13).map((label) => ({
@@ -47869,7 +48554,8 @@ const lineSurfaceRuntime = {
 const lineRuntimeRuntime = {
   ...lineSurfaceRuntime,
   buildTemplateMessageFromPayload: (payload) => payload,
-  createDefaultMenuConfig: () => ({}),
+  createDefaultMenuConfig,
+  createGridLayout,
   createQuickReplyItems,
   datetimePickerAction,
   firstDefined,
@@ -85108,7 +85794,15 @@ function listProviderPluginCommandSpecs(provider) {
   }));
 }
 
-function getPluginCommandSpecs(provider) {
+function getPluginCommandSpecs(provider, options = {}) {
+  const providerKey = normalizePluginCommandName(provider);
+  const nativeCommandsAutoEnabled =
+    options &&
+    (options.nativeCommandsAutoEnabled === true ||
+      (options.config && options.config.nativeCommandsAutoEnabled === true));
+  if (providerKey && nativeCommandsAutoEnabled !== true) {
+    return [];
+  }
   return listProviderPluginCommandSpecs(provider);
 }
 
@@ -90234,7 +90928,22 @@ const blueBubblesRootRuntime = Object.assign(Object.create(genericSdk), {
 });
 
 const originalLoad = Module._load;
+let activePluginSdkAliasMap = null;
+
+function activePluginSdkAliasTarget(request) {
+  const aliasMap = activePluginSdkAliasMap;
+  if (!aliasMap || typeof aliasMap !== "object") {
+    return null;
+  }
+  const target = aliasMap[request];
+  return typeof target === "string" && target.trim() ? target : null;
+}
+
 Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
+  const aliasTarget = activePluginSdkAliasTarget(request);
+  if (aliasTarget) {
+    return loadRuntimeModuleSync(aliasTarget);
+  }
   if (
     request === "openclaw/plugin-sdk/twitch" ||
     request === "@openclaw/plugin-sdk/twitch"
@@ -92751,6 +93460,15 @@ async function loadRuntimeModule(entryPath) {
   }
 }
 
+function loadRuntimeModuleSync(entryPath) {
+  const resolved = path.resolve(entryPath);
+  const source = fs.readFileSync(resolved, "utf8");
+  if (/^\s*import\s/m.test(source) || /^\s*export\s+/m.test(source)) {
+    return requireTranspiledRuntimeModule(resolved, source);
+  }
+  return require(resolved);
+}
+
 function requireTranspiledRuntimeModule(entryPath, source) {
   let transformed = source
     .replace(
@@ -92765,6 +93483,15 @@ function requireTranspiledRuntimeModule(entryPath, source) {
       /import\s+([A-Za-z_$][\w$]*)\s+from\s+["']([^"']+)["'];?/g,
       (_match, localName, specifier) =>
         `const ${localName} = require("${specifier}").default || require("${specifier}");`,
+    )
+    .replace(
+      /export\s+(async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g,
+      (_match, asyncPrefix, name) =>
+        `exports.${name} = ${asyncPrefix || ""}function ${name}(`,
+    )
+    .replace(
+      /export\s+(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g,
+      (_match, _kind, name) => `exports.${name} =`,
     )
     .replace(/export\s+default\s+/g, "module.exports = ");
   const tempPath = path.join(
@@ -92860,7 +93587,17 @@ async function activatePlugin(plugin) {
   if (typeof entryPath !== "string" || !entryPath.trim()) {
     return null;
   }
-  const loaded = await loadRuntimeModule(entryPath);
+  const previousPluginSdkAliasMap = activePluginSdkAliasMap;
+  activePluginSdkAliasMap =
+    plugin.pluginSdkAliasMap && typeof plugin.pluginSdkAliasMap === "object"
+      ? plugin.pluginSdkAliasMap
+      : null;
+  let loaded;
+  try {
+    loaded = await loadRuntimeModule(entryPath);
+  } finally {
+    activePluginSdkAliasMap = previousPluginSdkAliasMap;
+  }
   const runtime = unwrapRuntimeExport(loaded);
   const activate =
     runtime && typeof runtime === "object"
@@ -92888,6 +93625,10 @@ async function activatePlugin(plugin) {
       factory: isFactory ? definition : undefined,
       factoryTool: isFactory,
       runtimeEntrySource: entryPath,
+      pluginSdkAliasMap:
+        plugin.pluginSdkAliasMap && typeof plugin.pluginSdkAliasMap === "object"
+          ? plugin.pluginSdkAliasMap
+          : undefined,
       config:
         context.config && typeof context.config === "object"
           ? context.config
@@ -93155,6 +93896,9 @@ def _native_plugin_runtime_specs_from_loader_payload(
         )
         config_payload = entry.get("config")
         raw_config_payload = entry.get("rawConfig", entry.get("raw_config"))
+        plugin_sdk_alias_map_payload = entry.get(
+            "pluginSdkAliasMap", entry.get("plugin_sdk_alias_map")
+        )
         activation_source_config_payload = entry.get(
             "activationSourceConfig", entry.get("activation_source_config")
         )
@@ -93180,6 +93924,8 @@ def _native_plugin_runtime_specs_from_loader_payload(
             }
             if runtime_entry_source is not None:
                 plugin_context["runtimeEntrySource"] = runtime_entry_source
+            if isinstance(plugin_sdk_alias_map_payload, Mapping):
+                plugin_context["pluginSdkAliasMap"] = dict(plugin_sdk_alias_map_payload)
             if isinstance(config_payload, Mapping):
                 plugin_context["config"] = dict(config_payload)
             if isinstance(raw_config_payload, Mapping):
@@ -98126,7 +98872,586 @@ def _normalize_pairing_setup_url(raw: str) -> str:
     except ValueError as exc:
         raise ValueError("Configured publicUrl is invalid.") from exc
     port = f":{parsed_port}" if parsed_port is not None else ""
+    if scheme == "ws" and not _is_mobile_pairing_cleartext_allowed_host(parsed.hostname):
+        raise ValueError(_mobile_pairing_cleartext_error())
     return f"{scheme}://{_format_pairing_host(parsed.hostname)}{port}"
+
+
+def _mobile_pairing_cleartext_error() -> str:
+    return (
+        "Tailscale and public mobile pairing require a secure gateway URL (wss://) "
+        "or Tailscale Serve/Funnel. Fix: use a private LAN IP address, prefer "
+        "gateway.tailscale.mode=serve, or set gateway.remote.url / "
+        "plugins.entries.device-pair.config.publicUrl to a wss:// URL. "
+        "ws:// is only valid for localhost, private LAN IP addresses, or the "
+        "Android emulator."
+    )
+
+
+def _is_mobile_pairing_cleartext_allowed_host(host: str) -> bool:
+    normalized = str(host or "").strip().strip("[]").lower()
+    if normalized in {"localhost", "10.0.2.2"}:
+        return True
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    if address.is_loopback or address.is_link_local:
+        return True
+    if address.version == 4:
+        return address.is_private and not str(address).startswith("100.")
+    return address.is_private
+
+
+def _is_pairing_loopback_host(host: str) -> bool:
+    normalized = str(host or "").strip().strip("[]").lower()
+    if normalized in {"localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _qr_loopback_bind_error() -> str:
+    return (
+        "Gateway is only bound to loopback, so OpenZues cannot infer a mobile "
+        "setup-code URL. Provide an explicit reachable URL with --url, use "
+        "--remote with gateway.remote.url, or configure gateway.tailscale.mode=serve/funnel."
+    )
+
+
+def _qr_config_mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _qr_config_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _qr_gateway_config(
+    config_snapshot: Mapping[str, object] | None,
+) -> Mapping[str, object]:
+    if config_snapshot is None:
+        return {}
+    return _qr_config_mapping(config_snapshot.get("gateway"))
+
+
+def _qr_gateway_remote_config(
+    config_snapshot: Mapping[str, object] | None,
+) -> Mapping[str, object]:
+    return _qr_config_mapping(_qr_gateway_config(config_snapshot).get("remote"))
+
+
+def _qr_gateway_tailscale_config(
+    config_snapshot: Mapping[str, object] | None,
+) -> Mapping[str, object]:
+    return _qr_config_mapping(_qr_gateway_config(config_snapshot).get("tailscale"))
+
+
+_TAILSCALE_STATUS_COMMAND_CANDIDATES = (
+    "tailscale",
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+)
+_QR_REMOTE_SECRET_TARGET_IDS = ("gateway.remote.token", "gateway.remote.password")
+
+
+def _qr_parse_noisy_json_object(raw: str) -> Mapping[str, object] | None:
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        parsed = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, Mapping) else None
+
+
+def _qr_extract_tailscale_host(raw: str) -> str | None:
+    status = _qr_parse_noisy_json_object(raw)
+    self_status = _qr_config_mapping(status.get("Self")) if status else {}
+    dns_name = _qr_config_text(self_status.get("DNSName"))
+    if dns_name:
+        return dns_name.rstrip(".")
+    tailscale_ips = self_status.get("TailscaleIPs")
+    if isinstance(tailscale_ips, Sequence) and not isinstance(tailscale_ips, str):
+        for value in tailscale_ips:
+            ip = _qr_config_text(value)
+            if ip:
+                return ip
+    return None
+
+
+def _resolve_qr_tailscale_host() -> str | None:
+    for candidate in _TAILSCALE_STATUS_COMMAND_CANDIDATES:
+        try:
+            result = subprocess.run(
+                [candidate, "status", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if getattr(result, "returncode", 1) != 0:
+            continue
+        host = _qr_extract_tailscale_host(str(getattr(result, "stdout", "") or ""))
+        if host:
+            return host
+    return None
+
+
+_QR_ENV_TEMPLATE_SECRET_REF_RE = re.compile(r"^\$\{([A-Z][A-Z0-9_]{0,127})\}$")
+_QR_LEGACY_ENV_SECRET_REF_PREFIX = "secretref-env:"
+
+
+def _qr_secret_ref_label(value: object) -> str | None:
+    if _is_secret_ref(value):
+        source = _optional_cli_string(cast(Mapping[str, object], value).get("source"))
+        provider = _optional_cli_string(cast(Mapping[str, object], value).get("provider"))
+        secret_id = _optional_cli_string(cast(Mapping[str, object], value).get("id"))
+        if source and secret_id:
+            return f"{source}:{provider or 'default'}:{secret_id}"
+    if isinstance(value, str):
+        trimmed = value.strip()
+        match = _QR_ENV_TEMPLATE_SECRET_REF_RE.match(trimmed)
+        if match:
+            return f"env:default:{match.group(1)}"
+        if trimmed.startswith(_QR_LEGACY_ENV_SECRET_REF_PREFIX):
+            env_name = trimmed[len(_QR_LEGACY_ENV_SECRET_REF_PREFIX) :].strip()
+            if env_name:
+                return f"env:default:{env_name}"
+    return None
+
+
+def _qr_secret_ref_parts(value: object) -> tuple[str, str, str] | None:
+    label = _qr_secret_ref_label(value)
+    if label is None:
+        return None
+    source, provider, secret_id = label.split(":", 2)
+    if not source or not provider or not secret_id:
+        return None
+    return source, provider, secret_id
+
+
+def _qr_env_secret_ref_name(value: object) -> str | None:
+    parts = _qr_secret_ref_parts(value)
+    if parts is None:
+        return None
+    source, _, env_name = parts
+    if source != "env":
+        return None
+    return env_name
+
+
+def _qr_json_pointer_read(payload: object, pointer: str) -> object | None:
+    if pointer == "":
+        return payload
+    if not pointer.startswith("/"):
+        return None
+    current = payload
+    for raw_part in pointer.split("/")[1:]:
+        part = raw_part.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, Mapping):
+            if part not in current:
+                return None
+            current = current[part]
+            continue
+        if isinstance(current, list):
+            try:
+                index = int(part)
+            except ValueError:
+                return None
+            if index < 0 or index >= len(current):
+                return None
+            current = current[index]
+            continue
+        return None
+    return current
+
+
+def _qr_strip_single_trailing_newline(value: str) -> str:
+    if value.endswith("\r\n"):
+        return value[:-2]
+    if value.endswith("\n") or value.endswith("\r"):
+        return value[:-1]
+    return value
+
+
+def _resolve_qr_file_secret_ref(
+    config_snapshot: Mapping[str, object],
+    *,
+    provider: str,
+    secret_id: str,
+) -> str | None:
+    secrets_config = _qr_config_mapping(config_snapshot.get("secrets"))
+    providers = _qr_config_mapping(secrets_config.get("providers"))
+    provider_config = _qr_config_mapping(providers.get(provider))
+    if str(provider_config.get("source") or "").strip().lower() != "file":
+        return None
+    path_text = _qr_config_text(provider_config.get("path"))
+    if path_text is None:
+        return None
+    provider_path = Path(path_text).expanduser()
+    if not provider_path.is_absolute() or not provider_path.is_file():
+        return None
+    try:
+        raw_bytes = provider_path.read_bytes()
+    except OSError:
+        return None
+    max_bytes = provider_config.get("maxBytes")
+    max_byte_count = int(max_bytes) if isinstance(max_bytes, int) and max_bytes > 0 else 1024 * 1024
+    if len(raw_bytes) > max_byte_count:
+        return None
+    raw_text = raw_bytes.decode("utf-8-sig")
+    mode = str(provider_config.get("mode") or "json").strip()
+    if mode == "singleValue":
+        if secret_id != "value":
+            return None
+        return _optional_cli_string(_qr_strip_single_trailing_newline(raw_text))
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return None
+    resolved = _qr_json_pointer_read(payload, secret_id)
+    return _optional_cli_string(resolved)
+
+
+def _qr_exec_provider_env(provider_config: Mapping[str, object]) -> dict[str, str]:
+    child_env: dict[str, str] = {}
+    pass_env = provider_config.get("passEnv")
+    if isinstance(pass_env, Sequence) and not isinstance(pass_env, str):
+        for key in pass_env:
+            env_key = _optional_cli_string(key)
+            if env_key and env_key in os.environ:
+                child_env[env_key] = os.environ[env_key]
+    raw_env = provider_config.get("env")
+    if isinstance(raw_env, Mapping):
+        for key, value in raw_env.items():
+            env_key = _optional_cli_string(key)
+            env_value = _optional_cli_string(value)
+            if env_key and env_value is not None:
+                child_env[env_key] = env_value
+    return child_env
+
+
+def _qr_parse_exec_secret_value(
+    *,
+    secret_id: str,
+    stdout: str,
+    json_only: bool,
+) -> str | None:
+    trimmed = stdout.strip()
+    if not trimmed:
+        return None
+    try:
+        parsed = json.loads(trimmed)
+    except json.JSONDecodeError:
+        return None if json_only else _optional_cli_string(trimmed)
+    if not isinstance(parsed, Mapping):
+        if not json_only and isinstance(parsed, str):
+            return _optional_cli_string(parsed)
+        return None
+    if parsed.get("protocolVersion") != 1:
+        return None
+    values = parsed.get("values")
+    if not isinstance(values, Mapping) or secret_id not in values:
+        return None
+    return _optional_cli_string(values.get(secret_id))
+
+
+def _resolve_qr_exec_secret_ref(
+    config_snapshot: Mapping[str, object],
+    *,
+    provider: str,
+    secret_id: str,
+) -> str | None:
+    secrets_config = _qr_config_mapping(config_snapshot.get("secrets"))
+    providers = _qr_config_mapping(secrets_config.get("providers"))
+    provider_config = _qr_config_mapping(providers.get(provider))
+    if str(provider_config.get("source") or "").strip().lower() != "exec":
+        return None
+    command_text = _qr_config_text(provider_config.get("command"))
+    if command_text is None:
+        return None
+    command_path = Path(command_text).expanduser()
+    if not command_path.is_absolute() or not command_path.exists():
+        return None
+    raw_args = provider_config.get("args")
+    args = [
+        str(arg)
+        for arg in raw_args
+        if isinstance(arg, (str, int, float))
+    ] if isinstance(raw_args, Sequence) and not isinstance(raw_args, str) else []
+    request_payload = json.dumps(
+        {"protocolVersion": 1, "provider": provider, "ids": [secret_id]},
+        separators=(",", ":"),
+    )
+    timeout_ms = provider_config.get("timeoutMs")
+    timeout_seconds = (
+        float(timeout_ms) / 1000
+        if isinstance(timeout_ms, int) and timeout_ms > 0
+        else 5.0
+    )
+    try:
+        result = subprocess.run(
+            [str(command_path), *args],
+            input=request_payload,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+            env=_qr_exec_provider_env(provider_config) or None,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    max_output_bytes = provider_config.get("maxOutputBytes")
+    max_byte_count = (
+        int(max_output_bytes)
+        if isinstance(max_output_bytes, int) and max_output_bytes > 0
+        else 1024 * 1024
+    )
+    if len((result.stdout or "").encode("utf-8")) > max_byte_count:
+        return None
+    json_only = provider_config.get("jsonOnly")
+    return _qr_parse_exec_secret_value(
+        secret_id=secret_id,
+        stdout=result.stdout or "",
+        json_only=json_only if isinstance(json_only, bool) else True,
+    )
+
+
+def _qr_gateway_secrets_resolve_base_url(app_settings: Settings) -> str | None:
+    base_url = _control_plane_base_url(app_settings)
+    parsed = urlparse(base_url)
+    host = parsed.hostname or app_settings.host
+    if parsed.port is not None:
+        port = parsed.port
+    elif parsed.scheme == "https":
+        port = 443
+    else:
+        port = 80
+    if not _control_plane_metadata_endpoint_is_reachable(host, port, timeout_seconds=0.05):
+        return None
+    return base_url
+
+
+def _qr_gateway_resolve_string_array(value: object) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    normalized: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or not entry.strip():
+            return None
+        normalized.append(entry.strip())
+    return normalized
+
+
+def _apply_qr_gateway_secret_resolve_payload(
+    config_snapshot: Mapping[str, object],
+    payload: object,
+) -> tuple[Mapping[str, object], list[str], set[str]]:
+    if not isinstance(payload, Mapping):
+        return config_snapshot, [], set()
+    raw_assignments = payload.get("assignments")
+    if not isinstance(raw_assignments, list):
+        return config_snapshot, [], set()
+    resolved_snapshot = copy.deepcopy(dict(config_snapshot))
+    diagnostics: list[str] = []
+    raw_diagnostics = payload.get("diagnostics")
+    if isinstance(raw_diagnostics, list):
+        for entry in raw_diagnostics:
+            text = _optional_cli_string(entry)
+            if text is not None:
+                diagnostics.append(text)
+    resolved_paths: set[str] = set()
+    for entry in raw_assignments:
+        if not isinstance(entry, Mapping):
+            continue
+        path_segments = _qr_gateway_resolve_string_array(entry.get("pathSegments"))
+        if path_segments not in (
+            ["gateway", "remote", "token"],
+            ["gateway", "remote", "password"],
+        ):
+            continue
+        value = _optional_cli_string(entry.get("value"))
+        if value is None:
+            continue
+        gateway = resolved_snapshot.setdefault("gateway", {})
+        if not isinstance(gateway, dict):
+            continue
+        remote_config = gateway.setdefault("remote", {})
+        if not isinstance(remote_config, dict):
+            continue
+        field = path_segments[-1]
+        remote_config[field] = value
+        path = ".".join(path_segments)
+        resolved_paths.add(path)
+        diagnostics.append(f"resolved {path}")
+    return resolved_snapshot, _dedupe_cli_strings(diagnostics), resolved_paths
+
+
+def _resolve_qr_remote_secret_refs_via_gateway(
+    config_snapshot: Mapping[str, object],
+    *,
+    app_settings: Settings,
+) -> tuple[Mapping[str, object], list[str], set[str]]:
+    base_url = _qr_gateway_secrets_resolve_base_url(app_settings)
+    if base_url is None:
+        return config_snapshot, [], set()
+    try:
+        payload = _watch_api_json(
+            base_url,
+            "/api/gateway/node-methods/call",
+            method="POST",
+            payload={
+                "method": "secrets.resolve",
+                "params": {
+                    "commandName": "qr --remote",
+                    "targetIds": list(_QR_REMOTE_SECRET_TARGET_IDS),
+                },
+            },
+            timeout_seconds=2.0,
+        )
+    except RuntimeError:
+        return config_snapshot, [], set()
+    return _apply_qr_gateway_secret_resolve_payload(config_snapshot, payload)
+
+
+def _resolve_qr_remote_secret_refs(
+    config_snapshot: Mapping[str, object] | None,
+    *,
+    app_settings: Settings | None = None,
+) -> tuple[Mapping[str, object] | None, list[str]]:
+    if config_snapshot is None:
+        return None, []
+    resolved_snapshot = copy.deepcopy(dict(config_snapshot))
+    gateway = resolved_snapshot.get("gateway")
+    if not isinstance(gateway, dict):
+        return resolved_snapshot, []
+    remote_config = gateway.get("remote")
+    if not isinstance(remote_config, dict):
+        return resolved_snapshot, []
+
+    diagnostics: list[str] = []
+    if app_settings is not None:
+        gateway_snapshot, gateway_diagnostics, _gateway_resolved_paths = (
+            _resolve_qr_remote_secret_refs_via_gateway(
+                resolved_snapshot,
+                app_settings=app_settings,
+            )
+        )
+        resolved_snapshot = copy.deepcopy(dict(gateway_snapshot))
+        diagnostics.extend(gateway_diagnostics)
+        gateway = resolved_snapshot.get("gateway")
+        remote_config = gateway.get("remote") if isinstance(gateway, dict) else None
+        if not isinstance(remote_config, dict):
+            return resolved_snapshot, _dedupe_cli_strings(diagnostics)
+
+    for field in ("token", "password"):
+        value = remote_config.get(field)
+        parts = _qr_secret_ref_parts(value)
+        if parts is None:
+            continue
+        source, provider, secret_id = parts
+        ref_label = f"{source}:{provider}:{secret_id}"
+        path = f"gateway.remote.{field}"
+        if source == "env":
+            resolved = _optional_cli_string(os.environ.get(secret_id))
+        elif source == "file":
+            resolved = _resolve_qr_file_secret_ref(
+                resolved_snapshot,
+                provider=provider,
+                secret_id=secret_id,
+            )
+        elif source == "exec":
+            resolved = _resolve_qr_exec_secret_ref(
+                resolved_snapshot,
+                provider=provider,
+                secret_id=secret_id,
+            )
+        else:
+            resolved = None
+        if resolved is None:
+            diagnostics.append(f"{path} SecretRef is unresolved ({ref_label}).")
+            continue
+        remote_config[field] = resolved
+        diagnostics.append(f"resolved {path}")
+    return resolved_snapshot, _dedupe_cli_strings(diagnostics)
+
+
+def _emit_qr_secret_resolve_diagnostics(
+    diagnostics: Sequence[str],
+    *,
+    json_output: bool,
+    setup_code_only: bool,
+) -> None:
+    if not diagnostics:
+        return
+    to_stderr = json_output or setup_code_only
+    for diagnostic in diagnostics:
+        typer.echo(f"[secrets] {diagnostic}", err=to_stderr)
+
+
+def _normalize_pairing_config_url(raw: str, *, invalid_error: str) -> str:
+    try:
+        return _normalize_pairing_setup_url(raw)
+    except ValueError as exc:
+        if str(exc) == "Configured publicUrl is invalid.":
+            raise ValueError(invalid_error) from exc
+        raise
+
+
+def _resolve_qr_auth_label(
+    *,
+    token: str | None,
+    password: str | None,
+    remote: bool,
+    config_snapshot: Mapping[str, object] | None,
+) -> str:
+    if str(password or "").strip():
+        return "password"
+    if str(token or "").strip():
+        return "token"
+
+    gateway_config = _qr_gateway_config(config_snapshot)
+    if remote:
+        remote_config = _qr_gateway_remote_config(config_snapshot)
+        if _qr_config_text(remote_config.get("token")):
+            return "token"
+        if _qr_config_text(remote_config.get("password")):
+            return "password"
+
+    auth_config = _qr_config_mapping(gateway_config.get("auth"))
+    auth_mode = str(auth_config.get("mode") or "").strip().lower()
+    has_token = _qr_config_text(auth_config.get("token")) is not None
+    has_password = _qr_config_text(auth_config.get("password")) is not None
+    if auth_mode == "password":
+        if has_password:
+            return "password"
+        if remote:
+            raise ValueError(
+                "Gateway auth is set to password, but no password is configured."
+            )
+    if auth_mode == "token":
+        if has_token:
+            return "token"
+        if remote:
+            raise ValueError("Gateway auth is set to token, but no token is configured.")
+    if has_token:
+        return "token"
+    if has_password:
+        return "password"
+    if remote:
+        raise ValueError("Gateway auth is not configured (no token or password).")
+    return "bootstrap-token"
 
 
 def _resolve_qr_gateway_url(
@@ -98135,16 +99460,42 @@ def _resolve_qr_gateway_url(
     url: str | None,
     public_url: str | None,
     remote: bool,
+    config_snapshot: Mapping[str, object] | None = None,
 ) -> tuple[str, str]:
     explicit_url = str(url or "").strip() or str(public_url or "").strip()
     if explicit_url:
         return _normalize_pairing_setup_url(explicit_url), (
             "cli.url" if str(url or "").strip() else "cli.publicUrl"
         )
+    remote_url = _qr_config_text(_qr_gateway_remote_config(config_snapshot).get("url"))
+    if remote:
+        if remote_url:
+            return (
+                _normalize_pairing_config_url(
+                    remote_url,
+                    invalid_error="Configured gateway.remote.url is invalid.",
+                ),
+                "gateway.remote.url",
+            )
+    tailscale_mode = str(
+        _qr_gateway_tailscale_config(config_snapshot).get("mode") or "off"
+    ).strip().lower()
+    if tailscale_mode in {"serve", "funnel"}:
+        tailscale_host = _resolve_qr_tailscale_host()
+        if not tailscale_host:
+            raise ValueError(
+                "Tailscale Serve is enabled, but MagicDNS could not be resolved."
+            )
+        return (
+            f"wss://{_format_pairing_host(tailscale_host)}",
+            f"gateway.tailscale.mode={tailscale_mode}",
+        )
     if remote:
         raise ValueError(
             "qr --remote requires gateway.remote.url (or gateway.tailscale.mode=serve/funnel)."
         )
+    if _is_pairing_loopback_host(app_settings.host):
+        raise ValueError(_qr_loopback_bind_error())
     scheme = "wss" if remote else "ws"
     return (
         _normalize_pairing_setup_url(
@@ -98326,11 +99677,32 @@ def qr_command(
         if str(token or "").strip() and str(password or "").strip():
             raise ValueError("Use either --token or --password, not both.")
         app_settings = _runtime_settings()
+        config_snapshot: Mapping[str, object] | None = (
+            _build_cli_gateway_config_service(app_settings).build_snapshot()
+        )
+        secret_diagnostics: list[str] = []
+        if remote and not str(token or "").strip() and not str(password or "").strip():
+            config_snapshot, secret_diagnostics = _resolve_qr_remote_secret_refs(
+                config_snapshot,
+                app_settings=app_settings,
+            )
+            _emit_qr_secret_resolve_diagnostics(
+                secret_diagnostics,
+                json_output=json_output,
+                setup_code_only=setup_code_only,
+            )
         gateway_url, url_source = _resolve_qr_gateway_url(
             app_settings=app_settings,
             url=url,
             public_url=public_url,
             remote=remote,
+            config_snapshot=config_snapshot,
+        )
+        auth_label = _resolve_qr_auth_label(
+            token=token,
+            password=password,
+            remote=remote,
+            config_snapshot=config_snapshot,
         )
         issued = issue_device_bootstrap_token(base_dir=app_settings.data_dir)
         setup_code = _encode_pairing_setup_code(
@@ -98347,13 +99719,6 @@ def qr_command(
         typer.echo(setup_code)
         return
 
-    auth_label = (
-        "password"
-        if str(password or "").strip()
-        else "token"
-        if str(token or "").strip()
-        else "bootstrap-token"
-    )
     payload = {
         "setupCode": setup_code,
         "gatewayUrl": gateway_url,
@@ -103831,6 +105196,126 @@ def tasks_show_command(
     _emit_task_show(task, json_output=json_output)
 
 
+def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    pending_value = payload.get("pending")
+    paired_value = payload.get("paired")
+    pending: list[object] = pending_value if isinstance(pending_value, list) else []
+    paired: list[object] = paired_value if isinstance(paired_value, list) else []
+    if pending:
+        typer.echo(f"Pending ({len(pending)})")
+        for item in pending:
+            if not isinstance(item, dict):
+                continue
+            request_id = _optional_cli_string(item.get("requestId")) or "<unknown>"
+            device_id = _optional_cli_string(item.get("displayName")) or _optional_cli_string(
+                item.get("deviceId")
+            )
+            device_text = f" {device_id}" if device_id is not None else ""
+            typer.echo(f"  {request_id}{device_text}")
+    if paired:
+        typer.echo(f"Paired ({len(paired)})")
+        for item in paired:
+            if not isinstance(item, dict):
+                continue
+            device_id = _optional_cli_string(item.get("displayName")) or _optional_cli_string(
+                item.get("deviceId")
+            )
+            roles = item.get("roles")
+            role_text = ""
+            if isinstance(roles, list) and roles:
+                role_text = " " + ", ".join(str(role) for role in roles)
+            typer.echo(f"  {device_id or '<unknown>'}{role_text}")
+    if not pending and not paired:
+        typer.echo("No device pairing entries.")
+
+
+def _latest_pending_device(payload: dict[str, object]) -> dict[str, object] | None:
+    pending = payload.get("pending")
+    if not isinstance(pending, list):
+        return None
+    candidates = [item for item in pending if isinstance(item, dict)]
+    if not candidates:
+        return None
+
+    def sort_key(item: dict[object, object]) -> int:
+        timestamp = item.get("ts")
+        if isinstance(timestamp, int) and not isinstance(timestamp, bool):
+            return timestamp
+        return -1
+
+    latest = max(candidates, key=sort_key)
+    return {str(key): value for key, value in latest.items() if isinstance(key, str)}
+
+
+@devices_app.command("list")
+def devices_list_command(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "device.pair.list", {})
+
+    result = _run(_run_with_services(_action))
+    _emit_devices_list(result, json_output=json_output)
+
+
+@devices_app.command("approve")
+def devices_approve_command(
+    request_id: str | None = typer.Argument(None, help="Pending request id."),
+    latest: bool = typer.Option(
+        False,
+        "--latest",
+        help="Preview the latest pending request before explicit approval.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    normalized_request_id = _optional_cli_string(request_id)
+    if normalized_request_id is None or latest:
+
+        async def _preview_action(services: CliServices) -> dict[str, object]:
+            return await _call_gateway_node_method(services, "device.pair.list", {})
+
+        listing = _run(_run_with_services(_preview_action))
+        selected = _latest_pending_device(listing)
+        if selected is None:
+            typer.echo("No pending device pairing requests to approve", err=True)
+            raise typer.Exit(code=1)
+        selected_request_id = _optional_cli_string(selected.get("requestId"))
+        if selected_request_id is None:
+            typer.echo("Selected device pairing request is missing requestId", err=True)
+            raise typer.Exit(code=1)
+        preview = {
+            "selected": selected,
+            "approveCommand": (
+                f"openzues devices approve {selected_request_id}"
+                f"{' --json' if json_output else ''}"
+            ),
+        }
+        if json_output:
+            typer.echo(json.dumps(preview, indent=2))
+        else:
+            _emit_devices_list({"pending": [selected], "paired": []}, json_output=False)
+            typer.echo(f"Run: {preview['approveCommand']}", err=True)
+        raise typer.Exit(code=1)
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(
+            services,
+            "device.pair.approve",
+            {"requestId": normalized_request_id},
+        )
+
+    result = _run(_run_with_services(_action))
+    if json_output:
+        typer.echo(json.dumps(result, indent=2))
+        return
+    device = result.get("device") if isinstance(result.get("device"), dict) else {}
+    device_id = _optional_cli_string(device.get("deviceId")) if isinstance(device, dict) else None
+    typer.echo(f"Approved {device_id or normalized_request_id}")
+
+
 @sessions_app.callback(invoke_without_command=True)
 def sessions_inventory_command(
     ctx: typer.Context,
@@ -104934,7 +106419,37 @@ def doctor(
         help="Disable interactive doctor prompts; accepted for update-runner parity.",
     ),
 ) -> None:
-    _ = non_interactive
+    package_root = _openzues_package_root()
+
+    async def _preflight_update_action(services: CliServices) -> dict[str, object]:
+        payload = await services.runtime_updates.run_update(timeout_ms=None)
+        return dict(payload)
+
+    if _doctor_should_offer_update_before_checks(
+        root=package_root,
+        json_output=json_output,
+        fix=fix,
+        non_interactive=non_interactive,
+    ):
+        git_checkout = _doctor_update_detect_git_checkout(package_root)
+        if git_checkout == "git" and typer.confirm(
+            "Update OpenZues from git before running doctor?",
+            default=True,
+        ):
+            typer.echo("Update")
+            typer.echo("Running update (fetch/rebase/build/ui:build/doctor)...")
+            update_payload = _run(_run_with_services(_preflight_update_action))
+            _emit_update_run_result(update_payload, json_output=False)
+            if update_payload.get("status") == "ok":
+                typer.echo("Update completed (doctor already ran as part of the update).")
+                return
+        elif git_checkout == "not-git":
+            typer.echo("Update")
+            typer.echo("This install is not a git checkout.")
+            typer.echo(
+                "Run `openzues update` to update via your package manager (npm/pnpm), "
+                "then rerun doctor."
+            )
 
     async def _action(services: CliServices) -> dict[str, object]:
         view = await _try_live_hermes_doctor_view(services.settings)
@@ -105083,6 +106598,67 @@ def doctor(
     _emit_hermes_doctor(payload, json_output=json_output)
 
 
+@app.command("completion")
+def completion(
+    write_state: bool = typer.Option(
+        False,
+        "--write-state",
+        help="Write the current shell completion cache without stdout.",
+    ),
+    install: bool = typer.Option(
+        False,
+        "--install",
+        "-i",
+        help="Install cached completion into the current shell profile.",
+    ),
+) -> None:
+    shell = _doctor_completion_shell_from_env()
+    cache_path = _doctor_completion_cache_path(
+        data_dir=settings.data_dir,
+        shell=shell,
+        bin_name="openzues",
+    )
+    if write_state:
+        generated = [
+            _doctor_completion_generate_cache(
+                _doctor_completion_cache_path(
+                    data_dir=settings.data_dir,
+                    shell=cache_shell,
+                    bin_name="openzues",
+                ),
+                shell=cache_shell,
+            )
+            for cache_shell in _DOCTOR_COMPLETION_WRITE_STATE_SHELLS
+        ]
+        if not all(generated):
+            raise typer.Exit(code=1)
+        return
+
+    if install:
+        if not _doctor_completion_generate_cache(cache_path):
+            typer.echo(f"Failed to generate completion cache at {cache_path}.", err=True)
+            raise typer.Exit(code=1)
+        profile_path = _doctor_completion_profile_path(shell=shell)
+        try:
+            changed = _doctor_completion_update_profile(
+                shell=shell,
+                bin_name="openzues",
+                cache_path=cache_path,
+                profile_path=profile_path,
+            )
+        except OSError as exc:
+            typer.echo(f"Failed to update {shell} profile: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        action = "Updated" if changed else "Kept"
+        typer.echo(f"{action} {shell} completion in {profile_path}.")
+        return
+
+    script = _doctor_completion_script_for_shell(shell)
+    if not script:
+        raise typer.Exit(code=1)
+    typer.echo(script, nl=False)
+
+
 @hermes_profile_app.callback()
 def hermes_profile_show(
     ctx: typer.Context,
@@ -105223,19 +106799,73 @@ def update_root(
     root = _openzues_package_root()
     install_kind = _openclaw_update_install_kind(root)
     if install_kind == "package":
-        effective_channel = requested_channel or "stable"
+        if _openclaw_update_running_inside_gateway_service():
+            typer.echo(
+                "Package updates cannot run from inside the gateway service process.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        stored_channel = _openclaw_update_read_stored_channel_for_preview()
+        effective_channel = requested_channel or stored_channel or "stable"
         explicit_tag = _openclaw_update_normalize_package_target(tag)
         target_tag = explicit_tag or _openclaw_update_channel_to_package_tag(effective_channel)
+        current_version = _openclaw_update_read_package_version(root)
+        target_version: str | None = None
+        fallback_to_latest = False
         if not explicit_tag:
             resolved = _openclaw_update_resolve_npm_channel_tag(
                 effective_channel,
                 timeout_seconds=timeout_seconds,
             )
             target_tag = _optional_cli_string(resolved.get("tag")) or target_tag
+            target_version = _optional_cli_string(resolved.get("version"))
+            fallback_to_latest = effective_channel == "beta" and target_tag == "latest"
+        else:
+            target_version = _openclaw_update_resolve_target_version(
+                target_tag,
+                timeout_seconds=timeout_seconds,
+            )
+        downgrade_risk = _openclaw_update_package_downgrade_risk(
+            tag=target_tag,
+            current_version=current_version,
+            target_version=target_version,
+            fallback_to_latest=fallback_to_latest,
+        )
+        if downgrade_risk and not yes:
+            if json_output or not _doctor_update_offer_is_interactive():
+                typer.echo(
+                    "\n".join(
+                        [
+                            "Downgrade confirmation required.",
+                            "Downgrading can break configuration. Re-run in a TTY to confirm.",
+                        ]
+                    ),
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+            target_label = target_version or f"{target_tag} (unknown)"
+            message = (
+                f"Downgrading from {current_version} to {target_label} can break configuration. "
+                "Continue?"
+            )
+            if not typer.confirm(
+                message,
+                default=False,
+            ):
+                if not json_output:
+                    typer.echo("Update cancelled.")
+                raise typer.Exit(code=0)
         package_spec = _openclaw_update_resolve_global_install_spec(
             package_name=_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,
             tag=target_tag,
         )
+        runtime_preflight_error = _openclaw_update_package_runtime_preflight_error(
+            target_tag,
+            timeout_seconds=timeout_seconds,
+        )
+        if runtime_preflight_error is not None:
+            typer.echo(runtime_preflight_error, err=True)
+            raise typer.Exit(code=1)
         package_manager = _openclaw_update_package_manager(root)
 
         async def run_package_update_with_plugins(services: CliServices) -> dict[str, object]:
@@ -105250,7 +106880,13 @@ def update_root(
                 payload,
                 requested_channel,
             )
-            return await _openclaw_update_attach_post_update_plugins(services, payload)
+            payload = await _openclaw_update_attach_post_update_plugins(services, payload)
+            return await _openclaw_update_attach_restart_health(
+                services,
+                payload,
+                restart=restart,
+                timeout_seconds=timeout_seconds,
+            )
 
         payload = _run(
             _run_with_services(run_package_update_with_plugins)

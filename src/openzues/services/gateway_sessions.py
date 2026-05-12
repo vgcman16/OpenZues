@@ -41,6 +41,7 @@ _OPENCLAW_SESSION_LIST_KINDS = {
     "global",
     "thread",
 }
+_OPENCLAW_IMPLICIT_AGENT_RUNTIME = {"id": "pi", "source": "implicit"}
 _TRANSCRIPT_USAGE_MESSAGE_LIMIT = 1_000
 _SESSION_MESSAGE_INLINE_DIRECTIVE_RE = re.compile(
     r"\[\[\s*(?:reply_to(?:_current|\s*:\s*[^\]]+)?|audio_as_voice)\s*\]\]",
@@ -698,6 +699,9 @@ class GatewaySessionsService:
             "totalTokens": _int_or_none(transcript_usage.get("totalTokens")),
             "modelProvider": resolved_model_provider,
             "model": resolved_model,
+            "agentRuntime": openclaw_agent_runtime_metadata_for_session_key(
+                session.current_session_key
+            ),
             "contextTokens": context_tokens,
         }
         total_tokens_fresh = _bool_or_none(transcript_usage.get("totalTokensFresh"))
@@ -1884,6 +1888,11 @@ def _context_tokens_for_model(
     if normalized_provider == "anthropic" and "claude-sonnet-4" in normalized_model:
         return 1_048_576
     return None
+
+
+def openclaw_agent_runtime_metadata_for_session_key(session_key: object) -> dict[str, str]:
+    """Return OpenClaw-shaped runtime metadata for the session's agent."""
+    return dict(_OPENCLAW_IMPLICIT_AGENT_RUNTIME)
 
 
 def _apply_live_usage_metadata(

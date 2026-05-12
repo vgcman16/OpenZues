@@ -465,6 +465,99 @@ async def test_voicewake_methods_surface_defaults_persist_updates_and_broadcast(
 
 
 @pytest.mark.asyncio
+async def test_voicewake_routing_methods_persist_normalize_and_broadcast(
+    tmp_path,
+) -> None:
+    registry = GatewayNodeRegistry()
+    connection = FakeNodeConnection("conn-voicewake-routing-node-1")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-voicewake-routing-node-1",
+            device_id="voicewake-routing-node-1",
+            platform="ios",
+        ),
+    )
+
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(
+        registry,
+        hub=hub,
+        voicewake_service=GatewayVoiceWakeService(tmp_path),
+    )
+
+    initial = await service.call("voicewake.routing.get", {})
+
+    async with hub.subscribe() as queue:
+        updated = await service.call(
+            "voicewake.routing.set",
+            {
+                "config": {
+                    "defaultTarget": {"mode": "current"},
+                    "routes": [
+                        {"trigger": "  Robot   Wake! ", "target": {"agentId": "MAIN"}},
+                        {
+                            "trigger": "ship status",
+                            "target": {"sessionKey": "agent:builder:main"},
+                        },
+                    ],
+                }
+            },
+            now_ms=4567,
+        )
+        published = await asyncio.wait_for(queue.get(), timeout=1)
+
+    reloaded = await service.call("voicewake.routing.get", {})
+
+    assert initial == {
+        "config": {
+            "version": 1,
+            "defaultTarget": {"mode": "current"},
+            "routes": [],
+            "updatedAtMs": 0,
+        }
+    }
+    assert updated["config"]["version"] == 1
+    assert updated["config"]["defaultTarget"] == {"mode": "current"}
+    assert updated["config"]["routes"] == [
+        {"trigger": "robot wake", "target": {"agentId": "main"}},
+        {"trigger": "ship status", "target": {"sessionKey": "agent:builder:main"}},
+    ]
+    assert updated["config"]["updatedAtMs"] == 4567
+    assert reloaded == updated
+    assert connection.sent_events[-1] == {
+        "event": "voicewake.routing.changed",
+        "payload": updated,
+    }
+    assert published["type"] == "gateway_event"
+    assert published["event"] == "voicewake.routing.changed"
+    assert published["payload"] == updated
+    assert isinstance(published["createdAt"], str)
+
+    with pytest.raises(ValueError, match="voicewake\\.routing\\.set requires config: object"):
+        await service.call("voicewake.routing.set", {"config": None})
+    with pytest.raises(ValueError, match="config\\.routes must be an array"):
+        await service.call("voicewake.routing.set", {"config": {"routes": "oops"}})
+    with pytest.raises(ValueError, match="cannot include both agentId and sessionKey"):
+        await service.call(
+            "voicewake.routing.set",
+            {
+                "config": {
+                    "routes": [
+                        {
+                            "trigger": "robot wake",
+                            "target": {
+                                "agentId": "main",
+                                "sessionKey": "agent:main:main",
+                            },
+                        }
+                    ]
+                }
+            },
+        )
+
+
+@pytest.mark.asyncio
 async def test_talk_mode_persists_updates_and_broadcast(tmp_path) -> None:
     registry = GatewayNodeRegistry()
     connection = FakeNodeConnection("conn-talk-mode-node-1")
@@ -1223,6 +1316,7 @@ async def test_device_pair_family_uses_persisted_node_pairing_runtime(tmp_path) 
         "node.pair.request",
         {
             "nodeId": "device-node-1",
+            "publicKey": "device-public-key-1",
             "displayName": "Device Node",
             "platform": "ios",
             "deviceFamily": "phone",
@@ -1238,6 +1332,7 @@ async def test_device_pair_family_uses_persisted_node_pairing_runtime(tmp_path) 
             {
                 "requestId": request_id,
                 "deviceId": "device-node-1",
+                "publicKey": "device-public-key-1",
                 "displayName": "Device Node",
                 "platform": "ios",
                 "deviceFamily": "phone",
@@ -1260,6 +1355,7 @@ async def test_device_pair_family_uses_persisted_node_pairing_runtime(tmp_path) 
     assert approved["requestId"] == request_id
     assert approved["device"] == {
         "deviceId": "device-node-1",
+        "publicKey": "device-public-key-1",
         "displayName": "Device Node",
         "platform": "ios",
         "deviceFamily": "phone",
@@ -6038,6 +6134,106 @@ export default {
     assert payload["ok"] is True
     assert payload["result"]["ok"] is True
     assert payload["result"]["normalized"] == "hello"
+    assert str(payload["result"]["toolCallId"]).startswith("http-")
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_executes_source_sdk_alias_runtime_entry_tool(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    plugin_dir = tmp_path / "source-runtime-plugin"
+    runtime_entry = plugin_dir / "src" / "channel.runtime.ts"
+    runtime_entry.parent.mkdir(parents=True)
+    runtime_entry.write_text(
+        """
+import { resolveOutboundSendDep } from "@openclaw/plugin-sdk/outbound-send-deps";
+
+export default {
+  register(api) {
+    api.registerTool({
+      name: resolveOutboundSendDep(),
+      description: "Execute through a source SDK alias",
+      parameters: {
+        type: "object",
+        properties: { message: { type: "string" } }
+      },
+      execute(toolCallId, args) {
+        return {
+          ok: true,
+          toolCallId,
+          tool: resolveOutboundSendDep(),
+          echoed: args.message
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    sdk_shim = plugin_dir / "plugin-sdk" / "outbound-send-deps.ts"
+    sdk_shim.parent.mkdir(parents=True)
+    sdk_shim.write_text(
+        "export function resolveOutboundSendDep() { return 'discord.send'; }\n",
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "discord",
+                    "name": "Discord",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                    "pluginSdkAliasMap": {
+                        "openclaw/plugin-sdk/outbound-send-deps": str(sdk_shim),
+                        "@openclaw/plugin-sdk/outbound-send-deps": str(sdk_shim),
+                    },
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-source-sdk-alias-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["discord.send"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "discord.send", "args": {"message": "hello"}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["ok"] is True
+    assert payload["result"]["tool"] == "discord.send"
+    assert payload["result"]["echoed"] == "hello"
     assert str(payload["result"]["toolCallId"]).startswith("http-")
 
 
@@ -35227,6 +35423,8 @@ module.exports = {
           helpChecks: [
             help.includes("/commands for full list"),
             help.includes("/tasks"),
+            help.includes("/gateway-status"),
+            help.includes("/gwstatus"),
             help.includes("/fast status|on|off"),
             help.includes("/trace on|off|raw"),
             help.includes("/skill <name> [input]"),
@@ -35237,6 +35435,9 @@ module.exports = {
             commands.includes("Slash commands"),
             commands.includes("Status"),
             commands.includes("/commands - List all slash commands."),
+            commands.includes("/status - Show current status."),
+            commands.includes("/gateway-status - Show gateway status summary."),
+            commands.includes("/gwstatus - Alias for /gateway-status."),
             commands.includes("/skill - Run a skill by name."),
             commands.includes("/think (/thinking, /t) - Set thinking level."),
             commands.includes("/compact - Compact the session context."),
@@ -35318,8 +35519,11 @@ module.exports = {
 
     assert payload["ok"] is True
     assert payload["result"] == {
-        "helpChecks": [True, True, True, True, True, True, True],
+        "helpChecks": [True, True, True, True, True, True, True, True, True],
         "commandsChecks": [
+            True,
+            True,
+            True,
             True,
             True,
             True,
@@ -55078,6 +55282,18 @@ module.exports = {
         const processed = surface.processLineMessage(
           "## Heading\\nHello **world**\\n\\n```js\\nconsole.log(1)\\n```"
         );
+        const defaultMenu = runtime.createDefaultMenuConfig();
+        const gridActions = [
+          runtime.messageAction("One", "/one"),
+          runtime.messageAction("Two", "/two"),
+          runtime.messageAction("Three", "/three"),
+          runtime.messageAction("Four", "/four"),
+          runtime.messageAction("Five", "/five"),
+          runtime.messageAction("Six", "/six")
+        ];
+        const grid = typeof runtime.createGridLayout === "function"
+          ? runtime.createGridLayout(843, gridActions)
+          : null;
         return {
           keys: Object.keys(surface).sort(),
           scopedTypes: [
@@ -55087,7 +55303,9 @@ module.exports = {
           runtimeTypes: [
             typeof runtime.messageAction,
             typeof runtime.createQuickReplyItems,
-            typeof runtime.parseLineDirectives
+            typeof runtime.parseLineDirectives,
+            typeof runtime.createDefaultMenuConfig,
+            typeof runtime.createGridLayout
           ],
           accounts: {
             ids: surface.listLineAccountIds(cfg),
@@ -55113,6 +55331,20 @@ module.exports = {
             imageRatio: image.hero.aspectRatio,
             actionStyle: action.footer.contents[0].style
           },
+          menu: {
+            size: defaultMenu.size,
+            selected: defaultMenu.selected,
+            name: defaultMenu.name,
+            chatBarText: defaultMenu.chatBarText,
+            areaCount: Array.isArray(defaultMenu.areas) ? defaultMenu.areas.length : 0,
+            labels: Array.isArray(defaultMenu.areas)
+              ? defaultMenu.areas.map((area) => area.action.label)
+              : [],
+            texts: Array.isArray(defaultMenu.areas)
+              ? defaultMenu.areas.map((area) => area.action.text)
+              : []
+          },
+          grid: grid ? grid.map((area) => area.bounds) : null,
           processed
         };
       }
@@ -55188,7 +55420,13 @@ module.exports = {
         "resolveLineAccount",
     ]
     assert result["scopedTypes"] == ["function", "function"]
-    assert result["runtimeTypes"] == ["function", "function", "function"]
+    assert result["runtimeTypes"] == [
+        "function",
+        "function",
+        "function",
+        "function",
+        "function",
+    ]
     assert result["accounts"]["ids"] == ["default", "work", "other"]
     assert result["accounts"]["defaultAccount"] == "work"
     assert result["accounts"]["normalized"] == "work-account"
@@ -55241,6 +55479,23 @@ module.exports = {
         "imageRatio": "1:1",
         "actionStyle": "primary",
     }
+    assert result["menu"] == {
+        "size": {"width": 2500, "height": 843},
+        "selected": False,
+        "name": "Default Menu",
+        "chatBarText": "Menu",
+        "areaCount": 6,
+        "labels": ["Help", "Status", "Settings", "About", "Feedback", "Contact"],
+        "texts": ["/help", "/status", "/settings", "/about", "/feedback", "/contact"],
+    }
+    assert result["grid"] == [
+        {"x": 0, "y": 0, "width": 833, "height": 421},
+        {"x": 833, "y": 0, "width": 833, "height": 421},
+        {"x": 1666, "y": 0, "width": 833, "height": 421},
+        {"x": 0, "y": 421, "width": 833, "height": 421},
+        {"x": 833, "y": 421, "width": 833, "height": 421},
+        {"x": 1666, "y": 421, "width": 833, "height": 421},
+    ]
     assert result["processed"]["text"] == "Heading\nHello world"
     assert [message["altText"] for message in result["processed"]["flexMessages"]] == ["Code"]
 
@@ -78748,7 +79003,10 @@ module.exports = {
             duplicate,
             listed: pluginRuntime.listPluginCommands(),
             providerSpecs: pluginRuntime.listProviderPluginCommandSpecs("telegram"),
-            allSpecs: pluginRuntime.getPluginCommandSpecs("telegram")
+            allSpecs: pluginRuntime.getPluginCommandSpecs("telegram"),
+            enabledSpecs: pluginRuntime.getPluginCommandSpecs("telegram", {
+              nativeCommandsAutoEnabled: true
+            })
           },
           matching: {
             args: match.args,
@@ -78881,7 +79139,8 @@ module.exports = {
                     "acceptsArgs": True,
                 }
             ],
-            "allSpecs": [
+            "allSpecs": [],
+            "enabledSpecs": [
                 {
                     "name": "demo_tg",
                     "description": "Demo command",
@@ -83019,6 +83278,47 @@ async def test_chat_history_strips_internal_runtime_context_prompt_preface(
 
 
 @pytest.mark.asyncio
+async def test_chat_history_strips_legacy_internal_runtime_context_event(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-chat-history-legacy-runtime-event.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content="\n".join(
+            [
+                "visible intro",
+                "",
+                "OpenClaw runtime context (internal):",
+                "This context is runtime-generated, not user-authored. "
+                "Keep internal details private.",
+                "",
+                "[Internal task completion event]",
+                "source: subagent",
+                "",
+                "visible ask",
+            ]
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "visible intro\n\nvisible ask"}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_history_strips_user_channel_envelope_and_message_id(tmp_path) -> None:
     database = Database(tmp_path / "gateway-chat-history-channel-envelope.db")
     await database.initialize()
@@ -83359,6 +83659,58 @@ async def test_sessions_history_strips_internal_runtime_context_prompt_preface(
         {
             "role": "user",
             "content": [{"type": "text", "text": "visible session ask"}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_history_strips_legacy_internal_runtime_context_event(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-history-legacy-runtime-event.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content="\n".join(
+            [
+                "visible session intro",
+                "",
+                "OpenClaw runtime context (internal):",
+                "This context is runtime-generated, not user-authored. "
+                "Keep internal details private.",
+                "",
+                "[Internal task completion event]",
+                "source: subagent",
+                "<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>",
+                "hidden result",
+                "<<<END_UNTRUSTED_CHILD_RESULT>>>",
+                "",
+                "Action:",
+                "announce hidden action",
+                "",
+                "visible session ask",
+            ]
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "visible session intro\n\nvisible session ask",
+                }
+            ],
         }
     ]
 
@@ -98243,7 +98595,11 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
     assert payload["ok"] is True
     assert payload["path"] == str(database.path)
     assert payload["key"] == current_session_key
-    assert payload["resolved"] == {"modelProvider": "openai", "model": "gpt-5.4-mini"}
+    assert payload["resolved"] == {
+        "modelProvider": "openai",
+        "model": "gpt-5.4-mini",
+        "agentRuntime": {"id": "pi", "source": "implicit"},
+    }
     assert payload["entry"]["key"] == current_session_key
     assert payload["entry"]["label"] == "Parity Session"
     assert payload["entry"]["thinkingLevel"] == "low"
@@ -98281,6 +98637,7 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
             "totalTokensFresh": False,
             "modelProvider": "openai",
             "model": "gpt-5.4-mini",
+            "agentRuntime": {"id": "pi", "source": "implicit"},
             "contextTokens": None,
             "label": "Parity Session",
             "responseUsage": "tokens",
@@ -98645,6 +99002,7 @@ async def test_sessions_patch_preserves_provider_model_override_split() -> None:
     assert payload["resolved"] == {
         "modelProvider": "nvidia",
         "model": "moonshotai/kimi-k2.5",
+        "agentRuntime": {"id": "pi", "source": "implicit"},
     }
 
     metadata_row = await database.get_gateway_session_metadata(current_session_key)
@@ -98662,6 +99020,7 @@ async def test_sessions_patch_preserves_provider_model_override_split() -> None:
     main_session = sessions_payload["sessions"][0]
     assert main_session["modelProvider"] == "nvidia"
     assert main_session["model"] == "moonshotai/kimi-k2.5"
+    assert main_session["agentRuntime"] == {"id": "pi", "source": "implicit"}
     assert main_session["providerOverride"] == "nvidia"
     assert main_session["modelOverride"] == "moonshotai/kimi-k2.5"
 
@@ -107749,6 +108108,92 @@ async def test_agents_list_sessions_spawn_projection_honors_allowlist(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_agents_list_uses_requester_agent_allowlist(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agents-list-requester-allowlist.db")
+    await database.initialize()
+    for agent_id, name in (
+        ("lead", "Lead"),
+        ("builder", "Builder"),
+        ("reviewer", "Reviewer"),
+    ):
+        await database.create_gateway_agent(
+            agent_id=agent_id,
+            name=name,
+            workspace=str(tmp_path / "agents" / agent_id),
+            model=None,
+            emoji=None,
+            avatar=None,
+        )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "allowAgents": ["reviewer"],
+                            },
+                        },
+                        "list": [
+                            {
+                                "id": "lead",
+                                "name": "Lead",
+                                "subagents": {
+                                    "allowAgents": ["builder"],
+                                },
+                            }
+                        ],
+                    },
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "agents_list",
+            "args": {"toolProjection": "sessions_spawn"},
+            "sessionKey": "agent:lead:main",
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "requester": "lead",
+            "allowAny": False,
+            "agents": [
+                {"id": "lead", "name": "Lead", "configured": True},
+                {"id": "builder", "name": "Builder", "configured": True},
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("method", "params", "message"),
     [
@@ -108177,6 +108622,7 @@ async def test_sessions_list_returns_bounded_singleton_control_chat_inventory() 
             "totalTokensFresh": False,
             "modelProvider": "openai",
             "model": "gpt-5.4",
+            "agentRuntime": {"id": "pi", "source": "implicit"},
             "contextTokens": None,
         }
     ]
@@ -109722,6 +110168,98 @@ async def test_commands_list_supports_scope_filters_and_omits_args_when_requeste
     assert text_payload == {"commands": []}
     assert native_payload["commands"]
     assert all("args" not in command for command in native_payload["commands"])
+
+
+@pytest.mark.asyncio
+async def test_commands_list_applies_slack_native_command_aliases() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    payload = await service.call(
+        "commands.list",
+        {"provider": "slack", "scope": "native", "includeArgs": False},
+    )
+
+    commands = payload["commands"]
+    status_command = next(command for command in commands if command["name"] == "status")
+    assert status_command["nativeName"] == "agentstatus"
+    assert not any(command["nativeName"] == "status" for command in commands)
+
+
+@pytest.mark.asyncio
+async def test_commands_list_appends_slack_provider_plugin_commands() -> None:
+    plugin_runtime = GatewayPluginRuntimeService(
+        native_command_enabled_providers=("slack",),
+        command_specs=(
+            {
+                "pluginId": "voice-plugin",
+                "pluginName": "Voice Plugin",
+                "name": "voice",
+                "description": "Run voice routing.",
+                "nativeNames": {"default": "talkvoice", "slack": "slackvoice"},
+                "acceptsArgs": True,
+            },
+            {
+                "pluginId": "shadow-status",
+                "name": "shadow-status",
+                "description": "Conflicts with Slack status.",
+                "nativeNames": {"slack": "agentstatus"},
+                "acceptsArgs": False,
+            },
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    payload = await service.call(
+        "commands.list",
+        {"provider": "slack", "scope": "native", "includeArgs": False},
+    )
+
+    commands = payload["commands"]
+    plugin_command = next(command for command in commands if command["source"] == "plugin")
+    assert plugin_command == {
+        "name": "slackvoice",
+        "nativeName": "slackvoice",
+        "textAliases": ["/voice"],
+        "description": "Run voice routing.",
+        "source": "plugin",
+        "scope": "both",
+        "acceptsArgs": True,
+        "pluginId": "voice-plugin",
+        "pluginName": "Voice Plugin",
+    }
+    assert not any(
+        command["source"] == "plugin" and command["nativeName"] == "agentstatus"
+        for command in commands
+    )
+
+
+@pytest.mark.asyncio
+async def test_commands_list_omits_plugin_native_commands_without_provider_gate() -> None:
+    plugin_runtime = GatewayPluginRuntimeService(
+        command_specs=(
+            {
+                "pluginId": "voice-plugin",
+                "name": "voice",
+                "description": "Run voice routing.",
+                "nativeNames": {"default": "talkvoice", "whatsapp": "wavox"},
+                "acceptsArgs": False,
+            },
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    payload = await service.call(
+        "commands.list",
+        {"provider": "whatsapp", "scope": "native", "includeArgs": False},
+    )
+
+    assert [command for command in payload["commands"] if command["source"] == "plugin"] == []
 
 
 class _FakeBrowserRuntime:
@@ -111486,6 +112024,607 @@ def test_browser_tabs_runtime_uses_agent_browser_tab_list(monkeypatch: pytest.Mo
     assert calls == [["agent-browser.cmd", "--session", "parity-browser", "tab", "list"]]
     assert payload["tabCount"] == 1
     assert payload["tabs"] == [{"id": "tab-1", "url": "http://127.0.0.1:8884"}]
+
+
+def test_browser_request_runtime_maps_lifecycle_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    started = service.request(
+        method="POST",
+        path="/start",
+        session="parity-browser",
+    )
+    stopped = service.request(
+        method="POST",
+        path="/stop",
+        body={"all": True},
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "open", "about:blank"],
+        ["agent-browser.cmd", "--session", "parity-browser", "close", "--all"],
+    ]
+    assert started["ok"] is True
+    assert started["status"] == "ready"
+    assert stopped["ok"] is True
+    assert stopped["allSessions"] is True
+
+
+def test_browser_request_runtime_maps_tab_mutation_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    focused = service.request(
+        method="POST",
+        path="/tabs/focus",
+        body={"targetId": "tab-1"},
+        session="parity-browser",
+    )
+    closed = service.request(
+        method="DELETE",
+        path="/tabs/tab-2",
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "tab-1"],
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "close", "tab-2"],
+    ]
+    assert focused["targetId"] == "tab-1"
+    assert closed["targetId"] == "tab-2"
+    assert closed["allSessions"] is False
+
+
+def test_browser_request_runtime_maps_tab_action_select_and_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-2:] == ["tab", "list"]:
+            return Completed('{"tabs": [{"targetId": "tab-1"}, {"targetId": "tab-2"}]}')
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    closed = service.request(
+        method="POST",
+        path="/tabs/action",
+        body={"action": "close", "index": 1},
+        session="parity-browser",
+    )
+    selected = service.request(
+        method="POST",
+        path="/tabs/action",
+        body={"action": "select", "index": 0},
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "list"],
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "close", "tab-2"],
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "list"],
+        ["agent-browser.cmd", "--session", "parity-browser", "tab", "tab-1"],
+    ]
+    assert closed["targetId"] == "tab-2"
+    assert selected["targetId"] == "tab-1"
+
+
+def test_browser_request_runtime_maps_storage_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-4:] == ["storage", "local", "get", "theme"]:
+            return Completed('{"theme": "dark"}')
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    storage = service.request(
+        method="GET",
+        path="/storage/local",
+        query={"key": "theme"},
+        session="parity-browser",
+    )
+    set_result = service.request(
+        method="POST",
+        path="/storage/local/set",
+        body={"key": "theme", "value": "dark"},
+        session="parity-browser",
+    )
+    clear_result = service.request(
+        method="POST",
+        path="/storage/session/clear",
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "storage", "local", "get", "theme"],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "storage",
+            "local",
+            "set",
+            "theme",
+            "dark",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "storage", "session", "clear"],
+    ]
+    assert storage["entries"] == {"theme": "dark"}
+    assert set_result["operation"] == "set"
+    assert clear_result["operation"] == "clear"
+
+
+def test_browser_request_runtime_maps_cookie_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-2:] == ["cookies", "get"]:
+            return Completed('{"cookies": [{"name": "theme", "value": "dark"}]}')
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    cookies = service.request(
+        method="GET",
+        path="/cookies",
+        session="parity-browser",
+    )
+    set_result = service.request(
+        method="POST",
+        path="/cookies/set",
+        body={
+            "cookie": {
+                "name": "theme",
+                "value": "dark",
+                "url": "https://example.test",
+                "httpOnly": True,
+            }
+        },
+        session="parity-browser",
+    )
+    clear_result = service.request(
+        method="POST",
+        path="/cookies/clear",
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "cookies", "get"],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "cookies",
+            "set",
+            "theme",
+            "dark",
+            "--url",
+            "https://example.test",
+            "--httpOnly",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "cookies", "clear"],
+    ]
+    assert cookies["cookies"] == [{"name": "theme", "value": "dark"}]
+    assert set_result["operation"] == "set"
+    assert set_result["name"] == "theme"
+    assert clear_result["operation"] == "clear"
+
+
+def test_browser_request_runtime_maps_debug_routes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-1] == "console":
+            return Completed("console ready")
+        if invocation[-2:] == ["errors", "--clear"]:
+            return Completed("page error")
+        if invocation[-5:] == ["network", "requests", "--filter", "api", "--clear"]:
+            return Completed('{"requests": [{"id": "req-1", "url": "https://example.test/api"}]}')
+        if invocation[-2] == "stop":
+            Path(invocation[-1]).write_bytes(b"trace")
+            return Completed("trace complete")
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    console = service.request(
+        method="GET",
+        path="/console",
+        session="parity-browser",
+    )
+    errors = service.request(
+        method="GET",
+        path="/errors",
+        query={"clear": "true"},
+        session="parity-browser",
+    )
+    requests = service.request(
+        method="GET",
+        path="/requests",
+        query={"filter": "api", "clear": True},
+        session="parity-browser",
+    )
+    trace_start = service.request(
+        method="POST",
+        path="/trace/start",
+        body={"screenshots": True},
+        session="parity-browser",
+    )
+    trace_stop = service.request(
+        method="POST",
+        path="/trace/stop",
+        body={"path": "custom-trace.zip"},
+        session="parity-browser",
+    )
+
+    assert calls[:4] == [
+        ["agent-browser.cmd", "--session", "parity-browser", "console"],
+        ["agent-browser.cmd", "--session", "parity-browser", "errors", "--clear"],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "network",
+            "requests",
+            "--filter",
+            "api",
+            "--clear",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "trace", "start"],
+    ]
+    assert calls[4][:5] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "trace",
+        "stop",
+    ]
+    assert console["lines"] == ["console ready"]
+    assert errors["cleared"] is True
+    assert requests["requestCount"] == 1
+    assert requests["clear"] is True
+    assert trace_start["traceRecording"] is True
+    assert trace_stop["traceRecording"] is False
+    assert str(trace_stop["path"]).startswith(str(tmp_path))
+    assert str(trace_stop["path"]).endswith(".zip")
+
+
+def test_browser_request_runtime_maps_setting_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "setting updated") -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-4:-2] == ["set", "credentials"]:
+            return Completed("credentials set for admin with secret-token")
+        if invocation[-3:-1] == ["set", "headers"]:
+            return Completed("headers set with Bearer token")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    offline = service.request(
+        method="POST",
+        path="/set/offline",
+        body={"offline": True},
+        session="parity-browser",
+    )
+    headers = service.request(
+        method="POST",
+        path="/set/headers",
+        body={"headers": {"Authorization": "Bearer token", "X-Test": "yes"}},
+        session="parity-browser",
+    )
+    credentials = service.request(
+        method="POST",
+        path="/set/credentials",
+        body={"username": "admin", "password": "secret-token"},
+        session="parity-browser",
+    )
+    geolocation = service.request(
+        method="POST",
+        path="/set/geolocation",
+        body={"latitude": 37.7749, "longitude": -122.4194},
+        session="parity-browser",
+    )
+    media = service.request(
+        method="POST",
+        path="/set/media",
+        body={"colorScheme": "dark"},
+        session="parity-browser",
+    )
+    device = service.request(
+        method="POST",
+        path="/set/device",
+        body={"name": "iPhone 12"},
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "set", "offline", "on"],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "set",
+            "headers",
+            '{"Authorization":"Bearer token","X-Test":"yes"}',
+        ],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "set",
+            "credentials",
+            "admin",
+            "secret-token",
+        ],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "set",
+            "geo",
+            "37.7749",
+            "-122.4194",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "set", "media", "dark"],
+        ["agent-browser.cmd", "--session", "parity-browser", "set", "device", "iPhone 12"],
+    ]
+    assert offline["setting"] == "offline"
+    assert offline["values"] == ["on"]
+    assert headers["headerNames"] == ["Authorization", "X-Test"]
+    assert "Bearer token" not in str(headers)
+    assert credentials["values"] == ["admin", "[redacted]"]
+    assert "secret-token" not in str(credentials)
+    assert geolocation["setting"] == "geo"
+    assert media["setting"] == "media"
+    assert device["values"] == ["iPhone 12"]
+
+
+def test_browser_request_runtime_maps_act_utility_routes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    upload_file = tmp_path / "openzues-browser-upload-seed.txt"
+    upload_file.write_text("seed", encoding="utf-8")
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "ok") -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if "download" in invocation:
+            Path(invocation[-1]).write_bytes(b"download")
+            return Completed("download complete")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    highlight = service.request(
+        method="POST",
+        path="/highlight",
+        body={"ref": "@e2"},
+        session="parity-browser",
+    )
+    download = service.request(
+        method="POST",
+        path="/download",
+        body={"ref": "@download", "path": "reports/result.csv"},
+        session="parity-browser",
+    )
+    upload = service.request(
+        method="POST",
+        path="/hooks/file-chooser",
+        body={"inputRef": "@file", "paths": [str(upload_file)]},
+        session="parity-browser",
+    )
+
+    assert calls[0] == ["agent-browser.cmd", "--session", "parity-browser", "highlight", "@e2"]
+    assert calls[1][:5] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "download",
+        "@download",
+    ]
+    assert calls[2] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "upload",
+        "@file",
+        str(upload_file),
+    ]
+    assert highlight["selector"] == "@e2"
+    assert download["selector"] == "@download"
+    assert str(download["path"]).startswith(str(tmp_path))
+    assert str(download["path"]).endswith("result.csv")
+    assert download["sizeBytes"] == 8
+    assert upload["selector"] == "@file"
+    assert upload["files"] == [str(upload_file)]
+
+
+def test_browser_request_runtime_maps_status_and_doctor_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-1] == "session":
+            return Completed("parity-browser")
+        if invocation[-2:] == ["session", "list"]:
+            return Completed('["parity-browser"]')
+        if invocation[-1] == "profiles":
+            return Completed('{"profiles": [{"name": "Default", "status": "ready"}]}')
+        if invocation[-2:] == ["snapshot", "-i"]:
+            return Completed("button Launch")
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    status = service.request(
+        method="GET",
+        path="/",
+        session="parity-browser",
+    )
+    doctor = service.request(
+        method="GET",
+        path="/doctor",
+        query={"live": "true"},
+        session="parity-browser",
+    )
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "session"],
+        ["agent-browser.cmd", "--session", "parity-browser", "session", "list"],
+        ["agent-browser.cmd", "--session", "parity-browser", "profiles"],
+        ["agent-browser.cmd", "--session", "parity-browser", "session"],
+        ["agent-browser.cmd", "--session", "parity-browser", "session", "list"],
+        ["agent-browser.cmd", "--session", "parity-browser", "profiles"],
+        ["agent-browser.cmd", "--session", "parity-browser", "snapshot", "-i"],
+    ]
+    assert status["enabled"] is True
+    assert status["profile"] == "parity-browser"
+    assert status["transport"] == "agent-browser"
+    assert status["running"] is True
+    assert status["profiles"] == [{"name": "Default", "status": "ready"}]
+    assert doctor["ok"] is True
+    assert doctor["status"]["running"] is True
+    assert any(check["id"] == "live-snapshot" for check in doctor["checks"])
 
 
 def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121294,6 +122433,329 @@ async def test_node_invoke_rejects_persistent_browser_proxy_mutations_before_wak
         )
 
     assert wake_calls == []
+
+
+@pytest.mark.asyncio
+async def test_browser_request_rejects_persistent_profile_mutations_before_dispatch() -> None:
+    registry = GatewayNodeRegistry()
+    connection = FakeNodeConnection("conn-browser-node")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-browser-node",
+            device_id="browser-node",
+            platform="windows",
+            caps=("browser",),
+            commands=("browser.proxy",),
+        ),
+    )
+    service = GatewayNodeMethodService(registry)
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "browser.request",
+            {
+                "method": "POST",
+                "path": "profiles/create/",
+                "body": {"name": "poc", "cdpUrl": "http://10.0.0.42:9222"},
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.message == (
+        "browser.request cannot mutate persistent browser profiles"
+    )
+    assert connection.sent_events == []
+
+
+@pytest.mark.asyncio
+async def test_browser_request_proxies_to_connected_browser_node_with_profile_selection() -> None:
+    class BrowserProxyNodeConnection(FakeNodeConnection):
+        def __init__(self, registry: GatewayNodeRegistry, conn_id: str) -> None:
+            super().__init__(conn_id)
+            self.registry = registry
+            self.proxy_params: dict[str, object] | None = None
+
+        def send_gateway_event(self, event: str, payload: object) -> None:
+            super().send_gateway_event(event, payload)
+            if event != "node.invoke.request" or not isinstance(payload, dict):
+                return
+            request_id = str(payload.get("id") or "")
+            node_id = str(payload.get("nodeId") or "")
+            params_json = payload.get("paramsJSON")
+            proxy_params = json.loads(params_json) if isinstance(params_json, str) else {}
+            self.proxy_params = proxy_params
+            response = {
+                "result": {
+                    "ok": True,
+                    "path": proxy_params.get("path"),
+                    "profile": proxy_params.get("profile"),
+                }
+            }
+            asyncio.get_running_loop().call_soon(
+                lambda: self.registry.handle_invoke_result(
+                    request_id=request_id,
+                    node_id=node_id,
+                    ok=True,
+                    payload=response,
+                    payload_json=json.dumps(response),
+                    error=None,
+                )
+            )
+
+    registry = GatewayNodeRegistry()
+    connection = BrowserProxyNodeConnection(registry, "conn-browser-node")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-browser-node",
+            device_id="browser-node",
+            display_name="Work Browser",
+            platform="windows",
+            caps=("browser",),
+            commands=("browser.proxy",),
+        ),
+    )
+    service = GatewayNodeMethodService(registry)
+
+    response = await service.call(
+        "browser.request",
+        {
+            "method": "POST",
+            "path": "/act",
+            "query": {"profile": "chrome"},
+            "body": {"profile": "work", "request": {"action": "click", "ref": "btn1"}},
+            "timeoutMs": 250,
+        },
+    )
+
+    assert response == {"ok": True, "path": "/act", "profile": "chrome"}
+    assert connection.proxy_params == {
+        "method": "POST",
+        "path": "/act",
+        "query": {"profile": "chrome"},
+        "body": {"profile": "work", "request": {"action": "click", "ref": "btn1"}},
+        "timeoutMs": 250,
+        "profile": "chrome",
+    }
+    request_payload = connection.sent_events[0]["payload"]
+    assert isinstance(request_payload, dict)
+    assert request_payload["command"] == "browser.proxy"
+    assert request_payload["nodeId"] == "browser-node"
+
+
+@pytest.mark.asyncio
+async def test_browser_request_persists_proxy_files_and_rewrites_result_paths(tmp_path) -> None:
+    class BrowserProxyFileNodeConnection(FakeNodeConnection):
+        def __init__(self, registry: GatewayNodeRegistry, conn_id: str) -> None:
+            super().__init__(conn_id)
+            self.registry = registry
+
+        def send_gateway_event(self, event: str, payload: object) -> None:
+            super().send_gateway_event(event, payload)
+            if event != "node.invoke.request" or not isinstance(payload, dict):
+                return
+            request_id = str(payload.get("id") or "")
+            node_id = str(payload.get("nodeId") or "")
+            source_path = "/tmp/browser-proxy-shot.png"
+            response = {
+                "result": {
+                    "ok": True,
+                    "path": source_path,
+                    "imagePath": source_path,
+                    "download": {"path": source_path},
+                },
+                "files": [
+                    {
+                        "path": source_path,
+                        "base64": base64.b64encode(b"browser proxy image").decode("ascii"),
+                        "mimeType": "image/png",
+                    }
+                ],
+            }
+            asyncio.get_running_loop().call_soon(
+                lambda: self.registry.handle_invoke_result(
+                    request_id=request_id,
+                    node_id=node_id,
+                    ok=True,
+                    payload=response,
+                    payload_json=json.dumps(response),
+                    error=None,
+                )
+            )
+
+    registry = GatewayNodeRegistry()
+    connection = BrowserProxyFileNodeConnection(registry, "conn-browser-node")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-browser-node",
+            device_id="browser-node",
+            platform="windows",
+            caps=("browser",),
+            commands=("browser.proxy",),
+        ),
+    )
+    media_dir = tmp_path / "browser-media"
+    service = GatewayNodeMethodService(
+        registry,
+        browser_proxy_media_dir=media_dir,
+    )
+
+    response = await service.call(
+        "browser.request",
+        {"method": "POST", "path": "/screenshot", "timeoutMs": 250},
+    )
+
+    rewritten_path = response["path"]
+    assert isinstance(rewritten_path, str)
+    assert rewritten_path != "/tmp/browser-proxy-shot.png"
+    assert response["imagePath"] == rewritten_path
+    assert response["download"] == {"path": rewritten_path}
+    saved_path = Path(rewritten_path)
+    assert saved_path.parent == media_dir
+    assert saved_path.read_bytes() == b"browser proxy image"
+
+
+@pytest.mark.asyncio
+async def test_browser_request_uses_configured_browser_node_when_multiple_connected() -> None:
+    class FakeBrowserNodeConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "gateway": {
+                    "nodes": {
+                        "browser": {
+                            "mode": "auto",
+                            "node": "Work Browser",
+                        }
+                    }
+                }
+            }
+
+    class BrowserProxySelectedNodeConnection(FakeNodeConnection):
+        def __init__(self, registry: GatewayNodeRegistry, conn_id: str) -> None:
+            super().__init__(conn_id)
+            self.registry = registry
+
+        def send_gateway_event(self, event: str, payload: object) -> None:
+            super().send_gateway_event(event, payload)
+            if event != "node.invoke.request" or not isinstance(payload, dict):
+                return
+            request_id = str(payload.get("id") or "")
+            node_id = str(payload.get("nodeId") or "")
+            response = {"result": {"ok": True, "nodeId": node_id}}
+            asyncio.get_running_loop().call_soon(
+                lambda: self.registry.handle_invoke_result(
+                    request_id=request_id,
+                    node_id=node_id,
+                    ok=True,
+                    payload=response,
+                    payload_json=json.dumps(response),
+                    error=None,
+                )
+            )
+
+    registry = GatewayNodeRegistry()
+    other = BrowserProxySelectedNodeConnection(registry, "conn-other-browser")
+    work = BrowserProxySelectedNodeConnection(registry, "conn-work-browser")
+    registry.register(
+        other,
+        GatewayNodeConnect(
+            client_id="live-other-browser",
+            device_id="other-browser-node",
+            display_name="Other Browser",
+            platform="windows",
+            caps=("browser",),
+            commands=("browser.proxy",),
+        ),
+    )
+    registry.register(
+        work,
+        GatewayNodeConnect(
+            client_id="live-work-browser",
+            device_id="work-browser-node",
+            display_name="Work Browser",
+            platform="windows",
+            caps=("browser",),
+            commands=("browser.proxy",),
+        ),
+    )
+    service = GatewayNodeMethodService(
+        registry,
+        config_service=FakeBrowserNodeConfig(),
+    )
+
+    response = await service.call("browser.request", {"method": "GET", "path": "/"})
+
+    assert response == {"ok": True, "nodeId": "work-browser-node"}
+    assert other.sent_events == []
+    assert work.sent_events[0]["event"] == "node.invoke.request"
+
+
+@pytest.mark.asyncio
+async def test_browser_request_falls_back_to_local_browser_runtime_without_node() -> None:
+    class FakeLocalBrowserRuntime:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def request(
+            self,
+            *,
+            method: str,
+            path: str,
+            query: dict[str, object] | None = None,
+            body: object = None,
+            timeout_ms: int | None = None,
+            session: str,
+        ) -> dict[str, object]:
+            self.calls.append(
+                {
+                    "method": method,
+                    "path": path,
+                    "query": query or {},
+                    "body": body,
+                    "timeoutMs": timeout_ms or 0,
+                    "session": session,
+                }
+            )
+            return {
+                "ok": True,
+                "source": "local-browser-runtime",
+                "path": path,
+            }
+
+    runtime = FakeLocalBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=runtime,
+    )
+
+    response = await service.call(
+        "browser.request",
+        {
+            "method": "POST",
+            "path": "/act",
+            "query": {"profile": "work"},
+            "body": {"action": "click", "ref": "button"},
+            "timeoutMs": 500,
+        },
+    )
+
+    assert response == {
+        "ok": True,
+        "source": "local-browser-runtime",
+        "path": "/act",
+    }
+    assert runtime.calls == [
+        {
+            "method": "POST",
+            "path": "/act",
+            "query": {"profile": "work"},
+            "body": {"action": "click", "ref": "button"},
+            "timeoutMs": 500,
+            "session": "openzues-browser",
+        }
+    ]
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 DEFAULT_BROWSER_SESSION = "openzues-browser"
 _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
@@ -120,6 +121,254 @@ class GatewayBrowserRuntimeService:
             "url": target,
             "session": session,
         }
+
+    def request(
+        self,
+        *,
+        method: str,
+        path: str,
+        query: dict[str, object] | None = None,
+        body: object = None,
+        timeout_ms: int | None = None,
+        session: str = DEFAULT_BROWSER_SESSION,
+    ) -> dict[str, object]:
+        del timeout_ms
+        normalized_method = method.strip().upper()
+        normalized_path = "/" + path.strip().lstrip("/")
+        request_body = body if isinstance(body, dict) else {}
+        request_query = query or {}
+
+        if normalized_method == "GET" and normalized_path == "/":
+            return self.status(session=session)
+        if normalized_method == "GET" and normalized_path == "/doctor":
+            return self.doctor(
+                session=session,
+                deep=browser_request_bool(request_query.get("deep")),
+                live=browser_request_bool(request_query.get("live")),
+            )
+        if normalized_method == "GET" and normalized_path == "/snapshot":
+            return self.snapshot(session=session)
+        if normalized_method == "POST" and normalized_path == "/act":
+            return self.act(dict(request_body), session=session)
+        if normalized_method == "POST" and normalized_path == "/screenshot":
+            full_page = browser_request_bool(
+                request_body.get("fullPage", request_query.get("fullPage"))
+            ) or browser_request_bool(
+                request_body.get("full_page", request_query.get("full_page"))
+            )
+            return self.screenshot(session=session, full_page=full_page)
+        if normalized_method == "POST" and normalized_path == "/start":
+            return self.start(session=session)
+        if normalized_method == "POST" and normalized_path == "/stop":
+            all_sessions = browser_request_bool(
+                request_body.get(
+                    "all",
+                    request_body.get(
+                        "allSessions",
+                        request_query.get("all", request_query.get("allSessions")),
+                    ),
+                )
+            )
+            return self.stop(session=session, all_sessions=all_sessions)
+        if normalized_method == "GET" and normalized_path == "/profiles":
+            return self.profiles(session=session)
+        if normalized_method == "GET" and normalized_path == "/tabs":
+            return self.tabs(session=session)
+        if normalized_method == "GET" and normalized_path == "/console":
+            return self.console(session=session)
+        if normalized_method == "GET" and normalized_path == "/errors":
+            return self.errors(
+                session=session,
+                clear=browser_request_bool(request_query.get("clear")),
+            )
+        if normalized_method == "GET" and normalized_path == "/requests":
+            filter_value = request_query.get("filter")
+            return self.network_requests(
+                session=session,
+                filter_pattern=filter_value.strip() if isinstance(filter_value, str) else None,
+                clear=browser_request_bool(request_query.get("clear")),
+            )
+        if normalized_method == "POST" and normalized_path == "/trace/start":
+            return self.trace_start(session=session)
+        if normalized_method == "POST" and normalized_path == "/trace/stop":
+            return self.trace_stop(session=session)
+        if normalized_method == "POST" and normalized_path == "/set/offline":
+            if "offline" not in request_body:
+                raise GatewayBrowserRuntimeError("offline is required")
+            return self.set_setting(
+                "offline",
+                ["on" if browser_request_bool(request_body.get("offline")) else "off"],
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/headers":
+            headers = request_body.get("headers")
+            if not isinstance(headers, dict):
+                raise GatewayBrowserRuntimeError("headers is required")
+            return self.set_setting(
+                "headers",
+                [json.dumps(headers, separators=(",", ":"))],
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/credentials":
+            return self.set_setting(
+                "credentials",
+                [
+                    browser_required_string(
+                        request_body,
+                        "username",
+                        label="username",
+                    ),
+                    browser_required_string(
+                        request_body,
+                        "password",
+                        label="password",
+                    ),
+                ],
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/geolocation":
+            return self.set_setting(
+                "geo",
+                [
+                    browser_request_number_text(
+                        request_body,
+                        "latitude",
+                        label="latitude",
+                    ),
+                    browser_request_number_text(
+                        request_body,
+                        "longitude",
+                        label="longitude",
+                    ),
+                ],
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/media":
+            return self.set_setting(
+                "media",
+                [
+                    browser_required_string(
+                        request_body,
+                        "colorScheme",
+                        label="colorScheme",
+                    )
+                ],
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/set/device":
+            return self.set_setting(
+                "device",
+                [browser_required_string(request_body, "name", label="name")],
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/highlight":
+            return self.highlight(
+                browser_required_string(request_body, "ref", label="ref"),
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/download":
+            requested_path = browser_required_string(request_body, "path", label="path")
+            return self.download(
+                browser_required_string(request_body, "ref", label="ref"),
+                session=session,
+                filename_hint=Path(requested_path).name,
+            )
+        if normalized_method == "POST" and normalized_path == "/hooks/file-chooser":
+            selector = browser_request_string(request_body, "inputRef", "ref", "element")
+            if not selector:
+                raise GatewayBrowserRuntimeError("inputRef, ref, or element is required")
+            return self.upload(
+                selector,
+                browser_request_string_list(request_body, "paths"),
+                session=session,
+            )
+        if normalized_method == "POST" and normalized_path == "/tabs/open":
+            target = request_body.get("url")
+            if not isinstance(target, str) or not target.strip():
+                raise GatewayBrowserRuntimeError("url is required")
+            return self.open_page(target.strip(), session=session)
+        if normalized_method == "POST" and normalized_path == "/tabs/focus":
+            target_id = request_body.get("targetId")
+            if not isinstance(target_id, str) or not target_id.strip():
+                raise GatewayBrowserRuntimeError("targetId is required")
+            return self.focus(target_id.strip(), session=session)
+        if normalized_method == "DELETE" and normalized_path.startswith("/tabs/"):
+            target_id = unquote(normalized_path.removeprefix("/tabs/")).strip()
+            if not target_id:
+                raise GatewayBrowserRuntimeError("targetId is required")
+            return self.close(session=session, target_id=target_id)
+        if normalized_method == "POST" and normalized_path == "/tabs/action":
+            action = request_body.get("action")
+            if action == "list":
+                return self.tabs(session=session)
+            if action == "new":
+                return self.open_page("about:blank", session=session)
+            if action == "close":
+                target_id = browser_request_indexed_tab_target_id(
+                    self.tabs(session=session),
+                    browser_request_int(request_body, "index"),
+                )
+                return self.close(session=session, target_id=target_id)
+            if action == "select":
+                index = browser_request_int(request_body, "index")
+                if index is None:
+                    raise GatewayBrowserRuntimeError("index is required")
+                target_id = browser_request_indexed_tab_target_id(
+                    self.tabs(session=session),
+                    index,
+                )
+                return self.focus(target_id, session=session)
+        if normalized_method == "GET" and normalized_path == "/cookies":
+            return self.cookies_get(session=session)
+        if normalized_method == "POST" and normalized_path == "/cookies/clear":
+            return self.cookies_clear(session=session)
+        if normalized_method == "POST" and normalized_path == "/cookies/set":
+            raw_cookie = request_body.get("cookie")
+            if not isinstance(raw_cookie, dict):
+                raise GatewayBrowserRuntimeError("cookie is required")
+            cookie = {key: value for key, value in raw_cookie.items() if isinstance(key, str)}
+            return self.cookies_set(
+                browser_request_string(cookie, "name"),
+                browser_request_string(cookie, "value"),
+                session=session,
+                url=browser_request_string(cookie, "url") or None,
+                domain=browser_request_string(cookie, "domain") or None,
+                path=browser_request_string(cookie, "path") or None,
+                http_only=browser_json_bool(cookie, "httpOnly"),
+                secure=browser_json_bool(cookie, "secure"),
+                same_site=browser_request_string(cookie, "sameSite") or None,
+                expires=browser_request_int(cookie, "expires"),
+            )
+        storage_parts = normalized_path.strip("/").split("/")
+        if len(storage_parts) >= 2 and storage_parts[0] == "storage":
+            storage_kind = unquote(storage_parts[1])
+            if normalized_method == "GET" and len(storage_parts) == 2:
+                key_value = request_query.get("key")
+                key = key_value.strip() if isinstance(key_value, str) else None
+                return self.storage_get(storage_kind, key=key, session=session)
+            if (
+                normalized_method == "POST"
+                and len(storage_parts) == 3
+                and storage_parts[2] == "set"
+            ):
+                key_value = request_body.get("key")
+                key = key_value.strip() if isinstance(key_value, str) else ""
+                value = request_body.get("value")
+                return self.storage_set(
+                    storage_kind,
+                    key=key,
+                    value=value if isinstance(value, str) else "",
+                    session=session,
+                )
+            if (
+                normalized_method == "POST"
+                and len(storage_parts) == 3
+                and storage_parts[2] == "clear"
+            ):
+                return self.storage_clear(storage_kind, session=session)
+        raise GatewayBrowserRuntimeError(
+            f"browser local request unsupported: {normalized_method} {normalized_path}"
+        )
 
     def history(self, action: str, *, session: str) -> dict[str, object]:
         if action not in {"back", "forward", "reload"}:
@@ -406,13 +655,72 @@ class GatewayBrowserRuntimeService:
         output = self._run(["console"], session=session, timeout_seconds=5.0)
         return browser_stream_payload(label="console", session=session, output=output)
 
-    def errors(self, *, session: str) -> dict[str, object]:
-        output = self._run(["errors"], session=session, timeout_seconds=5.0)
-        return browser_stream_payload(label="error", session=session, output=output)
+    def errors(self, *, session: str, clear: bool = False) -> dict[str, object]:
+        args = ["errors"]
+        if clear:
+            args.append("--clear")
+        output = self._run(args, session=session, timeout_seconds=5.0)
+        payload = browser_stream_payload(label="error", session=session, output=output)
+        payload["cleared"] = clear
+        return payload
 
     def profiles(self, *, session: str) -> dict[str, object]:
         output = self._run(["profiles"], session=session, timeout_seconds=5.0)
         return browser_profiles_payload(session=session, output=output)
+
+    def status(self, *, session: str) -> dict[str, object]:
+        current = self.session_current(session=session)
+        sessions = self.session_list(session=session)
+        profiles = self.profiles(session=session)
+        running = browser_session_list_contains(sessions.get("sessions"), session)
+        return browser_status_payload(
+            session=session,
+            current=current,
+            sessions=sessions,
+            profiles=profiles,
+            running=running,
+        )
+
+    def doctor(
+        self,
+        *,
+        session: str,
+        deep: bool = False,
+        live: bool = False,
+    ) -> dict[str, object]:
+        status = self.status(session=session)
+        checks = browser_doctor_checks(status)
+        if deep or live:
+            try:
+                snapshot = self.snapshot(session=session)
+            except GatewayBrowserRuntimeError as exc:
+                checks.append(
+                    {
+                        "id": "live-snapshot",
+                        "label": "Live snapshot",
+                        "status": "fail",
+                        "summary": str(exc),
+                    }
+                )
+            else:
+                checks.append(
+                    {
+                        "id": "live-snapshot",
+                        "label": "Live snapshot",
+                        "status": "pass",
+                        "summary": snapshot.get("snapshotSummary")
+                        or "Native agent-browser snapshot succeeded.",
+                    }
+                )
+        ok = all(check.get("status") != "fail" for check in checks)
+        return {
+            "ok": ok,
+            "status": status,
+            "checks": checks,
+            "summary": "Browser doctor checks passed."
+            if ok
+            else "Browser doctor checks failed.",
+        }
 
     def get(
         self,
@@ -478,6 +786,7 @@ class GatewayBrowserRuntimeService:
         resource_type: str | None = None,
         method: str | None = None,
         status: str | None = None,
+        clear: bool = False,
     ) -> dict[str, object]:
         args = ["network", "requests"]
         if filter_pattern is not None:
@@ -488,6 +797,8 @@ class GatewayBrowserRuntimeService:
             args.extend(["--method", method])
         if status is not None:
             args.extend(["--status", status])
+        if clear:
+            args.append("--clear")
         output = self._run(args, session=session, timeout_seconds=5.0)
         return browser_network_requests_payload(
             session=session,
@@ -496,6 +807,7 @@ class GatewayBrowserRuntimeService:
             resource_type=resource_type,
             method=method,
             status=status,
+            clear=clear,
         )
 
     def network_request(self, request_id: str, *, session: str) -> dict[str, object]:
@@ -1277,6 +1589,7 @@ def browser_network_requests_payload(
     resource_type: str | None,
     method: str | None,
     status: str | None,
+    clear: bool = False,
 ) -> dict[str, object]:
     requests: list[object] = []
     try:
@@ -1301,6 +1614,7 @@ def browser_network_requests_payload(
         "type": resource_type,
         "method": method,
         "statusFilter": status,
+        "clear": clear,
         "requestCount": request_count,
         "requests": requests,
         "lines": lines,
@@ -1540,6 +1854,65 @@ def browser_session_list_payload(*, session: str, output: str) -> dict[str, obje
         "sessions": sessions,
         "lines": lines,
     }
+
+
+def browser_session_list_contains(raw_sessions: object, session: str) -> bool:
+    if not isinstance(raw_sessions, list):
+        return False
+    expected = session.strip()
+    for entry in raw_sessions:
+        if isinstance(entry, str) and entry.strip() == expected:
+            return True
+        if isinstance(entry, dict):
+            for key in ("session", "name", "id", "currentSession"):
+                value = entry.get(key)
+                if isinstance(value, str) and value.strip() == expected:
+                    return True
+    return False
+
+
+def browser_status_payload(
+    *,
+    session: str,
+    current: dict[str, object],
+    sessions: dict[str, object],
+    profiles: dict[str, object],
+    running: bool,
+) -> dict[str, object]:
+    return {
+        "ok": True,
+        "enabled": True,
+        "profile": session,
+        "driver": "agent-browser",
+        "transport": "agent-browser",
+        "running": running,
+        "cdpReady": running,
+        "cdpHttp": None,
+        "session": session,
+        "currentSession": current.get("currentSession") or session,
+        "sessions": sessions.get("sessions") if isinstance(sessions.get("sessions"), list) else [],
+        "profiles": profiles.get("profiles") if isinstance(profiles.get("profiles"), list) else [],
+    }
+
+
+def browser_doctor_checks(status: dict[str, object]) -> list[dict[str, object]]:
+    running = status.get("running") is True
+    return [
+        {
+            "id": "native-runtime",
+            "label": "Native agent-browser runtime",
+            "status": "pass",
+            "summary": "Native agent-browser command runtime is available.",
+        },
+        {
+            "id": "session",
+            "label": "Browser session",
+            "status": "pass" if running else "warn",
+            "summary": "Browser session is active."
+            if running
+            else "Browser session is not listed as active.",
+        },
+    ]
 
 
 def browser_diff_snapshot_payload(
@@ -2320,6 +2693,27 @@ def browser_request_string(request: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def browser_request_indexed_tab_target_id(
+    tabs_payload: dict[str, object],
+    index: int | None,
+) -> str:
+    raw_tabs = tabs_payload.get("tabs")
+    if not isinstance(raw_tabs, list) or not raw_tabs:
+        raise GatewayBrowserRuntimeError("browser tab not found")
+    resolved_index = index if index is not None else 0
+    if resolved_index < 0 or resolved_index >= len(raw_tabs):
+        raise GatewayBrowserRuntimeError("browser tab not found")
+    tab = raw_tabs[resolved_index]
+    if isinstance(tab, dict):
+        for key in ("targetId", "id", "tabId"):
+            value = tab.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    if isinstance(tab, str) and tab.strip():
+        return tab.strip()
+    raise GatewayBrowserRuntimeError("browser tab targetId is unavailable")
+
+
 def browser_request_string_list(request: dict[str, Any], *keys: str) -> list[str]:
     for key in keys:
         value = request.get(key)
@@ -2341,6 +2735,17 @@ def browser_required_string(request: dict[str, Any], key: str, *, label: str) ->
     if not value:
         raise ValueError(f"{label} is required")
     return value
+
+
+def browser_request_number_text(request: dict[str, Any], key: str, *, label: str) -> str:
+    value = request.get(key)
+    if isinstance(value, bool) or value is None:
+        raise GatewayBrowserRuntimeError(f"{label} is required")
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise GatewayBrowserRuntimeError(f"{label} is required")
 
 
 def browser_required_selector(request: dict[str, Any], kind: str) -> str:
@@ -2614,6 +3019,16 @@ def browser_bool_value(value: str) -> bool | None:
     if text in {"false", "0", "no", "hidden", "disabled", "unchecked"}:
         return False
     return None
+
+
+def browser_request_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "on"}
+    if isinstance(value, int):
+        return value != 0
+    return False
 
 
 def browser_url_value(value: str) -> str:

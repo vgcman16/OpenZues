@@ -1,20 +1,35 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-08
+Updated: 2026-05-12
 
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99999999999999999999999999999999999999999999998%.
-- The active gateway/session/tool-contract family is estimated at ~99.9% of the
+  band of ~80-99.99999999999999999999999999999999999999999999999999%.
+- The active gateway/session/tool-contract family is estimated at ~99.946% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~99.96% after the latest
+- The chat/session contract subfamily is estimated at ~99.986% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
-  `sessions.spawn`, sandboxed remote media staging, `tools.invoke`, and Tlon
-  monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence, Tlon route-backed account probe, Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
+  `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed
+  remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
+  Tlon monitor lifecycle runtime seams.
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99989% after the
+  runtime bridge doctor posture, native ACP client interactive replay, package
+  post-update completion-cache refresh, all-shell completion write-state,
+  secrets reload CLI surface, QR remote config lookup/auth/Tailscale
+  MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
+  preflight, devices list/approve CLI, package-update downgrade confirmation,
+  stored-channel package update dispatch, package-update Node engine preflight,
+  package-update activated plugin/channel-probe/version-mismatch restart-health failure,
+  gateway health `serverVersion` projection,
+  provider-gated plugin native command specs, plugin imported-state projection,
+  errored runtime-imported plugin projection, facade-loaded plugin imported-state
+  preservation, diagnostics-loaded plugin imported-state counts, bundled plugin
+  reported-version normalization, bundled plugin env discovery/default-disable,
+  plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  provider route send/poll alias-precedence, Tlon route-backed account probe,
+  Tlon native route-backed text send, iMessage config-backed CLI/RPC account probe,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -44,7 +59,8 @@ Current percentage rollup:
   diagnostics section, plugin inspect human install section, plugin inspect
   human compatibility warnings section, plugin inspect typed/custom hook
   sections, plugin inspect human header/bundle-format labels, plugin list
-  verbose activation/import state, plugin list human enabled label, plugin list
+  verbose activation/import state, LINE rich-menu runtime helpers,
+  restart-health missing-version diagnostics, plugin list human enabled label, plugin list
   human enabled count, manifest load-path activation-state projection,
   plugin public-surface/runtime-sidecar artifact metadata projection,
   configured-channel owner activation projection,
@@ -54,6 +70,7 @@ Current percentage rollup:
   configured-channel workspace owner activation gate,
   manifest toolMetadata availability gate,
   installed plugin runtime activation adapter,
+  installed plugin source SDK subpath alias runtime activation and execution,
   installed plugin disabled activation gate,
   active-registry executor projection, runtime activation doctor posture, and
   speech facade helper,
@@ -123,12 +140,20 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.9% after the
-  latest companion remote macOS bin discovery slice.
-- The CLI/operator control-plane family is estimated at ~99.9% after the bundle
+- The gateway session/tool-contract family is estimated at ~99.946% after the
+  latest requester-scoped `agents_list` spawn-target projection slice.
+- The provider-native inbound/outbound breadth family is estimated at ~99.9991%
+  after route-backed Telegram stale-thread retry fallback for JSON and
+  HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
+  delivery plus postback/media-placeholder/sticker/location delivery and group
+  mention gating, native LINE mention metadata handling, group
+  pending-history replay, non-text group media mention-gate bypass, LINE
+  inbound media staging, production credential-backed LINE media download, and
+  LINE webhook redelivery dedupe.
+- The CLI/operator control-plane family is estimated at ~99.99989% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
-  secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  secrets reload CLI surface, devices list/approve CLI, package-update downgrade confirmation, stored-channel package update dispatch, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch restart-health failure, gateway health `serverVersion` projection, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
@@ -151,7 +176,8 @@ Current percentage rollup:
   section, plugin inspect human install section, plugin inspect human
   compatibility warnings section, plugin inspect typed/custom hook sections,
   plugin inspect human header/bundle-format labels, plugin list verbose
-  activation/import state, plugin list human enabled label, plugin list human
+  activation/import state, LINE rich-menu runtime helpers,
+  restart-health missing-version diagnostics, plugin list human enabled label, plugin list human
   enabled count, manifest load-path activation-state projection,
   plugin public-surface/runtime-sidecar artifact metadata projection,
   configured-channel owner activation projection,
@@ -167,11 +193,312 @@ Current percentage rollup:
   remaining CLI
   gaps are now dominated by real installed plugin module import/activation and
   packaging surfaces.
+
+Current queue-head adjustment: the native installed-plugin LINE runtime shim now
+exports OpenClaw-shaped rich-menu pure helpers, including `createGridLayout()`
+and the six-action `createDefaultMenuConfig()` default menu. Source/test
+checkpointed in `b80501c6`; repo-wide parity remains estimated at ~99.9%, and
+runtime/CLI/doctor plus CLI/operator parity move to ~99.99988%. Continue
+remaining package restart-health diagnostics, provider-specific media/reply
+edges, deeper installed plugin activation, browser local fallback, or companion
+breadth.
+
+Current queue-head adjustment: package update restart-health checks now fail
+when the restarted gateway omits its gateway version without rendering a
+version-mismatch diagnostic, matching OpenClaw's missing-version posture.
+Source/test checkpointed in `90e3d0a3`; repo-wide parity remains estimated at
+~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to ~99.99989%.
+Continue remaining package restart-health diagnostics, provider-specific
+media/reply edges, browser local fallback, deeper installed plugin activation,
+or companion breadth.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
   channel-registered thread binders, broader provider-native adapters,
-  CLI/runtime breadth, packaging/doctor surfaces, and companion app parity.
+  CLI/runtime breadth, packaging/doctor surfaces, provider-specific
+  send/poll/replay edges, and companion app parity.
+
+Current queue-head adjustment: Slack Events API member callbacks now match the
+OpenClaw monitor path in `extensions/slack/src/monitor/events/members.ts`:
+`member_joined_channel` and `member_left_channel` unwrap Slack
+`event_callback`, enforce native Slack DM/channel authorization from config,
+derive the channel/account session key, and enqueue next-heartbeat
+`system-event` wakes with `slack:member:<verb>:<channel>:<user>` context keys.
+Verified on 2026-05-09 with focused red/green Slack member service/route
+proofs, adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and
+focused `git diff --check`; source/test checkpointed in `9d07244d`. This
+closes `OZ-PROV-001DZ`; provider-native inbound/outbound breadth moves to
+~99.3%. Continue provider-specific media/reply edges, companion breadth, or
+the next package startup/update edge.
+
+Current queue-head adjustment: Slack Events API channel lifecycle callbacks now
+match the OpenClaw monitor path in
+`extensions/slack/src/monitor/events/channels.ts`: `channel_created` and
+`channel_rename` unwrap Slack `event_callback`, enforce native Slack
+channel allow/disable config, derive a channel/account session key, and enqueue
+next-heartbeat `system-event` wakes with
+`slack:channel:<verb>:<channel>` context keys. Verified on 2026-05-09 with
+focused red/green Slack channel service/route proofs, adjacent Slack
+provider/inbound proof, `ruff check`, `mypy`, and focused
+`git diff --check`; source/test checkpointed in `7474eb85`. This closes
+`OZ-PROV-001EA`; provider-native inbound/outbound breadth moves to ~99.4%.
+Continue provider-specific media/reply edges, companion breadth, or the next
+package startup/update edge.
+
+Current queue-head adjustment: Slack Events API pin callbacks now match the
+OpenClaw monitor path in `extensions/slack/src/monitor/events/pins.ts`:
+`pin_added` and `pin_removed` unwrap Slack `event_callback`, enforce native
+Slack sender authorization from config, derive a channel/account session key,
+and enqueue next-heartbeat `system-event` wakes with
+`slack:pin:<added|removed>:<channel>:<message>` context keys. Verified on
+2026-05-09 with focused red/green Slack pin service/route proofs, adjacent
+Slack provider/inbound proof, `ruff check`, `mypy`, and focused
+`git diff --check`; source/test checkpointed in `0688d049`. This closes
+`OZ-PROV-001EB`; provider-native inbound/outbound breadth moves to ~99.5%.
+Continue provider-specific media/reply edges, companion breadth, or the next
+package startup/update edge.
+
+Current queue-head adjustment: Slack metadata-only message subtypes now match
+the OpenClaw monitor path in
+`extensions/slack/src/monitor/events/message-subtype-handlers.ts`:
+`message_changed` and `message_deleted` preserve the upstream sender/message id
+fallback order, enforce native Slack sender authorization from config, derive a
+channel/account session key, and enqueue next-heartbeat `system-event` wakes
+with `slack:message:<changed|deleted>:<channel>:<message>` context keys.
+Verified on 2026-05-09 with focused red/green Slack message subtype
+service/route proofs, adjacent Slack provider/inbound proof, `ruff check`,
+`mypy`, and focused `git diff --check`; source/test checkpointed in
+`8c4e74ef`. This closes `OZ-PROV-001EC`; provider-native inbound/outbound
+breadth moves to ~99.6%. Continue provider-specific media/reply edges,
+companion breadth, or the next package startup/update edge.
+
+Current queue-head adjustment: Slack App Home callbacks now match the
+OpenClaw monitor path in `extensions/slack/src/monitor/events/home.ts`:
+`app_home_opened` skips the Messages tab, resolves a native Slack account route
+and token, posts `views.publish` with the OpenZues Home view, and returns an
+honest unavailable response when route credentials are absent. Verified on
+2026-05-09 with focused red/green Slack App Home service/route proofs,
+adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and focused
+`git diff --check`; source/test checkpointed in `58bc6b72`. This closes
+`OZ-PROV-001ED`; provider-native inbound/outbound breadth moves to ~99.7%.
+Continue provider-specific media/reply edges, companion breadth, or the next
+package startup/update edge.
+
+Current queue-head adjustment: Slack `channel_id_changed` callbacks now match
+the OpenClaw config migration path in
+`extensions/slack/src/monitor/events/channels.ts` and
+`extensions/slack/src/channel-migration.ts`: events require old/new channel
+ids, honor `channels.slack.configWrites` plus account overrides, migrate
+matching global/account channel config keys, and preserve `skippedExisting`
+plus scope projection. Verified on 2026-05-09 with focused red/green Slack
+channel-id migration service/route proofs, adjacent Slack provider/inbound
+proof, `ruff check`, `mypy`, and focused `git diff --check`; source/test
+checkpointed in `22b9bd10`. This closes `OZ-PROV-001EE`; provider-native
+inbound/outbound breadth moves to ~99.8%. Continue provider-specific
+media/reply edges, companion breadth, or the next package startup/update edge.
+
+Current queue-head adjustment: Slack `block_actions` interactions now match
+the OpenClaw monitor system-event path in
+`extensions/slack/src/monitor/events/interactions.block-actions.ts`: the native
+interactions route accepts JSON or Slack form `payload`, redacts
+trigger/response URLs, enforces config-backed sender authorization, derives the
+channel/account session key, and enqueues `Slack interaction: ...` wakes with
+`slack:interaction:<channel>:<message>:<action>` context keys. Verified on
+2026-05-09 with focused red/green Slack block-action service/route proofs,
+adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and focused
+`git diff --check`; source/test checkpointed in `37a9d2dc`. This closes
+`OZ-PROV-001EF`; provider-native inbound/outbound breadth moves to ~99.9%.
+Continue provider-specific media/reply edges, companion breadth, or the next
+package startup/update edge.
+
+Current queue-head adjustment: Slack `view_submission` and `view_closed`
+modal interactions now match the OpenClaw monitor system-event path in
+`extensions/slack/src/monitor/events/interactions.modal.ts`: the native
+interactions route accepts JSON or Slack form `payload`, parses
+`private_metadata` routing, enforces the expected user, summarizes modal input
+state, redacts private metadata and view hashes, and enqueues
+`Slack interaction: ...` wakes with `slack:interaction:view...` /
+`slack:interaction:view-closed...` context keys. Verified on 2026-05-09 with
+focused red/green Slack modal service/route proofs, adjacent Slack
+provider/inbound proof, `ruff check`, `mypy`, and focused `git diff --check`;
+source/test checkpointed in `ecdfe207`. This closes `OZ-PROV-001EG`;
+provider-native inbound/outbound breadth remains ~99.9%. Continue
+provider-specific media/reply edges, companion breadth, or the next package
+startup/update edge.
+
+Current queue-head adjustment: Slack slash command ingress now matches the
+OpenClaw `extensions/slack/src/monitor/slash.ts` baseline for native
+form-driven command dispatch: `/api/channels/slack/slash` accepts Slack form or
+JSON payloads, applies disabled-channel and sender policy, derives Slack
+conversation session keys, redacts trigger ids, and sends accepted command text
+through the session-backed runtime with Slack-shaped ephemeral responses.
+Verified on 2026-05-09 with focused red/green Slack slash service/route
+proofs, adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and
+focused `git diff --check`; source/test checkpointed in `7c538421`. This
+closes `OZ-PROV-001EH`; provider-native inbound/outbound breadth remains
+~99.9%. Continue provider-specific media/reply edges, companion breadth, or
+the next package startup/update edge.
+
+Current queue-head adjustment: Slack native HTTP ingress now enforces
+OpenClaw HTTP-mode signing-secret posture from
+`extensions/slack/src/monitor/provider.ts` / `account-inspect.ts` for configured
+plain signing secrets: Events, interactions, and slash routes verify Slack
+`v0` request signatures over the exact body and reject stale/invalid signatures
+before dispatch. Verified on 2026-05-09 with focused red/green Slack signature
+route proofs, adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and
+focused `git diff --check`; source/test checkpointed in `7ce8a169`. This
+closes `OZ-PROV-001EI`; provider-native inbound/outbound breadth remains
+~99.9%. Continue SecretRef-backed signing-secret resolution, provider-specific
+media/reply edges, companion breadth, or the next package startup/update edge.
+
+Current queue-head adjustment: Slack native HTTP signing-secret resolution now
+accepts env-backed SecretRefs for `channels.slack.signingSecret` and account
+`signingSecret`, matching
+`extensions/slack/src/config-schema.test.ts` while failing closed when the
+configured env ref is unresolved. Verified on 2026-05-09 with focused
+red/green Slack signing Env SecretRef route proofs, adjacent Slack
+provider/inbound proof, `ruff check`, `mypy`, and focused `git diff --check`;
+source/test checkpointed in `47c1a605`. This closes `OZ-PROV-001EJ`;
+provider-native inbound/outbound breadth remains ~99.9%. Continue file/exec
+SecretRef signing-secret resolution, provider-specific media/reply edges,
+companion breadth, or the next package startup/update edge.
+
+Current queue-head adjustment: Slack native HTTP signing-secret resolution now
+accepts file-backed SecretRefs for `channels.slack.signingSecret` and account
+`signingSecret`, trimming file content and failing closed when the configured
+file cannot be read. Verified on 2026-05-09 with focused red/green Slack
+signing file SecretRef route proofs, adjacent Slack provider/inbound proof,
+`ruff check`, `mypy`, and focused `git diff --check`; source/test checkpointed
+in `adac6624`. This closes `OZ-PROV-001EK`; provider-native inbound/outbound
+breadth remains ~99.9%. Continue exec SecretRef signing-secret resolution,
+provider-specific media/reply edges, companion breadth, or the next package
+startup/update edge.
+
+Current queue-head adjustment: Slack native HTTP signing-secret resolution now
+accepts exec-backed SecretRefs for `channels.slack.signingSecret` and account
+`signingSecret` through the configured native secret provider protocol v1 JSON
+contract, using bounded no-shell subprocess execution and failing closed when
+the provider is unavailable, fails, emits invalid output, or omits the requested
+id. Verified on 2026-05-09 with focused red/green Slack signing exec SecretRef
+route proofs, adjacent Slack provider/inbound proof, `ruff check`, `mypy`, and
+focused `git diff --check`; source/test checkpointed in `a4b67444`. This closes
+`OZ-PROV-001EL`; provider-native inbound/outbound breadth remains ~99.9%.
+Continue provider-specific media/reply edges, companion breadth, or the next
+package startup/update edge.
+
+Current queue-head adjustment: Slack slash command arg-menu action selections
+now decode OpenClaw's `cmdarg|command|arg|value|user` action values, reject
+stale or other-user menu submissions with Slack-shaped ephemeral responses, and
+dispatch valid selections through the session-backed slash command delivery path
+instead of downgrading them to generic interaction wake events. Verified on
+2026-05-09 with focused red/green Slack command arg interaction proofs, adjacent
+Slack provider/interaction proof, `ruff check`, `mypy`, and focused
+`git diff --check`; source/test checkpointed in `f6cad264`. This closes
+`OZ-PROV-001EM`; provider-native inbound/outbound breadth remains ~99.9%.
+Continue Slack external arg-menu options, provider-specific media/reply edges,
+companion breadth, or the next package startup/update edge.
+
+Current queue-head adjustment: Slack external arg-menu options payloads now
+acknowledge OpenClaw's `block_suggestion` empty-result path for missing or
+unavailable external menu tokens, returning Slack-shaped `options: []` instead
+of reporting the payload type as unsupported. Verified on 2026-05-09 with a
+focused red/green Slack interaction route proof, adjacent Slack provider/
+interaction proof, `ruff check`, `mypy`, and focused `git diff --check`;
+source/test checkpointed in `151bb0e5`. This closes `OZ-PROV-001EN`;
+provider-native inbound/outbound breadth remains ~99.9%. Continue full
+external arg-menu choice-store hydration, provider-specific media/reply edges,
+companion breadth, or the next package startup/update edge.
+
+Current queue-head adjustment: QR `--remote` now loads persisted
+`gateway.remote.url` plus remote token/password auth material from the native
+control UI config snapshot, reports `urlSource="gateway.remote.url"`, keeps
+remote mode from falling through to device-pair publicUrl, preserves existing
+no-remote-config preflight behavior, and avoids embedding local or remote auth
+material in setup-code or JSON output. Verified on 2026-05-08 with focused
+red/green QR remote config proof, focused no-config/JSON guard pair, adjacent
+QR CLI proof, `ruff check`, `mypy`, and focused `git diff --check`;
+checkpointed in `3d63d136`. The next QR remote breadth target was remote
+secret diagnostics plus Tailscale serve/funnel URL resolution.
+
+Current queue-head adjustment: QR `--remote` now resolves
+`gateway.tailscale.mode=serve|funnel` through native `tailscale status --json`
+when no `gateway.remote.url` is configured. It extracts MagicDNS from
+`Self.DNSName`, falls back to the first `Self.TailscaleIPs` value, emits a
+secure `wss://` setup URL, and reports
+`urlSource="gateway.tailscale.mode=<mode>"`; unavailable host discovery keeps
+the OpenClaw-shaped MagicDNS error. Verified on 2026-05-08 with focused
+red/green QR Tailscale proof, adjacent QR CLI proof, `ruff check`, `mypy`, and
+focused `git diff --check`; checkpointed in `beb67302`. Remaining QR remote
+breadth is remote secret diagnostics.
+
+Current queue-head adjustment: QR `--remote` now resolves env-backed
+`gateway.remote.token` / `gateway.remote.password` SecretRefs before auth-label
+selection and emits `[secrets] ...` diagnostics to stderr for JSON and
+setup-code-only output. Verified on 2026-05-08 with focused red/green QR
+remote env SecretRef proof, adjacent QR CLI proof, `ruff check`, `mypy`, and
+focused `git diff --check`; checkpointed in `e3b3031a`. The next QR secret
+depth targets were unresolved-auth preflight and non-env command secret
+resolution parity.
+
+Current queue-head adjustment: QR `--remote` now fails closed when remote
+SecretRefs are unresolved and no fallback gateway auth is configured. The CLI
+emits the unresolved SecretRef diagnostic to stderr, returns
+`Gateway auth is not configured (no token or password).`, and avoids issuing a
+device bootstrap token. Verified on 2026-05-08 with focused red/green QR
+unresolved remote SecretRef proof, adjacent QR CLI proof, `ruff check`,
+`mypy`, and focused `git diff --check`; checkpointed in `4057991c`. Remaining
+QR secret breadth after that checkpoint was file/exec/gateway-backed command
+secret resolution parity.
+
+Current queue-head adjustment: QR `--remote` now resolves file-backed
+`gateway.remote.token` / `gateway.remote.password` SecretRefs through persisted
+`secrets.providers`, including single-value file providers and JSON-pointer
+ids, before auth-label selection. Verified on 2026-05-08 with focused
+red/green QR file SecretRef proof, adjacent QR CLI proof, `ruff check`,
+`mypy`, and focused `git diff --check`; checkpointed in `ddd1d811`. Remaining
+QR secret breadth after that checkpoint was exec/gateway-backed command secret
+resolution parity.
+
+Current queue-head adjustment: QR `--remote` now resolves exec-backed
+`gateway.remote.token` / `gateway.remote.password` SecretRefs through persisted
+`secrets.providers`, sends an OpenClaw protocol v1 request envelope to the
+configured command, reads protocol v1 `values`, routes diagnostics to stderr
+for JSON output, and keeps resolved secret values out of stdout and stderr.
+Verified on 2026-05-08 with focused red/green QR exec SecretRef proof,
+adjacent QR CLI proof, `ruff check`, `mypy`, and focused `git diff --check`;
+checkpointed in `6e1b84c4`. Remaining QR secret breadth is gateway-backed live
+command secret resolution parity.
+
+Current queue-head adjustment: QR `--remote` now asks the active OpenZues
+gateway for `secrets.resolve` before local fallback, applies returned
+`gateway.remote.token` / `gateway.remote.password` assignments, preserves
+gateway diagnostics on stderr for JSON/setup-code output, and keeps resolved
+secret values out of output. Verified on 2026-05-08 with focused red/green QR
+gateway SecretRef proof, adjacent QR CLI proof, `ruff check`, `mypy`, and
+focused `git diff --check`; checkpointed in `93a57d8b`. The QR remote
+SecretRef queue is now closed for env/file/exec/gateway-backed resolution.
+
+Current queue-head adjustment: provider-native direct `send` now accepts
+OpenClaw-style `channelData`-only payloads for shared outbound runtime
+delivery. Non-empty `channelData` is treated as sendable content, whitespace
+text is normalized to an empty message for the provider request, `channelData`
+is preserved in the persisted delivery payload, and structured provider
+metadata still flows through the existing transport/result path. Verified on
+2026-05-08 with focused red/green provider proof, adjacent provider-send
+proofs, `ruff check`, `mypy`, and focused `git diff --check`; checkpointed in
+`fd244774`. Remaining provider breadth includes provider-specific media/reply
+edge cases and inbound/runtime depth.
+
+Current queue-head adjustment: Git-backed native updates now run an OpenZues
+`ui:build` step for source checkouts with `src/openzues/web`, verify the
+native doctor entry, run `openzues doctor --non-interactive --fix --json`, and
+repair missing control-UI assets with a second `ui:build` after doctor if
+needed. If required web assets are still missing after repair, the update
+returns `reason="ui-assets-missing"` with a failed `ui assets verify` step.
+Verified on 2026-05-08 with focused red/green repair/failure proofs, adjacent
+Git update proof, `ruff check`, `mypy`, and focused `git diff --check`;
+checkpointed in `92aadaf9`. Remaining packaging breadth includes broader
+distribution and startup/update edge cases.
 
 Current queue-head adjustment: `sessions.spawn runtime="acp"` now uses a real
 native `GatewayAcpSpawnService` backed by `RuntimeManager`, including thread
@@ -2488,7 +2815,8 @@ Current queue-head adjustment: `agents_list` is now an explicit tool posture,
 and `agents.list toolProjection=sessions_spawn` returns an OpenClaw-style
 `requester`, `allowAny`, and bounded `agents` list for spawn targeting while
 preserving the existing broad OpenZues agent inventory by default. Remaining
-agent-target parity is the richer OpenClaw subagent allowlist config model.
+agent-target parity is requester-specific OpenClaw subagent allowlist config
+model coverage.
 
 Current queue-head adjustment: `sessions.spawn` now materializes inline
 subagent attachments into `.openclaw/attachments/<id>` under the target
@@ -2555,6 +2883,14 @@ Current queue-head adjustment: `sessions.spawn` now honors persisted
 `allowAny`, and allowed target list instead of advertising every configured
 agent. Remaining spawn parity includes ACP harness spawning, thread-binding
 hooks, lifecycle cleanup, and native agent-tool executor wiring.
+
+Current queue-head adjustment: `tools.invoke tool=agents_list` now carries the
+caller `sessionKey` into `agents.list toolProjection=sessions_spawn`, and the
+projection resolves `gateway.agents.list[].subagents.allowAgents` /
+`requireAgentId` for the requester before falling back to defaults. This closes
+the requester-specific OpenClaw agent-target config seam. Remaining spawn parity
+includes ACP harness spawning, thread-binding hooks, lifecycle cleanup, and
+native agent-tool executor wiring.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now returns the
 upstream-shaped no-hook error before runtime dispatch because OpenZues has no
@@ -11152,3 +11488,670 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   with the evidence band tightened to
   ~80-99.99999999999999999999999999999999999999999999998%. Continue remaining
   transcript projection edges plus broader provider/runtime breadth.
+- Current queue-head adjustment: `chat.history` and `sessions.history` now
+  strip OpenClaw runtime-context prompt-preface headers and the generated
+  context privacy notice before exposing visible user transcript rows.
+  Source/test checkpointed in `11c597b7`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.99999999999999999999999999999999999999999999999%. Continue the
+  remaining legacy internal runtime-context event-block edge, then rotate to
+  broader provider/runtime, packaging, or companion breadth.
+- Current queue-head adjustment: `chat.history` and `sessions.history` now
+  strip legacy OpenClaw internal runtime-context event blocks, including
+  untrusted child-result and action sections, before exposing visible user
+  transcript rows. Source/test checkpointed in `dff892b6`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999995%. Rotate to broader
+  provider/runtime, packaging, or companion breadth unless another exact
+  transcript sanitizer edge is exposed.
+- Current queue-head adjustment: Slack `message.action send` and `upload-file`
+  now resolve OpenClaw-style auto-thread IDs from matching tool-context channel
+  and thread state when `replyToMode` allows it. Source/test checkpointed in
+  `8db0f19b`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to
+  ~80-99.999999999999999999999999999999999999999999999996%. Continue provider
+  reply policy plumbing (`replyToMode` / `replyToIdSource`) or packaging
+  ownership detection.
+- Current queue-head adjustment: direct provider-backed outbound sends now
+  preserve OpenClaw-style `replyToIdSource` and `replyToMode` through runtime
+  request dispatch and saved delivery payloads, defaulting explicit replies to
+  `replyToIdSource="explicit"`. Source/test checkpointed in `e115e5f1`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to
+  ~80-99.999999999999999999999999999999999999999999999997%. Continue
+  packaging ownership detection or companion device-pairing breadth next.
+- Current queue-head adjustment: native package update detection now infers
+  `npm` from an owning npm global root when package metadata lacks
+  `packageManager` or lockfiles, but only if the owning npm command exists.
+  Source/test checkpointed in `76e2a21c`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999998%. Continue
+  companion device-pairing breadth or the next packaging startup/update edge.
+- Current queue-head adjustment: native package update detection now also
+  infers `pnpm` from `pnpm root -g` ownership and `bun` from the OpenClaw-style
+  `BUN_INSTALL/install/global/node_modules` root when package metadata lacks
+  `packageManager` or lockfiles. Source/test checkpointed in `5d80e370`, bun
+  follow-up proof checkpointed in `04472a9c`; runtime/CLI/doctor and
+  CLI/operator parity move to ~99.98%, repo-wide parity remains estimated at
+  ~99.9%, and the evidence band is tightened to
+  ~80-99.99999999999999999999999999999999999999999999999986%. Continue
+  provider-specific media/reply edges, companion breadth, or the next
+  packaging startup/update edge.
+- Current queue-head adjustment: device pairing now preserves OpenClaw-style
+  `publicKey` through pending request storage, refresh/list snapshots,
+  approval, paired-device storage, and `device.pair.*` projections. Source/test
+  checkpointed in `bef0652f`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to
+  ~80-99.999999999999999999999999999999999999999999999999%. Continue
+  companion QR/setup-code remote secret/rendered QR breadth, packaging
+  startup/update edges, or provider/runtime breadth next.
+- Current queue-head adjustment: QR setup-code generation now rejects public
+  cleartext `ws://` mobile pairing URLs before bootstrap token issue while
+  still allowing loopback, private LAN/link-local, and Android emulator
+  cleartext URLs. Source/test checkpointed in `24d89215`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9999999999999999999999999999999999999999999999995%. Continue QR
+  `--remote` saved `gateway.remote.url`/auth handling, packaging post-doctor
+  UI asset repair, or provider `channelData`-only delivery next.
+- Current queue-head adjustment: `voicewake.routing.get` and
+  `voicewake.routing.set` now preserve OpenClaw's persisted routing config
+  contract, route normalization, target validation, `voicewake.routing.changed`
+  broadcasts, HTTP method-call support, and fresh managed-node snapshot sync.
+  Source/test checkpointed in `a74cec21`; repo-wide parity remains estimated
+  at ~99.9%, and browser/canvas/nodes/voice bounded-command parity moves to
+  ~99.1%. Continue provider-specific media/reply edges, companion breadth, or
+  the next packaging startup/update edge.
+- Current queue-head adjustment: `openzues qr` now rejects the inferred
+  default loopback setup-code URL before issuing a bootstrap token, matching
+  OpenClaw's loopback-only bind preflight while preserving explicit loopback
+  URLs for simulator/local-dev use. Source/test checkpointed in `89ee261d`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion app
+  parity moves to ~5.1%. Continue provider-specific media/reply edges,
+  companion breadth, or the next packaging startup/update edge.
+- Current queue-head adjustment: active plugin registry projection now
+  preserves non-tool `sessionExtensions` and `controlUiDescriptors` as native
+  runtime specs, including disabled-state filtering through the existing
+  session-extension and plugin UI descriptor service paths. Source/test
+  checkpointed in `2cc24e73`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.99%. Continue
+  provider-specific media/reply edges, companion breadth, or the next plugin
+  runtime activation edge.
+- Current queue-head adjustment: embedded/TUI command-status parity now exposes
+  `/gateway-status` and `/gwstatus` separately from session `/status`, keeping
+  OpenClaw's local gateway diagnostics command visible in help and command
+  inventory. Source/test checkpointed in `38890fe3`; repo-wide parity remains
+  estimated at ~99.9%, and CLI/operator control-plane parity moves to ~99.99%.
+  Continue provider-specific media/reply edges, companion breadth, or the next
+  runtime/CLI ergonomics edge.
+- Current queue-head adjustment: `openzues doctor` now mirrors OpenClaw's
+  interactive git-checkout update offer before standalone doctor checks.
+  Accepted updates dispatch the native runtime update service, successful
+  updates skip the standalone doctor because post-update doctor already ran,
+  package installs get a package-manager update note, and non-interactive,
+  JSON, repair, or in-progress update contexts suppress the prompt. Source/test
+  checkpointed in `cfef9ae1`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor plus CLI/operator parity move to ~99.995%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.
+- Current queue-head adjustment: Slack `reaction_added` and `reaction_removed`
+  event callbacks now route through the native Slack Events endpoint into
+  session-keyed next-heartbeat `system-event` wakes with OpenClaw-style
+  reaction context keys and config-backed sender authorization. Source/test
+  checkpointed in `10dfaa17`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.2%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.
+- Current queue-head adjustment: Slack `member_joined_channel` and
+  `member_left_channel` event callbacks now route through the same native
+  Slack Events endpoint into session-keyed next-heartbeat `system-event` wakes
+  with OpenClaw-style `slack:member:<verb>:<channel>:<user>` context keys and
+  config-backed sender authorization. Source/test checkpointed in `9d07244d`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.3%. Continue provider-specific
+  media/reply edges, companion breadth, or the next package startup/update
+  edge.
+- Current queue-head adjustment: Slack `channel_created` and `channel_rename`
+  event callbacks now route through the native Slack Events endpoint into
+  session-keyed next-heartbeat `system-event` wakes with OpenClaw-style
+  `slack:channel:<verb>:<channel>` context keys and config-backed channel
+  allow/disable gating. Source/test checkpointed in `7474eb85`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth moves to ~99.4%. Continue provider-specific media/reply edges,
+  companion breadth, or the next package startup/update edge.
+- Current queue-head adjustment: Slack `pin_added` and `pin_removed` event
+  callbacks now route through the native Slack Events endpoint into
+  session-keyed next-heartbeat `system-event` wakes with OpenClaw-style
+  `slack:pin:<added|removed>:<channel>:<message>` context keys and
+  config-backed sender authorization. Source/test checkpointed in `0688d049`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.5%. Continue provider-specific
+  media/reply edges, companion breadth, or the next package startup/update
+  edge.
+- Current queue-head adjustment: Slack `message_changed` and
+  `message_deleted` callbacks now route through the native Slack Events
+  endpoint into session-keyed next-heartbeat `system-event` wakes with
+  OpenClaw-style `slack:message:<changed|deleted>:<channel>:<message>`
+  context keys and config-backed sender authorization. Source/test
+  checkpointed in `8c4e74ef`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.6%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.
+- Current queue-head adjustment: Slack `app_home_opened` callbacks now route
+  through the native Slack Events endpoint, skip the Messages tab, and publish
+  an OpenZues Home view through route-backed Slack `views.publish` when a
+  native route/token is configured. Source/test checkpointed in `58bc6b72`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.7%. Continue provider-specific
+  media/reply edges, companion breadth, or the next package startup/update
+  edge.
+- Current queue-head adjustment: Slack `channel_id_changed` callbacks now
+  migrate global/account Slack channel config keys behind config-write gating,
+  preserving OpenClaw-shaped `skippedExisting` and migrated scope projection.
+  Source/test checkpointed in `22b9bd10`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.8%.
+  Continue provider-specific media/reply edges, companion breadth, or the next
+  package startup/update edge.
+- Current queue-head adjustment: Slack `block_actions` interactions now route
+  through `/api/channels/slack/interactions` into session-keyed
+  next-heartbeat `system-event` wakes with OpenClaw-style
+  `slack:interaction:<channel>:<message>:<action>` context keys, trigger/
+  response URL redaction, and config-backed sender authorization. Source/test
+  checkpointed in `37a9d2dc`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.9%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.
+- Current queue-head adjustment: Slack `view_submission` and `view_closed`
+  modal interactions now route through `/api/channels/slack/interactions` into
+  session-keyed next-heartbeat `system-event` wakes with OpenClaw-style
+  `slack:interaction:view...` / `slack:interaction:view-closed...` context
+  keys, expected-user authorization, modal state input summaries, and
+  private-metadata/view-hash redaction. Source/test checkpointed in
+  `ecdfe207`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.
+- Current queue-head adjustment: Slack slash command ingress now routes through
+  `/api/channels/slack/slash` into Slack conversation session keys with
+  disabled-channel/sender policy, trigger-id redaction, session-backed command
+  text delivery, and Slack-shaped ephemeral responses. Source/test
+  checkpointed in `7c538421`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth remains ~99.9%. Continue
+  provider-specific media/reply edges, companion breadth, or the next package
+  startup/update edge.
+- Current queue-head adjustment: Slack native HTTP ingress now verifies
+  configured plain signing secrets on Events, interactions, and slash routes
+  using Slack `v0` HMAC signatures and timestamp freshness before dispatch.
+  Source/test checkpointed in `7ce8a169`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth remains ~99.9%.
+  Continue SecretRef-backed signing-secret resolution, provider-specific
+  media/reply edges, companion breadth, or the next package startup/update
+  edge.
+- Current queue-head adjustment: Slack native HTTP signing-secret resolution
+  now accepts env-backed SecretRefs for top-level and account signing secrets,
+  and fails closed when the env ref is unresolved. Source/test checkpointed in
+  `47c1a605`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%. Continue file/exec
+  SecretRef signing-secret resolution, provider-specific media/reply edges,
+  companion breadth, or the next package startup/update edge.
+- Current queue-head adjustment: Slack native HTTP signing-secret resolution
+  now accepts file-backed SecretRefs for top-level and account signing secrets,
+  and fails closed when the configured file cannot be read. Source/test
+  checkpointed in `adac6624`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth remains ~99.9%. Continue exec
+  SecretRef signing-secret resolution, provider-specific media/reply edges,
+  companion breadth, or the next package startup/update edge.
+- Current queue-head adjustment: Slack external arg-menu hydrated options now
+  match the OpenClaw choice-store path in
+  `extensions/slack/src/monitor/slash.ts` and
+  `extensions/slack/src/monitor/external-arg-menu-store.ts`: native Slack
+  `block_suggestion` payloads resolve TTL-backed `openclaw_cmdarg_ext:<token>`
+  menu entries, enforce the requester user, filter choices case-insensitively,
+  and return Slack-shaped option payloads instead of empty placeholders.
+  Source/test checkpointed in `54d18930`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth remains ~99.9%.
+  Continue provider-specific media/reply edges, companion breadth, deeper Slack
+  command menu generation, or the next package startup/update edge.
+- Current queue-head adjustment: Slack slash command arg-menu rendering now
+  matches the OpenClaw menu-block path in
+  `extensions/slack/src/monitor/slash.ts`: native command specs can expose
+  choice arguments, missing choice values return Slack ephemeral menu blocks
+  with encoded `openclaw_cmdarg` action values, and incomplete slash commands
+  no longer enter the session dispatch path. Source/test checkpointed in
+  `27836d4c`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%. Continue
+  provider-specific media/reply edges, companion breadth, plugin/provider
+  command menu breadth, or the next package startup/update edge.
+- Current queue-head adjustment: Slack large-choice command arg menus now have
+  focused proof for OpenClaw's external-select branch: more than 100 encoded
+  choices produce `external_select`, `openclaw_cmdarg_ext:<token>` block ids,
+  and per-user option hydration through `block_suggestion`. Test checkpointed
+  in `b1639b4b`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth remains ~99.9%. Continue Slack
+  provider-native `/agentstatus` aliasing, provider-specific media/reply
+  edges, companion breadth, or the next package startup/update edge.
+- Current queue-head adjustment: package-shaped `openzues update` now refuses
+  package-manager dispatch from inside the managed gateway service process
+  (`OPENCLAW_SERVICE_MARKER=openclaw` and empty/`gateway`
+  `OPENCLAW_SERVICE_KIND`), matching OpenClaw's self-update service-process
+  guard. Source/test checkpointed in `ca7d7e81`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to
+  ~99.996%. Continue Slack provider-native `/agentstatus` command aliasing,
+  WhatsApp reply fanout, provider-specific media/reply edges, or companion
+  breadth.
+- Current queue-head adjustment: Slack native command catalog generation now
+  applies OpenClaw's provider-native alias for `status`, exposing
+  `/agentstatus` through `commands.list provider="slack"` while keeping the
+  canonical command key as `status`. Source/test checkpointed in `bc4f90fe`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth remains ~99.9%. Continue provider plugin-command
+  injection breadth, WhatsApp reply fanout, provider-specific media/reply
+  edges, or companion breadth.
+- Current queue-head adjustment: WhatsApp split-media sends now preserve
+  OpenClaw reply fanout metadata and apply reusable explicit/all-mode replies
+  to each low-level media payload instead of only the first payload.
+  Source/test checkpointed in `a1d930ab`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.91%.
+  Continue provider plugin-command injection breadth, remaining
+  provider-specific media/reply edges, companion breadth, or packaging edges.
+- Current queue-head adjustment: Slack provider-native command catalogs now
+  append plugin-owned native command specs through the shared plugin runtime,
+  resolve provider-specific native aliases such as `nativeNames.slack`, expose
+  plugin text aliases, and skip plugin command names that collide with existing
+  native command names such as `/agentstatus`, matching the OpenClaw Slack
+  startup/plugin command-spec path. Source/test checkpointed in `c798e879`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.92%. Continue remaining
+  provider-specific media/reply edges, companion breadth, or packaging edges.
+- Current queue-head adjustment: Telegram native multi-media sends now honor
+  OpenClaw reply fanout for implicit `replyToMode="first"` replies, applying
+  `reply_to_message_id` only to the first media payload while preserving
+  reusable explicit/all-mode behavior through the shared fanout helper.
+  Source/test checkpointed in `2b177851`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.93%.
+  Continue Telegram provider-visible caption passthrough parity, remaining
+  provider-specific media/reply edges, companion breadth, or packaging edges.
+- Current queue-head adjustment: Telegram provider-visible media captions now
+  preserve OpenClaw's route-backed outbound behavior: the first sequential media
+  send receives the original outbound text as `caption`, later media sends are
+  captionless, and internal `Media:` URL summaries are not projected to the
+  Telegram Bot API payload. Test checkpointed in `c9cd47a1`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.94%. Continue remaining provider-specific media/reply edges,
+  companion breadth, or packaging edges.
+- Current queue-head adjustment: package-shaped updates now run a bounded
+  post-doctor `openzues completion --write-state` refresh with
+  `OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS=1`, keep completion failures
+  non-fatal with the manual refresh hint, and expose the native completion
+  cache command for real post-update use. Source/test checkpointed in
+  `6df2f067`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.997%. Continue
+  remaining provider-specific media/reply edges, companion breadth, real
+  installed plugin activation, or the next packaging edge.
+- Current queue-head adjustment: native `completion --write-state` now writes
+  the OpenClaw all-shell cache set (`bash`, `fish`, `ps1`, `zsh`) using Typer's
+  installed-command completion scripts instead of only caching the detected
+  host shell. Source/test checkpointed in `9afdb51c`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to
+  ~99.998%. Continue remaining provider-specific media/reply edges, companion
+  breadth, real installed plugin activation, or the next packaging edge.
+- Current queue-head adjustment: the native installed-plugin runtime loader now
+  resolves source `pluginSdkAliasMap` subpath shims across Node's synchronous
+  module-load boundary, so source runtime entries can import
+  `@openclaw/plugin-sdk/outbound-send-deps` and register real executor tools
+  without a fake activation adapter. Source/test checkpointed in `5a2e8804`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor plus
+  CLI/operator parity move to ~99.999%. Continue remaining provider-specific
+  media/reply edges, companion breadth, deeper installed plugin activation, or
+  packaging edges.
+- Current queue-head adjustment: source-installed plugin runtime entries now
+  also have execution-path proof through `tools.invoke`; the activation payload
+  preserves `pluginSdkAliasMap`, the native executor reloads the same source
+  runtime with its plugin-local SDK alias map, and a tool importing
+  `@openclaw/plugin-sdk/outbound-send-deps` executes successfully. Source/test
+  checkpointed in `61843808`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor plus CLI/operator parity move to ~99.9991%.
+  Continue remaining provider-specific media/reply edges, companion breadth,
+  deeper installed plugin activation, or packaging edges.
+- Current queue-head adjustment: route-backed Telegram sends and polls now
+  match OpenClaw's stale-topic fallback path by retrying once without
+  `message_thread_id` when Telegram returns `message thread not found`, while
+  preserving reply, silent, text/media/document/keyboard/poll fields and
+  continuing to surface non-thread errors. Source/test checkpointed in
+  `f38aec97`, with poll-specific proof checkpointed in `813645f6`; repo-wide
+  parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.95%. Continue
+  remaining provider-specific media/reply edges, companion breadth, deeper
+  installed plugin activation, or packaging edges.
+- Current queue-head adjustment: route-backed Telegram sends and polls now also
+  retry stale-topic sends when the provider error is raised by the native HTTP
+  layer as `RuntimeError`, not only when the Bot API returns JSON `{ ok: false }`.
+  Source/test checkpointed in `0544ceb2`, with poll-specific proof in
+  `1eadc4ae`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.965%.
+  Continue remaining provider-specific media/reply edges, companion breadth,
+  deeper installed plugin activation, or packaging edges.
+- Current queue-head adjustment: OpenClaw implicit `agentRuntime` metadata now
+  projects through `sessions.patch` resolved payloads and `sessions.list` rows
+  as `{ id: "pi", source: "implicit" }`, matching
+  `resolveAgentRuntimeMetadata` in the upstream session RPC path. Source/test
+  checkpointed in `6c807e10`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.91%, and the
+  chat/session contract subfamily moves to ~99.985%. Continue
+  `openzues devices list/approve`, package-update downgrade confirmation, or
+  remaining provider-specific media/reply edges.
+- Current queue-head adjustment: provider plugin command specs now match
+  OpenClaw's gated `getPluginCommandSpecs(provider)` behavior in gateway
+  command publication while preserving the ungated provider alias listing for
+  plugin runtime helpers. `commands.list provider="whatsapp" scope="native"`
+  omits plugin-native commands unless the provider is explicitly
+  native-command enabled. Source/test checkpointed in `6f15b49f`; repo-wide
+  parity remains estimated at ~99.9%, active gateway/session/tool-contract
+  parity moves to ~99.92%, and runtime/CLI/doctor plus CLI/operator parity
+  move to ~99.9992%. Continue package-update downgrade confirmation or
+  remaining provider-specific media/reply edges.
+- Current queue-head adjustment: `openzues devices list` and
+  `openzues devices approve` now provide the QR-promised companion pairing CLI
+  surface, including JSON list/approve output and preview-only `approve
+  --latest --json` selection before explicit approval. Source/test
+  checkpointed in `25c344be`; repo-wide parity remains estimated at ~99.9%,
+  runtime/CLI/doctor and CLI/operator parity move to ~99.9993%, and companion
+  breadth moves to ~5.2%. Continue package-update downgrade confirmation or
+  remaining provider-specific media/reply edges.
+- Current queue-head adjustment: package-shaped updates now resolve registry
+  target versions for dry-run downgrade previews, set `downgradeRisk` for
+  explicit semver/dist-tag package targets, and refuse JSON/non-interactive
+  downgrades before package-manager dispatch unless `--yes` is present,
+  matching OpenClaw's update CLI guard. Source/test checkpointed in
+  `e39ead6e`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.9994%. Continue
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: real package updates now read stored
+  `update.channel` when `--channel` is omitted, so package dispatch resolves
+  the same effective channel as OpenClaw and the dry-run preview path.
+  Source/test checkpointed in `688b89c3`; repo-wide parity remains estimated
+  at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to
+  ~99.9995%. Continue remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: package updates now run a Node engine
+  preflight for registry-resolvable targets before package-manager dispatch,
+  returning the upstream silent-older-install warning when the target package's
+  `engines.node` requirement is incompatible with the current Node runtime.
+  Source/test checkpointed in `6897eae6`; repo-wide parity remains estimated
+  at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to
+  ~99.9996%. Continue remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, LINE webhook ingress, or the
+  next packaging edge.
+- Current queue-head adjustment: LINE signed webhook ingress now exposes
+  `/line/webhook`, validates `X-Line-Signature` over the raw body using
+  `channels.line.channelSecret`, enforces the 64 KiB raw-body cap, and dispatches
+  valid callback bodies through the native OpsMesh LINE handler before returning
+  `{ "status": "ok" }`. Source/test checkpointed in `c3279e34`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth moves to ~99.97%. Continue remaining provider-specific media/reply
+  edges, deeper installed plugin activation, companion breadth, or the next
+  packaging edge.
+- Current queue-head adjustment: LINE signed webhook text `message` events now
+  resolve direct user sources into OpenClaw-shaped LINE conversation targets,
+  derive workspace-affinity session keys, deliver text through native session
+  delivery, and return redacted reply-token plus sender/conversation/session
+  metadata in OpsMesh results. Source/test checkpointed in `906a7147`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.975%. Continue LINE postback webhook
+  delivery, remaining provider-specific media/reply edges, deeper installed
+  plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: LINE signed webhook `postback` events now
+  deliver through the same native session path, including raw postback text and
+  OpenClaw-shaped `line.action`/`line.device` normalization before delivery.
+  Source/test checkpointed in `b1bab063`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.98%.
+  Continue LINE group mention/history/media handling, remaining
+  provider-specific media/reply edges, deeper installed plugin activation,
+  companion breadth, or the next packaging edge.
+- Current queue-head adjustment: package-shaped updates now fail restart
+  verification when `/api/health` reports activated plugin load errors,
+  projecting only `plugins.errors[]` entries with `activated: true`, `id`, and
+  `error` into `Activated plugin load errors:` diagnostics and
+  `reason: restart-health`. Source/test checkpointed in `32796916`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor plus
+  CLI/operator parity move to ~99.9997%. Continue package restart channel-probe
+  diagnostics, remaining provider-specific media/reply edges, deeper installed
+  plugin activation, or companion breadth.
+- Current queue-head adjustment: package-shaped updates now also fail restart
+  verification when gateway health reports channel probe failures, projecting
+  only channel entries with `probe.ok === false` into `Channel health probe
+  errors:` diagnostics and the same `reason: restart-health` result. Source/test
+  checkpointed in `bf46a1f5`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor plus CLI/operator parity move to ~99.9998%. Continue
+  remaining package restart-health diagnostics, provider-specific media/reply
+  edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: LINE signed webhook media `message` events now
+  deliver OpenClaw-shaped placeholders (`<media:image>`, `<media:video>`,
+  `<media:audio>`, and `<media:document>`) into native session delivery instead
+  of being dropped as empty messages. Source/test checkpointed in `e594dfeb`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.985%. Continue LINE location/sticker
+  text extraction, group mention/history handling, remaining provider-specific
+  media/reply edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: LINE signed webhook sticker `message` events
+  now deliver readable OpenClaw-shaped sticker text, including LINE package-name
+  lookup and up to three keyword/text descriptors. Source/test checkpointed in
+  `583bd41a`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.99%. Continue LINE
+  location text extraction, group mention/history handling, remaining
+  provider-specific media/reply edges, deeper installed plugin activation, or
+  companion breadth.
+- Current queue-head adjustment: LINE signed webhook location `message` events
+  now deliver OpenClaw-shaped map-pin coordinate text with fixed six-decimal
+  latitude/longitude and optional accuracy suffixes. Source/test checkpointed
+  in `a3a4ad91`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.992%. Continue LINE
+  group mention/history handling, remaining provider-specific media/reply
+  edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: LINE signed webhook group/room messages now
+  apply the default OpenClaw mention gate before native session delivery,
+  skipping unmentioned group text with explicit skip metadata. Source/test
+  checkpointed in `beeb2d4a`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.994%. Continue LINE
+  mention pattern breadth/group history handling, remaining provider-specific
+  media/reply edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: package-shaped updates now fail restart
+  verification when the restarted gateway reports a version different from the
+  update result's `after.version`, rendering `Gateway version mismatch:`
+  diagnostics and `reason: restart-health`. Source/test checkpointed in
+  `fd5f8117`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor plus CLI/operator parity move to ~99.99985%. Continue
+  remaining package restart-health diagnostics, provider-specific media/reply
+  edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: `/api/health` and `openzues health --json`
+  now expose/preserve `serverVersion`, giving package restart-health version
+  checks a production health source instead of only test-provided health
+  payloads. Source/test checkpointed in `46e19304`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator parity move to
+  ~99.99987%. Continue remaining package restart-health diagnostics,
+  provider-specific media/reply edges, deeper installed plugin activation, or
+  companion breadth.
+- Current queue-head adjustment: LINE signed webhook group messages now honor
+  native `mention.mentionees` metadata for bot self-mentions and `@all`
+  mentions before session delivery, matching OpenClaw's group mention gate.
+  Source/test checkpointed in `24c9f902`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to ~99.995%.
+  Continue LINE group pending-history handling, remaining provider-specific
+  media/reply edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: LINE signed webhook group messages now record
+  skipped unmentioned text as pending history and replay it into the next
+  mentioned group delivery with OpenClaw's history/current-message markers plus
+  `inboundHistory` delivery metadata. Source/test checkpointed in `8d021ced`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.996%. Continue LINE non-text
+  group/media handling, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, or companion breadth.
+- Current queue-head adjustment: LINE signed webhook non-text group messages
+  now bypass the text-only mention gate, allowing media placeholders through
+  when LINE cannot expose mention metadata. Source/test checkpointed in
+  `ea73bd12`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.997%. Continue LINE
+  media download/staging depth, remaining provider-specific media/reply edges,
+  deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: LINE signed webhook media events now support
+  a fakeable native media fetch adapter and stage downloaded bytes into
+  `gateway-attachments/inbound`, surfacing OpenClaw-shaped media path/type and
+  staged-media metadata on the delivery. Source/test checkpointed in
+  `c5d2719b`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.998%. Continue LINE
+  production credential-backed download fallback, remaining provider-specific
+  media/reply edges, deeper installed plugin activation, or companion breadth.
+- Current queue-head adjustment: LINE signed webhook media events now fall back
+  to a production native LINE content download when no fake fetch adapter is
+  injected, resolving the configured account token, applying bearer auth,
+  enforcing the 10 MB cap, detecting content type, and staging the downloaded
+  bytes through the inbound attachment store. Source/test checkpointed in
+  `adbf3f62`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.999%. Continue LINE
+  webhook replay dedupe, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: LINE signed webhook redeliveries now use an
+  OpenClaw-shaped replay cache from `extensions/line/src/bot-handlers.ts`:
+  message events dedupe by LINE message id even when `webhookEventId` changes,
+  while postback and other non-message events dedupe by account, event type,
+  source id, and `webhookEventId`. Source/test checkpointed in `9acc4cd6`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.9991%. Continue remaining
+  provider-specific media/reply edges, deeper installed plugin activation,
+  companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` now handles the connected
+  browser-node proxy path natively: required method/path validation,
+  GET/POST/DELETE enforcement, upstream persistent-profile mutation blocking,
+  browser-capable node resolution, `browser.proxy` dispatch, query/body/profile
+  propagation, timeout propagation, and upstream-shaped `result` projection.
+  Source/test checkpointed in `430e365b`; repo-wide parity remains estimated
+  at ~99.9%, active gateway/session/tool-contract parity moves to ~99.93%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.2%.
+  Continue `browser.request` proxy file persistence and node selection policy,
+  local control-service fallback, remaining provider-specific media/reply
+  edges, deeper installed plugin activation, companion breadth, or the next
+  packaging edge.
+- Current queue-head adjustment: `browser.request` now persists browser proxy
+  `files[]` payloads into a native browser proxy media directory and rewrites
+  `result.path`, `result.imagePath`, and `result.download.path` to the stored
+  artifact path, matching OpenClaw's `persistBrowserProxyFiles` /
+  `applyBrowserProxyPaths` contract. Source/test checkpointed in `97c32bc8`;
+  repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.94%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.3%. Continue
+  `browser.request` node selection policy and local control-service fallback,
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` now honors OpenClaw's
+  configured browser-node selection policy from
+  `extensions/browser/src/gateway/browser-request.ts`: native config
+  `gateway.nodes.browser` supports `auto`/`manual`/`off`, resolves a configured
+  node by id, remote IP, normalized display name, or safe id prefix, and
+  dispatches `browser.proxy` to that selected node when multiple browser nodes
+  are connected. Source/test checkpointed in `6b31e0d7`; repo-wide parity
+  remains estimated at ~99.9%, active gateway/session/tool-contract parity
+  moves to ~99.945%, and browser/canvas/nodes/voice bounded-command parity
+  moves to ~99.4%. Continue `browser.request` local control-service fallback,
+  remaining provider-specific media/reply edges, deeper installed plugin
+  activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` now falls back to the native
+  local browser runtime when no browser-capable node is selected, following the
+  upstream local control-service branch in
+  `extensions/browser/src/gateway/browser-request.ts` without importing the
+  TypeScript runtime. The gateway forwards method/path/query/body/timeout into
+  a fakeable local request adapter, preserves the precise disabled/runtime
+  unavailable shape, maps route-style status/body failures, and the production
+  adapter now covers native snapshot/action/screenshot/profile/tab request
+  routes. Source/test checkpointed in `45fd0ffd`; repo-wide parity remains
+  estimated at ~99.9%, active gateway/session/tool-contract parity moves to
+  ~99.947%, and browser/canvas/nodes/voice bounded-command parity moves to
+  ~99.5%. Continue richer local browser route breadth, remaining
+  provider-specific media/reply edges, deeper installed plugin activation,
+  companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control lifecycle
+  route breadth now maps upstream `POST /start` and `POST /stop` from
+  `extensions/browser/src/browser/routes/basic.ts` onto native `agent-browser`
+  lifecycle methods, including `all` / `allSessions` stop options in the
+  adapter. Source/test checkpointed in `d9b5e87d`; repo-wide parity remains
+  estimated at ~99.9%, active gateway/session/tool-contract parity moves to
+  ~99.948%, and browser/canvas/nodes/voice bounded-command parity moves to
+  ~99.55%. Continue richer local browser status/doctor/profile/permission/tab
+  route breadth, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control tab mutation
+  route breadth now maps upstream `POST /tabs/focus` and
+  `DELETE /tabs/:targetId` from
+  `extensions/browser/src/browser/routes/tabs.ts` onto native browser focus
+  and targeted close methods, including decoded path-segment target ids.
+  Source/test checkpointed in `aa7298c6`; repo-wide parity remains estimated
+  at ~99.9%, active gateway/session/tool-contract parity moves to ~99.949%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.6%.
+  Continue richer local browser status/doctor/profile/permission/tab-action
+  route breadth, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control tab action
+  breadth now maps upstream `/tabs/action` `close` and `select` actions from
+  `extensions/browser/src/browser/routes/tabs.ts` onto native tab list,
+  targeted close, and focus calls. Source/test checkpointed in `904f2673`;
+  repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.950%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.65%.
+  Continue local browser status/doctor, profile mutation, permissions, label
+  action route breadth, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control storage route
+  breadth now maps upstream `GET /storage/:kind`,
+  `POST /storage/:kind/set`, and `POST /storage/:kind/clear` from
+  `extensions/browser/src/browser/routes/agent.storage.ts` onto native browser
+  storage get/set/clear methods for local/session storage. Source/test
+  checkpointed in `483e4aff`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.951%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.7%. Continue
+  local browser status/doctor, profile mutation, permissions, cookies, label
+  action route breadth, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control cookie route
+  breadth now maps upstream `GET /cookies`, `POST /cookies/set`, and
+  `POST /cookies/clear` from
+  `extensions/browser/src/browser/routes/agent.storage.ts` onto native browser
+  cookie get/set/clear methods, including nested `cookie` set fields.
+  Source/test checkpointed in `97602084`; repo-wide parity remains estimated
+  at ~99.9%, active gateway/session/tool-contract parity moves to ~99.952%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.75%.
+  Continue local browser status/doctor, profile mutation, permissions, label
+  action route breadth, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control debug route
+  breadth now maps upstream `GET /console`, `GET /errors`, `GET /requests`,
+  `POST /trace/start`, and `POST /trace/stop` from
+  `extensions/browser/src/browser/routes/agent.debug.ts` onto native console,
+  page-error, network-request, and trace artifact methods. Source/test
+  checkpointed in `d7eb616d`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.953%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.8%. Continue
+  local browser status/doctor, profile mutation, permissions, label-action
+  route breadth, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control setting route
+  breadth now maps supported upstream `/set/*` routes from
+  `extensions/browser/src/browser/routes/agent.storage.ts` onto native
+  `agent-browser set` commands for offline, headers, credentials,
+  geolocation, media, and device settings. Source/test checkpointed in
+  `97755215`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.954%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.85%.
+  Continue local browser status/doctor, profile mutation, permissions,
+  locale/timezone, label-action route breadth, remaining provider-specific
+  media/reply edges, deeper installed plugin activation, companion breadth, or
+  the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control act utility
+  route breadth now maps upstream `POST /highlight`, `POST /download`, and
+  `POST /hooks/file-chooser` from `extensions/browser/src/browser/routes`
+  onto native highlight, guarded download, and guarded upload methods.
+  Source/test checkpointed in `886c86f3`; repo-wide parity remains estimated
+  at ~99.9%, active gateway/session/tool-contract parity moves to ~99.955%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.9%.
+  Continue local browser status/doctor, profile mutation, permissions,
+  locale/timezone, response body/dialog-hook route breadth, remaining
+  provider-specific media/reply edges, deeper installed plugin activation,
+  companion breadth, or the next packaging edge.

@@ -4,13 +4,15 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import hmac
 import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import threading
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
@@ -18,6 +20,7 @@ from pathlib import Path
 from time import perf_counter
 from types import SimpleNamespace
 from typing import Any, Literal, cast
+from urllib.parse import parse_qsl
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -255,6 +258,9 @@ DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS = 8_000
 DIRECT_SESSION_HISTORY_SSE_KEEPALIVE_SECONDS = 15.0
 DIRECT_SESSION_HISTORY_FULL_INITIAL_LIMIT = 1_000_000_000
 MSTEAMS_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024
+SLACK_EVENTS_MAX_BODY_BYTES = 1024 * 1024
+SLACK_SIGNATURE_TOLERANCE_SECONDS = 60 * 5
+LINE_WEBHOOK_MAX_RAW_BODY_BYTES = 64 * 1024
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -292,6 +298,272 @@ def _msteams_configured_webhook_path(snapshot: Mapping[str, Any]) -> str | None:
     if not isinstance(webhook, Mapping):
         return None
     return _normalize_msteams_webhook_path(webhook.get("path"))
+
+
+def _optional_slack_config_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _slack_exec_provider_env(provider_config: Mapping[str, Any]) -> dict[str, str]:
+    child_env: dict[str, str] = {}
+    pass_env = provider_config.get("passEnv")
+    if isinstance(pass_env, Sequence) and not isinstance(pass_env, str):
+        for key in pass_env:
+            env_key = _optional_slack_config_string(key)
+            if env_key and env_key in os.environ:
+                child_env[env_key] = os.environ[env_key]
+    raw_env = provider_config.get("env")
+    if isinstance(raw_env, Mapping):
+        for key, value in raw_env.items():
+            env_key = _optional_slack_config_string(key)
+            env_value = _optional_slack_config_string(value)
+            if env_key and env_value is not None:
+                child_env[env_key] = env_value
+    return child_env
+
+
+def _slack_parse_exec_secret_value(
+    *,
+    secret_id: str,
+    stdout: str,
+    json_only: bool,
+) -> str | None:
+    trimmed = stdout.strip()
+    if not trimmed:
+        return None
+    try:
+        parsed = json.loads(trimmed)
+    except json.JSONDecodeError:
+        return _optional_slack_config_string(trimmed) if not json_only else None
+    if not isinstance(parsed, Mapping):
+        if isinstance(parsed, str) and not json_only:
+            return _optional_slack_config_string(parsed)
+        return None
+    if parsed.get("protocolVersion") != 1:
+        return None
+    values = parsed.get("values")
+    if not isinstance(values, Mapping) or secret_id not in values:
+        return None
+    return _optional_slack_config_string(values.get(secret_id))
+
+
+def _slack_exec_signing_secret_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    provider: str,
+    secret_id: str,
+) -> str:
+    secrets_config = snapshot.get("secrets")
+    if not isinstance(secrets_config, Mapping):
+        return ""
+    providers = secrets_config.get("providers")
+    if not isinstance(providers, Mapping):
+        return ""
+    provider_config = providers.get(provider)
+    if not isinstance(provider_config, Mapping):
+        return ""
+    if str(provider_config.get("source") or "").strip().lower() != "exec":
+        return ""
+    command_text = _optional_slack_config_string(provider_config.get("command"))
+    if command_text is None:
+        return ""
+    command_path = Path(command_text).expanduser()
+    if not command_path.is_absolute() or not command_path.exists():
+        return ""
+    raw_args = provider_config.get("args")
+    args = (
+        [str(arg) for arg in raw_args if isinstance(arg, str | int | float)]
+        if isinstance(raw_args, Sequence) and not isinstance(raw_args, str)
+        else []
+    )
+    request_payload = json.dumps(
+        {"protocolVersion": 1, "provider": provider, "ids": [secret_id]},
+        separators=(",", ":"),
+    )
+    timeout_ms = provider_config.get("timeoutMs")
+    timeout_seconds = (
+        float(timeout_ms) / 1000
+        if isinstance(timeout_ms, int) and timeout_ms > 0
+        else 5.0
+    )
+    try:
+        result = subprocess.run(
+            [str(command_path), *args],
+            input=request_payload,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+            env=_slack_exec_provider_env(provider_config) or None,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    max_output_bytes = provider_config.get("maxOutputBytes")
+    max_byte_count = (
+        int(max_output_bytes)
+        if isinstance(max_output_bytes, int) and max_output_bytes > 0
+        else 1024 * 1024
+    )
+    if len((result.stdout or "").encode("utf-8")) > max_byte_count:
+        return ""
+    json_only = provider_config.get("jsonOnly")
+    return (
+        _slack_parse_exec_secret_value(
+            secret_id=secret_id,
+            stdout=result.stdout or "",
+            json_only=json_only if isinstance(json_only, bool) else True,
+        )
+        or ""
+    )
+
+
+def _slack_signing_secret_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> str | None:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, Mapping):
+        return None
+    slack_config = channels.get("slack")
+    if not isinstance(slack_config, Mapping):
+        return None
+    normalized_account_id = str(account_id or "default").strip() or "default"
+    accounts = slack_config.get("accounts")
+    account_config: Mapping[str, Any] = {}
+    if isinstance(accounts, Mapping):
+        direct = accounts.get(normalized_account_id)
+        if isinstance(direct, Mapping):
+            account_config = direct
+        else:
+            lowered = normalized_account_id.lower()
+            for key, value in accounts.items():
+                if str(key).strip().lower() == lowered and isinstance(value, Mapping):
+                    account_config = value
+                    break
+    for candidate in (account_config.get("signingSecret"), slack_config.get("signingSecret")):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+        if isinstance(candidate, Mapping):
+            source = str(candidate.get("source") or "").strip().lower()
+            secret_id = str(candidate.get("id") or "").strip()
+            if source == "env" and secret_id:
+                return os.environ.get(secret_id, "").strip()
+            if source == "file" and secret_id:
+                try:
+                    return Path(os.path.expandvars(secret_id)).expanduser().read_text(
+                        encoding="utf-8"
+                    ).strip()
+                except OSError:
+                    return ""
+            provider = str(candidate.get("provider") or "default").strip() or "default"
+            if source == "exec" and secret_id:
+                return _slack_exec_signing_secret_from_snapshot(
+                    snapshot,
+                    provider=provider,
+                    secret_id=secret_id,
+                )
+    return None
+
+
+def _valid_slack_request_signature(
+    *,
+    body: bytes,
+    timestamp: str | None,
+    signature: str | None,
+    signing_secret: str,
+) -> bool:
+    if not timestamp or not signature:
+        return False
+    try:
+        timestamp_int = int(timestamp)
+    except ValueError:
+        return False
+    now = int(datetime.now(UTC).timestamp())
+    if abs(now - timestamp_int) > SLACK_SIGNATURE_TOLERANCE_SECONDS:
+        return False
+    base = b"v0:" + timestamp.encode("utf-8") + b":" + body
+    expected = "v0=" + hmac.new(
+        signing_secret.encode("utf-8"),
+        base,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+def _line_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> Mapping[str, Any] | None:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, Mapping):
+        return None
+    line_config = channels.get("line")
+    if not isinstance(line_config, Mapping):
+        return None
+    normalized_account_id = str(account_id or "default").strip() or "default"
+    accounts = line_config.get("accounts")
+    if isinstance(accounts, Mapping):
+        direct = accounts.get(normalized_account_id)
+        if isinstance(direct, Mapping):
+            return direct
+        lowered = normalized_account_id.lower()
+        for key, value in accounts.items():
+            if str(key).strip().lower() == lowered and isinstance(value, Mapping):
+                return value
+    return line_config
+
+
+def _line_channel_secret_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> str | None:
+    line_config = _line_config_from_snapshot(snapshot, account_id=account_id)
+    if line_config is None:
+        return None
+    candidate = line_config.get("channelSecret")
+    if isinstance(candidate, str):
+        secret = candidate.strip()
+        return secret or None
+    return None
+
+
+def _line_configured_webhook_path(snapshot: Mapping[str, Any]) -> str | None:
+    line_config = _line_config_from_snapshot(snapshot, account_id=None)
+    if line_config is None:
+        return None
+    raw_path = line_config.get("webhookPath")
+    if not isinstance(raw_path, str):
+        return None
+    normalized = raw_path.strip()
+    if not normalized:
+        return None
+    return normalized if normalized.startswith("/") else f"/{normalized}"
+
+
+def _valid_line_request_signature(
+    *,
+    body: bytes,
+    signature: str | None,
+    channel_secret: str,
+) -> bool:
+    if not signature:
+        return False
+    expected = base64.b64encode(
+        hmac.new(
+            channel_secret.encode("utf-8"),
+            body,
+            hashlib.sha256,
+        ).digest()
+    ).decode("ascii")
+    return hmac.compare_digest(expected, signature)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -2056,6 +2328,8 @@ def create_app(
         gateway_config_service=active_gateway_config_service,
         canvas_state_dir=active_settings.data_dir,
     )
+    if getattr(active_ops_mesh_service, "gateway_commands_service", None) is None:
+        active_ops_mesh_service.gateway_commands_service = active_gateway_commands_service
     active_gateway_channels_service = GatewayChannelsService(
         list_notification_route_views=list_gateway_notification_route_views,
         probe_account=active_ops_mesh_service.probe_channel_account,
@@ -3472,6 +3746,7 @@ def create_app(
     async def health() -> dict[str, Any]:
         return {
             "status": "ok",
+            "serverVersion": __version__,
             "control_plane": fastapi_app.state.control_plane_role,
             "owner_pid": fastapi_app.state.control_plane_owner_pid,
             "lock_path": fastapi_app.state.control_plane_lock_path,
@@ -4452,6 +4727,35 @@ def create_app(
         else build_msteams_webhook_jwt_validator_from_config(msteams_webhook_config_snapshot)
     )
 
+    def verify_slack_signature_if_configured(
+        request: Request,
+        body: bytes,
+        *,
+        account_id: str | None,
+    ) -> JSONResponse | None:
+        config_service = getattr(active_ops_mesh_service, "gateway_config_service", None)
+        snapshot = (
+            config_service.build_snapshot()
+            if config_service is not None
+            else active_gateway_config_service.build_snapshot()
+        )
+        signing_secret = _slack_signing_secret_from_snapshot(
+            snapshot,
+            account_id=account_id,
+        )
+        if signing_secret is None:
+            return None
+        if not signing_secret:
+            return JSONResponse({"error": "Invalid Slack signature"}, status_code=401)
+        if _valid_slack_request_signature(
+            body=body,
+            timestamp=request.headers.get("x-slack-request-timestamp"),
+            signature=request.headers.get("x-slack-signature"),
+            signing_secret=signing_secret,
+        ):
+            return None
+        return JSONResponse({"error": "Invalid Slack signature"}, status_code=401)
+
     async def dispatch_msteams_messages(request: Request) -> JSONResponse:
         authorization = str(request.headers.get("authorization") or "")
         if not authorization.startswith("Bearer "):
@@ -4504,6 +4808,181 @@ def create_app(
         fastapi_app.add_api_route(
             configured_msteams_webhook_path,
             handle_configured_msteams_messages,
+            methods=["POST"],
+            include_in_schema=False,
+        )
+
+    @fastapi_app.post("/api/channels/slack/events")
+    async def handle_slack_events(request: Request) -> JSONResponse:
+        body = await request.body()
+        if len(body) > SLACK_EVENTS_MAX_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        signature_error = verify_slack_signature_if_configured(
+            request,
+            body,
+            account_id=account_id,
+        )
+        if signature_error is not None:
+            return signature_error
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Slack event payload must be an object.")
+        if payload.get("type") == "url_verification":
+            challenge = payload.get("challenge")
+            return JSONResponse({"challenge": challenge if isinstance(challenge, str) else ""})
+        result = await active_ops_mesh_service.handle_slack_system_event(
+            cast(Mapping[str, Any], payload),
+            account_id=account_id,
+        )
+        return JSONResponse(result)
+
+    @fastapi_app.post("/api/channels/slack/interactions")
+    async def handle_slack_interactions(request: Request) -> JSONResponse:
+        body = await request.body()
+        if len(body) > SLACK_EVENTS_MAX_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        signature_error = verify_slack_signature_if_configured(
+            request,
+            body,
+            account_id=account_id,
+        )
+        if signature_error is not None:
+            return signature_error
+        content_type = request.headers.get("content-type", "")
+        try:
+            if "application/json" in content_type:
+                payload = json.loads(body.decode("utf-8")) if body else {}
+            else:
+                form = dict(parse_qsl(body.decode("utf-8"), keep_blank_values=True))
+                payload = json.loads(form.get("payload", "{}"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid Slack interaction body") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Slack interaction payload must be an object.",
+            )
+        result = await active_ops_mesh_service.handle_slack_interaction(
+            cast(Mapping[str, Any], payload),
+            account_id=account_id,
+        )
+        return JSONResponse(result)
+
+    @fastapi_app.post("/api/channels/slack/slash")
+    async def handle_slack_slash(request: Request) -> JSONResponse:
+        body = await request.body()
+        if len(body) > SLACK_EVENTS_MAX_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        signature_error = verify_slack_signature_if_configured(
+            request,
+            body,
+            account_id=account_id,
+        )
+        if signature_error is not None:
+            return signature_error
+        content_type = request.headers.get("content-type", "")
+        try:
+            if "application/json" in content_type:
+                payload = json.loads(body.decode("utf-8")) if body else {}
+            else:
+                payload = dict(parse_qsl(body.decode("utf-8"), keep_blank_values=True))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid Slack slash body") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Slack slash payload must be an object.",
+            )
+        result = await active_ops_mesh_service.handle_slack_slash_command(
+            cast(Mapping[str, Any], payload),
+            account_id=account_id,
+        )
+        return JSONResponse(result)
+
+    async def dispatch_line_webhook(request: Request) -> JSONResponse:
+        signature = request.headers.get("x-line-signature")
+        if not signature:
+            return JSONResponse({"error": "Missing X-Line-Signature header"}, status_code=400)
+        body = await request.body()
+        if not body:
+            return JSONResponse(
+                {"error": "Missing raw request body for signature verification"},
+                status_code=400,
+            )
+        if len(body) > LINE_WEBHOOK_MAX_RAW_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        config_service = getattr(active_ops_mesh_service, "gateway_config_service", None)
+        snapshot = (
+            config_service.build_snapshot()
+            if config_service is not None
+            else active_gateway_config_service.build_snapshot()
+        )
+        channel_secret = _line_channel_secret_from_snapshot(
+            snapshot,
+            account_id=account_id,
+        )
+        if channel_secret is None:
+            return JSONResponse(
+                {"error": "LINE webhook channel secret is not configured"},
+                status_code=503,
+            )
+        if not _valid_line_request_signature(
+            body=body,
+            signature=signature,
+            channel_secret=channel_secret,
+        ):
+            return JSONResponse({"error": "Invalid signature"}, status_code=401)
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return JSONResponse({"error": "Invalid webhook payload"}, status_code=400)
+        if not isinstance(payload, dict):
+            return JSONResponse({"error": "Invalid webhook payload"}, status_code=400)
+        events = payload.get("events")
+        if isinstance(events, list) and events:
+            await active_ops_mesh_service.handle_line_webhook(
+                cast(Mapping[str, Any], payload),
+                account_id=account_id,
+            )
+        return JSONResponse({"status": "ok"})
+
+    @fastapi_app.post("/line/webhook")
+    async def handle_line_webhook(request: Request) -> JSONResponse:
+        return await dispatch_line_webhook(request)
+
+    configured_line_webhook_path = _line_configured_webhook_path(
+        active_gateway_config_service.build_snapshot()
+    )
+    if (
+        configured_line_webhook_path is not None
+        and configured_line_webhook_path != "/line/webhook"
+    ):
+
+        async def handle_configured_line_webhook(request: Request) -> JSONResponse:
+            return await dispatch_line_webhook(request)
+
+        fastapi_app.add_api_route(
+            configured_line_webhook_path,
+            handle_configured_line_webhook,
             methods=["POST"],
             include_in_schema=False,
         )

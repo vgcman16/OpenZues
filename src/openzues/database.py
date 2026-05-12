@@ -247,6 +247,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS gateway_node_pairing_requests (
                     request_id TEXT PRIMARY KEY,
                     node_id TEXT NOT NULL,
+                    public_key TEXT,
                     display_name TEXT,
                     platform TEXT,
                     version TEXT,
@@ -267,6 +268,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS gateway_node_paired_nodes (
                     node_id TEXT PRIMARY KEY,
                     token TEXT NOT NULL,
+                    public_key TEXT,
                     display_name TEXT,
                     platform TEXT,
                     version TEXT,
@@ -665,6 +667,8 @@ class Database:
                 "bins_json",
                 "TEXT NOT NULL DEFAULT '[]'",
             )
+            await self._ensure_column(db, "gateway_node_pairing_requests", "public_key", "TEXT")
+            await self._ensure_column(db, "gateway_node_paired_nodes", "public_key", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "session_key", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "model_provider", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "model", "TEXT")
@@ -813,6 +817,7 @@ class Database:
         return {
             "request_id": str(payload["request_id"]),
             "node_id": str(payload["node_id"]),
+            "public_key": payload.get("public_key"),
             "display_name": payload["display_name"],
             "platform": payload["platform"],
             "version": payload["version"],
@@ -868,6 +873,7 @@ class Database:
         silent: bool | None,
         requested_at_ms: int,
         request_id: str,
+        public_key: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
         now = utcnow()
         caps_json = json.dumps(list(caps))
@@ -893,6 +899,7 @@ class Database:
                     INSERT INTO gateway_node_pairing_requests (
                         request_id,
                         node_id,
+                        public_key,
                         display_name,
                         platform,
                         version,
@@ -908,11 +915,12 @@ class Database:
                         created_at,
                         updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         persisted_request_id,
                         node_id,
+                        public_key,
                         display_name,
                         platform,
                         version,
@@ -934,6 +942,7 @@ class Database:
                     """
                     UPDATE gateway_node_pairing_requests
                     SET display_name = ?,
+                        public_key = ?,
                         platform = ?,
                         version = ?,
                         core_version = ?,
@@ -950,6 +959,7 @@ class Database:
                     """,
                     (
                         display_name,
+                        public_key,
                         platform,
                         version,
                         core_version,
@@ -1001,6 +1011,7 @@ class Database:
         return {
             "node_id": str(payload["node_id"]),
             "token": str(payload["token"]),
+            "public_key": payload.get("public_key"),
             "display_name": payload["display_name"],
             "platform": payload["platform"],
             "version": payload["version"],
@@ -1072,6 +1083,7 @@ class Database:
         created_at_ms: int,
         approved_at_ms: int,
         last_connected_at_ms: int | None,
+        public_key: str | None = None,
     ) -> dict[str, Any]:
         now = utcnow()
         async with aiosqlite.connect(self.path) as db:
@@ -1080,6 +1092,7 @@ class Database:
                 INSERT INTO gateway_node_paired_nodes (
                     node_id,
                     token,
+                    public_key,
                     display_name,
                     platform,
                     version,
@@ -1098,9 +1111,10 @@ class Database:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(node_id) DO UPDATE SET
                     token = excluded.token,
+                    public_key = excluded.public_key,
                     display_name = excluded.display_name,
                     platform = excluded.platform,
                     version = excluded.version,
@@ -1121,6 +1135,7 @@ class Database:
                 (
                     node_id,
                     token,
+                    public_key,
                     display_name,
                     platform,
                     version,

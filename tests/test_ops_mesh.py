@@ -10,9 +10,11 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request
 
 import pytest
@@ -60,6 +62,7 @@ from openzues.services.memory_protocol import (
 )
 from openzues.services.ops_mesh import (
     OUTBOUND_DELIVERY_MAX_RETRIES,
+    GatewayLineInboundMediaFetchRequest,
     GatewayMSTeamsFeedbackReflectionRequest,
     GatewayMSTeamsInboundMediaFetchRequest,
     OpsMeshService,
@@ -2303,12 +2306,7 @@ async def test_ops_mesh_service_send_direct_channel_message_prefers_provider_run
         GatewayOutboundRuntimeMessageRequest(
             channel="slack",
             target="channel:C123",
-            message=(
-                "Ship parity.\n\n"
-                "Media:\n"
-                "1. https://example.com/parity.png\n\n"
-                "Settings: gifPlayback=false"
-            ),
+            message="Ship parity.",
             media_urls=("https://example.com/parity.png",),
             gif_playback=False,
             account_id="default",
@@ -3951,6 +3949,105 @@ async def test_ops_mesh_service_message_action_dispatches_slack_send_route(
                 "channel": "C123",
                 "text": "Ship Slack send action parity.",
                 "thread_ts": "1710000000.0010",
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_slack_send_auto_threads_from_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-slack-send-auto-thread"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {"ok": True, "channel": "C123", "ts": "1710000000.0022"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    tool_context: dict[str, object] = {
+        "currentChannelId": "channel:C123",
+        "currentThreadTs": "1710000000.9999",
+        "replyToMode": "first",
+        "hasRepliedRef": {"value": False},
+    }
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="send",
+            params={
+                "to": "channel:C123",
+                "message": "Auto-thread Slack action parity.",
+            },
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-send-action-auto-thread",
+            tool_context=tool_context,
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "1710000000.0022",
+            "channelId": "C123",
+        },
+    }
+    assert tool_context["hasRepliedRef"] == {"value": True}
+    assert slack_posts == [
+        (
+            "https://slack.test/api/chat.postMessage",
+            {
+                "channel": "C123",
+                "text": "Auto-thread Slack action parity.",
+                "thread_ts": "1710000000.9999",
             },
             "Authorization",
             "Bearer xoxb-action-token",
@@ -9477,7 +9574,7 @@ async def test_ops_mesh_service_stages_tlon_inbound_image_blocks_for_session() -
     await database.initialize()
 
     session_deliveries: list[tuple[str, str]] = []
-    fetch_requests: list[object] = []
+    fetch_requests: list[GatewayLineInboundMediaFetchRequest] = []
 
     async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
         session_deliveries.append((session_key, message))
@@ -10930,12 +11027,13 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_n
         GatewayOutboundRuntimeMessageRequest(
             channel="telegram",
             target="chat:ops",
-            message="Send provider-native options.\n\nMedia:\n1. https://example.com/report.pdf",
+            message="Send provider-native options.",
             media_urls=("https://example.com/report.pdf",),
             account_id="alerts",
             thread_id="topic-42",
             session_key=expected_session_key,
             reply_to_id="message-99",
+            reply_to_id_source="explicit",
             silent=True,
             force_document=True,
         )
@@ -10959,12 +11057,165 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_n
     }
     assert delivery is not None
     assert delivery["event_payload"]["replyToId"] == "message-99"
+    assert delivery["event_payload"]["replyToIdSource"] == "explicit"
     assert delivery["event_payload"]["silent"] is True
     assert delivery["event_payload"]["forceDocument"] is True
     assert delivery["route_scope"]["provider_result"] == {
         "messageId": "provider-send-options-1",
         "conversationId": "thread:topic-42"
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_preserves_reply_policy(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-reply-policy"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {
+            "messageId": "provider-send-reply-policy-1",
+            "conversationId": "thread:topic-42",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="Reply policy parity.",
+        account_id="alerts",
+        thread_id="topic-42",
+        reply_to_id="message-99",
+        reply_to_mode="first",
+        idempotency_key="idem-provider-runtime-reply-policy",
+    )
+
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="telegram",
+                account_id="alerts",
+                peer_kind="channel",
+                peer_id="chat:ops",
+            ),
+        ),
+        thread_id="topic-42",
+    ).session_key
+    delivery = await database.get_outbound_delivery(1)
+
+    assert provider_requests == [
+        GatewayOutboundRuntimeMessageRequest(
+            channel="telegram",
+            target="chat:ops",
+            message="Reply policy parity.",
+            account_id="alerts",
+            thread_id="topic-42",
+            session_key=expected_session_key,
+            reply_to_id="message-99",
+            reply_to_id_source="explicit",
+            reply_to_mode="first",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["replyToId"] == "message-99"
+    assert delivery["event_payload"]["replyToIdSource"] == "explicit"
+    assert delivery["event_payload"]["replyToMode"] == "first"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_preserves_channel_data_only_payload(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-channel-data-only"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-channel-data-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="line",
+        to="user:U123",
+        message=" \n\t ",
+        account_id="bot",
+        channel_data={"mode": "flex"},
+        idempotency_key="idem-provider-channel-data-only",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="line",
+            account_id="bot",
+            peer_kind="direct",
+            peer_id="user:U123",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert provider_requests == [
+        GatewayOutboundRuntimeMessageRequest(
+            channel="line",
+            target="user:U123",
+            message="",
+            account_id="bot",
+            session_key=expected_session_key,
+            channel_data={"mode": "flex"},
+        )
+    ]
+    assert result["ok"] is True
+    assert result["messageId"] == "provider-channel-data-1"
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == ""
+    assert delivery["event_payload"]["channelData"] == {"mode": "flex"}
 
 
 @pytest.mark.asyncio
@@ -18082,13 +18333,206 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_animat
                 "reply_to_message_id": "41",
                 "disable_notification": True,
                 "animation": "https://example.com/fun.gif",
-                "caption": (
-                    "Ship the GIF.\n\n"
-                    "Media:\n"
-                    "1. https://example.com/fun.gif"
-                ),
+                "caption": "Ship the GIF.",
             },
         )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_retries_telegram_missing_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-telegram-thread-fallback"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Thread Fallback Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, dict(payload)))
+        if len(telegram_posts) == 1:
+            return {
+                "ok": False,
+                "error_code": 400,
+                "description": "Bad Request: message thread not found",
+            }
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 46,
+                "chat": {"id": -100123},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="channel:-100123",
+        message="Fallback to the chat when a stale topic is gone.",
+        account_id="telegram-bot",
+        thread_id="271",
+        reply_to_id="41",
+        silent=True,
+        idempotency_key="idem-native-telegram-thread-fallback",
+    )
+
+    assert result["messageId"] == "46"
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendMessage",
+            {
+                "chat_id": "-100123",
+                "message_thread_id": "271",
+                "reply_to_message_id": "41",
+                "disable_notification": True,
+                "text": "Fallback to the chat when a stale topic is gone.",
+            },
+        ),
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendMessage",
+            {
+                "chat_id": "-100123",
+                "reply_to_message_id": "41",
+                "disable_notification": True,
+                "text": "Fallback to the chat when a stale topic is gone.",
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_retries_telegram_http_thread_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-telegram-http-thread"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native HTTP Thread Fallback Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, dict(payload)))
+        if len(telegram_posts) == 1:
+            raise RuntimeError(
+                "Webhook returned HTTP 400: Bad Request: message thread not found"
+            )
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 48,
+                "chat": {"id": -100123},
+                "photo": [{"file_id": "threadless-photo"}],
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="channel:-100123",
+        message="Retry media when the topic disappeared.",
+        media_urls=["https://example.com/photo.jpg"],
+        account_id="telegram-bot",
+        thread_id="271",
+        reply_to_id="41",
+        silent=True,
+        idempotency_key="idem-native-telegram-http-thread-fallback",
+    )
+
+    assert result["messageId"] == "48"
+    assert result["mediaIds"] == ["threadless-photo"]
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPhoto",
+            {
+                "chat_id": "-100123",
+                "message_thread_id": "271",
+                "reply_to_message_id": "41",
+                "disable_notification": True,
+                "photo": "https://example.com/photo.jpg",
+                "caption": "Retry media when the topic disappeared.",
+            },
+        ),
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPhoto",
+            {
+                "chat_id": "-100123",
+                "reply_to_message_id": "41",
+                "disable_notification": True,
+                "photo": "https://example.com/photo.jpg",
+                "caption": "Retry media when the topic disappeared.",
+            },
+        ),
     ]
 
 
@@ -18174,12 +18618,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_audio_
                 "reply_to_message_id": "41",
                 "disable_notification": True,
                 "voice": "https://example.com/note.ogg",
-                "caption": (
-                    "Ship the voice note.\n\n"
-                    "Media:\n"
-                    "1. https://example.com/note.ogg\n\n"
-                    "Settings: audioAsVoice=true"
-                ),
+                "caption": "Ship the voice note.",
             },
         )
     ]
@@ -18537,12 +18976,7 @@ async def test_ops_mesh_service_send_direct_channel_message_attaches_telegram_bu
             {
                 "chat_id": "-100123",
                 "photo": "https://example.com/one.png",
-                "caption": (
-                    "Approval image set\n\n"
-                    "Media:\n"
-                    "1. https://example.com/one.png\n"
-                    "2. https://example.com/two.png"
-                ),
+                "caption": "Approval image set",
                 "reply_markup": {
                     "inline_keyboard": [
                         [{"text": "Approve", "callback_data": "/approve abc"}],
@@ -18821,6 +19255,83 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
         "document-one",
         "document-two",
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_reply_fanout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-telegram-reply-fanout"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Media Reply Fanout",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[dict[str, object]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, target, secret_header_name, secret_token
+        telegram_posts.append(payload)
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 40 + len(telegram_posts),
+                "chat": {"id": -100123},
+                "photo": [{"file_id": f"photo-{len(telegram_posts)}"}],
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="channel:-100123",
+        message="Ship the media bundle.",
+        media_urls=[
+            "https://example.com/one.png",
+            "https://example.com/two.png",
+        ],
+        account_id="telegram-bot",
+        reply_to_id="900",
+        reply_to_id_source="implicit",
+        reply_to_mode="first",
+        idempotency_key="idem-native-telegram-reply-fanout",
+    )
+
+    assert result["messageId"] == "42"
+    assert telegram_posts[0]["reply_to_message_id"] == "900"
+    assert "reply_to_message_id" not in telegram_posts[1]
 
 
 @pytest.mark.asyncio
@@ -25141,6 +25652,2844 @@ async def test_ops_mesh_service_message_action_records_msteams_poll_vote(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_slack_reaction_system_event_through_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_reaction_event(
+        {
+            "type": "reaction_added",
+            "user": "U1",
+            "reaction": "thumbsup",
+            "item": {"type": "message", "channel": "D123", "ts": "123.456"},
+            "item_user": "UBOT",
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="direct",
+        peer_id="U1",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert result == {
+        "ok": True,
+        "channel": "slack",
+        "eventType": "reaction_added",
+        "action": "added",
+        "sessionKey": expected_session_key,
+        "senderId": "U1",
+        "channelId": "D123",
+        "messageTs": "123.456",
+        "reaction": "thumbsup",
+        "text": "Slack reaction added: :thumbsup: by U1 in D123 msg 123.456 from UBOT",
+        "contextKey": "slack:reaction:added:D123:123.456:U1:thumbsup",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == expected_session_key
+    assert wake_requests[0]["reason"] == "slack:reaction:added:D123:123.456:U1:thumbsup"
+    assert wake_requests[0]["text"] == result["text"]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["sessionKey"] == expected_session_key
+    assert events[0]["payload"]["text"] == result["text"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_reaction_when_dm_policy_disabled(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "accounts": {"workspace": {"dmPolicy": "disabled"}},
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_reaction_event(
+        {
+            "type": "reaction_added",
+            "user": "U1",
+            "reaction": "thumbsup",
+            "item": {"type": "message", "channel": "D123", "ts": "123.456"},
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "reaction_added",
+        "skipped": True,
+        "reason": "slack_reaction_sender_unauthorized",
+    }
+    assert await database.list_gateway_wake_requests() == []
+    assert await database.list_events() == []
+
+
+def test_slack_events_route_handles_reaction_event_callbacks(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/events?accountId=workspace",
+            json={
+                "type": "event_callback",
+                "event": {
+                    "type": "reaction_added",
+                    "user": "U1",
+                    "reaction": "thumbsup",
+                    "item": {"type": "message", "channel": "C123", "ts": "123.456"},
+                },
+            },
+        )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["eventType"] == "reaction_added"
+    assert payload["sessionKey"] == expected_session_key
+    assert payload["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_slack_member_event_through_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_member_event(
+        {
+            "type": "member_joined_channel",
+            "user": "U1",
+            "channel": "C123",
+            "channel_type": "channel",
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert result == {
+        "ok": True,
+        "channel": "slack",
+        "eventType": "member_joined_channel",
+        "action": "joined",
+        "sessionKey": expected_session_key,
+        "senderId": "U1",
+        "channelId": "C123",
+        "text": "Slack: U1 joined C123.",
+        "contextKey": "slack:member:joined:C123:U1",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == expected_session_key
+    assert wake_requests[0]["reason"] == "slack:member:joined:C123:U1"
+    assert wake_requests[0]["text"] == result["text"]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["sessionKey"] == expected_session_key
+    assert events[0]["payload"]["text"] == result["text"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_member_when_channel_user_denied(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "accounts": {
+                        "workspace": {
+                            "channels": {"C123": {"users": ["U_ALLOWED"]}},
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_member_event(
+        {
+            "type": "member_joined_channel",
+            "user": "U_DENIED",
+            "channel": "C123",
+            "channel_type": "channel",
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "member_joined_channel",
+        "skipped": True,
+        "reason": "slack_member_sender_unauthorized",
+    }
+    assert await database.list_gateway_wake_requests() == []
+    assert await database.list_events() == []
+
+
+def test_slack_events_route_dispatches_member_event_callbacks(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/events?accountId=workspace",
+            json={
+                "type": "event_callback",
+                "event": {
+                    "type": "member_left_channel",
+                    "user": "U1",
+                    "channel": "C123",
+                    "channel_type": "channel",
+                },
+            },
+        )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["eventType"] == "member_left_channel"
+    assert payload["action"] == "left"
+    assert payload["sessionKey"] == expected_session_key
+    assert payload["contextKey"] == "slack:member:left:C123:U1"
+    assert payload["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_slack_channel_event_through_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_channel_event(
+        {
+            "type": "channel_created",
+            "channel": {"id": "C123", "name": "deploys"},
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert result == {
+        "ok": True,
+        "channel": "slack",
+        "eventType": "channel_created",
+        "action": "created",
+        "sessionKey": expected_session_key,
+        "channelId": "C123",
+        "channelName": "deploys",
+        "text": "Slack channel created: deploys.",
+        "contextKey": "slack:channel:created:C123",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == expected_session_key
+    assert wake_requests[0]["reason"] == "slack:channel:created:C123"
+    assert wake_requests[0]["text"] == result["text"]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["sessionKey"] == expected_session_key
+    assert events[0]["payload"]["text"] == result["text"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_channel_event_when_disabled(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "accounts": {
+                        "workspace": {
+                            "channels": {"C123": {"enabled": False}},
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_channel_event(
+        {
+            "type": "channel_created",
+            "channel": {"id": "C123", "name": "deploys"},
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "channel_created",
+        "skipped": True,
+        "reason": "slack_channel_event_unauthorized",
+    }
+    assert await database.list_gateway_wake_requests() == []
+    assert await database.list_events() == []
+
+
+def test_slack_events_route_dispatches_channel_event_callbacks(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/events?accountId=workspace",
+            json={
+                "type": "event_callback",
+                "event": {
+                    "type": "channel_rename",
+                    "channel": {
+                        "id": "C123",
+                        "name": "release-room",
+                        "name_normalized": "release-room",
+                    },
+                },
+            },
+        )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["eventType"] == "channel_rename"
+    assert payload["action"] == "renamed"
+    assert payload["sessionKey"] == expected_session_key
+    assert payload["contextKey"] == "slack:channel:renamed:C123"
+    assert payload["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_migrates_slack_channel_id_changed_config(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "configWrites": True,
+                    "channels": {"COLD": {"enabled": True}},
+                    "accounts": {
+                        "workspace": {
+                            "channels": {"COLD": {"users": ["U1"]}},
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_channel_id_changed_event(
+        {
+            "type": "channel_id_changed",
+            "old_channel_id": "COLD",
+            "new_channel_id": "CNEW",
+        },
+        account_id="workspace",
+    )
+    snapshot = gateway_config.build_snapshot()
+    slack_config = snapshot["channels"]["slack"]
+
+    assert result == {
+        "ok": True,
+        "channel": "slack",
+        "eventType": "channel_id_changed",
+        "oldChannelId": "COLD",
+        "newChannelId": "CNEW",
+        "migrated": True,
+        "skippedExisting": False,
+        "scopes": ["account", "global"],
+    }
+    assert "COLD" not in slack_config["channels"]
+    assert slack_config["channels"]["CNEW"] == {"enabled": True}
+    assert "COLD" not in slack_config["accounts"]["workspace"]["channels"]
+    assert slack_config["accounts"]["workspace"]["channels"]["CNEW"] == {"users": ["U1"]}
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_skips_slack_channel_id_change_when_writes_disabled(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "configWrites": False,
+                    "channels": {"COLD": {"enabled": True}},
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_channel_id_changed_event(
+        {
+            "type": "channel_id_changed",
+            "old_channel_id": "COLD",
+            "new_channel_id": "CNEW",
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "channel_id_changed",
+        "skipped": True,
+        "reason": "slack_channel_config_writes_disabled",
+    }
+    assert "COLD" in gateway_config.build_snapshot()["channels"]["slack"]["channels"]
+
+
+def test_slack_events_route_dispatches_channel_id_changed_callbacks(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/events?accountId=workspace",
+            json={
+                "type": "event_callback",
+                "event": {
+                    "type": "channel_id_changed",
+                    "old_channel_id": "COLD",
+                },
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "channel_id_changed",
+        "skipped": True,
+        "reason": "slack_channel_id_change_missing_ids",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_slack_pin_event_through_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_pin_event(
+        {
+            "type": "pin_added",
+            "user": "U1",
+            "channel_id": "C123",
+            "item": {"type": "message", "message": {"ts": "123.456"}},
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert result == {
+        "ok": True,
+        "channel": "slack",
+        "eventType": "pin_added",
+        "action": "pinned",
+        "sessionKey": expected_session_key,
+        "senderId": "U1",
+        "channelId": "C123",
+        "messageId": "123.456",
+        "itemType": "message",
+        "text": "Slack: U1 pinned a message in C123.",
+        "contextKey": "slack:pin:added:C123:123.456",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == expected_session_key
+    assert wake_requests[0]["reason"] == "slack:pin:added:C123:123.456"
+    assert wake_requests[0]["text"] == result["text"]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["sessionKey"] == expected_session_key
+    assert events[0]["payload"]["text"] == result["text"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_pin_when_sender_denied(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "accounts": {
+                        "workspace": {
+                            "channels": {"C123": {"users": ["U_ALLOWED"]}},
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_pin_event(
+        {
+            "type": "pin_added",
+            "user": "U_DENIED",
+            "channel_id": "C123",
+            "item": {"type": "message", "message": {"ts": "123.456"}},
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "pin_added",
+        "skipped": True,
+        "reason": "slack_pin_sender_unauthorized",
+    }
+    assert await database.list_gateway_wake_requests() == []
+    assert await database.list_events() == []
+
+
+def test_slack_events_route_dispatches_pin_event_callbacks(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/events?accountId=workspace",
+            json={
+                "type": "event_callback",
+                "event": {
+                    "type": "pin_removed",
+                    "user": "U1",
+                    "channel_id": "C123",
+                    "item": {"type": "message", "message": {"ts": "123.456"}},
+                },
+            },
+        )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["eventType"] == "pin_removed"
+    assert payload["action"] == "unpinned"
+    assert payload["sessionKey"] == expected_session_key
+    assert payload["contextKey"] == "slack:pin:removed:C123:123.456"
+    assert payload["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_slack_message_changed_event_through_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_message_subtype_event(
+        {
+            "type": "message",
+            "subtype": "message_changed",
+            "channel": "C123",
+            "event_ts": "123.457",
+            "message": {"ts": "123.456", "user": "U1"},
+            "previous_message": {"ts": "123.450", "user": "U2"},
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert result == {
+        "ok": True,
+        "channel": "slack",
+        "eventType": "message",
+        "subtype": "message_changed",
+        "action": "edited",
+        "sessionKey": expected_session_key,
+        "senderId": "U1",
+        "channelId": "C123",
+        "messageId": "123.456",
+        "text": "Slack message edited in C123.",
+        "contextKey": "slack:message:changed:C123:123.456",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "delivery": {"runtime": "wake-queue", "mode": "next-heartbeat"},
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == expected_session_key
+    assert wake_requests[0]["reason"] == "slack:message:changed:C123:123.456"
+    assert wake_requests[0]["text"] == result["text"]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["sessionKey"] == expected_session_key
+    assert events[0]["payload"]["text"] == result["text"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_message_deleted_when_sender_denied(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "accounts": {
+                        "workspace": {
+                            "channels": {"C123": {"users": ["U_ALLOWED"]}},
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_message_subtype_event(
+        {
+            "type": "message",
+            "subtype": "message_deleted",
+            "channel": "C123",
+            "deleted_ts": "123.456",
+            "previous_message": {"ts": "123.450", "user": "U_DENIED"},
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "message",
+        "subtype": "message_deleted",
+        "skipped": True,
+        "reason": "slack_message_subtype_sender_unauthorized",
+    }
+    assert await database.list_gateway_wake_requests() == []
+    assert await database.list_events() == []
+
+
+def test_slack_events_route_dispatches_message_subtype_callbacks(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/events?accountId=workspace",
+            json={
+                "type": "event_callback",
+                "event": {
+                    "type": "message",
+                    "subtype": "message_deleted",
+                    "channel": "C123",
+                    "deleted_ts": "123.456",
+                    "previous_message": {"ts": "123.450", "user": "U1"},
+                },
+            },
+        )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["eventType"] == "message"
+    assert payload["subtype"] == "message_deleted"
+    assert payload["action"] == "deleted"
+    assert payload["sessionKey"] == expected_session_key
+    assert payload["contextKey"] == "slack:message:deleted:C123:123.456"
+    assert payload["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_publishes_slack_app_home_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native App Home",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["slack/app-home"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-home-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace",
+            "peer_kind": "channel",
+            "peer_id": "C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {"ok": True, "view": {"id": "VHOME"}}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_home_event(
+        {
+            "type": "app_home_opened",
+            "user": "U123",
+            "channel": "D123",
+            "tab": "home",
+        },
+        account_id="workspace",
+    )
+
+    assert result["ok"] is True
+    assert result["channel"] == "slack"
+    assert result["eventType"] == "app_home_opened"
+    assert result["userId"] == "U123"
+    assert result["delivery"] == {
+        "runtime": "native-provider-backed",
+        "method": "views.publish",
+    }
+    assert slack_posts == [
+        (
+            "https://slack.test/api/views.publish",
+            {
+                "user_id": "U123",
+                "view": result["view"],
+            },
+            "Authorization",
+            "Bearer xoxb-home-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_skips_slack_app_home_messages_tab(tmp_path: Path) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_home_event(
+        {
+            "type": "app_home_opened",
+            "user": "U123",
+            "channel": "D123",
+            "tab": "messages",
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "app_home_opened",
+        "skipped": True,
+        "reason": "slack_home_messages_tab",
+    }
+
+
+def test_slack_events_route_dispatches_app_home_callbacks(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/events?accountId=workspace",
+            json={
+                "type": "event_callback",
+                "event": {
+                    "type": "app_home_opened",
+                    "user": "U123",
+                    "channel": "D123",
+                    "tab": "messages",
+                },
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload == {
+        "ok": False,
+        "channel": "slack",
+        "eventType": "app_home_opened",
+        "skipped": True,
+        "reason": "slack_home_messages_tab",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_slack_block_action_interaction_to_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_interaction(
+        {
+            "type": "block_actions",
+            "user": {"id": "U123"},
+            "team": {"id": "T9"},
+            "trigger_id": "123.trigger",
+            "response_url": "https://hooks.slack.test/response",
+            "channel": {"id": "C1"},
+            "container": {
+                "channel_id": "C1",
+                "message_ts": "100.200",
+                "thread_ts": "100.100",
+            },
+            "actions": [
+                {
+                    "type": "button",
+                    "action_id": "openclaw:verify",
+                    "block_id": "verify_block",
+                    "value": "approved",
+                }
+            ],
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C1",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert result["ok"] is True
+    assert result["channel"] == "slack"
+    assert result["interactionType"] == "block_actions"
+    assert result["actionId"] == "openclaw:verify"
+    assert result["sessionKey"] == expected_session_key
+    assert result["contextKey"] == "slack:interaction:C1:100.200:openclaw:verify"
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+    event_text = str(result["text"])
+    assert event_text.startswith("Slack interaction: ")
+    event_payload = json.loads(event_text.removeprefix("Slack interaction: "))
+    assert event_payload == {
+        "interactionType": "block_action",
+        "actionId": "openclaw:verify",
+        "blockId": "verify_block",
+        "actionType": "button",
+        "value": "approved",
+        "userId": "U123",
+        "teamId": "T9",
+        "triggerId": "[redacted]",
+        "responseUrl": "[redacted]",
+        "channelId": "C1",
+        "messageTs": "100.200",
+        "threadTs": "100.100",
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == expected_session_key
+    assert wake_requests[0]["reason"] == result["contextKey"]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["text"] == result["text"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_block_action_when_sender_denied(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "accounts": {
+                        "workspace": {
+                            "channels": {"C1": {"users": ["U_ALLOWED"]}},
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_interaction(
+        {
+            "type": "block_actions",
+            "user": {"id": "U_DENIED"},
+            "channel": {"id": "C1"},
+            "container": {"channel_id": "C1", "message_ts": "100.200"},
+            "actions": [{"type": "button", "action_id": "codex"}],
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "interactionType": "block_actions",
+        "skipped": True,
+        "reason": "slack_interaction_sender_unauthorized",
+    }
+    assert await database.list_gateway_wake_requests() == []
+    assert await database.list_events() == []
+
+
+def test_slack_interactions_route_dispatches_block_actions(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/interactions?accountId=workspace",
+            json={
+                "type": "block_actions",
+                "user": {"id": "U123"},
+                "channel": {"id": "C1"},
+                "container": {"channel_id": "C1", "message_ts": "100.200"},
+                "actions": [{"type": "button", "action_id": "codex"}],
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["interactionType"] == "block_actions"
+    assert payload["actionId"] == "codex"
+    assert payload["contextKey"] == "slack:interaction:C1:100.200:codex"
+
+
+def test_slack_interactions_route_acknowledges_external_arg_options_without_token(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/interactions?accountId=workspace",
+            json={
+                "type": "block_suggestion",
+                "user": {"id": "U123"},
+                "action_id": "openclaw_cmdarg",
+                "block_id": "stale-menu",
+                "value": "prod",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload == {
+        "ok": True,
+        "channel": "slack",
+        "interactionType": "block_suggestion",
+        "actionId": "openclaw_cmdarg",
+        "options": [],
+        "reason": "slack_command_arg_options_missing_token",
+    }
+
+
+def test_slack_interactions_route_returns_filtered_external_arg_options(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    token = service.create_slack_external_arg_menu(
+        choices=[
+            {
+                "label": "Production",
+                "value": "cmdarg|deploy|environment|prod|U123",
+            },
+            {
+                "label": "Staging",
+                "value": "cmdarg|deploy|environment|stage|U123",
+            },
+        ],
+        user_id="U123",
+    )
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/interactions?accountId=workspace",
+            json={
+                "type": "block_suggestion",
+                "user": {"id": "U123"},
+                "action_id": "openclaw_cmdarg",
+                "block_id": f"openclaw_cmdarg_ext:{token}",
+                "value": "prod",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["options"] == [
+        {
+            "text": {"type": "plain_text", "text": "Production"},
+            "value": "cmdarg|deploy|environment|prod|U123",
+        }
+    ]
+    assert payload["menuToken"] == token
+
+
+def test_slack_slash_route_returns_arg_menu_for_missing_choice_arg(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    delivered: list[tuple[str, str]] = []
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    async def fake_deliver(session_key: str, prompt: str) -> dict[str, object]:
+        delivered.append((session_key, prompt))
+        return {"messageId": "queued"}
+
+    service.session_delivery_service = fake_deliver
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            json={
+                "command": "/browser.ios.swipe",
+                "text": "",
+                "user_id": "U123",
+                "user_name": "alice",
+                "channel_id": "COPS",
+                "channel_name": "ops",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reason"] == "slack_slash_command_arg_menu"
+    assert delivered == []
+    response_payload = payload["response"]
+    assert response_payload["response_type"] == "ephemeral"
+    assert (
+        response_payload["text"]
+        == "Choose Swipe direction: up, down, left, or right. for /browser.ios.swipe."
+    )
+    blocks = response_payload["blocks"]
+    assert blocks[0] == {
+        "type": "header",
+        "text": {
+            "type": "plain_text",
+            "text": "/browser.ios.swipe: choose direction",
+        },
+    }
+    action = blocks[3]["elements"][0]
+    assert action["type"] == "overflow"
+    assert action["action_id"] == "openclaw_cmdarg"
+    assert [option["value"] for option in action["options"]] == [
+        "cmdarg|browser.ios.swipe|direction|up|U123",
+        "cmdarg|browser.ios.swipe|direction|down|U123",
+        "cmdarg|browser.ios.swipe|direction|left|U123",
+        "cmdarg|browser.ios.swipe|direction|right|U123",
+    ]
+
+
+def test_slack_slash_route_uses_external_arg_menu_for_large_choice_set(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    delivered: list[tuple[str, str]] = []
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    class LargeChoiceCommands:
+        def build_catalog(
+            self,
+            *,
+            include_args: bool,
+            provider: str | None = None,
+            scope: str | None = None,
+        ) -> dict[str, object]:
+            assert include_args is True
+            assert provider == "slack"
+            assert scope == "native"
+            return {
+                "commands": [
+                    {
+                        "name": "deploy.region",
+                        "nativeName": "deploy.region",
+                        "args": [
+                            {
+                                "name": "region",
+                                "description": "deployment region",
+                                "choices": [
+                                    {
+                                        "label": f"Region {index:03d}",
+                                        "value": f"region-{index:03d}",
+                                    }
+                                    for index in range(101)
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+
+    async def fake_deliver(session_key: str, prompt: str) -> dict[str, object]:
+        delivered.append((session_key, prompt))
+        return {"messageId": "queued"}
+
+    service.gateway_commands_service = LargeChoiceCommands()  # type: ignore[assignment]
+    service.session_delivery_service = fake_deliver
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            json={
+                "command": "/deploy.region",
+                "text": "",
+                "user_id": "U123",
+                "user_name": "alice",
+                "channel_id": "COPS",
+                "channel_name": "ops",
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["reason"] == "slack_slash_command_arg_menu"
+        assert delivered == []
+        blocks = payload["response"]["blocks"]
+        action_block = blocks[3]
+        assert action_block["block_id"].startswith("openclaw_cmdarg_ext:")
+        action = action_block["elements"][0]
+        assert action["type"] == "external_select"
+        assert action["action_id"] == "openclaw_cmdarg"
+        assert action["min_query_length"] == 0
+
+        suggestion_response = client.post(
+            "/api/channels/slack/interactions?accountId=workspace",
+            json={
+                "type": "block_suggestion",
+                "user": {"id": "U123"},
+                "action_id": "openclaw_cmdarg",
+                "block_id": action_block["block_id"],
+                "value": "Region 100",
+            },
+        )
+
+    assert suggestion_response.status_code == 200, suggestion_response.text
+    suggestion_payload = suggestion_response.json()
+    assert suggestion_payload["ok"] is True
+    assert suggestion_payload["options"] == [
+        {
+            "text": {"type": "plain_text", "text": "Region 100"},
+            "value": "cmdarg|deploy.region|region|region-100|U123",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_dispatches_slack_command_arg_interaction_to_session(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        deliveries.append((session_key, message))
+        return {"messageId": "cmdarg-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        session_delivery_service=fake_session_delivery,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    result = await service.handle_slack_interaction(
+        {
+            "type": "block_actions",
+            "user": {"id": "U123", "name": "Ada"},
+            "team": {"id": "T9"},
+            "channel": {"id": "C1", "name": "ops"},
+            "container": {"channel_id": "C1", "message_ts": "100.200"},
+            "trigger_id": "123.trigger",
+            "actions": [
+                {
+                    "type": "button",
+                    "action_id": "openclaw_cmdarg_0_0",
+                    "value": "cmdarg|deploy|environment|prod|U123",
+                }
+            ],
+        },
+        account_id="workspace",
+    )
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C1",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert result["ok"] is True
+    assert result["channel"] == "slack"
+    assert result["interactionType"] == "block_actions"
+    assert result["actionId"] == "openclaw_cmdarg_0_0"
+    assert result["command"] == "deploy"
+    assert result["arg"] == "environment"
+    assert result["value"] == "prod"
+    assert result["text"] == "/deploy prod"
+    assert result["sessionKey"] == expected_session_key
+    assert result["messageId"] == "cmdarg-message-1"
+    assert result["triggerId"] == "[redacted]"
+    assert result["delivery"] == {
+        "runtime": "session-backed",
+        "commandSource": "native-slack-arg-menu",
+    }
+    assert result["response"] == {
+        "response_type": "ephemeral",
+        "text": "Queued for OpenZues.",
+    }
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+    assert deliveries == [(expected_session_key, "/deploy prod")]
+    assert await database.list_gateway_wake_requests() == []
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_command_arg_interaction_for_wrong_user(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        deliveries.append((session_key, message))
+        return {"messageId": "cmdarg-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        session_delivery_service=fake_session_delivery,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    result = await service.handle_slack_interaction(
+        {
+            "type": "block_actions",
+            "user": {"id": "U123"},
+            "channel": {"id": "C1"},
+            "container": {"channel_id": "C1", "message_ts": "100.200"},
+            "actions": [
+                {
+                    "type": "static_select",
+                    "action_id": "openclaw_cmdarg",
+                    "selected_option": {
+                        "value": "cmdarg|deploy|environment|prod|U999"
+                    },
+                }
+            ],
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "interactionType": "block_actions",
+        "actionId": "openclaw_cmdarg",
+        "skipped": True,
+        "reason": "slack_command_arg_sender_unauthorized",
+        "response": {
+            "response_type": "ephemeral",
+            "text": "That menu is for another user.",
+        },
+    }
+    assert deliveries == []
+    assert await database.list_gateway_wake_requests() == []
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_slack_view_submission_interaction_to_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    private_metadata = json.dumps(
+        {
+            "sessionKey": "slack-modal-session",
+            "channelId": "C1",
+            "channelType": "channel",
+            "userId": "U123",
+        }
+    )
+    result = await service.handle_slack_interaction(
+        {
+            "type": "view_submission",
+            "user": {"id": "U123"},
+            "team": {"id": "T9"},
+            "view": {
+                "id": "V123",
+                "callback_id": "openclaw:deploy",
+                "private_metadata": private_metadata,
+                "root_view_id": "VROOT",
+                "previous_view_id": "VPREV",
+                "external_id": "deploy-form",
+                "hash": "sensitive-view-hash",
+                "state": {
+                    "values": {
+                        "environment_block": {
+                            "environment": {
+                                "type": "static_select",
+                                "selected_option": {
+                                    "value": "prod",
+                                    "text": {"text": "Production"},
+                                },
+                            }
+                        },
+                        "notes_block": {
+                            "notes": {
+                                "type": "plain_text_input",
+                                "value": "ship it",
+                            }
+                        },
+                    }
+                },
+            },
+        },
+        account_id="workspace",
+    )
+
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert result["ok"] is True
+    assert result["channel"] == "slack"
+    assert result["interactionType"] == "view_submission"
+    assert result["actionId"] == "view:openclaw:deploy"
+    assert result["sessionKey"] == "slack-modal-session"
+    assert (
+        result["contextKey"]
+        == "slack:interaction:view:openclaw:deploy:V123:U123"
+    )
+    event_text = str(result["text"])
+    assert event_text.startswith("Slack interaction: ")
+    event_payload = json.loads(event_text.removeprefix("Slack interaction: "))
+    assert event_payload == {
+        "interactionType": "view_submission",
+        "actionId": "view:openclaw:deploy",
+        "callbackId": "openclaw:deploy",
+        "viewId": "V123",
+        "userId": "U123",
+        "teamId": "T9",
+        "rootViewId": "VROOT",
+        "previousViewId": "VPREV",
+        "externalId": "deploy-form",
+        "viewHash": "[redacted]",
+        "isStackedView": True,
+        "privateMetadata": "[redacted]",
+        "routedChannelId": "C1",
+        "routedChannelType": "channel",
+        "inputs": [
+            {
+                "blockId": "environment_block",
+                "actionId": "environment",
+                "actionType": "static_select",
+                "selectedValues": ["prod"],
+                "selectedLabels": ["Production"],
+            },
+            {
+                "blockId": "notes_block",
+                "actionId": "notes",
+                "actionType": "plain_text_input",
+                "inputKind": "text",
+                "value": "ship it",
+                "inputValue": "ship it",
+            },
+        ],
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == "slack-modal-session"
+    assert wake_requests[0]["reason"] == result["contextKey"]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["text"] == result["text"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_modal_when_expected_user_mismatches(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_interaction(
+        {
+            "type": "view_submission",
+            "user": {"id": "U_DENIED"},
+            "view": {
+                "id": "V123",
+                "callback_id": "openclaw:deploy",
+                "private_metadata": json.dumps({"userId": "U_ALLOWED"}),
+            },
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "interactionType": "view_submission",
+        "skipped": True,
+        "reason": "slack_interaction_sender_unauthorized",
+    }
+    assert await database.list_gateway_wake_requests() == []
+    assert await database.list_events() == []
+
+
+def test_slack_interactions_route_dispatches_view_closed_form_payload(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    payload = {
+        "type": "view_closed",
+        "user": {"id": "U123"},
+        "view": {
+            "id": "V999",
+            "callback_id": "openclaw:compose",
+            "private_metadata": json.dumps(
+                {"sessionKey": "slack-modal-session", "userId": "U123"}
+            ),
+        },
+        "is_cleared": True,
+    }
+    with TestClient(create_app(app_settings)) as client:
+        response = client.post(
+            "/api/channels/slack/interactions?accountId=workspace",
+            data={"payload": json.dumps(payload)},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["interactionType"] == "view_closed"
+    assert body["actionId"] == "view:openclaw:compose"
+    assert (
+        body["contextKey"]
+        == "slack:interaction:view-closed:openclaw:compose:V999:U123"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_dispatches_slack_slash_command_to_session(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, text: str) -> dict[str, str]:
+        deliveries.append((session_key, text))
+        return {"messageId": "slash-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_slash_command(
+        {
+            "command": "/openzues",
+            "text": "ship status",
+            "user_id": "U123",
+            "user_name": "Ada",
+            "channel_id": "C1",
+            "channel_name": "general",
+            "team_id": "T1",
+            "trigger_id": "trigger-1",
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="slack",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="C1",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    assert result["ok"] is True
+    assert result["channel"] == "slack"
+    assert result["command"] == "/openzues"
+    assert result["text"] == "ship status"
+    assert result["sessionKey"] == expected_session_key
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+    assert result["messageId"] == "slash-message-1"
+    assert result["response"] == {
+        "response_type": "ephemeral",
+        "text": "Queued for OpenZues.",
+    }
+    assert deliveries == [(expected_session_key, "ship status")]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_slack_slash_command_when_channel_disabled(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, text: str) -> dict[str, str]:
+        deliveries.append((session_key, text))
+        return {"messageId": "unexpected"}
+
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "accounts": {
+                        "workspace": {
+                            "channels": {"C_DENIED": {"enabled": False}},
+                        }
+                    },
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_slack_slash_command(
+        {
+            "command": "/openzues",
+            "text": "ship status",
+            "user_id": "U123",
+            "channel_id": "C_DENIED",
+            "channel_name": "denied",
+            "team_id": "T1",
+        },
+        account_id="workspace",
+    )
+
+    assert result == {
+        "ok": False,
+        "channel": "slack",
+        "command": "/openzues",
+        "skipped": True,
+        "reason": "slack_slash_channel_unauthorized",
+        "response": {
+            "response_type": "ephemeral",
+            "text": "This channel is not allowed.",
+        },
+    }
+    assert deliveries == []
+
+
+def test_slack_slash_route_dispatches_form_payload_to_session(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, text: str) -> dict[str, str]:
+        deliveries.append((session_key, text))
+        return {"messageId": "slash-route-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="openzues",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            data={
+                "command": "/openzues",
+                "text": "run deploy check",
+                "user_id": "U123",
+                "user_name": "Ada",
+                "channel_id": "D123",
+                "channel_name": "directmessage",
+                "team_id": "T1",
+                "trigger_id": "trigger-1",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["command"] == "/openzues"
+    assert payload["text"] == "run deploy check"
+    assert str(payload["messageId"]).strip()
+    assert payload["response"] == {
+        "response_type": "ephemeral",
+        "text": "Queued for OpenZues.",
+    }
+
+
+def test_slack_slash_route_rejects_invalid_configured_signature(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {"channels": {"slack": {"signingSecret": "slack-signing-secret"}}}
+    )
+    deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, text: str) -> dict[str, str]:
+        deliveries.append((session_key, text))
+        return {"messageId": "unexpected"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    body = urlencode(
+        {
+            "command": "/openzues",
+            "text": "run deploy check",
+            "user_id": "U123",
+            "channel_id": "D123",
+        }
+    ).encode("utf-8")
+    timestamp = str(int(datetime.now(UTC).timestamp()))
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            content=body,
+            headers={
+                "content-type": "application/x-www-form-urlencoded",
+                "x-slack-request-timestamp": timestamp,
+                "x-slack-signature": "v0=invalid",
+            },
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Invalid Slack signature"}
+    assert deliveries == []
+
+
+def test_slack_slash_route_accepts_valid_configured_signature(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    signing_secret = "slack-signing-secret"
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {"channels": {"slack": {"signingSecret": signing_secret}}}
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    body = urlencode(
+        {
+            "command": "/openzues",
+            "text": "signed route",
+            "user_id": "U123",
+            "channel_id": "D123",
+        }
+    ).encode("utf-8")
+    timestamp = str(int(datetime.now(UTC).timestamp()))
+    signature = hmac.new(
+        signing_secret.encode("utf-8"),
+        b"v0:" + timestamp.encode("utf-8") + b":" + body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            content=body,
+            headers={
+                "content-type": "application/x-www-form-urlencoded",
+                "x-slack-request-timestamp": timestamp,
+                "x-slack-signature": f"v0={signature}",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["text"] == "signed route"
+
+
+def test_slack_slash_route_rejects_invalid_env_secretref_signature(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    monkeypatch.setenv("SLACK_SIGNING_SECRET_TEST", "env-slack-signing-secret")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "signingSecret": {
+                        "source": "env",
+                        "provider": "default",
+                        "id": "SLACK_SIGNING_SECRET_TEST",
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    body = urlencode(
+        {
+            "command": "/openzues",
+            "text": "signed route",
+            "user_id": "U123",
+            "channel_id": "D123",
+        }
+    ).encode("utf-8")
+
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            content=body,
+            headers={
+                "content-type": "application/x-www-form-urlencoded",
+                "x-slack-request-timestamp": str(int(datetime.now(UTC).timestamp())),
+                "x-slack-signature": "v0=invalid",
+            },
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Invalid Slack signature"}
+
+
+def test_slack_slash_route_accepts_valid_env_secretref_signature(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    signing_secret = "env-slack-signing-secret"
+    monkeypatch.setenv("SLACK_SIGNING_SECRET_TEST", signing_secret)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "signingSecret": {
+                        "source": "env",
+                        "provider": "default",
+                        "id": "SLACK_SIGNING_SECRET_TEST",
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    body = urlencode(
+        {
+            "command": "/openzues",
+            "text": "env signed route",
+            "user_id": "U123",
+            "channel_id": "D123",
+        }
+    ).encode("utf-8")
+    timestamp = str(int(datetime.now(UTC).timestamp()))
+    signature = hmac.new(
+        signing_secret.encode("utf-8"),
+        b"v0:" + timestamp.encode("utf-8") + b":" + body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            content=body,
+            headers={
+                "content-type": "application/x-www-form-urlencoded",
+                "x-slack-request-timestamp": timestamp,
+                "x-slack-signature": f"v0={signature}",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["text"] == "env signed route"
+
+
+def test_slack_slash_route_rejects_invalid_file_secretref_signature(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    secret_file = tmp_path / "slack-signing-secret.txt"
+    secret_file.write_text("file-slack-signing-secret\n", encoding="utf-8")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "signingSecret": {
+                        "source": "file",
+                        "provider": "default",
+                        "id": str(secret_file),
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    body = urlencode(
+        {
+            "command": "/openzues",
+            "text": "signed route",
+            "user_id": "U123",
+            "channel_id": "D123",
+        }
+    ).encode("utf-8")
+
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            content=body,
+            headers={
+                "content-type": "application/x-www-form-urlencoded",
+                "x-slack-request-timestamp": str(int(datetime.now(UTC).timestamp())),
+                "x-slack-signature": "v0=invalid",
+            },
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Invalid Slack signature"}
+
+
+def test_slack_slash_route_accepts_valid_file_secretref_signature(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    signing_secret = "file-slack-signing-secret"
+    secret_file = tmp_path / "slack-signing-secret.txt"
+    secret_file.write_text(f"{signing_secret}\n", encoding="utf-8")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "slack": {
+                    "signingSecret": {
+                        "source": "file",
+                        "provider": "default",
+                        "id": str(secret_file),
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    body = urlencode(
+        {
+            "command": "/openzues",
+            "text": "file signed route",
+            "user_id": "U123",
+            "channel_id": "D123",
+        }
+    ).encode("utf-8")
+    timestamp = str(int(datetime.now(UTC).timestamp()))
+    signature = hmac.new(
+        signing_secret.encode("utf-8"),
+        b"v0:" + timestamp.encode("utf-8") + b":" + body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            content=body,
+            headers={
+                "content-type": "application/x-www-form-urlencoded",
+                "x-slack-request-timestamp": timestamp,
+                "x-slack-signature": f"v0={signature}",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["text"] == "file signed route"
+
+
+def test_slack_slash_route_rejects_invalid_exec_secretref_signature(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "secrets": {
+                "providers": {
+                    "default": {
+                        "source": "exec",
+                        "command": sys.executable,
+                        "args": [
+                            "-c",
+                            (
+                                "import json,sys; sys.stdin.read(); "
+                                "print(json.dumps({'protocolVersion':1,"
+                                "'values':{'slack':'exec-slack-signing-secret'}}))"
+                            ),
+                        ],
+                    }
+                }
+            },
+            "channels": {
+                "slack": {
+                    "signingSecret": {
+                        "source": "exec",
+                        "provider": "default",
+                        "id": "slack",
+                    }
+                }
+            },
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    body = urlencode(
+        {
+            "command": "/openzues",
+            "text": "signed route",
+            "user_id": "U123",
+            "channel_id": "D123",
+        }
+    ).encode("utf-8")
+
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            content=body,
+            headers={
+                "content-type": "application/x-www-form-urlencoded",
+                "x-slack-request-timestamp": str(int(datetime.now(UTC).timestamp())),
+                "x-slack-signature": "v0=invalid",
+            },
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Invalid Slack signature"}
+
+
+def test_slack_slash_route_accepts_valid_exec_secretref_signature(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    signing_secret = "exec-slack-signing-secret"
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.patch_object(
+        {
+            "secrets": {
+                "providers": {
+                    "default": {
+                        "source": "exec",
+                        "command": sys.executable,
+                        "args": [
+                            "-c",
+                            (
+                                "import json,sys; sys.stdin.read(); "
+                                "print(json.dumps({'protocolVersion':1,"
+                                "'values':{'slack':'exec-slack-signing-secret'}}))"
+                            ),
+                        ],
+                    }
+                }
+            },
+            "channels": {
+                "slack": {
+                    "signingSecret": {
+                        "source": "exec",
+                        "provider": "default",
+                        "id": "slack",
+                    }
+                }
+            },
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=gateway_config,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    body = urlencode(
+        {
+            "command": "/openzues",
+            "text": "exec signed route",
+            "user_id": "U123",
+            "channel_id": "D123",
+        }
+    ).encode("utf-8")
+    timestamp = str(int(datetime.now(UTC).timestamp()))
+    signature = hmac.new(
+        signing_secret.encode("utf-8"),
+        b"v0:" + timestamp.encode("utf-8") + b":" + body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    with TestClient(
+        create_app(app_settings, database=database, ops_mesh_service=service)
+    ) as client:
+        response = client.post(
+            "/api/channels/slack/slash?accountId=workspace",
+            content=body,
+            headers={
+                "content-type": "application/x-www-form-urlencoded",
+                "x-slack-request-timestamp": timestamp,
+                "x-slack-signature": f"v0={signature}",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["text"] == "exec signed route"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_session() -> None:
     conversation_id = "19:ops-thread@thread.tacv2"
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-adaptive-card-inbound"
@@ -30633,6 +33982,1018 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "replyToken": "line-reply-token-1",
+                    "timestamp": 1760000000123,
+                    "source": {"type": "user", "userId": "U1234567890"},
+                    "message": {
+                        "id": "line-message-1",
+                        "type": "text",
+                        "text": "Ship the LINE parity lane.",
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="direct",
+        peer_id="line:user:U1234567890",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [
+        (expected_session_key, "Ship the LINE parity lane.")
+    ]
+    assert result == {
+        "ok": True,
+        "channel": "line",
+        "accountId": "line-bot",
+        "eventCount": 1,
+        "deliveredCount": 1,
+        "deliveries": [
+            {
+                "eventType": "message",
+                "messageId": "line-session-message-1",
+                "inboundMessageId": "line-message-1",
+                "replyToken": "[redacted]",
+                "timestamp": 1760000000123,
+                "sessionKey": expected_session_key,
+                "text": "Ship the LINE parity lane.",
+                "senderId": "U1234567890",
+                "conversationId": "U1234567890",
+                "conversationType": "direct",
+                "conversationTarget": expected_target.model_dump(mode="json"),
+                "delivery": {"runtime": "session-backed"},
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_deduplicates_message_redelivery_by_message_id(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": f"line-session-message-{len(session_deliveries)}"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    original_event = {
+        "type": "message",
+        "replyToken": "line-reply-token-1",
+        "timestamp": 1760000000123,
+        "source": {"type": "user", "userId": "UDEDUP123"},
+        "webhookEventId": "evt-line-message-original",
+        "deliveryContext": {"isRedelivery": False},
+        "message": {
+            "id": "line-message-dedupe-1",
+            "type": "text",
+            "text": "Deliver this once.",
+        },
+    }
+
+    first = await service.handle_line_webhook(
+        {"events": [original_event]},
+        account_id="line-bot",
+    )
+    redelivery = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    **original_event,
+                    "replyToken": "line-reply-token-2",
+                    "webhookEventId": "evt-line-message-redelivery",
+                    "deliveryContext": {"isRedelivery": True},
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    assert first["deliveredCount"] == 1
+    assert len(session_deliveries) == 1
+    assert session_deliveries[0][1] == "Deliver this once."
+    assert redelivery == {
+        "ok": True,
+        "channel": "line",
+        "accountId": "line-bot",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skippedCount": 1,
+        "skips": [
+            {
+                "eventType": "message",
+                "reason": "line_webhook_replay_duplicate",
+                "inboundMessageId": "line-message-dedupe-1",
+                "replayId": "message:line-message-dedupe-1",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_delivers_direct_postback(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-postback-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "postback",
+                    "replyToken": "line-postback-reply-token",
+                    "timestamp": 1760000000456,
+                    "source": {"type": "user", "userId": "UPOSTBACK123"},
+                    "postback": {
+                        "data": "line.action=approve&line.device=workstation"
+                    },
+                    "webhookEventId": "evt-postback-1",
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="direct",
+        peer_id="line:user:UPOSTBACK123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [
+        (expected_session_key, "line action approve device workstation")
+    ]
+    assert result["ok"] is True
+    assert result["channel"] == "line"
+    assert result["eventCount"] == 1
+    assert result["deliveredCount"] == 1
+    assert result["deliveries"] == [
+        {
+            "eventType": "postback",
+            "messageId": "line-postback-session-1",
+            "inboundMessageId": "evt-postback-1",
+            "replyToken": "[redacted]",
+            "timestamp": 1760000000456,
+            "sessionKey": expected_session_key,
+            "text": "line action approve device workstation",
+            "senderId": "UPOSTBACK123",
+            "conversationId": "UPOSTBACK123",
+            "conversationType": "direct",
+            "conversationTarget": expected_target.model_dump(mode="json"),
+            "delivery": {"runtime": "session-backed"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_deduplicates_postback_redelivery(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": f"line-postback-session-{len(session_deliveries)}"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    event = {
+        "type": "postback",
+        "replyToken": "line-postback-reply-token-1",
+        "timestamp": 1760000000456,
+        "source": {"type": "user", "userId": "UPOSTBACKDEDUP"},
+        "postback": {"data": "action=confirm"},
+        "webhookEventId": "evt-postback-dedupe-1",
+        "deliveryContext": {"isRedelivery": False},
+    }
+
+    first = await service.handle_line_webhook({"events": [event]}, account_id="line-bot")
+    redelivery = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    **event,
+                    "replyToken": "line-postback-reply-token-2",
+                    "deliveryContext": {"isRedelivery": True},
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    assert first["deliveredCount"] == 1
+    assert len(session_deliveries) == 1
+    assert session_deliveries[0][1] == "action=confirm"
+    assert redelivery == {
+        "ok": True,
+        "channel": "line",
+        "accountId": "line-bot",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skippedCount": 1,
+        "skips": [
+            {
+                "eventType": "postback",
+                "reason": "line_webhook_replay_duplicate",
+                "inboundMessageId": "evt-postback-dedupe-1",
+                "replayId": "event:evt-postback-dedupe-1",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_delivers_media_placeholder(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-media-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "replyToken": "line-media-reply-token",
+                    "timestamp": 1760000000789,
+                    "source": {"type": "user", "userId": "UMEDIA123"},
+                    "message": {"id": "line-image-1", "type": "image"},
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="direct",
+        peer_id="line:user:UMEDIA123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert result["deliveredCount"] == 1
+    assert result["deliveries"][0]["inboundMessageId"] == "line-image-1"
+    assert result["deliveries"][0]["text"] == "<media:image>"
+    assert result["deliveries"][0]["conversationTarget"] == expected_target.model_dump(
+        mode="json"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_delivers_sticker_text(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-sticker-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "replyToken": "line-sticker-reply-token",
+                    "timestamp": 1760000000999,
+                    "source": {"type": "user", "userId": "USTICKER123"},
+                    "message": {
+                        "id": "line-sticker-1",
+                        "type": "sticker",
+                        "packageId": "11538",
+                        "keywords": ["happy", "wave", "done", "ignored"],
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="direct",
+        peer_id="line:user:USTICKER123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    expected_text = "[Sent a Brown sticker: happy, wave, done]"
+
+    assert session_deliveries == [(expected_session_key, expected_text)]
+    assert result["deliveredCount"] == 1
+    assert result["deliveries"][0]["text"] == expected_text
+    assert result["deliveries"][0]["conversationTarget"] == expected_target.model_dump(
+        mode="json"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_delivers_location_text(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-location-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "replyToken": "line-location-reply-token",
+                    "timestamp": 1760000001111,
+                    "source": {"type": "user", "userId": "ULOCATION123"},
+                    "message": {
+                        "id": "line-location-1",
+                        "type": "location",
+                        "title": "OpenZues HQ",
+                        "address": "1 Parity Way",
+                        "latitude": 37.422,
+                        "longitude": -122.084,
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="direct",
+        peer_id="line:user:ULOCATION123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    expected_text = "\U0001f4cd 37.422000, -122.084000"
+
+    assert session_deliveries == [(expected_session_key, expected_text)]
+    assert result["deliveredCount"] == 1
+    assert result["deliveries"][0]["text"] == expected_text
+    assert result["deliveries"][0]["conversationTarget"] == expected_target.model_dump(
+        mode="json"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_skips_unmentioned_group_text(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-group-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "timestamp": 1760000001222,
+                    "source": {
+                        "type": "group",
+                        "groupId": "C1234567890",
+                        "userId": "UGROUPUSER",
+                    },
+                    "message": {
+                        "id": "line-group-message-1",
+                        "type": "text",
+                        "text": "please ship this quietly",
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    assert session_deliveries == []
+    assert result == {
+        "ok": True,
+        "channel": "line",
+        "accountId": "line-bot",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skippedCount": 1,
+        "skips": [
+            {
+                "eventType": "message",
+                "inboundMessageId": "line-group-message-1",
+                "reason": "line_group_message_requires_mention",
+                "conversationId": "C1234567890",
+                "conversationType": "group",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_delivers_group_text_with_native_bot_mention(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-group-mention-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "timestamp": 1760000001333,
+                    "source": {
+                        "type": "group",
+                        "groupId": "CMENTION123",
+                        "userId": "UGROUPMENTION",
+                    },
+                    "message": {
+                        "id": "line-group-mention-1",
+                        "type": "text",
+                        "text": "@Bot please run status",
+                        "mention": {
+                            "mentionees": [
+                                {
+                                    "index": 0,
+                                    "length": 4,
+                                    "type": "user",
+                                    "isSelf": True,
+                                }
+                            ]
+                        },
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="group",
+        peer_id="line:group:CMENTION123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "@Bot please run status")]
+    assert result["deliveredCount"] == 1
+    assert "skips" not in result
+    assert result["deliveries"][0]["messageId"] == "line-group-mention-session-1"
+    assert result["deliveries"][0]["conversationType"] == "group"
+    assert result["deliveries"][0]["conversationTarget"] == expected_target.model_dump(
+        mode="json"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_replays_group_pending_history(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-group-history-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "timestamp": 1760000001400,
+                    "source": {
+                        "type": "group",
+                        "groupId": "CHISTORY123",
+                        "userId": "UHISTORY",
+                    },
+                    "message": {
+                        "id": "line-group-history-1",
+                        "type": "text",
+                        "text": "hello history",
+                    },
+                },
+                {
+                    "type": "message",
+                    "timestamp": 1760000001500,
+                    "source": {
+                        "type": "group",
+                        "groupId": "CHISTORY123",
+                        "userId": "UMENTION",
+                    },
+                    "message": {
+                        "id": "line-group-history-2",
+                        "type": "text",
+                        "text": "@Bot summarize this",
+                        "mention": {
+                            "mentionees": [
+                                {
+                                    "index": 0,
+                                    "length": 4,
+                                    "type": "user",
+                                    "isSelf": True,
+                                }
+                            ]
+                        },
+                    },
+                },
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="group",
+        peer_id="line:group:CHISTORY123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    expected_history_prompt = (
+        "[Chat messages since your last reply - for context]\n"
+        "user:UHISTORY: hello history\n\n"
+        "[Current message - respond to this]\n"
+        "@Bot summarize this"
+    )
+
+    assert session_deliveries == [(expected_session_key, expected_history_prompt)]
+    assert result["deliveredCount"] == 1
+    assert result["skippedCount"] == 1
+    assert result["deliveries"][0]["text"] == "@Bot summarize this"
+    assert result["deliveries"][0]["inboundHistory"] == [
+        {
+            "sender": "user:UHISTORY",
+            "body": "hello history",
+            "timestamp": 1760000001400,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_delivers_group_media_without_mention(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-group-media-session-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "timestamp": 1760000001600,
+                    "source": {
+                        "type": "group",
+                        "groupId": "CMEDIA123",
+                        "userId": "UMEDIA",
+                    },
+                    "message": {
+                        "id": "line-group-media-1",
+                        "type": "image",
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="group",
+        peer_id="line:group:CMEDIA123",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert result["deliveredCount"] == 1
+    assert "skips" not in result
+    assert result["deliveries"][0]["text"] == "<media:image>"
+    assert result["deliveries"][0]["conversationType"] == "group"
+    assert result["deliveries"][0]["conversationTarget"] == expected_target.model_dump(
+        mode="json"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_stages_downloaded_media(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    fetch_requests: list[object] = []
+    png_bytes = b"\x89PNG\r\n\x1a\nline-media"
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-staged-media-session-1"}
+
+    async def fetch_media(request: GatewayLineInboundMediaFetchRequest) -> dict[str, object]:
+        fetch_requests.append(request)
+        return {
+            "bytes": png_bytes,
+            "contentType": "image/png",
+            "filename": "line-photo.png",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        line_inbound_media_fetch_service=fetch_media,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "replyToken": "line-staged-reply-token",
+                    "timestamp": 1760000001700,
+                    "source": {"type": "user", "userId": "USTAGEDMEDIA"},
+                    "message": {
+                        "id": "line-staged-media-1",
+                        "type": "image",
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="line",
+        account_id="line-bot",
+        peer_kind="direct",
+        peer_id="line:user:USTAGEDMEDIA",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert len(fetch_requests) == 1
+    fetch_request = fetch_requests[0]
+    assert fetch_request.message_id == "line-staged-media-1"
+    assert fetch_request.message_type == "image"
+    assert fetch_request.account_id == "line-bot"
+    delivery = result["deliveries"][0]
+    staged_paths = delivery["MediaPaths"]
+    assert isinstance(staged_paths, list)
+    assert len(staged_paths) == 1
+    assert delivery["MediaPath"] == staged_paths[0]
+    assert delivery["MediaUrl"] == staged_paths[0]
+    assert delivery["MediaType"] == "image/png"
+    assert delivery["MediaTypes"] == ["image/png"]
+    assert Path(str(staged_paths[0])).read_bytes() == png_bytes
+    assert delivery["delivery"] == {"runtime": "session-backed", "media": {"staged": 1}}
+    assert delivery["stagedMedia"][0]["filename"] == "line-photo.png"
+    assert delivery["stagedMedia"][0]["contentType"] == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_downloads_media_with_configured_line_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    requests: list[Request] = []
+    png_bytes = b"\x89PNG\r\n\x1a\nline-production-media"
+
+    class FakeLineMediaResponse:
+        status = 200
+        headers = {"Content-Type": "image/png"}
+
+        def __enter__(self) -> FakeLineMediaResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            return png_bytes
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeLineMediaResponse:
+        requests.append(request)
+        return FakeLineMediaResponse()
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "line-production-media-session-1"}
+
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="zues",
+        server_version="test",
+        data_dir=tmp_path / "config",
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "line": {
+                    "accounts": {
+                        "line-bot": {
+                            "channelAccessToken": "account-line-token",
+                        }
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+    )
+
+    result = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    "type": "message",
+                    "replyToken": "line-production-reply-token",
+                    "timestamp": 1760000001800,
+                    "source": {"type": "user", "userId": "UPRODMEDIA"},
+                    "message": {
+                        "id": "line-production-media-1",
+                        "type": "image",
+                    },
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    assert session_deliveries
+    assert len(requests) == 1
+    request = requests[0]
+    assert (
+        request.full_url
+        == "https://api-data.line.me/v2/bot/message/line-production-media-1/content"
+    )
+    assert request.get_header("Authorization") == "Bearer account-line-token"
+    delivery = result["deliveries"][0]
+    staged_paths = delivery["MediaPaths"]
+    assert isinstance(staged_paths, list)
+    assert Path(str(staged_paths[0])).read_bytes() == png_bytes
+    assert delivery["MediaType"] == "image/png"
+    assert delivery["stagedMedia"][0]["contentType"] == "image/png"
+    assert delivery["delivery"] == {"runtime": "session-backed", "media": {"staged": 1}}
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_line_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -33609,6 +37970,90 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_medi
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_replies_to_all_whatsapp_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-direct-send-whatsapp-media-reply-all"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Media Reply Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789/messages",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="Bearer wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": "+15551234567", "wa_id": "15551234567"}],
+            "messages": [{"id": f"wamid.media.reply.{len(whatsapp_posts)}"}],
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="whatsapp",
+        to="direct:+15551234567",
+        message="Ship both WhatsApp images.",
+        media_urls=[
+            "https://example.com/one.png",
+            "https://example.com/two.png",
+        ],
+        account_id="wa-business",
+        reply_to_id="wamid.reply.99",
+        reply_to_mode="all",
+        idempotency_key="idem-native-whatsapp-media-reply-all",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "wamid.media.reply.2"
+    assert [post[1]["context"] for post in whatsapp_posts] == [
+        {"message_id": "wamid.reply.99"},
+        {"message_id": "wamid.reply.99"},
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["replyToId"] == "wamid.reply.99"
+    assert delivery["event_payload"]["replyToIdSource"] == "explicit"
+    assert delivery["event_payload"]["replyToMode"] == "all"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_whatsapp_reply_document(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -34864,6 +39309,220 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
         "conversationId": "-100123",
         "pollId": "poll-telegram-1",
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_retries_telegram_missing_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-telegram-thread"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Poll Thread Fallback Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bot123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, dict(payload)))
+        if len(telegram_posts) == 1:
+            return {
+                "ok": False,
+                "error_code": 400,
+                "description": "Bad Request: message thread not found",
+            }
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 47,
+                "chat": {"id": -100123},
+                "poll": {"id": "poll-telegram-threadless"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_poll(
+        channel="telegram",
+        to="channel:-100123",
+        question="Retry stale poll topic?",
+        options=["Yes", "No"],
+        max_selections=1,
+        duration_seconds=60,
+        silent=True,
+        account_id="telegram-bot",
+        reply_to_id="41",
+        thread_id="271",
+        idempotency_key="idem-native-telegram-poll-thread-fallback",
+    )
+
+    assert result["messageId"] == "47"
+    assert result["pollId"] == "poll-telegram-threadless"
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPoll",
+            {
+                "chat_id": "-100123",
+                "question": "Retry stale poll topic?",
+                "options": ["Yes", "No"],
+                "allows_multiple_answers": False,
+                "open_period": 60,
+                "disable_notification": True,
+                "reply_to_message_id": "41",
+                "message_thread_id": "271",
+            },
+        ),
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPoll",
+            {
+                "chat_id": "-100123",
+                "question": "Retry stale poll topic?",
+                "options": ["Yes", "No"],
+                "allows_multiple_answers": False,
+                "open_period": 60,
+                "disable_notification": True,
+                "reply_to_message_id": "41",
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_retries_telegram_http_thread_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-telegram-http-thread"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Poll HTTP Thread Fallback Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bot123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, dict(payload)))
+        if len(telegram_posts) == 1:
+            raise RuntimeError(
+                "Webhook returned HTTP 400: Bad Request: message thread not found"
+            )
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 49,
+                "chat": {"id": -100123},
+                "poll": {"id": "poll-telegram-http-threadless"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_poll(
+        channel="telegram",
+        to="channel:-100123",
+        question="Retry stale poll topic after HTTP error?",
+        options=["Yes", "No"],
+        max_selections=2,
+        duration_seconds=60,
+        silent=True,
+        account_id="telegram-bot",
+        reply_to_id="41",
+        thread_id="271",
+        idempotency_key="idem-native-telegram-poll-http-thread-fallback",
+    )
+
+    assert result["messageId"] == "49"
+    assert result["pollId"] == "poll-telegram-http-threadless"
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPoll",
+            {
+                "chat_id": "-100123",
+                "question": "Retry stale poll topic after HTTP error?",
+                "options": ["Yes", "No"],
+                "allows_multiple_answers": True,
+                "open_period": 60,
+                "disable_notification": True,
+                "reply_to_message_id": "41",
+                "message_thread_id": "271",
+            },
+        ),
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPoll",
+            {
+                "chat_id": "-100123",
+                "question": "Retry stale poll topic after HTTP error?",
+                "options": ["Yes", "No"],
+                "allows_multiple_answers": True,
+                "open_period": 60,
+                "disable_notification": True,
+                "reply_to_message_id": "41",
+            },
+        ),
+    ]
 
 
 @pytest.mark.parametrize(

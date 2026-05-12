@@ -24,6 +24,12 @@ from openzues.database import Database
 logger = logging.getLogger(__name__)
 _UPDATE_LOG_TAIL_CHARS = 8000
 _LOW_DISK_SPACE_WARNING_THRESHOLD_BYTES = 1024 * 1024 * 1024
+_COMPLETION_CACHE_WRITE_TIMEOUT_MS = 30_000
+_COMPLETION_SKIP_PLUGIN_COMMANDS_ENV = "OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS"
+_COMPLETION_CACHE_MANUAL_REFRESH_HINT = (
+    "Shell tab-completion may be stale; refresh manually with: "
+    "openzues completion --write-state"
+)
 _UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE_ENV = (
     "OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE"
 )
@@ -36,9 +42,15 @@ _PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.js
 _FIRST_PACKAGED_DIST_INVENTORY_VERSION = (2026, 4, 15)
 _UPDATE_PREFLIGHT_MAX_COMMITS = 10
 _STARTUP_AUTO_UPDATE_COMMAND_TIMEOUT_MS = 45 * 60 * 1000
+_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS = 2.0
 _ONE_HOUR_SECONDS = 60 * 60
 _UPDATE_CHANNELS = {"stable", "beta", "dev"}
 _UPDATE_DEV_BRANCH = "main"
+_NATIVE_CONTROL_UI_REQUIRED_RELATIVE_PATHS = (
+    Path("src") / "openzues" / "web" / "templates" / "index.html",
+    Path("src") / "openzues" / "web" / "static" / "app.js",
+    Path("src") / "openzues" / "web" / "static" / "app.css",
+)
 _UPDATE_BETA_TAG_PATTERN = re.compile(r"(?:^|[.-])beta(?:[.-]|$)", re.IGNORECASE)
 _UPDATE_LEGACY_DOT_BETA_PATTERN = re.compile(
     r"^([vV]?[0-9]+\.[0-9]+\.[0-9]+)\.beta(?:\.([0-9A-Za-z.-]+))?$"
@@ -529,6 +541,9 @@ def _detect_package_manager(package_root: Path) -> str:
     ):
         if _path_exists(package_root / filename):
             return manager
+    detected_manager = _detect_global_package_manager_for_root(package_root)
+    if detected_manager is not None:
+        return detected_manager
     return "unknown"
 
 
@@ -606,6 +621,13 @@ def _package_name_parts(package_name: str) -> tuple[str, ...]:
     return tuple(part for part in package_name.strip().split("/") if part)
 
 
+def _resolve_path(target: Path) -> Path:
+    try:
+        return target.resolve(strict=False)
+    except OSError:
+        return target.absolute()
+
+
 def _package_root_for_name(global_root: Path, package_name: str) -> Path:
     parts = _package_name_parts(package_name)
     if not parts:
@@ -618,6 +640,63 @@ def _global_root_from_package_root(package_root: Path, package_name: str) -> Pat
     for _part in _package_name_parts(package_name) or (package_root.name,):
         root = root.parent
     return root
+
+
+def _global_root_owns_package(
+    *,
+    package_root: Path,
+    global_root: Path,
+    package_name: str,
+) -> bool:
+    return _resolve_path(_package_root_for_name(global_root, package_name)) == _resolve_path(
+        package_root
+    )
+
+
+def _global_root_from_command(command: str) -> Path | None:
+    try:
+        result = subprocess.run(
+            [command, "root", "-g"],
+            capture_output=True,
+            text=True,
+            timeout=_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    stdout = str(result.stdout or "").strip()
+    return Path(stdout) if stdout else None
+
+
+def _bun_global_root() -> Path:
+    bun_install = str(os.environ.get("BUN_INSTALL") or "").strip()
+    root = Path(bun_install) if bun_install else Path.home() / ".bun"
+    return root / "install" / "global" / "node_modules"
+
+
+def _detect_global_package_manager_for_root(package_root: Path) -> str | None:
+    package_name = _read_package_name(package_root)
+    for manager in ("npm", "pnpm"):
+        global_root = _global_root_from_command(manager)
+        if global_root is None:
+            continue
+        if _global_root_owns_package(
+            package_root=package_root,
+            global_root=global_root,
+            package_name=package_name,
+        ):
+            return manager
+    if _global_root_owns_package(
+        package_root=package_root,
+        global_root=_bun_global_root(),
+        package_name=package_name,
+    ):
+        return "bun"
+    if _has_owning_npm_command(package_root, package_name):
+        return "npm"
+    return None
 
 
 def _npm_prefix_layout_from_global_root(global_root: Path) -> _NpmGlobalPrefixLayout | None:
@@ -654,6 +733,20 @@ def _npm_prefix_layout_from_prefix(prefix: Path) -> _NpmGlobalPrefixLayout:
         global_root=resolved / "lib" / "node_modules",
         bin_dir=resolved / "bin",
     )
+
+
+def _has_owning_npm_command(package_root: Path, package_name: str) -> bool:
+    global_root = _global_root_from_package_root(package_root, package_name)
+    layout = _npm_prefix_layout_from_global_root(global_root)
+    if layout is None:
+        return False
+    candidates = {
+        layout.bin_dir / "npm",
+        layout.bin_dir / "npm.cmd",
+        layout.prefix / "npm",
+        layout.prefix / "npm.cmd",
+    }
+    return any(_path_exists(candidate) for candidate in candidates)
 
 
 def _create_staged_npm_install(
@@ -959,6 +1052,90 @@ def _post_package_update_doctor_env() -> dict[str, str]:
         "OPENCLAW_UPDATE_IN_PROGRESS": "1",
         _UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE_ENV: "1",
     }
+
+
+def _post_package_update_completion_cache_args() -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "openzues.cli",
+        "completion",
+        "--write-state",
+    ]
+
+
+def _post_package_update_completion_cache_env() -> dict[str, str]:
+    return {_COMPLETION_SKIP_PLUGIN_COMMANDS_ENV: "1"}
+
+
+def _completion_cache_refresh_warning(step: dict[str, object]) -> str:
+    stderr_tail = _update_step_log(step).get("stderrTail")
+    detail = str(stderr_tail).strip() if isinstance(stderr_tail, str) else ""
+    if not detail and _update_step_exit_code(step) is None:
+        detail = f"timed out after {_COMPLETION_CACHE_WRITE_TIMEOUT_MS // 1000}s"
+    suffix = f": {detail}" if detail else ""
+    return f"Completion cache update failed{suffix}. {_COMPLETION_CACHE_MANUAL_REFRESH_HINT}"
+
+
+def _git_update_ui_build_args() -> list[str]:
+    return [sys.executable, "-m", "compileall", "-q", "src/openzues/web"]
+
+
+def _native_control_ui_surface_exists(root: Path) -> bool:
+    return (root / "src" / "openzues" / "web").exists()
+
+
+def _missing_native_control_ui_assets(root: Path) -> list[Path]:
+    return [
+        root / relative_path
+        for relative_path in _NATIVE_CONTROL_UI_REQUIRED_RELATIVE_PATHS
+        if not (root / relative_path).exists()
+    ]
+
+
+def _native_verify_step(
+    *,
+    name: str,
+    root: Path,
+    path: Path,
+    exists: bool,
+) -> dict[str, object]:
+    return {
+        "name": name,
+        "command": f"verify {path}",
+        "cwd": str(root),
+        "durationMs": 0,
+        "log": {
+            "stdoutTail": None,
+            "stderrTail": None if exists else f"missing {path}",
+            "exitCode": 0 if exists else 1,
+        },
+    }
+
+
+def _native_control_ui_assets_verify_step(root: Path) -> dict[str, object]:
+    missing_paths = _missing_native_control_ui_assets(root)
+    path = (
+        missing_paths[0]
+        if missing_paths
+        else root / _NATIVE_CONTROL_UI_REQUIRED_RELATIVE_PATHS[0]
+    )
+    return _native_verify_step(
+        name="ui assets verify",
+        root=root,
+        path=path,
+        exists=not missing_paths,
+    )
+
+
+def _native_doctor_entry_verify_step(root: Path) -> dict[str, object]:
+    path = root / "src" / "openzues" / "cli.py"
+    return _native_verify_step(
+        name="openzues doctor entry",
+        root=root,
+        path=path,
+        exists=path.exists(),
+    )
 
 
 def _global_package_update_env() -> dict[str, str]:
@@ -2218,6 +2395,87 @@ class RuntimeUpdateService:
                     started_at=started_at,
                 )
 
+        if _native_control_ui_surface_exists(root):
+            ui_build_step = await self._run_update_command_step_at(
+                "ui:build",
+                _git_update_ui_build_args(),
+                cwd=root,
+                timeout_ms=timeout_ms,
+            )
+            steps.append(ui_build_step)
+            if _update_step_exit_code(ui_build_step) != 0:
+                return self._build_update_command_result(
+                    status="error",
+                    reason="ui-build-failed",
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+
+            doctor_entry_step = _native_doctor_entry_verify_step(root)
+            steps.append(doctor_entry_step)
+            if _update_step_exit_code(doctor_entry_step) != 0:
+                return self._build_update_command_result(
+                    status="error",
+                    reason="doctor-entry-missing",
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+
+            doctor_step = await self._run_update_command_step_at(
+                "openzues doctor",
+                _post_package_update_doctor_args(),
+                cwd=root,
+                timeout_ms=timeout_ms,
+                env=_post_package_update_doctor_env(),
+            )
+            steps.append(doctor_step)
+            if _update_step_exit_code(doctor_step) != 0:
+                return self._build_update_command_result(
+                    status="error",
+                    reason="doctor-failed",
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+
+            if _missing_native_control_ui_assets(root):
+                repair_step = await self._run_update_command_step_at(
+                    "ui:build (post-doctor repair)",
+                    _git_update_ui_build_args(),
+                    cwd=root,
+                    timeout_ms=timeout_ms,
+                )
+                steps.append(repair_step)
+                if _update_step_exit_code(repair_step) != 0:
+                    return self._build_update_command_result(
+                        status="error",
+                        reason="ui-build-failed",
+                        root=root,
+                        before=before,
+                        after=None,
+                        steps=steps,
+                        started_at=started_at,
+                    )
+                if _missing_native_control_ui_assets(root):
+                    steps.append(_native_control_ui_assets_verify_step(root))
+                    return self._build_update_command_result(
+                        status="error",
+                        reason="ui-assets-missing",
+                        root=root,
+                        before=before,
+                        after=None,
+                        steps=steps,
+                        started_at=started_at,
+                    )
+
         after_sha = await asyncio.to_thread(self._revision_resolver, root)
         after = {"sha": after_sha, "version": None}
         self._snapshot.last_checked_at = _utcnow_iso()
@@ -2441,6 +2699,16 @@ class RuntimeUpdateService:
                     warnings=warnings,
                     started_at=started_at,
                 )
+            completion_step = await self._run_update_command_step_at(
+                "completion cache",
+                _post_package_update_completion_cache_args(),
+                cwd=package_root,
+                timeout_ms=_COMPLETION_CACHE_WRITE_TIMEOUT_MS,
+                env=_post_package_update_completion_cache_env(),
+            )
+            steps.append(completion_step)
+            if _update_step_exit_code(completion_step) != 0:
+                warnings.append(_completion_cache_refresh_warning(completion_step))
             return self._build_package_update_result(
                 status="ok",
                 reason=None,
