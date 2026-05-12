@@ -151,6 +151,11 @@ delivery.
 `dmPolicy="pairing"` creating scoped pending pairing requests, emitting pairing
 replies through route-backed outbound delivery when available, and skipping
 unknown direct senders before native session delivery.
+`OZ-PROV-001FT` Zalo pairing allowFrom-store authorization from
+`extensions/zalo/src/monitor.ts`, `src/plugin-sdk/command-auth.ts`, and
+`src/pairing/allow-from-store-file.ts` is checkpointed in `1b2d5009`; it covers
+account-scoped `zalo-<account>-allowFrom.json` entries allowing already paired
+direct senders under `dmPolicy="pairing"`.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
