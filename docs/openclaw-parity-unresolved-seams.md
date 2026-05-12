@@ -12099,3 +12099,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Continue local browser status/doctor, profile mutation, permissions, label
   action route breadth, remaining provider-specific media/reply edges, deeper
   installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control storage route
+  breadth now maps upstream `GET /storage/:kind`,
+  `POST /storage/:kind/set`, and `POST /storage/:kind/clear` from
+  `extensions/browser/src/browser/routes/agent.storage.ts` onto native browser
+  storage get/set/clear methods for local/session storage. Source/test
+  checkpointed in `483e4aff`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.951%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.7%. Continue
+  local browser status/doctor, profile mutation, permissions, cookies, label
+  action route breadth, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.

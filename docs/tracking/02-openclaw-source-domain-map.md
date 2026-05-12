@@ -59,9 +59,13 @@ native focus/targeted-close methods with decoded path-segment target ids.
 `OZ-CANVAS-001I` local tab-action close/select breadth from
 `extensions/browser/src/browser/routes/tabs.ts` is checkpointed in
 `904f2673`; it resolves tab indexes from native tab list output and dispatches
-targeted close/focus. Remaining browser-request depth is richer local status,
-doctor, profile, permission, and label-action route breadth beyond the current
-native adapter.
+targeted close/focus. `OZ-CANVAS-001J` storage route breadth from
+`extensions/browser/src/browser/routes/agent.storage.ts` is checkpointed in
+`483e4aff`; it maps `GET /storage/:kind`, `POST /storage/:kind/set`, and
+`POST /storage/:kind/clear` onto native local/session storage get/set/clear.
+Remaining browser-request depth is richer local status, doctor, profile,
+permission, cookies, and label-action route breadth beyond the current native
+adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers
