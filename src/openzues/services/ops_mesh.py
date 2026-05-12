@@ -10176,6 +10176,14 @@ def _line_event_has_native_bot_mention(event: Mapping[str, Any]) -> bool:
     return False
 
 
+def _line_event_can_detect_mention(event: Mapping[str, Any]) -> bool:
+    event_type = str(event.get("type") or "").strip().lower()
+    if event_type != "message":
+        return False
+    message = _line_inbound_mapping(event.get("message"))
+    return str(message.get("type") or "").strip().lower() == "text"
+
+
 def _line_group_message_requires_mention_skip(
     *,
     context: _LineInboundSessionContext,
@@ -10183,6 +10191,8 @@ def _line_group_message_requires_mention_skip(
     text: str,
 ) -> bool:
     if context.conversation_type not in {"group", "room"}:
+        return False
+    if not _line_event_can_detect_mention(event):
         return False
     if _line_event_has_native_bot_mention(event):
         return False
