@@ -21,8 +21,8 @@ may lag behind this tracker.
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.4% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.9991% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.99988% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.99988% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.99989% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.99989% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
@@ -144,6 +144,16 @@ may lag behind this tracker.
   mismatched restarted gateway versions into `Gateway version mismatch:`
   diagnostics.
   - Status: checkpointed in `fd5f8117`
+
+- [x] Package update missing gateway-version restart-health failure, projecting
+  an omitted restarted gateway version into generic `restart-health`
+  diagnostics without rendering a version-mismatch line.
+  - Source: `openclaw-main/src/cli/daemon-cli/restart-health.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Status: checkpointed in `90e3d0a3`
+  - Last verified: 2026-05-12, focused red/green missing-version test,
+    adjacent restart-health proof (`4 passed, 589 deselected`), ruff, mypy,
+    and focused `git diff --check`.
 
 - [x] Gateway health serverVersion projection for restart-health version
   checks, exposing `/api/health.serverVersion` and preserving it in

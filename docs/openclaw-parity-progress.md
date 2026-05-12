@@ -22871,6 +22871,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`2 passed, 1242 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `b80501c6`.
+- Package update restart-health checks now distinguish a missing restarted
+  gateway version from an actual version mismatch. Missing version still fails
+  the restart-health gate with generic diagnostics, while only a concrete wrong
+  version renders `Gateway version mismatch:`. This closes `OZ-PKG-001CX`;
+  repo-wide parity remains estimated at ~99.9%, runtime/CLI/doctor
+  native-bridge parity moves to ~99.99989%, and CLI/operator control-plane
+  parity moves to ~99.99989%.
+- Verified the missing restart-health version seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_fails_when_restarted_gateway_omits_gateway_version -q`
+  (`Gateway version mismatch: ... unavailable` before implementation, then
+  `1 passed`), adjacent restart-health proof
+  `python -m pytest tests\test_cli.py -q -k "restart_health or restarted_gateway or update_fails_when_restarted_gateway"`
+  (`4 passed, 589 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `90e3d0a3`.
 
 ## References
 

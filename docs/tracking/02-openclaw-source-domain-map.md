@@ -94,6 +94,11 @@ persisted `lastCheckedAt`.
 `src/commands/status.update.ts` is checkpointed in `1d19a46c`; it covers the
 OpenClaw ` · ` separator for combined git/npm availability details.
 
+`OZ-PKG-001CX` missing restart-health gateway-version diagnostics from
+`src/cli/daemon-cli/restart-health.ts` is checkpointed in `90e3d0a3`; it covers
+generic restart-health failure when the restarted gateway omits its version
+without rendering a version-mismatch diagnostic.
+
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is
 verified in `884c9afb`; `@openclaw/memory-host-sdk/engine` aggregate coverage
