@@ -190,6 +190,8 @@ LINE_GROUP_HISTORY_LIMIT = 50
 LINE_HISTORY_CONTEXT_MARKER = "[Chat messages since your last reply - for context]"
 LINE_CURRENT_MESSAGE_MARKER = "[Current message - respond to this]"
 LINE_MAX_HISTORY_KEYS = 1000
+LINE_WEBHOOK_REPLAY_WINDOW_SECONDS = 10 * 60
+LINE_WEBHOOK_REPLAY_MAX_ENTRIES = 4096
 LINE_DEFAULT_MEDIA_MAX_BYTES = 10 * 1024 * 1024
 LINE_MEDIA_CONTENT_ENDPOINT = "https://api-data.line.me/v2/bot/message/{message_id}/content"
 LINE_AUDIO_FTYP_BRANDS = frozenset(
@@ -10440,6 +10442,68 @@ def _line_webhook_event_text(event: Mapping[str, Any]) -> str | None:
 
 
 @dataclass(frozen=True, slots=True)
+class _LineWebhookReplayCandidate:
+    key: str
+    replay_id: str
+    inbound_message_id: str | None
+
+
+def _line_webhook_replay_source_id(event: Mapping[str, Any]) -> str:
+    source = _line_inbound_mapping(event.get("source"))
+    source_type = str(source.get("type") or "").strip().lower()
+    if source_type == "group":
+        return f"group:{_line_inbound_optional_string(source.get('groupId')) or ''}"
+    if source_type == "room":
+        return f"room:{_line_inbound_optional_string(source.get('roomId')) or ''}"
+    return f"user:{_line_inbound_optional_string(source.get('userId')) or ''}"
+
+
+def _line_webhook_replay_candidate(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _LineWebhookReplayCandidate | None:
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    event_type = str(event.get("type") or "").strip().lower()
+    if event_type == "message":
+        message = _line_inbound_mapping(event.get("message"))
+        message_id = _line_inbound_optional_string(message.get("id"))
+        if message_id is not None:
+            replay_id = f"message:{message_id}"
+            return _LineWebhookReplayCandidate(
+                key=f"{normalized_account_id}|{replay_id}",
+                replay_id=replay_id,
+                inbound_message_id=message_id,
+            )
+    webhook_event_id = _line_inbound_optional_string(event.get("webhookEventId"))
+    if webhook_event_id is None:
+        return None
+    replay_id = f"event:{webhook_event_id}"
+    return _LineWebhookReplayCandidate(
+        key=(
+            f"{normalized_account_id}|{event_type or 'event'}|"
+            f"{_line_webhook_replay_source_id(event)}|{webhook_event_id}"
+        ),
+        replay_id=replay_id,
+        inbound_message_id=_line_inbound_message_id(event),
+    )
+
+
+def _line_webhook_replay_skip(
+    event: Mapping[str, Any],
+    candidate: _LineWebhookReplayCandidate,
+) -> dict[str, object]:
+    skip: dict[str, object] = {
+        "eventType": str(event.get("type") or "").strip() or "event",
+        "reason": "line_webhook_replay_duplicate",
+        "replayId": candidate.replay_id,
+    }
+    if candidate.inbound_message_id is not None:
+        skip["inboundMessageId"] = candidate.inbound_message_id
+    return skip
+
+
+@dataclass(frozen=True, slots=True)
 class _LineInboundSessionContext:
     conversation_target: ConversationTargetView
     session_key: str
@@ -14449,6 +14513,10 @@ class OpsMeshService:
         init=False,
         default_factory=dict,
     )
+    _line_webhook_replay_cache: dict[str, float] = field(
+        init=False,
+        default_factory=dict,
+    )
 
     async def start(self) -> None:
         if self._task is not None:
@@ -18269,6 +18337,20 @@ class OpsMeshService:
             "reason": "slack_event_unsupported",
         }
 
+    def _claim_line_webhook_replay(self, candidate: _LineWebhookReplayCandidate) -> bool:
+        now = time.monotonic()
+        cache = self._line_webhook_replay_cache
+        for key, expires_at in list(cache.items()):
+            if expires_at <= now:
+                del cache[key]
+        if candidate.key in cache:
+            return False
+        cache[candidate.key] = now + LINE_WEBHOOK_REPLAY_WINDOW_SECONDS
+        while len(cache) > LINE_WEBHOOK_REPLAY_MAX_ENTRIES:
+            oldest_key = min(cache, key=cache.__getitem__)
+            del cache[oldest_key]
+        return True
+
     async def handle_line_webhook(
         self,
         payload: Mapping[str, Any],
@@ -18287,6 +18369,15 @@ class OpsMeshService:
         deliveries: list[dict[str, object]] = []
         skips: list[dict[str, object]] = []
         for event in events:
+            replay_candidate = _line_webhook_replay_candidate(
+                event,
+                account_id=account_id,
+            )
+            if replay_candidate is not None and not self._claim_line_webhook_replay(
+                replay_candidate
+            ):
+                skips.append(_line_webhook_replay_skip(event, replay_candidate))
+                continue
             text = _line_webhook_event_text(event)
             if text is None:
                 continue

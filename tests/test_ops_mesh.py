@@ -34067,6 +34067,82 @@ async def test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_deduplicates_message_redelivery_by_message_id(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": f"line-session-message-{len(session_deliveries)}"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    original_event = {
+        "type": "message",
+        "replyToken": "line-reply-token-1",
+        "timestamp": 1760000000123,
+        "source": {"type": "user", "userId": "UDEDUP123"},
+        "webhookEventId": "evt-line-message-original",
+        "deliveryContext": {"isRedelivery": False},
+        "message": {
+            "id": "line-message-dedupe-1",
+            "type": "text",
+            "text": "Deliver this once.",
+        },
+    }
+
+    first = await service.handle_line_webhook(
+        {"events": [original_event]},
+        account_id="line-bot",
+    )
+    redelivery = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    **original_event,
+                    "replyToken": "line-reply-token-2",
+                    "webhookEventId": "evt-line-message-redelivery",
+                    "deliveryContext": {"isRedelivery": True},
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    assert first["deliveredCount"] == 1
+    assert len(session_deliveries) == 1
+    assert session_deliveries[0][1] == "Deliver this once."
+    assert redelivery == {
+        "ok": True,
+        "channel": "line",
+        "accountId": "line-bot",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skippedCount": 1,
+        "skips": [
+            {
+                "eventType": "message",
+                "reason": "line_webhook_replay_duplicate",
+                "inboundMessageId": "line-message-dedupe-1",
+                "replayId": "message:line-message-dedupe-1",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_handle_line_webhook_delivers_direct_postback(
     tmp_path: Path,
 ) -> None:
@@ -34145,6 +34221,73 @@ async def test_ops_mesh_service_handle_line_webhook_delivers_direct_postback(
             "delivery": {"runtime": "session-backed"},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_line_webhook_deduplicates_postback_redelivery(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": f"line-postback-session-{len(session_deliveries)}"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    event = {
+        "type": "postback",
+        "replyToken": "line-postback-reply-token-1",
+        "timestamp": 1760000000456,
+        "source": {"type": "user", "userId": "UPOSTBACKDEDUP"},
+        "postback": {"data": "action=confirm"},
+        "webhookEventId": "evt-postback-dedupe-1",
+        "deliveryContext": {"isRedelivery": False},
+    }
+
+    first = await service.handle_line_webhook({"events": [event]}, account_id="line-bot")
+    redelivery = await service.handle_line_webhook(
+        {
+            "events": [
+                {
+                    **event,
+                    "replyToken": "line-postback-reply-token-2",
+                    "deliveryContext": {"isRedelivery": True},
+                }
+            ]
+        },
+        account_id="line-bot",
+    )
+
+    assert first["deliveredCount"] == 1
+    assert len(session_deliveries) == 1
+    assert session_deliveries[0][1] == "action=confirm"
+    assert redelivery == {
+        "ok": True,
+        "channel": "line",
+        "accountId": "line-bot",
+        "eventCount": 1,
+        "deliveredCount": 0,
+        "skippedCount": 1,
+        "skips": [
+            {
+                "eventType": "postback",
+                "reason": "line_webhook_replay_duplicate",
+                "inboundMessageId": "evt-postback-dedupe-1",
+                "replayId": "event:evt-postback-dedupe-1",
+            }
+        ],
+    }
 
 
 @pytest.mark.asyncio
