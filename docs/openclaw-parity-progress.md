@@ -24456,6 +24456,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `mypy src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `2236d019`.
 
+- Device token rotation now preserves an existing token's scopes when
+  `device.token.rotate` omits `scopes`, matching OpenClaw's
+  `rotateDeviceToken` fallback from `params.scopes` to existing token scopes.
+  Explicit `scopes: []` remains an explicit reset. This closes
+  `OZ-COMP-001W`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~6.0%.
+- Verified the device-token scope-preservation seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_preserves_existing_scopes_when_omitted -q`
+  (`1 failed` before implementation because the second rotation returned
+  `scopes=[]`, then `1 passed`), adjacent proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "device_token_family or
+  device_token_rotate_preserves_existing_scopes_when_omitted or
+  device_pair_family"` (`5 passed, 1277 deselected`), `ruff check
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `936bdc9b`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
