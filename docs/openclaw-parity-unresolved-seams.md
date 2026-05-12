@@ -12121,3 +12121,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Continue local browser status/doctor, profile mutation, permissions, label
   action route breadth, remaining provider-specific media/reply edges, deeper
   installed plugin activation, companion breadth, or the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control debug route
+  breadth now maps upstream `GET /console`, `GET /errors`, `GET /requests`,
+  `POST /trace/start`, and `POST /trace/stop` from
+  `extensions/browser/src/browser/routes/agent.debug.ts` onto native console,
+  page-error, network-request, and trace artifact methods. Source/test
+  checkpointed in `d7eb616d`; repo-wide parity remains estimated at ~99.9%,
+  active gateway/session/tool-contract parity moves to ~99.953%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.8%. Continue
+  local browser status/doctor, profile mutation, permissions, label-action
+  route breadth, remaining provider-specific media/reply edges, deeper
+  installed plugin activation, companion breadth, or the next packaging edge.

@@ -67,7 +67,11 @@ targeted close/focus. `OZ-CANVAS-001J` storage route breadth from
 `extensions/browser/src/browser/routes/agent.storage.ts` is checkpointed in
 `97602084`; it maps `GET /cookies`, `POST /cookies/set`, and
 `POST /cookies/clear` onto native cookie get/set/clear, including nested
-upstream `cookie` set fields.
+upstream `cookie` set fields. `OZ-CANVAS-001L` debug route breadth from
+`extensions/browser/src/browser/routes/agent.debug.ts` is checkpointed in
+`d7eb616d`; it maps `GET /console`, `GET /errors`, `GET /requests`,
+`POST /trace/start`, and `POST /trace/stop` onto native console/error,
+network-request, and trace artifact methods with supported clear/filter flags.
 Remaining browser-request depth is richer local status, doctor, profile,
 permission, and label-action route breadth beyond the current native adapter.
 
