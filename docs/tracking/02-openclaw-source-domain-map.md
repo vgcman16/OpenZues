@@ -76,9 +76,14 @@ network-request, and trace artifact methods with supported clear/filter flags.
 `extensions/browser/src/browser/routes/agent.storage.ts` is checkpointed in
 `97755215`; it maps supported `/set/*` routes onto native offline, headers,
 credentials, geolocation, media, and device settings with existing redaction.
+`OZ-CANVAS-001N` act utility route breadth from
+`extensions/browser/src/browser/routes/agent.act.ts` and adjacent hook/download
+files is checkpointed in `886c86f3`; it maps `POST /highlight`,
+`POST /download`, and `POST /hooks/file-chooser` onto native highlight,
+guarded download, and guarded upload methods.
 Remaining browser-request depth is richer local status, doctor, profile,
-permission, locale/timezone, and label-action route breadth beyond the current
-native adapter.
+permission, locale/timezone, response body, dialog hook, and label-action route
+breadth beyond the current native adapter.
 
 LINE webhook addendum: `OZ-PROV-001FK` redelivery replay dedupe from
 `extensions/line/src/bot-handlers.ts` is checkpointed in `9acc4cd6`; it covers

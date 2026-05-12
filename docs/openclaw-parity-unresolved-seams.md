@@ -12144,3 +12144,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   locale/timezone, label-action route breadth, remaining provider-specific
   media/reply edges, deeper installed plugin activation, companion breadth, or
   the next packaging edge.
+- Current queue-head adjustment: `browser.request` local-control act utility
+  route breadth now maps upstream `POST /highlight`, `POST /download`, and
+  `POST /hooks/file-chooser` from `extensions/browser/src/browser/routes`
+  onto native highlight, guarded download, and guarded upload methods.
+  Source/test checkpointed in `886c86f3`; repo-wide parity remains estimated
+  at ~99.9%, active gateway/session/tool-contract parity moves to ~99.955%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.9%.
+  Continue local browser status/doctor, profile mutation, permissions,
+  locale/timezone, response body/dialog-hook route breadth, remaining
+  provider-specific media/reply edges, deeper installed plugin activation,
+  companion breadth, or the next packaging edge.
