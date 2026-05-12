@@ -10769,6 +10769,128 @@ def _openclaw_update_write_post_core_plugin_result(
     path.write_text(json.dumps(plugins), encoding="utf-8")
 
 
+def _openclaw_update_attach_post_core_plugin_result(
+    payload: dict[str, object],
+    plugin_update: object,
+) -> dict[str, object]:
+    if not isinstance(plugin_update, Mapping):
+        return payload
+    result = dict(payload)
+    post_update_value = result.get("postUpdate")
+    post_update = (
+        dict(post_update_value) if isinstance(post_update_value, Mapping) else {}
+    )
+    post_update["plugins"] = dict(plugin_update)
+    result["postUpdate"] = post_update
+    if plugin_update.get("status") == "error":
+        result["status"] = "error"
+        result["reason"] = "post-update-plugins"
+    return result
+
+
+def _openclaw_update_optional_result_mapping(value: object) -> Mapping[str, object] | None:
+    return value if isinstance(value, Mapping) else None
+
+
+def _openclaw_update_result_changed(left: object, right: object) -> bool:
+    left_value = _optional_cli_string(left)
+    right_value = _optional_cli_string(right)
+    return left_value is not None and right_value is not None and left_value != right_value
+
+
+def _openclaw_update_should_resume_post_core_in_fresh_process(
+    payload: Mapping[str, object],
+    *,
+    downgrade_risk: bool,
+) -> bool:
+    if downgrade_risk:
+        return False
+    mode = _optional_cli_string(payload.get("mode"))
+    if mode in _OPENCLAW_UPDATE_PACKAGE_MANAGERS:
+        return True
+    if mode != "git":
+        return False
+    before = _openclaw_update_optional_result_mapping(payload.get("before"))
+    after = _openclaw_update_optional_result_mapping(payload.get("after"))
+    if before is None or after is None:
+        return False
+    return _openclaw_update_result_changed(
+        before.get("sha"),
+        after.get("sha"),
+    ) or _openclaw_update_result_changed(before.get("version"), after.get("version"))
+
+
+def _openclaw_update_read_post_core_plugin_result_file(
+    result_path: Path | None,
+) -> dict[str, object] | None:
+    if result_path is None or not result_path.exists():
+        return None
+    try:
+        parsed = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return dict(parsed) if isinstance(parsed, Mapping) else None
+
+
+async def _openclaw_update_continue_post_core_in_fresh_process(
+    *,
+    root: Path,
+    channel: str,
+    requested_channel: str | None,
+    json_output: bool,
+    restart: bool,
+    yes: bool,
+    timeout: str | None,
+) -> dict[str, object]:
+    argv = [sys.executable, "-m", "openzues.cli", "update"]
+    if json_output:
+        argv.append("--json")
+    if not restart:
+        argv.append("--no-restart")
+    if yes:
+        argv.append("--yes")
+    if timeout is not None:
+        argv.extend(["--timeout", timeout])
+
+    result_dir: Path | None = (
+        Path(tempfile.mkdtemp(prefix="openzues-update-post-core-"))
+        if json_output
+        else None
+    )
+    result_path = result_dir / "plugins.json" if result_dir is not None else None
+    env = dict(os.environ)
+    env[_OPENCLAW_UPDATE_POST_CORE_ENV] = "1"
+    env[_OPENCLAW_UPDATE_POST_CORE_CHANNEL_ENV] = channel
+    if requested_channel is not None:
+        env[_OPENCLAW_UPDATE_POST_CORE_REQUESTED_CHANNEL_ENV] = requested_channel
+    else:
+        env.pop(_OPENCLAW_UPDATE_POST_CORE_REQUESTED_CHANNEL_ENV, None)
+    if result_path is not None:
+        env[_OPENCLAW_UPDATE_POST_CORE_RESULT_PATH_ENV] = str(result_path)
+    else:
+        env.pop(_OPENCLAW_UPDATE_POST_CORE_RESULT_PATH_ENV, None)
+
+    try:
+        completed = await asyncio.to_thread(
+            subprocess.run,
+            argv,
+            cwd=root,
+            env=env,
+            check=False,
+        )
+        plugin_update = _openclaw_update_read_post_core_plugin_result_file(result_path)
+        exit_code = int(getattr(completed, "returncode", 1))
+        if exit_code != 0 and plugin_update is None:
+            raise RuntimeError(f"post-update process exited with code {exit_code}")
+        result: dict[str, object] = {"resumed": True, "exitCode": exit_code}
+        if plugin_update is not None:
+            result["pluginUpdate"] = plugin_update
+        return result
+    finally:
+        if result_dir is not None:
+            shutil.rmtree(result_dir, ignore_errors=True)
+
+
 def _openclaw_update_read_stored_channel_for_preview() -> str | None:
     async def read_channel(services: object) -> str | None:
         config_service = getattr(services, "gateway_config", None)
@@ -107821,7 +107943,32 @@ def update_root(
                 payload,
                 requested_channel,
             )
-            payload = await _openclaw_update_attach_post_update_plugins(services, payload)
+            should_resume_post_core = _openclaw_update_should_resume_post_core_in_fresh_process(
+                payload,
+                downgrade_risk=bool(downgrade_risk),
+            )
+            plugins_updated_in_fresh_process = False
+            if should_resume_post_core:
+                fresh_process_result = (
+                    await _openclaw_update_continue_post_core_in_fresh_process(
+                        root=Path(str(payload.get("root") or root)),
+                        channel=effective_channel,
+                        requested_channel=requested_channel,
+                        json_output=json_output,
+                        restart=restart,
+                        yes=yes,
+                        timeout=timeout,
+                    )
+                )
+                plugins_updated_in_fresh_process = bool(
+                    fresh_process_result.get("resumed")
+                )
+                payload = _openclaw_update_attach_post_core_plugin_result(
+                    payload,
+                    fresh_process_result.get("pluginUpdate"),
+                )
+            if not plugins_updated_in_fresh_process:
+                payload = await _openclaw_update_attach_post_update_plugins(services, payload)
             return await _openclaw_update_attach_restart_health(
                 services,
                 payload,
@@ -107865,7 +108012,31 @@ def update_root(
             payload,
             requested_channel,
         )
-        return await _openclaw_update_attach_post_update_plugins(services, payload)
+        should_resume_post_core = _openclaw_update_should_resume_post_core_in_fresh_process(
+            payload,
+            downgrade_risk=False,
+        )
+        plugins_updated_in_fresh_process = False
+        if should_resume_post_core:
+            fresh_process_result = (
+                await _openclaw_update_continue_post_core_in_fresh_process(
+                    root=Path(str(payload.get("root") or root)),
+                    channel=effective_channel,
+                    requested_channel=requested_channel,
+                    json_output=json_output,
+                    restart=restart,
+                    yes=yes,
+                    timeout=timeout,
+                )
+            )
+            plugins_updated_in_fresh_process = bool(fresh_process_result.get("resumed"))
+            payload = _openclaw_update_attach_post_core_plugin_result(
+                payload,
+                fresh_process_result.get("pluginUpdate"),
+            )
+        if not plugins_updated_in_fresh_process:
+            payload = await _openclaw_update_attach_post_update_plugins(services, payload)
+        return payload
 
     payload = _run(
         _run_with_services(run_git_update_with_plugins)

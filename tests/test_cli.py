@@ -28730,8 +28730,17 @@ def test_update_json_runs_post_update_plugin_sync_for_package_update(
             )
         )
 
+    async def fake_continue_post_core(**kwargs: object) -> dict[str, object]:
+        del kwargs
+        return {"resumed": False}
+
     monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
     monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_continue_post_core_in_fresh_process",
+        fake_continue_post_core,
+    )
 
     result = runner.invoke(app, ["update", "--json", "--tag", "latest", "--timeout", "9"])
 
@@ -28880,6 +28889,156 @@ def test_update_post_core_resume_skips_core_update_and_runs_plugin_sync(
     ]
 
 
+def test_update_json_uses_fresh_process_for_package_post_update_plugins(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "pnpm@9.0.0", "version": "2026.5.1"}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "npm" / "demo"
+    plugin_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["demo"],
+                    "entries": {"demo": {"enabled": True}},
+                    "installs": {
+                        "demo": {
+                            "source": "npm",
+                            "spec": "@openclaw/demo@beta",
+                            "installPath": str(plugin_dir),
+                            "version": "1.2.2",
+                            "resolvedName": "@openclaw/demo",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    fresh_calls: list[dict[str, object]] = []
+
+    class FakeRuntimeUpdates:
+        async def run_package_update(
+            self,
+            *,
+            package_root: Path,
+            package_manager: str,
+            package_spec: str,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            return {
+                "status": "ok",
+                "mode": package_manager,
+                "root": str(package_root),
+                "before": {"sha": None, "version": "2026.5.1"},
+                "after": {"sha": None, "version": "2026.5.2"},
+                "steps": [{"name": "global update"}],
+                "durationMs": 12,
+                "packageSpec": package_spec,
+                "timeoutMs": timeout_ms,
+            }
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            raise AssertionError(
+                f"parent process should not update plugins inline: {kwargs}"
+            )
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                runtime_updates=FakeRuntimeUpdates(),
+                gateway_config=gateway_config,
+                plugin_npm_installer=FakeNpmInstaller(),
+            )
+        )
+
+    async def fake_continue_post_core(**kwargs: object) -> dict[str, object]:
+        fresh_calls.append(dict(kwargs))
+        return {
+            "resumed": True,
+            "pluginUpdate": {
+                "status": "ok",
+                "changed": True,
+                "sync": {
+                    "changed": False,
+                    "switchedToBundled": [],
+                    "switchedToNpm": [],
+                    "warnings": [],
+                    "errors": [],
+                },
+                "npm": {
+                    "changed": True,
+                    "outcomes": [
+                        {
+                            "pluginId": "demo",
+                            "status": "updated",
+                            "currentVersion": "1.2.2",
+                            "nextVersion": "1.2.3",
+                            "message": "Updated demo: 1.2.2 -> 1.2.3.",
+                        }
+                    ],
+                },
+                "integrityDrifts": [],
+            },
+        }
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_resolve_target_version",
+        lambda *a, **k: "2026.5.2",
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_continue_post_core_in_fresh_process",
+        fake_continue_post_core,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["update", "--json", "--tag", "latest", "--no-restart", "--timeout", "9"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert len(fresh_calls) == 1
+    fresh_call = fresh_calls[0]
+    assert fresh_call["root"] == package_root
+    assert fresh_call["channel"] == "stable"
+    assert fresh_call["requested_channel"] is None
+    assert fresh_call["json_output"] is True
+    assert fresh_call["restart"] is False
+    assert fresh_call["yes"] is False
+    assert fresh_call["timeout"] == "9"
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["postUpdate"]["plugins"]["npm"]["outcomes"][0]["pluginId"] == "demo"
+
+
 def test_update_json_fails_when_post_update_plugin_sync_fails(
     tmp_path,
     monkeypatch,
@@ -28961,8 +29120,17 @@ def test_update_json_fails_when_post_update_plugin_sync_fails(
             )
         )
 
+    async def fake_continue_post_core(**kwargs: object) -> dict[str, object]:
+        del kwargs
+        return {"resumed": False}
+
     monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
     monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(
+        cli_module,
+        "_openclaw_update_continue_post_core_in_fresh_process",
+        fake_continue_post_core,
+    )
 
     result = runner.invoke(app, ["update", "--json", "--tag", "latest"])
 
