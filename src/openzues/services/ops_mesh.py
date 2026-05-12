@@ -3093,6 +3093,42 @@ def _feishu_media_local_roots(
     return []
 
 
+def _qqbot_channel_config(snapshot: dict[str, Any]) -> dict[str, Any]:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, dict):
+        return {}
+    channel_config = channels.get("qqbot")
+    return channel_config if isinstance(channel_config, dict) else {}
+
+
+def _qqbot_account_config(
+    channel_config: dict[str, Any],
+    account_id: str | None,
+) -> dict[str, Any]:
+    accounts = channel_config.get("accounts")
+    if not isinstance(accounts, dict):
+        return {}
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    account_config = accounts.get(normalized_account_id)
+    return account_config if isinstance(account_config, dict) else {}
+
+
+def _qqbot_media_local_roots(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+) -> list[str]:
+    channel_config = _qqbot_channel_config(snapshot)
+    account_config = _qqbot_account_config(channel_config, account_id)
+    raw_account_roots = account_config.get("mediaLocalRoots")
+    if isinstance(raw_account_roots, list):
+        return [str(entry).strip() for entry in raw_account_roots if str(entry).strip()]
+    raw_channel_roots = channel_config.get("mediaLocalRoots")
+    if isinstance(raw_channel_roots, list):
+        return [str(entry).strip() for entry in raw_channel_roots if str(entry).strip()]
+    return []
+
+
 def _bluebubbles_positive_number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -3261,6 +3297,40 @@ def _feishu_allowed_local_media_path(
             return resolved_candidate
     raise RuntimeError(
         f"Local Feishu media path is not under any configured mediaLocalRoots entry: {source}"
+    )
+
+
+def _qqbot_allowed_local_media_path(
+    local_path: Path,
+    *,
+    source: str,
+    local_roots: list[str],
+    account_id: str | None,
+) -> Path:
+    if not local_roots:
+        suffix = (
+            f" or channels.qqbot.accounts.{account_id}.mediaLocalRoots"
+            if account_id
+            else ""
+        )
+        raise RuntimeError(
+            "Local QQBot media paths are disabled by default. "
+            f"Set channels.qqbot.mediaLocalRoots{suffix} to explicitly "
+            "allow local file directories."
+        )
+    candidate = local_path.expanduser().resolve(strict=False)
+    for root_entry in local_roots:
+        root = _bluebubbles_configured_local_root(root_entry)
+        if not _bluebubbles_path_inside_root(candidate, root):
+            continue
+        if not local_path.is_file():
+            raise RuntimeError(f"Media path does not exist: {source}")
+        resolved_candidate = local_path.resolve(strict=True)
+        resolved_root = root.resolve(strict=True) if root.exists() else root
+        if _bluebubbles_path_inside_root(resolved_candidate, resolved_root):
+            return resolved_candidate
+    raise RuntimeError(
+        f"Local QQBot media path is not under any configured mediaLocalRoots entry: {source}"
     )
 
 
@@ -4993,14 +5063,30 @@ def _qqbot_media_file_type(media_url: str, media_kind: object) -> tuple[int, str
     return 4, "file"
 
 
-def _qqbot_upload_payload(media_url: str, file_type: int) -> dict[str, object]:
+def _qqbot_upload_payload(
+    media_url: str,
+    file_type: int,
+    *,
+    local_roots: list[str],
+    account_id: str | None,
+) -> dict[str, object]:
     payload: dict[str, object] = {"file_type": file_type, "srv_send_msg": False}
     stripped = str(media_url or "").strip()
     data_match = re.match(r"^data:[^;]+;base64,(.+)$", stripped, flags=re.IGNORECASE | re.DOTALL)
     if data_match:
         payload["file_data"] = data_match.group(1)
     else:
-        payload["url"] = stripped
+        local_source_path = _bluebubbles_local_media_source_path(stripped)
+        if local_source_path is not None:
+            allowed_path = _qqbot_allowed_local_media_path(
+                local_source_path,
+                source=stripped,
+                local_roots=local_roots,
+                account_id=account_id,
+            )
+            payload["file_data"] = base64.b64encode(allowed_path.read_bytes()).decode("ascii")
+        else:
+            payload["url"] = stripped
     if file_type == 4:
         filename = Path(unquote(urlparse(stripped).path)).name
         if filename:
@@ -35432,6 +35518,13 @@ class OpsMeshService:
             media_ids: list[str] = []
             bearer_token = _qqbot_bearer_token(secret_token)
             base_target = str(route.get("target") or "")
+            account_id = normalize_optional_account_id(event.get("accountId")) or DEFAULT_ACCOUNT_ID
+            local_roots: list[str] = []
+            if self.gateway_config_service is not None:
+                local_roots = _qqbot_media_local_roots(
+                    self.gateway_config_service.build_snapshot(),
+                    account_id=account_id,
+                )
             if target_type == "channel":
                 channel_payload: dict[str, object] = {
                     "content": _qqbot_channel_media_content(
@@ -35464,7 +35557,12 @@ class OpsMeshService:
                     file_type, media_type = _qqbot_media_file_type(media_url, media_kind)
                     upload_result = self._post_json_webhook(
                         _qqbot_media_upload_endpoint(base_target, target_type, target_id),
-                        _qqbot_upload_payload(media_url, file_type),
+                        _qqbot_upload_payload(
+                            media_url,
+                            file_type,
+                            local_roots=local_roots,
+                            account_id=account_id,
+                        ),
                         secret_header_name="Authorization",
                         secret_token=bearer_token,
                     )

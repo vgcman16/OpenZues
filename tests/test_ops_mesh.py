@@ -21000,6 +21000,102 @@ async def test_ops_mesh_service_send_direct_channel_message_replies_to_qqbot_tex
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_local_media_file_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-qqbot-local-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    media_file = tmp_path / "local-photo.png"
+    media_file.write_bytes(b"fake-local-png")
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="QQBot Native Local Media Provider",
+        kind="qqbot",
+        target="https://api.sgroup.qq.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="qqbot-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "qqbot",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "qqbot:c2c:openid-1",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="",
+        assistant_agent_id="main",
+        server_version=None,
+        data_dir=tmp_path / "config",
+    )
+    config_service.patch_object({"channels": {"qqbot": {"mediaLocalRoots": [str(tmp_path)]}}})
+    qqbot_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        qqbot_posts.append((target, payload, secret_header_name, secret_token))
+        if target.endswith("/files"):
+            return {
+                "file_info": "qq-local-file-info",
+                "file_uuid": "qq-local-file-uuid",
+                "ttl": 3600,
+            }
+        return {"id": "qq-local-msg-1", "timestamp": "2026-05-12T12:15:00Z"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=config_service,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="qqbot",
+        to="qqbot:c2c:openid-1",
+        message="Local upload",
+        media_urls=[str(media_file)],
+        media_kind="image",
+        account_id="default",
+        idempotency_key="idem-native-qqbot-local-media",
+    )
+
+    assert result["messageId"] == "qq-local-msg-1"
+    assert qqbot_posts[0] == (
+        "https://api.sgroup.qq.com/v2/users/openid-1/files",
+        {
+            "file_type": 1,
+            "srv_send_msg": False,
+            "file_data": base64.b64encode(b"fake-local-png").decode("ascii"),
+        },
+        "Authorization",
+        "Bearer qqbot-access-token",
+    )
+    assert qqbot_posts[1][1] == {
+        "msg_type": 7,
+        "media": {"file_info": "qq-local-file-info"},
+        "msg_seq": 1,
+        "content": "Local upload",
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
