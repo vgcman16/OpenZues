@@ -20786,7 +20786,15 @@ async def test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_image_
                 "msg_type": 7,
                 "media": {"file_info": "qq-file-info-1"},
                 "msg_seq": 1,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
                 "content": "Caption from OpenZues",
+                "msg_type": 0,
             },
             "Authorization",
             "Bearer qqbot-access-token",
@@ -21188,7 +21196,10 @@ async def test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_local_
         "msg_type": 7,
         "media": {"file_info": "qq-local-file-info"},
         "msg_seq": 1,
+    }
+    assert qqbot_posts[2][1] == {
         "content": "Local upload",
+        "msg_type": 0,
     }
 
 
@@ -21362,7 +21373,15 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_qqbot_chunked_l
                 "msg_type": 7,
                 "media": {"file_info": "qq-chunked-file-info"},
                 "msg_seq": 1,
+            },
+            "Authorization",
+            "Bearer qqbot-access-token",
+        ),
+        (
+            "https://api.sgroup.qq.com/v2/users/openid-1/messages",
+            {
                 "content": "Chunked local upload",
+                "msg_type": 0,
             },
             "Authorization",
             "Bearer qqbot-access-token",

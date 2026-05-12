@@ -35734,6 +35734,7 @@ class OpsMeshService:
         if media_urls:
             first_file_type, first_media_type = _qqbot_media_file_type(media_urls[0], media_kind)
             result_media_type = first_media_type
+            send_text_after_media = bool(text and not inline_media_entries)
             message_ids: list[str] = []
             media_ids: list[str] = []
             bearer_token = _qqbot_bearer_token(secret_token)
@@ -35823,7 +35824,7 @@ class OpsMeshService:
                             else 1
                         ),
                     }
-                    if index == 0 and text and file_type in {1, 2}:
+                    if index == 0 and text and file_type in {1, 2} and not send_text_after_media:
                         message_payload["content"] = text
                     if reply_to_id and index == 0:
                         message_payload["msg_id"] = reply_to_id
@@ -35845,7 +35846,7 @@ class OpsMeshService:
                             "QQBot API response did not include a message id."
                         )
                     message_ids.append(sent_message_id)
-                    if index == 0 and text and file_type in {3, 4}:
+                    if index == 0 and send_text_after_media:
                         text_payload: dict[str, object] = {"content": text, "msg_type": 0}
                         if reply_to_id:
                             text_payload["msg_id"] = reply_to_id
