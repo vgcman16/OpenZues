@@ -576,6 +576,7 @@ hermes_app = typer.Typer(help="Inspect and tune Hermes runtime posture.")
 routes_app = typer.Typer(help="Inspect and test notification routes.")
 agents_app = typer.Typer(help="Inspect configured agent inventory.")
 channels_app = typer.Typer(help="Inspect notification route channels.")
+devices_app = typer.Typer(help="Device pairing and auth tokens.")
 acp_app = typer.Typer(
     help="Run an ACP bridge backed by the Gateway.",
     invoke_without_command=True,
@@ -627,6 +628,7 @@ app.add_typer(hermes_app, name="hermes")
 app.add_typer(routes_app, name="routes")
 app.add_typer(agents_app, name="agents")
 app.add_typer(channels_app, name="channels")
+app.add_typer(devices_app, name="devices")
 app.add_typer(acp_app, name="acp")
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(sandbox_app, name="sandbox")
@@ -104726,6 +104728,126 @@ def tasks_show_command(
         typer.echo(f"Task not found: {lookup}", err=True)
         raise typer.Exit(code=1)
     _emit_task_show(task, json_output=json_output)
+
+
+def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    pending_value = payload.get("pending")
+    paired_value = payload.get("paired")
+    pending: list[object] = pending_value if isinstance(pending_value, list) else []
+    paired: list[object] = paired_value if isinstance(paired_value, list) else []
+    if pending:
+        typer.echo(f"Pending ({len(pending)})")
+        for item in pending:
+            if not isinstance(item, dict):
+                continue
+            request_id = _optional_cli_string(item.get("requestId")) or "<unknown>"
+            device_id = _optional_cli_string(item.get("displayName")) or _optional_cli_string(
+                item.get("deviceId")
+            )
+            device_text = f" {device_id}" if device_id is not None else ""
+            typer.echo(f"  {request_id}{device_text}")
+    if paired:
+        typer.echo(f"Paired ({len(paired)})")
+        for item in paired:
+            if not isinstance(item, dict):
+                continue
+            device_id = _optional_cli_string(item.get("displayName")) or _optional_cli_string(
+                item.get("deviceId")
+            )
+            roles = item.get("roles")
+            role_text = ""
+            if isinstance(roles, list) and roles:
+                role_text = " " + ", ".join(str(role) for role in roles)
+            typer.echo(f"  {device_id or '<unknown>'}{role_text}")
+    if not pending and not paired:
+        typer.echo("No device pairing entries.")
+
+
+def _latest_pending_device(payload: dict[str, object]) -> dict[str, object] | None:
+    pending = payload.get("pending")
+    if not isinstance(pending, list):
+        return None
+    candidates = [item for item in pending if isinstance(item, dict)]
+    if not candidates:
+        return None
+
+    def sort_key(item: dict[object, object]) -> int:
+        timestamp = item.get("ts")
+        if isinstance(timestamp, int) and not isinstance(timestamp, bool):
+            return timestamp
+        return -1
+
+    latest = max(candidates, key=sort_key)
+    return {str(key): value for key, value in latest.items() if isinstance(key, str)}
+
+
+@devices_app.command("list")
+def devices_list_command(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "device.pair.list", {})
+
+    result = _run(_run_with_services(_action))
+    _emit_devices_list(result, json_output=json_output)
+
+
+@devices_app.command("approve")
+def devices_approve_command(
+    request_id: str | None = typer.Argument(None, help="Pending request id."),
+    latest: bool = typer.Option(
+        False,
+        "--latest",
+        help="Preview the latest pending request before explicit approval.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    normalized_request_id = _optional_cli_string(request_id)
+    if normalized_request_id is None or latest:
+
+        async def _preview_action(services: CliServices) -> dict[str, object]:
+            return await _call_gateway_node_method(services, "device.pair.list", {})
+
+        listing = _run(_run_with_services(_preview_action))
+        selected = _latest_pending_device(listing)
+        if selected is None:
+            typer.echo("No pending device pairing requests to approve", err=True)
+            raise typer.Exit(code=1)
+        selected_request_id = _optional_cli_string(selected.get("requestId"))
+        if selected_request_id is None:
+            typer.echo("Selected device pairing request is missing requestId", err=True)
+            raise typer.Exit(code=1)
+        preview = {
+            "selected": selected,
+            "approveCommand": (
+                f"openzues devices approve {selected_request_id}"
+                f"{' --json' if json_output else ''}"
+            ),
+        }
+        if json_output:
+            typer.echo(json.dumps(preview, indent=2))
+        else:
+            _emit_devices_list({"pending": [selected], "paired": []}, json_output=False)
+            typer.echo(f"Run: {preview['approveCommand']}", err=True)
+        raise typer.Exit(code=1)
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(
+            services,
+            "device.pair.approve",
+            {"requestId": normalized_request_id},
+        )
+
+    result = _run(_run_with_services(_action))
+    if json_output:
+        typer.echo(json.dumps(result, indent=2))
+        return
+    device = result.get("device") if isinstance(result.get("device"), dict) else {}
+    device_id = _optional_cli_string(device.get("deviceId")) if isinstance(device, dict) else None
+    typer.echo(f"Approved {device_id or normalized_request_id}")
 
 
 @sessions_app.callback(invoke_without_command=True)

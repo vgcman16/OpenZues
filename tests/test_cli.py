@@ -748,6 +748,90 @@ def test_qr_human_output_includes_openclaw_approval_instructions(
     assert "openzues devices approve <requestId>" in result.stdout
 
 
+def test_devices_list_json_calls_device_pair_list(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"pending": [], "paired": []}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("device.pair.list", {})]
+    assert json.loads(result.stdout) == {"pending": [], "paired": []}
+
+
+def test_devices_approve_json_calls_device_pair_approve(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"requestId": "req-123", "device": {"deviceId": "device-1"}}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "approve", "req-123", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("device.pair.approve", {"requestId": "req-123"})]
+    assert json.loads(result.stdout) == {
+        "requestId": "req-123",
+        "device": {"deviceId": "device-1"},
+    }
+
+
+def test_devices_approve_latest_json_previews_without_approving(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            assert method == "device.pair.list"
+            return {
+                "pending": [
+                    {"requestId": "req-old", "deviceId": "device-old", "ts": 1000},
+                    {"requestId": "req-new", "deviceId": "device-new", "ts": 2000},
+                ],
+                "paired": [],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "approve", "--latest", "--json"])
+
+    assert result.exit_code == 1
+    assert calls == [("device.pair.list", {})]
+    payload = json.loads(result.stdout)
+    assert payload["selected"]["requestId"] == "req-new"
+    assert payload["approveCommand"] == "openzues devices approve req-new --json"
+
+
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
     assert _is_root_value_token("work") is True
     assert _is_root_value_token("-1") is True
