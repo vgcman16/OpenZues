@@ -39850,15 +39850,16 @@ class OpsMeshService:
         chunks = _matrix_text_chunks(str(event.get("message") or ""))
         if not chunks and not media_urls:
             raise RuntimeError("Matrix send requires text or media.")
-        relation = _matrix_relation(
-            thread_id=str(event.get("threadId") or "").strip() or None,
-            reply_to_id=str(event.get("replyToId") or "").strip() or None,
-        )
+        thread_id = str(event.get("threadId") or "").strip() or None
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        reply_to_id_source = event.get("replyToIdSource")
+        reply_to_mode = event.get("replyToMode")
         bearer_token = _matrix_bearer_token(secret_token)
         transaction_id = _matrix_transaction_id(event)
         message_ids: list[str] = []
         uploaded_media_urls: list[str] = []
         text_chunks = chunks
+        send_index = 0
         room_encrypted = (
             self._matrix_room_is_encrypted(
                 route,
@@ -39932,6 +39933,16 @@ class OpsMeshService:
                 media_content["file"] = encrypted_file
             else:
                 media_content["url"] = mxc_url
+            relation = _matrix_relation(
+                thread_id=thread_id,
+                reply_to_id=_reply_to_fanout_id(
+                    reply_to_id=reply_to_id,
+                    reply_to_id_source=reply_to_id_source,
+                    reply_to_mode=reply_to_mode,
+                    index=send_index,
+                )
+                or None,
+            )
             if relation is not None:
                 media_content["m.relates_to"] = relation
             result = self._put_json_provider(
@@ -39953,11 +39964,22 @@ class OpsMeshService:
             if message_id is None:
                 raise RuntimeError("Matrix API response did not include an event id.")
             message_ids.append(message_id)
+            send_index += 1
         for index, chunk in enumerate(text_chunks, start=1):
             content: dict[str, object] = {
                 "msgtype": "m.text",
                 "body": chunk,
             }
+            relation = _matrix_relation(
+                thread_id=thread_id,
+                reply_to_id=_reply_to_fanout_id(
+                    reply_to_id=reply_to_id,
+                    reply_to_id_source=reply_to_id_source,
+                    reply_to_mode=reply_to_mode,
+                    index=send_index,
+                )
+                or None,
+            )
             if relation is not None:
                 content["m.relates_to"] = relation
             chunk_transaction_id = (
@@ -39980,6 +40002,7 @@ class OpsMeshService:
             if message_id is None:
                 raise RuntimeError("Matrix API response did not include an event id.")
             message_ids.append(message_id)
+            send_index += 1
         native_result: dict[str, object] = {
             "runtime": "native-provider-backed",
             "messageId": message_ids[-1],

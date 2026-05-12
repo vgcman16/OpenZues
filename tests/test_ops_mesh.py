@@ -39443,6 +39443,130 @@ async def test_ops_mesh_service_send_direct_channel_media_uses_matrix_native_rou
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_matrix_media_uses_implicit_reply_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-matrix-media-reply-fanout"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    media_urls = [
+        "https://cdn.example.org/photo-1.png",
+        "https://cdn.example.org/photo-2.png",
+    ]
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\r"
+        b"IHDR"
+        b"\x00\x00\x00\x02"
+        b"\x00\x00\x00\x03"
+    )
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        download_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert download_url in media_urls
+        filename = "photo-1.png" if download_url.endswith("1.png") else "photo-2.png"
+        return (png_bytes, "image/png", filename)
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self, media, content_type, secret_token
+        return f"mxc://matrix.example.org/{filename}"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": f"$matrix-media-{len(matrix_puts)}"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="Photo caption.",
+        media_urls=media_urls,
+        reply_to_id="$reply",
+        reply_to_id_source="implicit",
+        reply_to_mode="batched",
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-media-fanout",
+    )
+
+    assert result["messageIds"] == ["$matrix-media-1", "$matrix-media-2"]
+    assert len(matrix_puts) == 2
+    first_payload = matrix_puts[0][1]
+    second_payload = matrix_puts[1][1]
+    assert first_payload["body"] == "Photo caption."
+    assert first_payload["m.relates_to"] == {
+        "m.in_reply_to": {"event_id": "$reply"},
+    }
+    assert second_payload["body"] == "photo-2.png"
+    assert "m.relates_to" not in second_payload
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_matrix_audio_includes_duration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
