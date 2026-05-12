@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.963% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.9992% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.9993% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99992% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99992% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
@@ -537,6 +537,23 @@ may lag behind this tracker.
   - Last verified: 2026-05-12, focused red/green LINE redelivery tests,
     adjacent LINE/provider proof (`25 passed, 454 deselected`), ruff, mypy,
     and focused `git diff --check`.
+
+- [x] Zalo text webhook session delivery and replay dedupe.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.webhook.ts`,
+    `openclaw-main/extensions/zalo/src/monitor.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Zalo `message.text.received` webhook payloads route to native
+    session delivery with Zalo conversation target, sender/timestamp/reply
+    metadata, and message-id replay dedupe before dispatch.
+  - Evidence required: focused Zalo session-delivery/replay proof, adjacent
+    Zalo webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `edcccea3`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green Zalo session-delivery/replay
+    tests (`2 failed` before implementation, then `2 passed`), adjacent Zalo
+    webhook/provider proof (`5 passed, 476 deselected`), ruff, mypy, and
+    focused `git diff --check`.
 
 - [x] Gateway-status slash command diagnostics for `/gateway-status` and
   `/gwstatus`, keeping gateway diagnostics separate from session `/status` in
@@ -9150,6 +9167,28 @@ may lag behind this tracker.
     src\openzues\services\ops_mesh.py tests\test_zalo_webhook.py`, `mypy
     src\openzues\app.py src\openzues\services\ops_mesh.py`, and focused
     `git diff --check`.
+
+- [x] Zalo text webhook session delivery and replay dedupe.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.webhook.ts`,
+    `openclaw-main/extensions/zalo/src/monitor.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: `message.text.received` dispatches into native session delivery
+    with Zalo target/reply/sender/timestamp metadata, and duplicate message-id
+    redeliveries return skip metadata without delivering again.
+  - Evidence required: focused Zalo session-delivery/replay proof, adjacent
+    Zalo webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `edcccea3`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_delivers_direct_text_message tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_deduplicates_text_redelivery_by_message_id -q`
+    (`2 failed` before implementation, then `2 passed`), adjacent Zalo
+    webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+    (`5 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 
 ## Update Rule
 

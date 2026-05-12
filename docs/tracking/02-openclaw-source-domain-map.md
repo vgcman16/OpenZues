@@ -119,7 +119,12 @@ dedupe for postback and other non-message events.
 Zalo webhook addendum: `OZ-PROV-001FL` authenticated webhook ingress from
 `extensions/zalo/src/monitor.webhook.ts` is checkpointed in `c0e8588e`; it
 covers `/zalo/webhook`, `x-bot-api-secret-token` validation, JSON update
-validation, `{ ok, result }` unwrap, and OpsMesh dispatch.
+validation, `{ ok, result }` unwrap, and OpsMesh dispatch. `OZ-PROV-001FM`
+text webhook session delivery/replay from
+`extensions/zalo/src/monitor.webhook.ts` and `extensions/zalo/src/monitor.ts`
+is checkpointed in `edcccea3`; it covers native session delivery target,
+sender/timestamp/reply metadata, and message-id replay dedupe for
+`message.text.received`.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
