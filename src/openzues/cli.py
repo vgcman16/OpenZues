@@ -855,7 +855,14 @@ async def _build_live_health_payload(
     runtime_update = health.get("runtimeUpdate")
     if not isinstance(runtime_update, dict):
         runtime_update = health.get("runtime_update")
-    return {
+    server_version = _optional_cli_string(
+        health.get("serverVersion", health.get("server_version"))
+    )
+    if server_version is None:
+        server = health.get("server")
+        if isinstance(server, dict):
+            server_version = _optional_cli_string(server.get("version"))
+    payload: dict[str, object] = {
         "ok": status == "ok",
         "status": status,
         "controlPlane": control_plane,
@@ -863,6 +870,11 @@ async def _build_live_health_payload(
         "lockPath": health.get("lockPath", health.get("lock_path")),
         "runtimeUpdate": dict(runtime_update) if isinstance(runtime_update, dict) else {},
         "readiness": dict(readiness),
+    }
+    if server_version is not None:
+        payload["serverVersion"] = server_version
+    return {
+        **payload,
     }
 
 

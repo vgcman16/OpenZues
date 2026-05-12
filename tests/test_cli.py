@@ -21917,6 +21917,36 @@ def test_health_json_surfaces_gateway_readiness_snapshot(monkeypatch) -> None:
     ]
 
 
+def test_health_json_surfaces_gateway_server_version(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "_control_plane_base_url",
+        lambda _settings: "http://gateway.test",
+    )
+
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        timeout_seconds: float,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        del base_url, timeout_seconds
+        if path == "/api/health":
+            return {"status": "ok", "server_version": "2026.4.24"}
+        if path == "/readyz":
+            return {"ready": True, "failing": []}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(cli_module, "_watch_api_json", fake_watch_api_json)
+
+    result = runner.invoke(app, ["health", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["serverVersion"] == "2026.4.24"
+
+
 def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch)

@@ -3746,6 +3746,7 @@ def create_app(
     async def health() -> dict[str, Any]:
         return {
             "status": "ok",
+            "serverVersion": __version__,
             "control_plane": fastapi_app.state.control_plane_role,
             "owner_pid": fastapi_app.state.control_plane_owner_pid,
             "lock_path": fastapi_app.state.control_plane_lock_path,
