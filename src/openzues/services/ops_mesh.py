@@ -18468,6 +18468,28 @@ class OpsMeshService:
             result["skips"] = skips
         return result
 
+    async def handle_zalo_webhook(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event_name = str(payload.get("event_name") or "").strip()
+        result: dict[str, object] = {
+            "ok": bool(event_name),
+            "channel": "zalo",
+            "eventName": event_name or "unknown",
+        }
+        normalized_account_id = str(account_id or "").strip()
+        if normalized_account_id:
+            result["accountId"] = normalized_account_id
+        message = payload.get("message")
+        if isinstance(message, Mapping):
+            message_id = str(message.get("message_id") or "").strip()
+            if message_id:
+                result["inboundMessageId"] = message_id
+        return result
+
     async def _stage_line_inbound_media(
         self,
         event: Mapping[str, Any],

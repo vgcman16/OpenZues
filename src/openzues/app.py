@@ -261,6 +261,7 @@ MSTEAMS_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024
 SLACK_EVENTS_MAX_BODY_BYTES = 1024 * 1024
 SLACK_SIGNATURE_TOLERANCE_SECONDS = 60 * 5
 LINE_WEBHOOK_MAX_RAW_BODY_BYTES = 64 * 1024
+ZALO_WEBHOOK_MAX_RAW_BODY_BYTES = 1024 * 1024
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -546,6 +547,70 @@ def _line_configured_webhook_path(snapshot: Mapping[str, Any]) -> str | None:
     if not normalized:
         return None
     return normalized if normalized.startswith("/") else f"/{normalized}"
+
+
+def _zalo_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> Mapping[str, Any] | None:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, Mapping):
+        return None
+    zalo_config = channels.get("zalo")
+    if not isinstance(zalo_config, Mapping):
+        return None
+    normalized_account_id = str(account_id or "default").strip() or "default"
+    accounts = zalo_config.get("accounts")
+    if isinstance(accounts, Mapping):
+        direct = accounts.get(normalized_account_id)
+        if isinstance(direct, Mapping):
+            return direct
+        lowered = normalized_account_id.lower()
+        for key, value in accounts.items():
+            if str(key).strip().lower() == lowered and isinstance(value, Mapping):
+                return value
+    return zalo_config
+
+
+def _zalo_webhook_secret_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> str | None:
+    zalo_config = _zalo_config_from_snapshot(snapshot, account_id=account_id)
+    if zalo_config is None:
+        return None
+    for key in ("webhookSecret", "botApiSecretToken", "webhookToken", "secretToken", "secret"):
+        candidate = zalo_config.get(key)
+        if isinstance(candidate, str):
+            secret = candidate.strip()
+            if secret:
+                return secret
+    return None
+
+
+def _zalo_configured_webhook_path(snapshot: Mapping[str, Any]) -> str | None:
+    zalo_config = _zalo_config_from_snapshot(snapshot, account_id=None)
+    if zalo_config is None:
+        return None
+    raw_path = zalo_config.get("webhookPath")
+    if not isinstance(raw_path, str):
+        return None
+    normalized = raw_path.strip()
+    if not normalized:
+        return None
+    return normalized if normalized.startswith("/") else f"/{normalized}"
+
+
+def _valid_zalo_webhook_secret_token(
+    *,
+    header_token: str | None,
+    configured_secret: str,
+) -> bool:
+    if not header_token:
+        return False
+    return hmac.compare_digest(configured_secret, header_token.strip())
 
 
 def _valid_line_request_signature(
@@ -4983,6 +5048,77 @@ def create_app(
         fastapi_app.add_api_route(
             configured_line_webhook_path,
             handle_configured_line_webhook,
+            methods=["POST"],
+            include_in_schema=False,
+        )
+
+    async def dispatch_zalo_webhook(request: Request) -> JSONResponse:
+        body = await request.body()
+        if len(body) > ZALO_WEBHOOK_MAX_RAW_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        content_type = request.headers.get("content-type", "")
+        if "application/json" not in content_type.lower():
+            return JSONResponse({"error": "Unsupported media type"}, status_code=415)
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        config_service = getattr(active_ops_mesh_service, "gateway_config_service", None)
+        snapshot = (
+            config_service.build_snapshot()
+            if config_service is not None
+            else active_gateway_config_service.build_snapshot()
+        )
+        webhook_secret = _zalo_webhook_secret_from_snapshot(
+            snapshot,
+            account_id=account_id,
+        )
+        if webhook_secret is None:
+            return JSONResponse(
+                {"error": "Zalo webhook secret token is not configured"},
+                status_code=503,
+            )
+        if not _valid_zalo_webhook_secret_token(
+            header_token=request.headers.get("x-bot-api-secret-token"),
+            configured_secret=webhook_secret,
+        ):
+            return JSONResponse(
+                {"error": "Invalid Zalo webhook secret token"},
+                status_code=401,
+            )
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return JSONResponse({"error": "Invalid webhook payload"}, status_code=400)
+        if not isinstance(payload, dict):
+            return JSONResponse({"error": "Invalid webhook payload"}, status_code=400)
+        update = payload.get("result") if payload.get("ok") is True else payload
+        if not isinstance(update, dict) or not str(update.get("event_name") or "").strip():
+            return JSONResponse({"error": "Invalid webhook payload"}, status_code=400)
+        await active_ops_mesh_service.handle_zalo_webhook(
+            cast(Mapping[str, Any], update),
+            account_id=account_id,
+        )
+        return JSONResponse({"status": "ok"})
+
+    @fastapi_app.post("/zalo/webhook")
+    async def handle_zalo_webhook(request: Request) -> JSONResponse:
+        return await dispatch_zalo_webhook(request)
+
+    configured_zalo_webhook_path = _zalo_configured_webhook_path(
+        active_gateway_config_service.build_snapshot()
+    )
+    if (
+        configured_zalo_webhook_path is not None
+        and configured_zalo_webhook_path != "/zalo/webhook"
+    ):
+
+        async def handle_configured_zalo_webhook(request: Request) -> JSONResponse:
+            return await dispatch_zalo_webhook(request)
+
+        fastapi_app.add_api_route(
+            configured_zalo_webhook_path,
+            handle_configured_zalo_webhook,
             methods=["POST"],
             include_in_schema=False,
         )
