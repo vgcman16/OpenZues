@@ -9,6 +9,7 @@ import ipaddress
 import json
 import math
 import os
+import platform as platform_module
 import re
 import secrets
 import shutil
@@ -98,7 +99,10 @@ from openzues.services.gateway_plugin_activation import (
 from openzues.services.gateway_plugin_runtime import (
     GatewayPluginExecutor,
     GatewayPluginRuntimeExecutorSpec,
+    GatewayPluginRuntimeService,
+    build_plugin_runtime_control_ui_descriptor_specs_from_active_registry,
     build_plugin_runtime_executor_specs_from_active_registry,
+    build_plugin_runtime_session_extension_specs_from_active_registry,
 )
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
 from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
@@ -7538,6 +7542,145 @@ def _with_doctor_gateway_runtime_payload(
     warnings = [
         str(warning)
         for warning in _object_list(gateway_runtime.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
+def _doctor_startup_platform() -> str:
+    return sys.platform
+
+
+def _doctor_startup_arch() -> str:
+    arch = platform_module.machine().strip().lower()
+    if arch == "aarch64":
+        return "arm64"
+    return arch
+
+
+def _doctor_startup_total_mem_bytes() -> int:
+    if not hasattr(os, "sysconf"):
+        return 0
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (OSError, ValueError):
+        return 0
+    if not isinstance(pages, int) or not isinstance(page_size, int):
+        return 0
+    return max(0, pages * page_size)
+
+
+def _doctor_env_value(env: Mapping[str, str], key: str) -> str:
+    value = env.get(key, "")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _doctor_truthy_env_value(value: str) -> bool:
+    return bool(value.strip())
+
+
+def _doctor_tmp_compile_cache_path(cache_path: str) -> bool:
+    normalized = cache_path.strip().rstrip("/")
+    return (
+        normalized == "/tmp"
+        or normalized.startswith("/tmp/")
+        or normalized == "/private/tmp"
+        or normalized.startswith("/private/tmp/")
+    )
+
+
+def _build_doctor_startup_optimization_payload(
+    *,
+    env: Mapping[str, str] | None = None,
+    platform_name: str | None = None,
+    arch: str | None = None,
+    total_mem_bytes: int | None = None,
+) -> dict[str, object] | None:
+    resolved_platform = platform_name or _doctor_startup_platform()
+    if resolved_platform != "linux":
+        return None
+    resolved_arch = arch or _doctor_startup_arch()
+    resolved_total_mem_bytes = (
+        total_mem_bytes
+        if total_mem_bytes is not None
+        else _doctor_startup_total_mem_bytes()
+    )
+    is_arm_host = resolved_arch in {"arm", "arm64"}
+    is_low_memory_linux = (
+        resolved_total_mem_bytes > 0
+        and resolved_total_mem_bytes <= 8 * 1024**3
+    )
+    if not (is_arm_host or is_low_memory_linux):
+        return None
+
+    runtime_env = env or os.environ
+    compile_cache = _doctor_env_value(runtime_env, "NODE_COMPILE_CACHE")
+    disable_compile_cache = _doctor_env_value(runtime_env, "NODE_DISABLE_COMPILE_CACHE")
+    no_respawn = _doctor_env_value(runtime_env, "OPENCLAW_NO_RESPAWN")
+    warnings: list[str] = []
+    if not compile_cache:
+        warnings.append(
+            "NODE_COMPILE_CACHE is not set; repeated CLI runs can be slower on small "
+            "hosts (Pi/VM)."
+        )
+    elif _doctor_tmp_compile_cache_path(compile_cache):
+        warnings.append(
+            "NODE_COMPILE_CACHE points to /tmp; use /var/tmp so cache survives "
+            "reboots and warms startup reliably."
+        )
+    if _doctor_truthy_env_value(disable_compile_cache):
+        warnings.append(
+            "NODE_DISABLE_COMPILE_CACHE is set; startup compile cache is disabled."
+        )
+    if no_respawn != "1":
+        warnings.append(
+            "OPENCLAW_NO_RESPAWN is not set to 1; set it to avoid extra startup "
+            "overhead from self-respawn."
+        )
+    if not warnings:
+        return None
+
+    suggestions = [
+        "export NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache",
+        "mkdir -p /var/tmp/openclaw-compile-cache",
+        "export OPENCLAW_NO_RESPAWN=1",
+    ]
+    if _doctor_truthy_env_value(disable_compile_cache):
+        suggestions.append("unset NODE_DISABLE_COMPILE_CACHE")
+    note_lines = [
+        *(f"- {warning}" for warning in warnings),
+        "- Suggested env for low-power hosts:",
+        *(f"  {suggestion}" for suggestion in suggestions),
+    ]
+    return {
+        "status": "warning",
+        "summary": "Startup optimization hints are available for low-power Linux hosts.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:startup-optimization",
+        "platform": resolved_platform,
+        "arch": resolved_arch,
+        "totalMemBytes": resolved_total_mem_bytes,
+        "lowMemoryLinux": is_low_memory_linux,
+        "warnings": warnings,
+        "suggestions": suggestions,
+        "note": {
+            "title": "Startup optimization",
+            "message": "\n".join(note_lines),
+        },
+    }
+
+
+def _with_doctor_startup_optimization_payload(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    startup_optimization = _build_doctor_startup_optimization_payload()
+    if startup_optimization is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["startupOptimization"] = startup_optimization
+    warnings = [
+        str(warning)
+        for warning in _object_list(startup_optimization.get("warnings"))
     ]
     return _with_doctor_added_warnings(next_payload, warnings)
 
@@ -94101,6 +94244,17 @@ async function activatePlugin(plugin) {
   }
   const tools = [];
   const providers = [];
+  const sessionExtensions = [];
+  const controlUiDescriptors = [];
+  const pluginId = plugin.id || plugin.pluginId;
+  const pluginName = plugin.name || plugin.pluginName || plugin.id || plugin.pluginId;
+  const cloneJsonValue = (value) => {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (_error) {
+      return undefined;
+    }
+  };
   const registerTool = (definition, opts) => {
     const names = toolNamesFromDefinition(definition, opts);
     if (!names.length) {
@@ -94109,8 +94263,8 @@ async function activatePlugin(plugin) {
     const isFactory = typeof definition === "function";
     const metadata = isFactory && opts && typeof opts === "object" ? opts : definition;
     tools.push({
-      pluginId: plugin.id || plugin.pluginId,
-      pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+      pluginId,
+      pluginName,
       source: "openclaw-plugin",
       names,
       factory: isFactory ? definition : undefined,
@@ -94161,16 +94315,54 @@ async function activatePlugin(plugin) {
     providers.push({
       ...provider,
       id: providerId,
-      pluginId: plugin.id || plugin.pluginId,
-      pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+      pluginId,
+      pluginName,
+    });
+  };
+  const registerSessionExtension = (extension) => {
+    if (!extension || typeof extension !== "object") {
+      return;
+    }
+    const namespace = normalizeOptionalString(extension.namespace);
+    const description = normalizeOptionalString(extension.description);
+    if (!namespace || !description) {
+      return;
+    }
+    sessionExtensions.push({
+      pluginId,
+      pluginName,
+      source: "openclaw-plugin",
+      namespace,
+      description,
+      enabled: extension.enabled !== false,
+    });
+  };
+  const registerControlUiDescriptor = (descriptor) => {
+    if (!descriptor || typeof descriptor !== "object") {
+      return;
+    }
+    const cloned = cloneJsonValue(descriptor);
+    if (!cloned || typeof cloned !== "object" || Array.isArray(cloned)) {
+      return;
+    }
+    controlUiDescriptors.push({
+      ...cloned,
+      pluginId,
+      pluginName,
+      source: "openclaw-plugin",
+      enabled: descriptor.enabled !== false,
     });
   };
   const api = {
-    pluginId: plugin.id || plugin.pluginId,
-    pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+    pluginId,
+    pluginName,
+    registerControlUiDescriptor,
     registerProvider,
+    registerSessionExtension,
     registerTool,
+    controlUi: { register: registerControlUiDescriptor, registerControlUiDescriptor },
     providers: { register: registerProvider, registerProvider },
+    sessionExtensions: { register: registerSessionExtension, registerSessionExtension },
     tools: { register: registerTool, registerTool },
     tool: { register: registerTool, registerTool },
   };
@@ -94181,8 +94373,10 @@ async function activatePlugin(plugin) {
     }
   }
   return {
-    pluginId: plugin.id || plugin.pluginId,
+    pluginId,
+    controlUiDescriptors,
     providers,
+    sessionExtensions,
     tools,
   };
 }
@@ -94215,6 +94409,8 @@ async function activatePlugin(plugin) {
     return;
   }
   const tools = [];
+  const sessionExtensions = [];
+  const controlUiDescriptors = [];
   const importedPluginIds = [];
   for (const plugin of Array.isArray(context.plugins) ? context.plugins : []) {
     if (!plugin || typeof plugin !== "object") {
@@ -94231,8 +94427,16 @@ async function activatePlugin(plugin) {
       importedPluginIds.push(result.pluginId);
     }
     tools.push(...result.tools);
+    sessionExtensions.push(
+      ...(Array.isArray(result.sessionExtensions) ? result.sessionExtensions : []),
+    );
+    controlUiDescriptors.push(
+      ...(Array.isArray(result.controlUiDescriptors) ? result.controlUiDescriptors : []),
+    );
   }
-  process.stdout.write(JSON.stringify({ tools, importedPluginIds }));
+  process.stdout.write(
+    JSON.stringify({ tools, sessionExtensions, controlUiDescriptors, importedPluginIds }),
+  );
 })().catch((error) => {
   const message = error && error.stack ? error.stack : String(error);
   process.stderr.write(message);
@@ -94242,19 +94446,19 @@ async function activatePlugin(plugin) {
 
 
 class _NativeInstalledPluginRuntimeActivationAdapter:
-    def activate_installed_plugins(
+    def _load_installed_plugins_payload(
         self,
         context: dict[str, object],
-    ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    ) -> object:
         plugins = context.get("plugins")
         if not isinstance(plugins, list):
-            return ()
+            return {}
         if not any(
             isinstance(plugin, Mapping)
             and _optional_cli_string(plugin.get("runtimeEntrySource")) is not None
             for plugin in plugins
         ):
-            return ()
+            return {}
         if shutil.which("node") is None:
             raise RuntimeError("Node.js is required to import OpenClaw plugin runtimes.")
         with tempfile.TemporaryDirectory(prefix="openzues-plugin-runtime-") as tmp_dir:
@@ -94279,10 +94483,39 @@ class _NativeInstalledPluginRuntimeActivationAdapter:
             detail = (completed.stderr or completed.stdout or "unknown error").strip()
             raise RuntimeError(detail[:1000])
         try:
-            payload = json.loads(completed.stdout or "{}")
+            return json.loads(completed.stdout or "{}")
         except json.JSONDecodeError as exc:
             raise RuntimeError("plugin runtime loader returned invalid JSON") from exc
+
+    def activate_installed_plugins(
+        self,
+        context: dict[str, object],
+    ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+        payload = self._load_installed_plugins_payload(context)
         return _native_plugin_runtime_specs_from_loader_payload(payload)
+
+    def activate_installed_plugin_runtime_service(
+        self,
+        context: dict[str, object],
+    ) -> GatewayPluginRuntimeService:
+        payload = self._load_installed_plugins_payload(context)
+        registry_payload = _native_plugin_runtime_registry_from_loader_payload(payload)
+        return GatewayPluginRuntimeService(
+            registry_executors=build_plugin_runtime_executor_specs_from_active_registry(
+                registry_payload,
+                tool_allowlist=("group:plugins",),
+            ),
+            session_extensions=(
+                build_plugin_runtime_session_extension_specs_from_active_registry(
+                    registry_payload
+                )
+            ),
+            control_ui_descriptors=(
+                build_plugin_runtime_control_ui_descriptor_specs_from_active_registry(
+                    registry_payload
+                )
+            ),
+        )
 
 
 async def _native_plugin_runtime_executor(
@@ -94366,6 +94599,22 @@ def _native_plugin_runtime_executor_factory(
         )
 
     return execute
+
+
+def _native_plugin_runtime_registry_from_loader_payload(
+    payload: object,
+) -> dict[str, object]:
+    if not isinstance(payload, Mapping):
+        return {}
+    registry: dict[str, object] = {}
+    for key in ("tools", "sessionExtensions", "controlUiDescriptors"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            registry[key] = [dict(entry) for entry in value if isinstance(entry, Mapping)]
+    imported_plugin_ids = _string_list_or_none(payload.get("importedPluginIds"))
+    if imported_plugin_ids is not None:
+        registry["importedPluginIds"] = imported_plugin_ids
+    return registry
 
 
 def _native_plugin_runtime_specs_from_loader_payload(
@@ -107791,6 +108040,7 @@ def doctor(
             payload,
             services.gateway_config,
         )
+        payload = _with_doctor_startup_optimization_payload(payload)
         payload = await _with_doctor_runtime_bridge_payload(payload, services)
         payload = _with_doctor_package_distribution_payload(payload)
         payload = _with_doctor_contribution_surfaces(payload)

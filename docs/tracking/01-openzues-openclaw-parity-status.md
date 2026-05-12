@@ -20,8 +20,8 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.969% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.999984% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.999994% | High for bounded native bridge | Packaging post-core resume/fresh-process handoff and runtime exit-signal labels plus installed facade registry fallback are checkpointed; ACP bridge depth and deeper installed plugin activation remain |
+| Provider-native inbound/outbound breadth | ~99.999989% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot reply message sequencing, QQBot local media file-data uploads, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image media staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Runtime/CLI/doctor native bridge | ~99.999996% | High for bounded native bridge | Packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; ACP bridge depth and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.9% | Low, broad parity still open | QR setup-code safety, SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, and approval-state preview metadata are landed; companion apps remain mostly open |
 
@@ -3299,8 +3299,32 @@ may lag behind this tracker.
     `47d73351`, package dist inventory validation checkpointed in `3bf0ff86`,
     update status channel projection checkpointed in `e32d4d47`, update status
     git branch channel label checkpointed in `8673e35d`, and update status
-    package-manager dependency posture checkpointed in `f1ac67da`.
+    package-manager dependency posture checkpointed in `f1ac67da`, and
+    startup-optimization doctor notes checkpointed in `b9400b0c`.
   - Weight: 5
+
+- [x] `OZ-PKG-001DD` Startup optimization doctor note.
+  - Source: `openclaw-main/src/commands/doctor-platform-notes.ts`,
+    `openclaw-main/src/commands/doctor-platform-notes.startup-optimization.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: on low-power Linux targets, `openzues doctor --json` reports a
+    `doctor:startup-optimization` payload when `NODE_COMPILE_CACHE` is missing
+    or under `/tmp`, `NODE_DISABLE_COMPILE_CACHE` is set, or
+    `OPENCLAW_NO_RESPAWN` is not `1`, preserving warning text, the
+    `Startup optimization` note title, and suggested exports.
+  - Evidence required: focused doctor CLI proof, adjacent doctor proof, ruff,
+    mypy
+  - Status: checkpointed in `b9400b0c`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_doctor_json_reports_startup_optimization_hints -q`
+    (`1 failed` before implementation because the startup helper/payload was
+    missing, then `1 passed`), adjacent doctor proof `python -m pytest
+    tests\test_cli.py -q -k "startup_optimization or runtime_bridge_posture or package_distribution"`
+    (`3 passed, 621 deselected`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+    --check`.
 
 - [ ] Runtime-control hard gaps.
   - Source: broader OpenClaw runtime/client integration and session runtime
@@ -3476,9 +3500,37 @@ may lag behind this tracker.
     `14ff20a1`, text-chunking shim checkpointed in `20267310`,
     string-normalization shim checkpointed in `06cd452d`, dangerous-name shim
     checkpointed in `01473fb4`, channel-logging shim checkpointed in
-    `c42b0d77`, and time-runtime shim checkpointed in `eb944ee1`, but broader
+    `c42b0d77`, time-runtime shim checkpointed in `eb944ee1`, and installed
+    runtime session/control-UI contribution capture checkpointed in
+    `ee5cbe7a`, but broader
     plugin SDK helper/runtime surface breadth remains.
   - Weight: 5
+
+- [x] `OZ-PLUGIN-001ZZB` Installed runtime session/control-UI contributions.
+  - Source: `openclaw-main/src/plugins/api-builder.ts`,
+    `openclaw-main/src/plugins/captured-registration.ts`,
+    `openclaw-main/src/plugins/registry.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: runtime plugins calling `registerSessionExtension` and
+    `registerControlUiDescriptor` during installed-plugin activation are
+    serialized into the native activation registry and exposed through
+    `GatewayPluginRuntimeService` for `plugins.uiDescriptors` and
+    `sessions.pluginPatch`.
+  - Evidence required: focused installed runtime contribution proof, adjacent
+    UI/session proof, ruff, mypy
+  - Status: checkpointed in `ee5cbe7a`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_installed_runtime_activation_registers_session_extension_and_control_ui_descriptor -q`
+    (`1 failed` before implementation because the activation adapter lacked a
+    runtime-service contribution path, then `1 passed`), adjacent explicit
+    proof `python -m pytest tests\test_gateway_node_methods.py::test_installed_runtime_activation_registers_session_extension_and_control_ui_descriptor tests\test_gateway_node_methods.py::test_plugins_ui_descriptors_returns_registered_control_ui_descriptors tests\test_gateway_node_methods.py::test_sessions_plugin_patch_persists_registered_extension_state -q`
+    (`3 passed`), adjacent keyword proof `python -m pytest
+    tests\test_gateway_node_methods.py -q -k "runtime_activation_registers_session_extension or plugins_ui_descriptors or sessions_plugin_patch"`
+    (`3 passed, 1268 deselected`), `ruff check src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+    focused `git diff --check`.
 
 - [x] Imported plugin SDK time-runtime shim.
   - Source: `openclaw-main/src/plugin-sdk/time-runtime.ts` and
@@ -7153,6 +7205,123 @@ may lag behind this tracker.
     proof (`1 passed`), adjacent OpsMesh lifecycle proof (`7 passed, 403
     deselected`), adjacent gateway method proof (`6 passed, 1123 deselected`),
     adjacent API proof (`4 passed, 424 deselected`), `ruff check`, and `mypy`.
+
+- [x] QQBot route-backed native text sends.
+  - Source: `openclaw-main/extensions/qqbot/src/channel.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/messaging/target-parser.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/api/routes.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/messaging/sender.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`
+  - Contract: `qqbot` notification routes accept C2C/group/channel targets,
+    direct sends choose the matching QQBot message endpoint, send bearer-token
+    text payloads, and persist transport/provider delivery metadata.
+  - Evidence required: focused route/send tests, adjacent provider proof,
+    ruff, mypy
+  - Status: checkpointed in `dd8aec4d`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_qqbot_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_qqbot_native_route -q`
+    (`2 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`6 passed, 492 deselected`), `ruff check src\openzues\schemas.py
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot route-backed image media uploads.
+  - Source: `openclaw-main/extensions/qqbot/src/engine/api/media.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/api/routes.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/messaging/outbound-media-send.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/messaging/sender.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: QQBot direct media sends upload image URLs to the C2C/group
+    `/files` endpoint, send the returned `file_info` through `msg_type: 7`,
+    preserve captions for image/video messages, and persist media/message
+    delivery metadata.
+  - Evidence required: focused media send test, focused QQBot provider trio,
+    adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `90b89a07`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_image_media -q`
+    (`1 failed` before implementation, then `1 passed`), focused
+    `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_qqbot_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_qqbot_native_route tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_image_media -q`
+    (`3 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`7 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot inline image media tags.
+  - Source: `openclaw-main/extensions/qqbot/src/engine/messaging/outbound.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/utils/media-tags.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: route-backed QQBot sends parse inline `<qqimg>...</qqimg>` text,
+    extract the media URL, preserve surrounding text as a caption, and dispatch
+    through the same upload/send path as explicit media.
+  - Evidence required: focused tag extraction test, focused QQBot provider
+    quartet, adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `8369a37c`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image_tag -q`
+    (`1 failed` before implementation, then `1 passed`), focused
+    `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_qqbot_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_qqbot_native_route tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_image_media tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image_tag -q`
+    (`4 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`8 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot passive reply message sequencing.
+  - Source: `openclaw-main/extensions/qqbot/src/engine/api/routes.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/api/messages.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/api/media.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: C2C/group passive text replies include `msg_seq` with `msg_id`,
+    and uploaded media replies use reply-derived sequence metadata for the
+    first media message instead of fixed proactive sequencing.
+  - Evidence required: focused reply sequencing test, focused QQBot provider
+    quintet, adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `44c83da3`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_replies_to_qqbot_text_with_msg_seq -q`
+    (`1 failed` before implementation, then `1 passed`), focused
+    `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_qqbot_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_qqbot_native_route tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_image_media tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image_tag tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_replies_to_qqbot_text_with_msg_seq -q`
+    (`5 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`9 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] QQBot local media file-data uploads.
+  - Source: `openclaw-main/extensions/qqbot/src/engine/messaging/media-source.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/messaging/outbound-media-send.ts`,
+    `openclaw-main/extensions/qqbot/src/engine/utils/platform.ts`
+  - References: Hermes/Warp paths or `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: local QQBot media paths are disabled without explicit
+    `mediaLocalRoots`, allowed files are read from the safe root and uploaded
+    as base64 `file_data`, then delivered through the normal `file_info`
+    message path.
+  - Evidence required: focused local media file-data test, focused QQBot
+    provider sextet, adjacent provider proof, ruff, mypy
+  - Status: checkpointed in `09943f82`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_local_media_file_data -q`
+    (`1 failed` before implementation, then `1 passed`), focused
+    `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_qqbot_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_qqbot_native_route tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_image_media tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_extracts_qqbot_image_tag tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_replies_to_qqbot_text_with_msg_seq tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uploads_qqbot_local_media_file_data -q`
+    (`6 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "qqbot or zalo_native_route or provider_native_options"`
+    (`10 passed, 492 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 
 - [x] Zalo user `channels.logout` runtime profile cleanup.
   - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,

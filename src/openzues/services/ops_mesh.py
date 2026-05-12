@@ -185,6 +185,7 @@ SLACK_MAX_BLOCKS = 50
 SLACK_COMMAND_ARG_CHROME_BLOCKS = 3
 SLACK_COMMAND_ARG_ACTION_BLOCKS_MAX = SLACK_MAX_BLOCKS - SLACK_COMMAND_ARG_CHROME_BLOCKS
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
+QQBOT_API_BASE_URL = "https://api.sgroup.qq.com"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 ZALO_WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60
 ZALO_WEBHOOK_REPLAY_MAX_ENTRIES = 5000
@@ -409,6 +410,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "telegram",
     "discord",
     "whatsapp",
+    "qqbot",
     "zalo",
     "feishu",
     "googlechat",
@@ -433,6 +435,7 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "slack",
     "telegram",
     "whatsapp",
+    "qqbot",
     "zalo",
     "msteams",
     "twitch",
@@ -3090,6 +3093,42 @@ def _feishu_media_local_roots(
     return []
 
 
+def _qqbot_channel_config(snapshot: dict[str, Any]) -> dict[str, Any]:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, dict):
+        return {}
+    channel_config = channels.get("qqbot")
+    return channel_config if isinstance(channel_config, dict) else {}
+
+
+def _qqbot_account_config(
+    channel_config: dict[str, Any],
+    account_id: str | None,
+) -> dict[str, Any]:
+    accounts = channel_config.get("accounts")
+    if not isinstance(accounts, dict):
+        return {}
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    account_config = accounts.get(normalized_account_id)
+    return account_config if isinstance(account_config, dict) else {}
+
+
+def _qqbot_media_local_roots(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+) -> list[str]:
+    channel_config = _qqbot_channel_config(snapshot)
+    account_config = _qqbot_account_config(channel_config, account_id)
+    raw_account_roots = account_config.get("mediaLocalRoots")
+    if isinstance(raw_account_roots, list):
+        return [str(entry).strip() for entry in raw_account_roots if str(entry).strip()]
+    raw_channel_roots = channel_config.get("mediaLocalRoots")
+    if isinstance(raw_channel_roots, list):
+        return [str(entry).strip() for entry in raw_channel_roots if str(entry).strip()]
+    return []
+
+
 def _bluebubbles_positive_number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -3258,6 +3297,40 @@ def _feishu_allowed_local_media_path(
             return resolved_candidate
     raise RuntimeError(
         f"Local Feishu media path is not under any configured mediaLocalRoots entry: {source}"
+    )
+
+
+def _qqbot_allowed_local_media_path(
+    local_path: Path,
+    *,
+    source: str,
+    local_roots: list[str],
+    account_id: str | None,
+) -> Path:
+    if not local_roots:
+        suffix = (
+            f" or channels.qqbot.accounts.{account_id}.mediaLocalRoots"
+            if account_id
+            else ""
+        )
+        raise RuntimeError(
+            "Local QQBot media paths are disabled by default. "
+            f"Set channels.qqbot.mediaLocalRoots{suffix} to explicitly "
+            "allow local file directories."
+        )
+    candidate = local_path.expanduser().resolve(strict=False)
+    for root_entry in local_roots:
+        root = _bluebubbles_configured_local_root(root_entry)
+        if not _bluebubbles_path_inside_root(candidate, root):
+            continue
+        if not local_path.is_file():
+            raise RuntimeError(f"Media path does not exist: {source}")
+        resolved_candidate = local_path.resolve(strict=True)
+        resolved_root = root.resolve(strict=True) if root.exists() else root
+        if _bluebubbles_path_inside_root(resolved_candidate, resolved_root):
+            return resolved_candidate
+    raise RuntimeError(
+        f"Local QQBot media path is not under any configured mediaLocalRoots entry: {source}"
     )
 
 
@@ -3442,6 +3515,8 @@ def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPee
             "matrix:@",
             "msteams:user:",
             "teams:user:",
+            "qqbot:c2c:",
+            "c2c:",
             "@",
         )
     ):
@@ -3449,7 +3524,7 @@ def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPee
     tlon_target = _tlon_parse_target(normalized)
     if tlon_target is not None:
         return "direct" if tlon_target.kind == "dm" else "group"
-    if normalized.startswith("group:"):
+    if normalized.startswith(("group:", "qqbot:group:")):
         return "group"
     return "channel"
 
@@ -4907,6 +4982,222 @@ def _whatsapp_text_chunks(text: str, *, limit: int = 4000) -> list[str]:
 
 def _zalo_text_chunks(text: str, *, limit: int = 2000) -> list[str]:
     return _fixed_text_chunks(text, limit=limit)
+
+
+def _qqbot_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("QQBot route is missing an access token secret.")
+    return f"Bearer {token}"
+
+
+def _qqbot_target(raw_target: str | None) -> tuple[str, str] | None:
+    normalized = str(raw_target or "").strip()
+    if not normalized:
+        return None
+    if normalized.lower().startswith("qqbot:"):
+        normalized = normalized.split(":", 1)[1].strip()
+    for target_type, prefix in (
+        ("c2c", "c2c:"),
+        ("group", "group:"),
+        ("channel", "channel:"),
+    ):
+        if normalized.lower().startswith(prefix):
+            target_id = normalized[len(prefix) :].strip()
+            return (target_type, target_id) if target_id else None
+    return ("c2c", normalized)
+
+
+def _qqbot_canonical_target(target_type: str, target_id: str) -> str:
+    return f"qqbot:{target_type}:{target_id}"
+
+
+def _qqbot_message_endpoint(target: str | None, target_type: str, target_id: str) -> str:
+    base_url = str(target or "").strip() or QQBOT_API_BASE_URL
+    if target_type == "c2c":
+        path = f"/v2/users/{quote(target_id, safe='')}/messages"
+    elif target_type == "group":
+        path = f"/v2/groups/{quote(target_id, safe='')}/messages"
+    elif target_type == "channel":
+        path = f"/channels/{quote(target_id, safe='')}/messages"
+    else:
+        raise RuntimeError(f"Unsupported QQBot target type: {target_type}")
+    endpoint = f"{base_url.rstrip('/')}{path}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("QQBot route target must be an http(s) API base URL.")
+    return endpoint
+
+
+def _qqbot_media_upload_endpoint(target: str | None, target_type: str, target_id: str) -> str:
+    base_url = str(target or "").strip() or QQBOT_API_BASE_URL
+    if target_type == "c2c":
+        path = f"/v2/users/{quote(target_id, safe='')}/files"
+    elif target_type == "group":
+        path = f"/v2/groups/{quote(target_id, safe='')}/files"
+    else:
+        raise RuntimeError("QQBot native media upload requires a C2C or group target.")
+    endpoint = f"{base_url.rstrip('/')}{path}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("QQBot route target must be an http(s) API base URL.")
+    return endpoint
+
+
+def _qqbot_media_file_type(media_url: str, media_kind: object) -> tuple[int, str]:
+    normalized_kind = str(media_kind or "").strip().lower()
+    if normalized_kind in {"image", "photo", "picture"}:
+        return 1, "image"
+    if normalized_kind in {"video", "movie"}:
+        return 2, "video"
+    if normalized_kind in {"voice", "audio", "sound"}:
+        return 3, "voice"
+    if normalized_kind in {"file", "document", "doc"}:
+        return 4, "file"
+    guessed_type, _ = mimetypes.guess_type(urlparse(media_url).path or media_url)
+    guessed_type = str(guessed_type or "").lower()
+    if guessed_type.startswith("image/"):
+        return 1, "image"
+    if guessed_type.startswith("video/"):
+        return 2, "video"
+    if guessed_type.startswith("audio/"):
+        return 3, "voice"
+    return 4, "file"
+
+
+def _qqbot_upload_payload(
+    media_url: str,
+    file_type: int,
+    *,
+    local_roots: list[str],
+    account_id: str | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {"file_type": file_type, "srv_send_msg": False}
+    stripped = str(media_url or "").strip()
+    data_match = re.match(r"^data:[^;]+;base64,(.+)$", stripped, flags=re.IGNORECASE | re.DOTALL)
+    if data_match:
+        payload["file_data"] = data_match.group(1)
+    else:
+        local_source_path = _bluebubbles_local_media_source_path(stripped)
+        if local_source_path is not None:
+            allowed_path = _qqbot_allowed_local_media_path(
+                local_source_path,
+                source=stripped,
+                local_roots=local_roots,
+                account_id=account_id,
+            )
+            payload["file_data"] = base64.b64encode(allowed_path.read_bytes()).decode("ascii")
+        else:
+            payload["url"] = stripped
+    if file_type == 4:
+        filename = Path(unquote(urlparse(stripped).path)).name
+        if filename:
+            payload["file_name"] = filename
+    return payload
+
+
+def _qqbot_upload_file_info(result: object) -> str | None:
+    if not isinstance(result, Mapping):
+        return None
+    for key in ("file_info", "fileInfo"):
+        value = result.get(key)
+        if value not in (None, ""):
+            return str(value).strip() or None
+    payload = result.get("result")
+    if isinstance(payload, Mapping):
+        return _qqbot_upload_file_info(payload)
+    return None
+
+
+def _qqbot_upload_media_id(result: object, file_info: str) -> str:
+    if isinstance(result, Mapping):
+        for key in ("file_uuid", "fileUuid", "id"):
+            value = result.get(key)
+            if value not in (None, ""):
+                return str(value).strip() or file_info
+        payload = result.get("result")
+        if isinstance(payload, Mapping):
+            return _qqbot_upload_media_id(payload, file_info)
+    return file_info
+
+
+def _qqbot_next_msg_seq(msg_id: str | None) -> int:
+    normalized = str(msg_id or "").strip()
+    if not normalized:
+        return 1
+    digest = hashlib.sha256(normalized.encode("utf-8")).digest()
+    sequence = int.from_bytes(digest[:4], "big") % 65536
+    return sequence if sequence != 1 else 2
+
+
+def _qqbot_error_detail(result: Mapping[str, object]) -> str:
+    return str(
+        result.get("message")
+        or result.get("description")
+        or result.get("error")
+        or result.get("msg")
+        or "unknown"
+    )
+
+
+def _qqbot_channel_media_content(text: str, media_urls: Sequence[str], media_type: str) -> str:
+    content_parts = [text] if text else []
+    for media_url in media_urls:
+        if media_type == "image":
+            content_parts.append(f"![]({media_url})")
+        else:
+            content_parts.append(media_url)
+    return "\n".join(part for part in content_parts if part)
+
+
+_QQBOT_MEDIA_TAG_RE = re.compile(
+    r"<(qqimg|qqvoice|qqvideo|qqfile|qqmedia)>([^<>]+)</(?:qqimg|qqvoice|qqvideo|qqfile|qqmedia|img)>",
+    flags=re.IGNORECASE,
+)
+
+
+def _qqbot_media_tag_kind(tag_name: str) -> str | None:
+    normalized = str(tag_name or "").strip().lower()
+    if normalized == "qqimg":
+        return "image"
+    if normalized == "qqvoice":
+        return "voice"
+    if normalized == "qqvideo":
+        return "video"
+    if normalized == "qqfile":
+        return "file"
+    return None
+
+
+def _qqbot_inline_media_tags(text: str) -> tuple[str, list[tuple[str, str | None]]]:
+    entries: list[tuple[str, str | None]] = []
+    caption_parts: list[str] = []
+    last_index = 0
+    for match in _QQBOT_MEDIA_TAG_RE.finditer(text):
+        before = text[last_index : match.start()].strip()
+        if before:
+            caption_parts.append(before)
+        media_url = html.unescape(str(match.group(2) or "").strip())
+        if media_url:
+            entries.append((media_url, _qqbot_media_tag_kind(str(match.group(1)))))
+        last_index = match.end()
+    if not entries:
+        return text, []
+    after = text[last_index:].strip()
+    if after:
+        caption_parts.append(after)
+    return "\n".join(caption_parts).strip(), entries
+
+
+def _qqbot_message_id(result: object) -> str | None:
+    if not isinstance(result, Mapping):
+        return None
+    for key in ("id", "message_id", "messageId", "msg_id", "msgId"):
+        value = result.get(key)
+        if value not in (None, ""):
+            return str(value).strip() or None
+    payload = result.get("result")
+    if isinstance(payload, Mapping):
+        return _qqbot_message_id(payload)
+    return None
 
 
 def _zalo_bot_token(secret_token: str | None) -> str:
@@ -13219,6 +13510,14 @@ def _conversation_target_peer_id_matches(
         except RuntimeError:
             return False
         return bool(route_msteams_target and route_msteams_target == event_msteams_target)
+    if channel == "qqbot":
+        route_qqbot_target = _qqbot_target(route_peer_id)
+        event_qqbot_target = _qqbot_target(event_peer_id)
+        return bool(
+            route_qqbot_target
+            and event_qqbot_target
+            and route_qqbot_target == event_qqbot_target
+        )
     return False
 
 
@@ -23795,6 +24094,8 @@ class OpsMeshService:
             return self._post_discord_provider_event
         if route_kind == "whatsapp":
             return self._post_whatsapp_provider_event
+        if route_kind == "qqbot":
+            return self._post_qqbot_provider_event
         if route_kind == "zalo":
             return self._post_zalo_provider_event
         if route_kind == "feishu":
@@ -35173,6 +35474,184 @@ class OpsMeshService:
                         detail = str(error)
                     raise RuntimeError(f"WhatsApp API returned {detail}.")
         return native_result
+
+    def _post_qqbot_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("QQBot native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        parsed_target = _qqbot_target(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if parsed_target is None:
+            raise RuntimeError("QQBot route is missing a message target.")
+        target_type, target_id = parsed_target
+        canonical_target = _qqbot_canonical_target(target_type, target_id)
+        text = str(event.get("message") or "").strip()
+        inline_text, inline_media_entries = _qqbot_inline_media_tags(text)
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if not media_urls and inline_media_entries:
+            text = inline_text
+            media_urls = [media_url for media_url, _ in inline_media_entries]
+        media_kind = event.get("mediaKind")
+        if media_kind is None and inline_media_entries:
+            inline_media_kinds = {kind for _, kind in inline_media_entries if kind is not None}
+            if len(inline_media_kinds) == 1:
+                media_kind = next(iter(inline_media_kinds))
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if media_urls:
+            first_file_type, first_media_type = _qqbot_media_file_type(media_urls[0], media_kind)
+            message_ids: list[str] = []
+            media_ids: list[str] = []
+            bearer_token = _qqbot_bearer_token(secret_token)
+            base_target = str(route.get("target") or "")
+            account_id = normalize_optional_account_id(event.get("accountId")) or DEFAULT_ACCOUNT_ID
+            local_roots: list[str] = []
+            if self.gateway_config_service is not None:
+                local_roots = _qqbot_media_local_roots(
+                    self.gateway_config_service.build_snapshot(),
+                    account_id=account_id,
+                )
+            if target_type == "channel":
+                channel_payload: dict[str, object] = {
+                    "content": _qqbot_channel_media_content(
+                        text,
+                        media_urls,
+                        first_media_type,
+                    ),
+                    "msg_type": 0,
+                }
+                if reply_to_id:
+                    channel_payload["msg_id"] = reply_to_id
+                channel_result = self._post_json_webhook(
+                    _qqbot_message_endpoint(base_target, target_type, target_id),
+                    channel_payload,
+                    secret_header_name="Authorization",
+                    secret_token=bearer_token,
+                )
+                if not isinstance(channel_result, dict):
+                    raise RuntimeError("QQBot API returned a non-JSON response.")
+                if channel_result.get("ok") is False:
+                    raise RuntimeError(
+                        f"QQBot API returned {_qqbot_error_detail(channel_result)}."
+                    )
+                message_id = _qqbot_message_id(channel_result)
+                if message_id is None:
+                    raise RuntimeError("QQBot API response did not include a message id.")
+                message_ids.append(message_id)
+            else:
+                for index, media_url in enumerate(media_urls):
+                    file_type, media_type = _qqbot_media_file_type(media_url, media_kind)
+                    upload_result = self._post_json_webhook(
+                        _qqbot_media_upload_endpoint(base_target, target_type, target_id),
+                        _qqbot_upload_payload(
+                            media_url,
+                            file_type,
+                            local_roots=local_roots,
+                            account_id=account_id,
+                        ),
+                        secret_header_name="Authorization",
+                        secret_token=bearer_token,
+                    )
+                    if not isinstance(upload_result, dict):
+                        raise RuntimeError("QQBot API returned a non-JSON upload response.")
+                    if upload_result.get("ok") is False:
+                        raise RuntimeError(
+                            f"QQBot media upload returned {_qqbot_error_detail(upload_result)}."
+                        )
+                    file_info = _qqbot_upload_file_info(upload_result)
+                    if file_info is None:
+                        raise RuntimeError("QQBot media upload did not include file_info.")
+                    media_ids.append(_qqbot_upload_media_id(upload_result, file_info))
+                    message_payload: dict[str, object] = {
+                        "msg_type": 7,
+                        "media": {"file_info": file_info},
+                        "msg_seq": (
+                            _qqbot_next_msg_seq(reply_to_id)
+                            if reply_to_id and index == 0
+                            else 1
+                        ),
+                    }
+                    if index == 0 and text and file_type in {1, 2}:
+                        message_payload["content"] = text
+                    if reply_to_id and index == 0:
+                        message_payload["msg_id"] = reply_to_id
+                    message_result = self._post_json_webhook(
+                        _qqbot_message_endpoint(base_target, target_type, target_id),
+                        message_payload,
+                        secret_header_name="Authorization",
+                        secret_token=bearer_token,
+                    )
+                    if not isinstance(message_result, dict):
+                        raise RuntimeError("QQBot API returned a non-JSON response.")
+                    if message_result.get("ok") is False:
+                        raise RuntimeError(
+                            f"QQBot API returned {_qqbot_error_detail(message_result)}."
+                        )
+                    sent_message_id = _qqbot_message_id(message_result)
+                    if sent_message_id is None:
+                        raise RuntimeError(
+                            "QQBot API response did not include a message id."
+                        )
+                    message_ids.append(sent_message_id)
+            native_result: dict[str, object] = {
+                "runtime": "native-provider-backed",
+                "messageId": message_ids[-1],
+                "chatId": canonical_target,
+                "channelId": canonical_target,
+                "mediaUrls": media_urls,
+                "messageIds": message_ids,
+                "meta": {
+                    "targetId": target_id,
+                    "targetType": target_type,
+                    "mediaType": first_media_type,
+                },
+            }
+            if media_ids:
+                native_result["mediaIds"] = media_ids
+            if reply_to_id:
+                native_result["replyToId"] = reply_to_id
+            return native_result
+        if not text:
+            raise RuntimeError("QQBot native provider route requires text.")
+        payload: dict[str, object] = {"content": text, "msg_type": 0}
+        if reply_to_id:
+            payload["msg_id"] = reply_to_id
+            if target_type in {"c2c", "group"}:
+                payload["msg_seq"] = _qqbot_next_msg_seq(reply_to_id)
+        result = self._post_json_webhook(
+            _qqbot_message_endpoint(str(route.get("target") or ""), target_type, target_id),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_qqbot_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("QQBot API returned a non-JSON response.")
+        if result.get("ok") is False:
+            raise RuntimeError(f"QQBot API returned {_qqbot_error_detail(result)}.")
+        message_id = _qqbot_message_id(result)
+        if message_id is None:
+            raise RuntimeError("QQBot API response did not include a message id.")
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": canonical_target,
+            "channelId": canonical_target,
+            "meta": {"targetId": target_id, "targetType": target_type},
+        }
 
     def _post_zalo_provider_event(
         self,

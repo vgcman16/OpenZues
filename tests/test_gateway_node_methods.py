@@ -82742,6 +82742,117 @@ async def test_plugins_ui_descriptors_returns_registered_control_ui_descriptors(
 
 
 @pytest.mark.asyncio
+async def test_installed_runtime_activation_registers_session_extension_and_control_ui_descriptor(
+    tmp_path: Path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-session-ui-contributions.cjs"
+    runtime_entry.write_text(
+        """
+module.exports = {
+  register(api) {
+    api.registerSessionExtension({
+      namespace: "focus",
+      description: "Focus state shown on session rows."
+    });
+    api.registerControlUiDescriptor({
+      id: "runtime-session-panel",
+      surface: "session",
+      label: "Runtime Session Panel",
+      description: "Runtime control UI descriptor.",
+      placement: "sidebar",
+      requiredScopes: ["operator.read"],
+      schema: {
+        type: "object",
+        properties: {
+          mode: { type: "string" }
+        }
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    plugin_runtime = adapter.activate_installed_plugin_runtime_service(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-contrib-plugin",
+                    "name": "Runtime Contributions",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-installed-runtime-contributions.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    ui_payload = await service.call("plugins.uiDescriptors", {})
+
+    assert ui_payload == {
+        "ok": True,
+        "descriptors": [
+            {
+                "id": "runtime-session-panel",
+                "pluginId": "runtime-contrib-plugin",
+                "pluginName": "Runtime Contributions",
+                "surface": "session",
+                "label": "Runtime Session Panel",
+                "description": "Runtime control UI descriptor.",
+                "placement": "sidebar",
+                "schema": {
+                    "type": "object",
+                    "properties": {"mode": {"type": "string"}},
+                },
+                "requiredScopes": [READ_GATEWAY_METHOD_SCOPE],
+            }
+        ],
+    }
+
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    patch_payload = await service.call(
+        "sessions.pluginPatch",
+        {
+            "key": session_key,
+            "pluginId": "runtime-contrib-plugin",
+            "namespace": "focus",
+            "value": {"state": "active"},
+        },
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+    )
+
+    assert patch_payload == {
+        "ok": True,
+        "key": session_key,
+        "value": {"state": "active"},
+    }
+    snapshot = await service.call("sessions.list", {"includeGlobal": True})
+    session = next(item for item in snapshot["sessions"] if item["key"] == session_key)
+    assert session["pluginExtensions"] == [
+        {
+            "pluginId": "runtime-contrib-plugin",
+            "namespace": "focus",
+            "value": {"state": "active"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tools_effective_exposes_explicit_sessions_history_toolset(tmp_path) -> None:
     database = Database(tmp_path / "gateway-tools-effective-sessions-history.db")
     await database.initialize()
@@ -97035,6 +97146,123 @@ async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
     assert [message["content"] for message in parent_messages] == [
         f"Subagent {child_session_key} completed: ACP child finished."
     ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_rejects_resume_id_not_owned_by_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-resume-forbidden.db")
+    await database.initialize()
+    await database.upsert_gateway_session_metadata(
+        session_key="agent:codex:acp:thread-other",
+        metadata={
+            "runtime": "acp",
+            "spawnedBy": "agent:other:main",
+            "parentSessionKey": "agent:other:main",
+            "runtimeThreadId": "thread-existing",
+            "runtimeSessionId": "session-existing",
+        },
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            raise AssertionError("foreign resume ids should reject before ACP dispatch")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Resume someone else's ACP thread.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "resumeSessionId": "thread-existing",
+            "requesterSessionKey": "agent:main:main",
+        },
+        now_ms=20_000,
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "errorCode": "resume_forbidden",
+        "error": (
+            "sessions_spawn resumeSessionId is only allowed for ACP sessions previously "
+            "recorded for this requester. Omit resumeSessionId to start a fresh ACP session."
+        ),
+        "role": "codex",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_allows_resume_id_owned_by_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-resume-owned.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+    requester_session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key="agent:codex:acp:thread-owned",
+        metadata={
+            "runtime": "acp",
+            "spawnedBy": requester_session_key,
+            "parentSessionKey": requester_session_key,
+            "runtimeThreadId": "thread-owned",
+            "runtimeSessionId": "session-owned",
+        },
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-owned",
+                "runId": "run-acp-resume-owned-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-owned",
+                "runtimeSessionId": "session-owned",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Resume my ACP thread.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "resumeSessionId": "session-owned",
+            "requesterSessionKey": requester_session_key,
+        },
+        now_ms=20_000,
+    )
+
+    assert payload["status"] == "accepted"
+    assert calls[0]["params"]["resumeSessionId"] == "session-owned"
+    assert calls[0]["context"]["requesterSessionKey"] == requester_session_key
 
 
 @pytest.mark.asyncio

@@ -15,9 +15,11 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.999994% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.999996% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
-  post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, package
+  post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback,
+  startup-optimization doctor notes, installed runtime session/control-UI
+  contribution capture, package
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
@@ -149,11 +151,13 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999984%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999989%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
   sends, Discord audio-as-voice direct media sends, Signal receive envelope
-  session routing with sync-message drops, LINE signed webhook ingress, and
+  session routing with sync-message drops, QQBot route-backed text sends,
+  QQBot image media uploads, QQBot inline image media tags, QQBot reply message
+  sequencing, QQBot local media file-data uploads, LINE signed webhook ingress, and
   LINE text webhook session delivery plus
   postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
@@ -12758,3 +12762,62 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and runtime/CLI/doctor native-bridge parity moves to ~99.999994%. Continue
   deeper installed plugin activation, ACP bridge lifecycle depth, provider
   media edges, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native doctor startup optimization now mirrors
+  OpenClaw's low-power Linux platform note. `openzues doctor --json` reports
+  `doctor:startup-optimization` when `NODE_COMPILE_CACHE` is absent or under
+  `/tmp`, `NODE_DISABLE_COMPILE_CACHE` is set, or `OPENCLAW_NO_RESPAWN` is not
+  `1`, including the upstream note title, warning text, and suggested exports.
+  Source/test checkpointed in `b9400b0c`; repo-wide parity remains estimated at
+  ~99.9%, and runtime/CLI/doctor native-bridge parity moves to ~99.999995%.
+  Continue deeper installed plugin activation, ACP bridge lifecycle depth,
+  QQBot/provider route breadth, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native installed runtime plugin activation now
+  captures `registerSessionExtension` and `registerControlUiDescriptor`
+  contributions from real runtime entries and exposes them through
+  `GatewayPluginRuntimeService` for `plugins.uiDescriptors` and
+  `sessions.pluginPatch`. Source/test checkpointed in `ee5cbe7a`; repo-wide
+  parity remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge
+  parity moves to ~99.999996%. Continue deeper installed plugin activation,
+  ACP bridge lifecycle depth, QQBot/provider route breadth,
+  packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native QQBot provider routes now accept the
+  OpenClaw `qqbot` route kind and route-backed text sends for C2C, group, and
+  channel targets. Direct sends parse `qqbot:c2c:*` / `qqbot:group:*` /
+  `qqbot:channel:*`, dispatch to `/v2/users/{id}/messages`,
+  `/v2/groups/{id}/messages`, or `/channels/{id}/messages` with bearer-token
+  auth, and persist native provider delivery metadata. Source/test
+  checkpointed in `dd8aec4d`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.999985%. Continue
+  provider media/reply edges, ACP bridge lifecycle depth, packaging/distribution,
+  or companion breadth.
+- Current queue-head adjustment: native QQBot media sends now upload C2C/group
+  route-backed image media through `/v2/users/{id}/files` or
+  `/v2/groups/{id}/files`, send the returned `file_info` with `msg_type: 7`,
+  preserve captions for image/video messages, and persist media/message delivery
+  metadata. Source/test checkpointed in `90b89a07`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999986%. Continue QQBot structured media tags/chunked/local media,
+  ACP bridge lifecycle depth, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native QQBot route-backed sends now parse
+  upstream-style inline `<qqimg>...</qqimg>` tags, strip the tag into caption
+  text, and reuse the upload/send media path so tag output behaves like
+  explicit media output. Source/test checkpointed in `8369a37c`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth moves to ~99.999987%. Continue QQBot reply `msg_seq`, local/chunked
+  media, ACP bridge lifecycle depth, packaging/distribution, or companion
+  breadth.
+- Current queue-head adjustment: native QQBot passive replies now include
+  reply-derived `msg_seq` values alongside `msg_id` for C2C/group text replies,
+  and media replies use the same sequence helper for the first uploaded media
+  message. Source/test checkpointed in `44c83da3`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.999988%. Continue QQBot local/chunked media and broader structured
+  media-tag coverage, ACP bridge lifecycle depth, packaging/distribution, or
+  companion breadth.
+- Current queue-head adjustment: native QQBot local media sends now require
+  explicit `channels.qqbot.mediaLocalRoots` (or account roots), read allowed
+  files into base64 `file_data`, and reuse the verified `file_info` media
+  delivery path. Source/test checkpointed in `09943f82`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.999989%. Continue QQBot chunked upload/voice-video-file edges,
+  ACP bridge lifecycle depth, packaging/distribution, or companion breadth.
