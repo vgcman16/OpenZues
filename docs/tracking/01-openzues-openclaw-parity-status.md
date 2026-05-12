@@ -17,12 +17,12 @@ may lag behind this tracker.
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
-| Active gateway/session/tool-contract family | ~99.91% | High for bounded local path | Does not mean whole product parity |
+| Active gateway/session/tool-contract family | ~99.92% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.985% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.965% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.9991% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
-| CLI/operator control plane | ~99.9991% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.9992% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.9992% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.1% | Low, broad parity still open | QR setup-code safety and SecretRef slices are landed; companion apps remain mostly open |
 
 ## Implemented / Locked Bounded Areas
@@ -112,6 +112,11 @@ may lag behind this tracker.
   safe core mappings, plugin error projection, and related session tool
   projection.
   - Status: verified in ledger
+
+- [x] Provider-gated plugin native command specs for gateway `commands.list`,
+  preserving OpenClaw's distinction between ungated provider alias helpers and
+  gated provider-native command publication.
+  - Status: checkpointed in `6f15b49f`
 
 - [x] `plugins.uiDescriptors` plugin-host gateway method for active registry
   control UI descriptor projection, empty-param validation, descriptor

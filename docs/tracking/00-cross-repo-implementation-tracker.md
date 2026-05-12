@@ -21,12 +21,12 @@ Hermes or Warp integration.
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99999999999999999999999999999999999999999999999999% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~99.91% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Active gateway/session/tool-contract path | ~99.92% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.985% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.965% | Near-complete bounded provider path; broader provider inventory still open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.9991% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
-| CLI/operator control plane | ~99.9991% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.9992% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
+| CLI/operator control plane | ~99.9992% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~5.1% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
@@ -15620,6 +15620,34 @@ installed plugin activation, or packaging edges.
     `mypy src\openzues\services\gateway_node_methods.py
     src\openzues\services\gateway_sessions.py`, and focused
     `git diff --check`.
+
+- [x] `OZ-PLUGIN-00381` Provider-gated plugin native command specs
+  - Source: `openclaw-main/src/plugins/command-specs.ts`,
+    `openclaw-main/src/gateway/server-methods/commands.ts`,
+    `openclaw-main/src/plugins/commands.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_commands.py`,
+    `src/openzues/services/gateway_plugin_runtime.py`,
+    `src/openzues/cli.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: gateway `commands.list` publishes plugin-native commands only
+    when the provider is native-command enabled, while the imported plugin SDK
+    still exposes ungated provider alias specs separately.
+  - Evidence required: focused provider-gating proof, adjacent command-spec and
+    plugin-runtime helper proof, ruff, mypy
+  - Status: checkpointed in `6f15b49f`
+  - Weight: 1
+  - Last verified: 2026-05-12,
+    `python -m pytest tests\test_gateway_node_methods.py::test_commands_list_omits_plugin_native_commands_without_provider_gate -q`
+    (`1 passed`), adjacent command-spec/helper selection (`3 passed`), broader
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "command_specs
+    or commands_list or plugin_runtime_helpers"` (`7 passed, 1232 deselected`),
+    `ruff check src\openzues\services\gateway_commands.py
+    src\openzues\services\gateway_plugin_runtime.py src\openzues\cli.py
+    tests\test_gateway_node_methods.py`, `mypy
+    src\openzues\services\gateway_commands.py
+    src\openzues\services\gateway_plugin_runtime.py src\openzues\cli.py`, and
+    focused `git diff --check`.
 
 ## Canonical Checklist Format
 

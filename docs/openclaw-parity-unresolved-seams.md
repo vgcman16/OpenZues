@@ -6,7 +6,7 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.91% of the
+- The active gateway/session/tool-contract family is estimated at ~99.92% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.985% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -14,12 +14,12 @@ Current percentage rollup:
   `sessions.spawn`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, `tools.invoke`, and Tlon monitor lifecycle runtime
   seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.9991% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.9992% after the
   runtime bridge doctor posture, native ACP client interactive replay, package
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
-  preflight, plugin imported-state projection,
+  preflight, provider-gated plugin native command specs, plugin imported-state projection,
   errored runtime-imported plugin projection, facade-loaded plugin imported-state
   preservation, diagnostics-loaded plugin imported-state counts, bundled plugin
   reported-version normalization, bundled plugin env discovery/default-disable,
@@ -135,15 +135,15 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.91% after the
-  latest OpenClaw `agentRuntime` session metadata projection slice.
+- The gateway session/tool-contract family is estimated at ~99.92% after the
+  latest provider-gated plugin native command-spec slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.965%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths.
-- The CLI/operator control-plane family is estimated at ~99.995% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.9992% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
-  secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
@@ -11798,7 +11798,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `resolveAgentRuntimeMetadata` in the upstream session RPC path. Source/test
   checkpointed in `6c807e10`; repo-wide parity remains estimated at ~99.9%,
   active gateway/session/tool-contract parity moves to ~99.91%, and the
-  chat/session contract subfamily moves to ~99.985%. Continue the
-  provider-gated plugin command-spec seam, `openzues devices list/approve` CLI
-  surface, package-update downgrade confirmation edge, or remaining
-  provider-specific media/reply edges.
+  chat/session contract subfamily moves to ~99.985%. Continue
+  `openzues devices list/approve`, package-update downgrade confirmation, or
+  remaining provider-specific media/reply edges.
+- Current queue-head adjustment: provider plugin command specs now match
+  OpenClaw's gated `getPluginCommandSpecs(provider)` behavior in gateway
+  command publication while preserving the ungated provider alias listing for
+  plugin runtime helpers. `commands.list provider="whatsapp" scope="native"`
+  omits plugin-native commands unless the provider is explicitly
+  native-command enabled. Source/test checkpointed in `6f15b49f`; repo-wide
+  parity remains estimated at ~99.9%, active gateway/session/tool-contract
+  parity moves to ~99.92%, and runtime/CLI/doctor plus CLI/operator parity
+  move to ~99.9992%. Continue `openzues devices list/approve`, package-update
+  downgrade confirmation, or remaining provider-specific media/reply edges.
