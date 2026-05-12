@@ -4980,6 +4980,51 @@ def _zalo_pairing_store_path(state_dir: Path) -> Path:
     return _zalo_pairing_store_dir(state_dir) / "zalo-pairing.json"
 
 
+def _zalo_pairing_safe_key(value: str) -> str:
+    raw = value.strip().lower()
+    safe = re.sub(r'[\\/:*?"<>|]', "_", raw).replace("..", "_")
+    return safe or "_"
+
+
+def _zalo_pairing_allow_from_paths(
+    state_dir: Path,
+    *,
+    account_id: str | None,
+) -> list[Path]:
+    channel_key = _zalo_pairing_safe_key("zalo")
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    account_key = _zalo_pairing_safe_key(normalized_account_id)
+    paths: list[Path] = []
+    for base_dir in (_zalo_pairing_store_dir(state_dir), state_dir / "oauth"):
+        if normalized_account_id != DEFAULT_ACCOUNT_ID:
+            paths.append(base_dir / f"{channel_key}-{account_key}-allowFrom.json")
+        else:
+            paths.append(base_dir / f"{channel_key}-{DEFAULT_ACCOUNT_ID}-allowFrom.json")
+            paths.append(base_dir / f"{channel_key}-allowFrom.json")
+    return paths
+
+
+def _zalo_pairing_read_allow_from_file(path: Path) -> list[str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, Mapping):
+        return []
+    allow_from = payload.get("allowFrom")
+    if not isinstance(allow_from, list):
+        return []
+    seen: set[str] = set()
+    entries: list[str] = []
+    for item in allow_from:
+        entry = str(item).strip()
+        if not entry or entry in seen:
+            continue
+        seen.add(entry)
+        entries.append(entry)
+    return entries
+
+
 def _zalo_pairing_reply_text(*, code: str, sender_id_line: str) -> str:
     approve_command = f"openclaw pairing approve zalo {code}"
     return "\n".join(
@@ -18745,6 +18790,23 @@ class OpsMeshService:
             return {}
         return _zalo_channel_config_from_snapshot(snapshot, account_id=account_id)
 
+    def _zalo_pairing_allow_from_store(self, *, account_id: str | None) -> list[str]:
+        if self.canvas_state_dir is None:
+            return []
+        seen: set[str] = set()
+        entries: list[str] = []
+        for path in _zalo_pairing_allow_from_paths(
+            self.canvas_state_dir,
+            account_id=account_id,
+        ):
+            for entry in _zalo_pairing_read_allow_from_file(path):
+                normalized = _zalo_sender_allow_token(entry)
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                entries.append(entry)
+        return entries
+
     async def _zalo_pairing_challenge(
         self,
         request: GatewayZaloPairingChallengeRequest,
@@ -18918,6 +18980,10 @@ class OpsMeshService:
             return None
         if dm_policy in {"allowlist", "pairing"}:
             allow_from = _zalo_inbound_string_list(channel_config.get("allowFrom"))
+            if dm_policy == "pairing":
+                allow_from.extend(
+                    self._zalo_pairing_allow_from_store(account_id=account_id)
+                )
             if _zalo_sender_allowed(context.sender_id, allow_from):
                 return None
         if dm_policy == "pairing":

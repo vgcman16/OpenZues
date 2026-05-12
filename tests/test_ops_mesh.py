@@ -34628,6 +34628,94 @@ async def test_ops_mesh_service_handle_zalo_webhook_issues_pairing_challenge_for
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_zalo_webhook_allows_pairing_store_sender(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    pairing_requests: list[GatewayZaloPairingChallengeRequest] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "zalo-paired-session-1"}
+
+    async def fake_pairing_challenge(
+        request: GatewayZaloPairingChallengeRequest,
+    ) -> dict[str, object]:
+        pairing_requests.append(request)
+        return {"created": True, "code": "PAIRCODE"}
+
+    allow_from_dir = tmp_path / "settings" / "oauth"
+    allow_from_dir.mkdir(parents=True)
+    (allow_from_dir / "zalo-zalo-bot-allowFrom.json").write_text(
+        json.dumps({"version": 1, "allowFrom": ["zl:approved-user"]}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="zues",
+        server_version="test",
+        data_dir=tmp_path / "config",
+    )
+    gateway_config.patch_object(
+        {
+            "channels": {
+                "zalo": {
+                    "accounts": {
+                        "zalo-bot": {
+                            "dmPolicy": "pairing",
+                            "allowFrom": [],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        gateway_config_service=gateway_config,
+        canvas_state_dir=tmp_path,
+        zalo_pairing_challenge_service=fake_pairing_challenge,
+    )
+
+    result = await service.handle_zalo_webhook(
+        {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "zalo-paired-dm-1",
+                "text": "already approved",
+                "date": 1760000000,
+                "chat": {"id": "dm-paired-1", "chat_type": "PRIVATE"},
+                "from": {"id": "approved-user", "display_name": "Ada"},
+            },
+        },
+        account_id="zalo-bot",
+    )
+
+    assert pairing_requests == []
+    assert len(session_deliveries) == 1
+    assert session_deliveries[0][0].endswith(
+        "channel:zalo:account:zalo-bot:peer:direct:zalo:dm-paired-1"
+    )
+    assert session_deliveries[0][1] == "already approved"
+    assert result["deliveredCount"] == 1
+    assert "skips" not in result
+    delivery = result["deliveries"][0]
+    assert delivery["messageId"] == "zalo-paired-session-1"
+    assert delivery["senderId"] == "approved-user"
+    assert delivery["conversationId"] == "dm-paired-1"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_handle_line_webhook_delivers_direct_text_message(
     tmp_path: Path,
 ) -> None:
