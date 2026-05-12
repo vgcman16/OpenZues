@@ -20,7 +20,7 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.963% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.986% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.9993% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Provider-native inbound/outbound breadth | ~99.9994% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Telegram stale-thread JSON and HTTP retry fallback, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99992% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
 | CLI/operator control plane | ~99.99992% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~5.2% | Low, broad parity still open | QR setup-code safety, SecretRef slices, and device pairing CLI are landed; companion apps remain mostly open |
@@ -553,6 +553,23 @@ may lag behind this tracker.
   - Last verified: 2026-05-12, focused red/green Zalo session-delivery/replay
     tests (`2 failed` before implementation, then `2 passed`), adjacent Zalo
     webhook/provider proof (`5 passed, 476 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] Zalo image webhook media URL delivery.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/test-support/lifecycle-test-support.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Zalo image webhook payloads deliver caption text or
+    `<media:image>` into the native session and preserve `photo_url` as media
+    metadata.
+  - Evidence required: focused Zalo image webhook proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `6c87d9e5`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green Zalo image webhook test
+    (session delivery absent before implementation, then `1 passed`),
+    adjacent Zalo provider proof (`6 passed, 476 deselected`), ruff, mypy, and
     focused `git diff --check`.
 
 - [x] Gateway-status slash command diagnostics for `/gateway-status` and
@@ -9186,6 +9203,28 @@ may lag behind this tracker.
     webhook/provider proof
     `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
     (`5 passed, 476 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+    tests\test_zalo_webhook.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] Zalo image webhook media URL delivery.
+  - Source: `openclaw-main/extensions/zalo/src/monitor.ts`,
+    `openclaw-main/extensions/zalo/src/test-support/lifecycle-test-support.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: `message.image.received` dispatches into native session delivery
+    using caption text or `<media:image>` and surfaces `photo_url` as
+    `mediaUrls` / `photoUrl` delivery metadata.
+  - Evidence required: focused Zalo image webhook media proof, adjacent Zalo
+    webhook/provider proof, ruff, mypy
+  - Status: checkpointed in `6c87d9e5`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_zalo_webhook_delivers_image_placeholder_with_media_url -q`
+    (session delivery absent before implementation, then `1 passed`),
+    adjacent Zalo webhook/provider proof
+    `python -m pytest tests\test_zalo_webhook.py tests\test_ops_mesh.py -q -k "zalo_webhook or handle_zalo_webhook or send_direct_channel_message_uses_zalo"`
+    (`6 passed, 476 deselected`), `ruff check
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
     tests\test_zalo_webhook.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.

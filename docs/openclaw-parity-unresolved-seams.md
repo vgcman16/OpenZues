@@ -144,15 +144,16 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.963% after the
   latest requester-scoped `agents_list` spawn-target projection slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.9993%
+- The provider-native inbound/outbound breadth family is estimated at ~99.9994%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, LINE signed webhook ingress, and LINE text webhook session
   delivery plus postback/media-placeholder/sticker/location delivery and group
   mention gating, native LINE mention metadata handling, group
   pending-history replay, non-text group media mention-gate bypass, LINE
   inbound media staging, production credential-backed LINE media download, and
-  LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, and Zalo
-  text webhook session delivery/replay dedupe.
+  LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text
+  webhook session delivery/replay dedupe, and Zalo image webhook media URL
+  delivery.
 - The CLI/operator control-plane family is estimated at ~99.99992% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -264,6 +265,17 @@ repo-wide parity remains estimated at ~99.9%, and provider-native
 inbound/outbound breadth moves to ~99.9993%. Continue Zalo image/media webhook
 delivery breadth, remaining provider-specific media/reply edges, deeper
 installed plugin activation, or companion breadth.
+
+Current queue-head adjustment: Zalo Bot image webhook updates now route
+`message.image.received` payloads into native session delivery using caption
+text or `<media:image>` while preserving `photo_url` as media metadata,
+matching the visible inbound-media contract from
+`extensions/zalo/src/monitor.ts` and
+`extensions/zalo/src/test-support/lifecycle-test-support.ts`. Source/test
+checkpointed in `6c87d9e5`; repo-wide parity remains estimated at ~99.9%, and
+provider-native inbound/outbound breadth moves to ~99.9994%. Continue Zalo
+remote-media download/staging depth, remaining provider-specific media/reply
+edges, deeper installed plugin activation, or companion breadth.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,

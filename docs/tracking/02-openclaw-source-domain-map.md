@@ -124,7 +124,11 @@ text webhook session delivery/replay from
 `extensions/zalo/src/monitor.webhook.ts` and `extensions/zalo/src/monitor.ts`
 is checkpointed in `edcccea3`; it covers native session delivery target,
 sender/timestamp/reply metadata, and message-id replay dedupe for
-`message.text.received`.
+`message.text.received`. `OZ-PROV-001FN` image webhook media URL delivery from
+`extensions/zalo/src/monitor.ts` and
+`extensions/zalo/src/test-support/lifecycle-test-support.ts` is checkpointed in
+`6c87d9e5`; it covers caption/`<media:image>` session delivery plus `photo_url`
+media metadata for `message.image.received`.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped `agents_list`
 spawn-target projection from `src/agents/tools/agents-list-tool.ts` and
