@@ -13177,3 +13177,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and packaging/companion breadth moves to
   ~7.6%. Continue companion-app device flows, packaging/distribution, ACP
   lifecycle, provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now rejects ambiguous
+  local gateway auth when token and password SecretRefs are both configured
+  without `gateway.auth.mode`, preventing setup-code issuance until the mode is
+  explicit. Source/test checkpointed in `e7c1059c`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~7.7%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.

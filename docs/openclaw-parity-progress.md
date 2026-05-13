@@ -24956,6 +24956,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py`, and focused `git diff --check`. Source/test
   checkpointed in `f534bf71`.
 
+- Native `openzues qr` now rejects ambiguous local gateway auth when both
+  token and password SecretRefs are configured but `gateway.auth.mode` is
+  unset, matching OpenClaw's fail-fast setup-code behavior and avoiding
+  accidental bootstrap-token issuance before the operator chooses token or
+  password mode. This closes `OZ-COMP-001AN`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~7.7%.
+- Verified ambiguous QR auth-mode rejection with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_rejects_inferred_token_password_secretrefs_before_token_issue -q`
+  (`1 failed` before implementation because a setup code was issued, then `1
+  passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q -k
+  "qr_"` (`18 passed, 609 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e7c1059c`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
