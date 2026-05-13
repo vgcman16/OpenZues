@@ -13184,3 +13184,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and packaging/companion breadth moves to ~7.7%.
   Continue companion-app device flows, packaging/distribution, ACP lifecycle,
   provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues devices list` human output
+  now strips terminal escape/control characters from device-controlled pending
+  and paired display fields before rendering them, including remote IP text.
+  Source/test checkpointed in `bcb27a80`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~7.8%. Continue companion-app
+  device flows, packaging/distribution, ACP lifecycle, provider action breadth,
+  or setup/onboarding gaps.

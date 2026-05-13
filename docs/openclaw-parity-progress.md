@@ -24970,6 +24970,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `e7c1059c`.
 
+- Native `openzues devices list` human output now strips ANSI/OSC terminal
+  escape sequences, C0/C1 control characters, and DEL from device-controlled
+  display fields before rendering pending and paired devices, including remote
+  IP text. This closes `OZ-COMP-001AO`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~7.8%.
+- Verified device CLI terminal-output sanitization with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_list_human_output_sanitizes_device_controlled_fields -q`
+  (`1 failed` before implementation because escape characters reached stdout,
+  then `1 passed`), adjacent device CLI proof `python -m pytest
+  tests\test_cli.py -q -k "devices_list or devices_approve_latest or
+  devices_clear or devices_mutation_commands or devices_remote_mutation or
+  devices_list_human_output_sanitizes_device_controlled_fields"` (`18 passed,
+  610 deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `bcb27a80`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
