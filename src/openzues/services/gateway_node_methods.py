@@ -2073,6 +2073,14 @@ class GatewayNodeMethodService:
         except Exception:
             return
 
+    def _disconnect_clients_for_device(self, device_id: str) -> None:
+        normalized_device_id = device_id.strip()
+        if not normalized_device_id:
+            return
+        for session in list(self.registry.list_connected()):
+            if session.node_id.strip() == normalized_device_id:
+                self.registry.unregister(session.conn_id)
+
     async def _wait_for_node_connection(
         self,
         node_id: str,
@@ -13005,6 +13013,11 @@ class GatewayNodeMethodService:
             removed = await self._pairing_service.remove(device_id)
             if removed is None:
                 raise ValueError("unknown deviceId")
+            removed_device_id = _require_non_empty_string(
+                removed.get("deviceId"),
+                label="deviceId",
+            )
+            self._disconnect_clients_for_device(removed_device_id)
             return removed
 
         if resolved_method == "device.token.rotate":
@@ -13061,6 +13074,7 @@ class GatewayNodeMethodService:
                 device_id=device_id,
             ):
                 rotated_payload["token"] = rotated.token
+            self._disconnect_clients_for_device(rotated.device_id)
             return rotated_payload
 
         if resolved_method == "device.token.revoke":
@@ -13095,6 +13109,7 @@ class GatewayNodeMethodService:
                 raise ValueError("device token revocation denied")
             if revoked is None:
                 raise ValueError("unknown deviceId/role")
+            self._disconnect_clients_for_device(revoked.device_id)
             return {
                 "deviceId": revoked.device_id,
                 "role": revoked.role,

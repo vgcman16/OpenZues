@@ -1430,6 +1430,49 @@ async def test_device_pair_remove_rejects_other_device_requester(tmp_path) -> No
 
 
 @pytest.mark.asyncio
+async def test_device_pair_remove_disconnects_active_node_session(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        registry,
+        pairing_service=pairing_service,
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-remove-disconnect",
+            "displayName": "Disconnect Device",
+            "role": "operator",
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "device.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        now_ms=2_000,
+    )
+    registry.register(
+        FakeNodeConnection("conn-device-remove-disconnect"),
+        GatewayNodeConnect(
+            client_id="client-device-remove-disconnect",
+            device_id="device-remove-disconnect",
+        ),
+    )
+
+    removed = await service.call(
+        "device.pair.remove",
+        {"deviceId": " device-remove-disconnect "},
+        now_ms=3_000,
+    )
+
+    assert removed["deviceId"] == "device-remove-disconnect"
+    assert registry.get("device-remove-disconnect") is None
+
+
+@pytest.mark.asyncio
 async def test_device_pair_list_filters_device_bound_non_admin_requester(
     tmp_path,
 ) -> None:
@@ -2428,6 +2471,83 @@ async def test_device_token_rotate_treats_admin_scope_as_operator_superset(
             "lastUsedAtMs": None,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_revoke_disconnects_active_node_session(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        registry,
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing",))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-disconnect",
+            "displayName": "Token Disconnect Device",
+            "role": "operator",
+            "scopes": ["operator.pairing"],
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "device.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=requester,
+        now_ms=2_000,
+    )
+    registry.register(
+        FakeNodeConnection("conn-device-token-rotate-disconnect"),
+        GatewayNodeConnect(
+            client_id="client-device-token-rotate-disconnect",
+            device_id="device-token-disconnect",
+        ),
+    )
+
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": " device-token-disconnect ",
+            "role": " operator ",
+            "scopes": ["operator.pairing"],
+        },
+        requester=requester,
+        now_ms=3_000,
+    )
+
+    assert registry.get("device-token-disconnect") is None
+
+    registry.register(
+        FakeNodeConnection("conn-device-token-revoke-disconnect"),
+        GatewayNodeConnect(
+            client_id="client-device-token-revoke-disconnect",
+            device_id="device-token-disconnect",
+        ),
+    )
+
+    revoked = await service.call(
+        "device.token.revoke",
+        {
+            "deviceId": " device-token-disconnect ",
+            "role": " operator ",
+        },
+        requester=requester,
+        now_ms=4_000,
+    )
+
+    assert revoked == {
+        "deviceId": "device-token-disconnect",
+        "role": "operator",
+        "revokedAtMs": 4_000,
+    }
+    assert registry.get("device-token-disconnect") is None
 
 
 @pytest.mark.asyncio
