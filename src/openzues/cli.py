@@ -106683,8 +106683,10 @@ def devices_approve_command(
             if guidance is not None:
                 typer.echo(guidance)
             typer.echo(f"Run: {preview['approveCommand']}", err=True)
-            if token_value is not None or password_value is not None:
-                typer.echo("Reuse the same auth flag when running approve.", err=True)
+            if token_value is not None:
+                typer.echo("Reuse the same --token option when rerunning.", err=True)
+            if password_value is not None:
+                typer.echo("Reuse the same --password option when rerunning.", err=True)
         raise typer.Exit(code=1)
 
     result = _run_devices_gateway_node_method(

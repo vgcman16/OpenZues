@@ -1293,6 +1293,85 @@ def test_devices_approve_latest_json_preserves_gateway_flags_without_secrets(
     assert "secret-token" not in result.stdout
 
 
+def test_devices_approve_latest_human_preserves_gateway_flags_without_secrets(
+    monkeypatch,
+) -> None:
+    remote_calls: list[tuple[str, dict[str, object], dict[str, object]]] = []
+
+    async def fake_remote_gateway_call(
+        method: str,
+        params: dict[str, object],
+        *,
+        url: str,
+        token: str | None,
+        password: str | None,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        remote_calls.append(
+            (
+                method,
+                dict(params),
+                {
+                    "url": url,
+                    "token": token,
+                    "password": password,
+                    "timeoutMs": timeout_ms,
+                },
+            )
+        )
+        assert method == "device.pair.list"
+        return {
+            "pending": [{"requestId": "req-url", "deviceId": "device-9", "ts": 1000}],
+            "paired": [],
+        }
+
+    async def fail_local_services(action):
+        raise AssertionError("explicit --url should use remote gateway dispatch")
+
+    monkeypatch.setattr(
+        "openzues.cli._call_remote_gateway_node_method",
+        fake_remote_gateway_call,
+    )
+    monkeypatch.setattr("openzues.cli._run_with_services", fail_local_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "devices",
+            "approve",
+            "--latest",
+            "--url",
+            "ws://gateway.example:18789/openclaw?cluster=qa lab",
+            "--timeout",
+            "3000",
+            "--token",
+            "secret-token",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert remote_calls == [
+        (
+            "device.pair.list",
+            {},
+            {
+                "url": "ws://gateway.example:18789/openclaw?cluster=qa lab",
+                "token": "secret-token",
+                "password": None,
+                "timeoutMs": 3000,
+            },
+        )
+    ]
+    assert (
+        "openzues devices approve req-url --url "
+        "'ws://gateway.example:18789/openclaw?cluster=qa lab' --timeout 3000"
+        in result.stderr
+    )
+    assert "Reuse the same --token option when rerunning." in result.stderr
+    assert "secret-token" not in result.stderr
+    assert "secret-token" not in result.stdout
+
+
 def test_devices_list_json_calls_remote_gateway_with_auth_flags(monkeypatch) -> None:
     remote_calls: list[tuple[str, dict[str, object], dict[str, object]]] = []
 
