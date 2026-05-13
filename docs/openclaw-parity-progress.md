@@ -25033,6 +25033,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `091d01dd`.
 
+- Native `openzues devices approve --latest` human previews now preserve safe
+  rerun flags such as `--url` and `--timeout`, redact auth secrets from the
+  displayed command, and print token/password-specific rerun guidance when
+  auth flags were used. This closes `OZ-COMP-001AS`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~8.2%.
+- Verified device approve auth rerun guidance with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_approve_latest_human_preserves_gateway_flags_without_secrets -q`
+  (`1 failed` before implementation because guidance was generic, then `1
+  passed`), adjacent device CLI proof `python -m pytest tests\test_cli.py -q -k
+  "devices_approve_latest_human_preserves_gateway_flags_without_secrets or
+  devices_approve_latest_human_renders_selected_approval_context or
+  devices_approve_latest or
+  devices_list_human_output_treats_public_key_mismatch_as_new_pairing or
+  devices_list_human_output_renders_requested_and_approved_access or
+  devices_list_human_output_sanitizes_device_controlled_fields or devices_list
+  or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+  (`22 passed, 610 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `2c8f191d`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

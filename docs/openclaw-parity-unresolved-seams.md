@@ -13211,3 +13211,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and packaging/companion breadth moves to ~8.1%.
   Continue companion-app device flows, packaging/distribution, ACP lifecycle,
   provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues devices approve --latest`
+  human previews now preserve safe rerun flags while redacting auth secrets and
+  printing token/password-specific rerun guidance. Source/test checkpointed in
+  `2c8f191d`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.2%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
