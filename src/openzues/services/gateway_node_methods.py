@@ -58,6 +58,7 @@ from openzues.services.gateway_message_actions import (
 )
 from openzues.services.gateway_method_policy import (
     ADMIN_GATEWAY_METHOD_SCOPE,
+    READ_GATEWAY_METHOD_SCOPE,
     TALK_SECRETS_GATEWAY_METHOD_SCOPE,
     WRITE_GATEWAY_METHOD_SCOPE,
 )
@@ -69,6 +70,7 @@ from openzues.services.gateway_node_command_policy import (
     resolve_node_command_allowlist,
 )
 from openzues.services.gateway_node_pairing import (
+    GatewayDeviceTokenMutationDenied,
     GatewayNodePairingService,
     GatewayPairedNode,
 )
@@ -2071,6 +2073,14 @@ class GatewayNodeMethodService:
         except Exception:
             return
 
+    def _disconnect_clients_for_device(self, device_id: str) -> None:
+        normalized_device_id = device_id.strip()
+        if not normalized_device_id:
+            return
+        for session in list(self.registry.list_connected()):
+            if session.node_id.strip() == normalized_device_id:
+                self.registry.unregister(session.conn_id)
+
     async def _wait_for_node_connection(
         self,
         node_id: str,
@@ -2259,6 +2269,9 @@ class GatewayNodeMethodService:
         model_identifier: str | None,
         caps: list[str] | None,
         commands: list[str] | None,
+        role: str | None = None,
+        roles: list[str] | None = None,
+        scopes: list[str] | None = None,
         remote_ip: str | None,
         silent: bool | None,
         now_ms: int | None,
@@ -2281,6 +2294,9 @@ class GatewayNodeMethodService:
             model_identifier=model_identifier,
             caps=caps,
             commands=commands,
+            role=role,
+            roles=roles,
+            scopes=scopes,
             remote_ip=remote_ip,
             silent=silent,
             now_ms=_timestamp_ms(now_ms),
@@ -2725,6 +2741,59 @@ class GatewayNodeMethodService:
         except Exception:
             # Best-effort cleanup: preserve the actionable spawn failure.
             return
+
+    async def _cleanup_failed_acp_spawn_acceptance(
+        self,
+        *,
+        session_key: str,
+        agent_id: str,
+        acp_result: Mapping[str, object],
+        reason: str,
+    ) -> None:
+        raw_thread_binding = acp_result.get("threadBinding")
+        thread_binding = raw_thread_binding if isinstance(raw_thread_binding, Mapping) else None
+        await self._cleanup_failed_thread_binding(
+            session_key=session_key,
+            agent_id=agent_id,
+            thread_binding=thread_binding,
+            reason=reason,
+        )
+        if self._acp_spawn_service is None:
+            return
+        runtime_thread_id = (
+            _string_or_none(acp_result.get("runtimeThreadId"))
+            or _string_or_none(acp_result.get("runtimeSessionId"))
+            or _acp_runtime_id_from_session_key(session_key)
+        )
+        runtime_session_id = _string_or_none(acp_result.get("runtimeSessionId")) or (
+            runtime_thread_id
+        )
+        service: Any = self._acp_spawn_service
+        cancel_session = getattr(service, "cancel_session", None)
+        if callable(cancel_session):
+            try:
+                await cancel_session(
+                    session_key=session_key,
+                    runtime_thread_id=runtime_thread_id,
+                    runtime_session_id=runtime_session_id,
+                    reason=reason,
+                )
+            except Exception:
+                pass
+        close_session = getattr(service, "close_session", None)
+        if callable(close_session):
+            try:
+                await close_session(
+                    session_key=session_key,
+                    runtime_thread_id=runtime_thread_id,
+                    runtime_session_id=runtime_session_id,
+                    reason=reason,
+                    discard_persistent_state=True,
+                    require_acp_session=False,
+                    allow_backend_unavailable=True,
+                )
+            except Exception:
+                pass
 
     async def _unbind_thread_binding_before_session_mutation(
         self,
@@ -8723,10 +8792,23 @@ class GatewayNodeMethodService:
                     payload.get("requesterSessionKey"),
                     label="requesterSessionKey",
                 )
+                if stream_to == "parent" and requester_session_key is None:
+                    return {
+                        "status": "error",
+                        "errorCode": "requester_session_required",
+                        "error": (
+                            'sessions_spawn streamTo="parent" requires an active '
+                            "requester session context."
+                        ),
+                        **role_context,
+                    }
                 spawn_parent_session_key = (
                     await self._resolve_existing_session_key(requester_session_key, now_ms=now_ms)
                     if requester_session_key is not None
                     else await self._sessions_service.main_session_key()
+                )
+                acp_resume_requester_session_key = (
+                    spawn_parent_session_key if requester_session_key is not None else None
                 )
                 requester_sandbox_status = _sessions_spawn_sandbox_runtime_status(
                     self._config_service,
@@ -8773,7 +8855,7 @@ class GatewayNodeMethodService:
                     }
                 acp_resume_error = await _sessions_spawn_acp_resume_session_error(
                     self._database,
-                    requester_session_key=spawn_parent_session_key,
+                    requester_session_key=acp_resume_requester_session_key,
                     resume_session_id=resume_session_id,
                 )
                 if acp_resume_error is not None:
@@ -9077,30 +9159,69 @@ class GatewayNodeMethodService:
                 if label is not None:
                     acp_metadata["label"] = label
                 acp_metadata["agentId"] = acp_agent_id
-                await self._database.upsert_gateway_session_metadata(
-                    session_key=child_session_key,
-                    metadata=acp_metadata,
-                )
-                entry = await self._sessions_service.build_session_payload_for_key(
-                    session_key=child_session_key,
-                    now_ms=timestamp_ms,
-                )
-                self._remember_gateway_chat_run(
-                    child_session_key,
-                    {"runId": run_id},
-                    started_at_ms=timestamp_ms,
-                    owner_requester=resolved_requester,
-                )
-                await self._publish_sessions_changed_event(
-                    session_key=child_session_key,
-                    reason="create",
-                    now_ms=now_ms,
-                )
-                await self._publish_sessions_changed_event(
-                    session_key=child_session_key,
-                    reason="send",
-                    now_ms=now_ms,
-                )
+                try:
+                    await self._database.upsert_gateway_session_metadata(
+                        session_key=child_session_key,
+                        metadata=acp_metadata,
+                    )
+                    entry = await self._sessions_service.build_session_payload_for_key(
+                        session_key=child_session_key,
+                        now_ms=timestamp_ms,
+                    )
+                    self._remember_gateway_chat_run(
+                        child_session_key,
+                        {"runId": run_id},
+                        started_at_ms=timestamp_ms,
+                        owner_requester=resolved_requester,
+                    )
+                    await self._publish_sessions_changed_event(
+                        session_key=child_session_key,
+                        reason="create",
+                        now_ms=now_ms,
+                    )
+                    await self._publish_sessions_changed_event(
+                        session_key=child_session_key,
+                        reason="send",
+                        now_ms=now_ms,
+                    )
+                except Exception as exc:  # noqa: BLE001 - return OpenClaw-shaped failure.
+                    await self._cleanup_failed_acp_spawn_acceptance(
+                        session_key=child_session_key,
+                        agent_id=acp_agent_id,
+                        acp_result=acp_result,
+                        reason="spawn-failed",
+                    )
+                    try:
+                        await self._database.delete_control_chat_messages(
+                            session_key=child_session_key
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        await self._database.delete_gateway_session_metadata(
+                            child_session_key
+                        )
+                    except Exception:
+                        pass
+                    self._forget_gateway_chat_run(child_session_key)
+                    try:
+                        await self._publish_sessions_changed_event(
+                            session_key=child_session_key,
+                            reason="delete",
+                            now_ms=now_ms,
+                        )
+                    except Exception:
+                        pass
+                    acp_spawn_error_response: dict[str, Any] = {
+                        "status": "error",
+                        "errorCode": "spawn_failed",
+                        "error": str(exc).strip() or type(exc).__name__,
+                        "childSessionKey": child_session_key,
+                        "mode": tracked_mode,
+                        "cleanup": tracked_cleanup,
+                    }
+                    acp_spawn_error_response.update(role_context)
+                    return acp_spawn_error_response
                 acp_response: dict[str, Any] = {
                     "status": "accepted",
                     "childSessionKey": child_session_key,
@@ -11456,6 +11577,9 @@ class GatewayNodeMethodService:
                     "deviceFamily",
                     "modelIdentifier",
                     "publicKey",
+                    "role",
+                    "roles",
+                    "scopes",
                     "caps",
                     "commands",
                     "remoteIp",
@@ -11511,6 +11635,21 @@ class GatewayNodeMethodService:
                     else None
                 ),
                 commands=commands,
+                role=(
+                    _optional_non_empty_string(payload.get("role"), label="role")
+                    if "role" in payload
+                    else None
+                ),
+                roles=(
+                    _optional_string_list(payload.get("roles"), label="roles")
+                    if "roles" in payload
+                    else None
+                ),
+                scopes=(
+                    _optional_string_list(payload.get("scopes"), label="scopes")
+                    if "scopes" in payload
+                    else None
+                ),
                 remote_ip=_optional_non_empty_string(payload.get("remoteIp"), label="remoteIp"),
                 silent=_optional_bool(payload.get("silent"), label="silent"),
                 now_ms=now_ms,
@@ -12747,6 +12886,18 @@ class GatewayNodeMethodService:
             )
             pending = await self._pairing_service.list_pending()
             paired = await self._pairing_service.list_paired_nodes()
+            if _device_requester_is_device_bound_non_admin(resolved_requester):
+                requester_device_id = (resolved_requester.node_id or "").strip()
+                pending = [
+                    request
+                    for request in pending
+                    if str(request.get("deviceId") or "").strip() == requester_device_id
+                ]
+                paired = [
+                    device
+                    for device in paired
+                    if device.node_id.strip() == requester_device_id
+                ]
             device_pair_paired_payloads: list[dict[str, object]] = []
             for device in paired:
                 tokens = await self._pairing_service.list_device_token_summaries(device.node_id)
@@ -12774,6 +12925,28 @@ class GatewayNodeMethodService:
                     status_code=503,
                 )
             timestamp_ms = _timestamp_ms(now_ms)
+            pending_request = await self._pairing_service.get_pending_request(request_id)
+            if (
+                pending_request is None
+                and _device_requester_is_device_bound_non_admin(resolved_requester)
+            ):
+                raise ValueError(
+                    "device pairing rejection denied"
+                    if resolved_method == "device.pair.reject"
+                    else "device pairing approval denied"
+                )
+            if (
+                pending_request is not None
+                and _device_requester_target_denied(
+                    requester=resolved_requester,
+                    device_id=pending_request.node_id,
+                )
+            ):
+                raise ValueError(
+                    "device pairing rejection denied"
+                    if resolved_method == "device.pair.reject"
+                    else "device pairing approval denied"
+                )
             if resolved_method == "device.pair.reject":
                 rejected = await self._pairing_service.reject(request_id)
                 if rejected is None:
@@ -12807,6 +12980,8 @@ class GatewayNodeMethodService:
                 raise ValueError("approved device payload unavailable")
             approved_device = _device_pair_paired_payload_from_node_payload(approved_node)
             device_id = _require_non_empty_string(approved_device.get("deviceId"), label="deviceId")
+            approved_tokens = await self._pairing_service.list_device_token_summaries(device_id)
+            approved_device["tokens"] = approved_tokens or {}
             await self._publish_gateway_event(
                 "device.pair.resolved",
                 {
@@ -12830,9 +13005,19 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
+            if _device_requester_target_denied(
+                requester=resolved_requester,
+                device_id=device_id,
+            ):
+                raise ValueError("device pairing removal denied")
             removed = await self._pairing_service.remove(device_id)
             if removed is None:
                 raise ValueError("unknown deviceId")
+            removed_device_id = _require_non_empty_string(
+                removed.get("deviceId"),
+                label="deviceId",
+            )
+            self._disconnect_clients_for_device(removed_device_id)
             return removed
 
         if resolved_method == "device.token.rotate":
@@ -12843,7 +13028,11 @@ class GatewayNodeMethodService:
             )
             device_id = _require_non_empty_string(payload.get("deviceId"), label="deviceId")
             role = _require_non_empty_string(payload.get("role"), label="role")
-            scopes = _optional_string_list(payload.get("scopes"), label="scopes")
+            scopes = (
+                _optional_string_list(payload.get("scopes"), label="scopes")
+                if "scopes" in payload
+                else None
+            )
             if self._pairing_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
@@ -12854,26 +13043,39 @@ class GatewayNodeMethodService:
                     status_code=503,
                 )
             device_token_missing_scope = _missing_requested_scope(
-                requested_scopes=scopes,
+                requested_scopes=scopes or (),
                 caller_scopes=resolved_requester.caller_scopes,
             )
-            if device_token_missing_scope is not None:
+            if (
+                device_token_missing_scope is not None
+                or _device_requester_target_denied(
+                    requester=resolved_requester,
+                    device_id=device_id,
+                )
+            ):
                 raise ValueError("device token rotation denied")
             rotated = await self._pairing_service.rotate_device_token(
                 device_id=device_id,
                 role=role,
                 scopes=scopes,
+                caller_scopes=resolved_requester.caller_scopes,
                 now_ms=_timestamp_ms(now_ms),
             )
             if rotated is None:
                 raise ValueError("device token rotation denied")
-            return {
+            rotated_payload: dict[str, Any] = {
                 "deviceId": rotated.device_id,
                 "role": rotated.role,
-                "token": rotated.token,
                 "scopes": list(rotated.scopes),
                 "rotatedAtMs": rotated.rotated_at_ms or rotated.created_at_ms,
             }
+            if _device_token_should_return_raw_token(
+                requester=resolved_requester,
+                device_id=device_id,
+            ):
+                rotated_payload["token"] = rotated.token
+            self._disconnect_clients_for_device(rotated.device_id)
+            return rotated_payload
 
         if resolved_method == "device.token.revoke":
             _validate_exact_keys(
@@ -12892,13 +13094,22 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
+            if _device_requester_target_denied(
+                requester=resolved_requester,
+                device_id=device_id,
+            ):
+                raise ValueError("device token revocation denied")
             revoked = await self._pairing_service.revoke_device_token(
                 device_id=device_id,
                 role=role,
+                caller_scopes=resolved_requester.caller_scopes,
                 now_ms=_timestamp_ms(now_ms),
             )
+            if isinstance(revoked, GatewayDeviceTokenMutationDenied):
+                raise ValueError("device token revocation denied")
             if revoked is None:
                 raise ValueError("unknown deviceId/role")
+            self._disconnect_clients_for_device(revoked.device_id)
             return {
                 "deviceId": revoked.device_id,
                 "role": revoked.role,
@@ -14123,7 +14334,7 @@ class GatewayNodeMethodService:
         if self._database is None:
             return 0
         requester_aliases = set(_session_key_aliases(requester_session_key))
-        active_count = 0
+        active_child_session_keys: set[str] = set()
         for run_id, tracked_run in list(self._gateway_tracked_chat_runs_by_id.items()):
             if (
                 await self._gateway_chat_terminal_snapshot(
@@ -14150,8 +14361,34 @@ class GatewayNodeMethodService:
                 continue
             parent_aliases = set(_session_key_aliases(parent_key))
             if requester_aliases.intersection(parent_aliases):
-                active_count += 1
-        return active_count
+                active_child_session_keys.add(_canonical_session_key(tracked_run.session_key))
+        for row in await self._database.list_gateway_session_metadata_rows():
+            metadata = row.get("metadata") if isinstance(row, dict) else None
+            if not isinstance(metadata, dict):
+                continue
+            task_record = _mapping_or_none(metadata.get("taskRecord"))
+            if task_record is None:
+                continue
+            current_status = _string_or_none(task_record.get("status"))
+            if current_status not in {"queued", "running"}:
+                continue
+            parent_key = (
+                _string_or_none(task_record.get("requesterSessionKey"))
+                or _string_or_none(task_record.get("ownerKey"))
+                or _string_or_none(metadata.get("spawnedBy"))
+                or _string_or_none(metadata.get("parentSessionKey"))
+            )
+            if parent_key is None:
+                continue
+            parent_aliases = set(_session_key_aliases(parent_key))
+            if not requester_aliases.intersection(parent_aliases):
+                continue
+            child_session_key = _string_or_none(
+                task_record.get("childSessionKey")
+            ) or _string_or_none(row.get("session_key"))
+            if child_session_key is not None:
+                active_child_session_keys.add(_canonical_session_key(child_session_key))
+        return len(active_child_session_keys)
 
     async def _wait_for_gateway_chat_run(
         self,
@@ -20525,9 +20762,51 @@ def _missing_requested_scope(
         return None
     allowed = set(caller_scopes)
     for scope in requested_scopes:
-        if scope not in allowed:
+        if not _gateway_scope_satisfied(scope, allowed):
             return scope
     return None
+
+
+def _gateway_scope_satisfied(scope: str, allowed: set[str]) -> bool:
+    if not scope.startswith("operator."):
+        return scope in allowed
+    if ADMIN_GATEWAY_METHOD_SCOPE in allowed:
+        return True
+    if scope == READ_GATEWAY_METHOD_SCOPE:
+        return READ_GATEWAY_METHOD_SCOPE in allowed or WRITE_GATEWAY_METHOD_SCOPE in allowed
+    if scope == WRITE_GATEWAY_METHOD_SCOPE:
+        return WRITE_GATEWAY_METHOD_SCOPE in allowed
+    return scope in allowed
+
+
+def _device_requester_target_denied(
+    *,
+    requester: GatewayNodeMethodRequester,
+    device_id: str,
+) -> bool:
+    requester_device_id = requester.node_id.strip() if requester.node_id else None
+    if not requester_device_id or requester_device_id == device_id:
+        return False
+    return ADMIN_GATEWAY_METHOD_SCOPE not in set(requester.caller_scopes or ())
+
+
+def _device_requester_is_device_bound_non_admin(
+    requester: GatewayNodeMethodRequester,
+) -> bool:
+    requester_device_id = requester.node_id.strip() if requester.node_id else None
+    return bool(
+        requester_device_id
+        and ADMIN_GATEWAY_METHOD_SCOPE not in set(requester.caller_scopes or ())
+    )
+
+
+def _device_token_should_return_raw_token(
+    *,
+    requester: GatewayNodeMethodRequester,
+    device_id: str,
+) -> bool:
+    requester_device_id = requester.node_id.strip() if requester.node_id else None
+    return bool(requester_device_id and requester_device_id == device_id)
 
 
 def _optional_bounded_int(
@@ -23254,6 +23533,8 @@ def _device_pair_pending_payload(payload: dict[str, object]) -> dict[str, object
         ("remoteIp", "remoteIp"),
         ("silent", "silent"),
         ("requiredApproveScopes", "requiredApproveScopes"),
+        ("roles", "roles"),
+        ("scopes", "scopes"),
     ):
         if source_key in payload and payload[source_key] is not None:
             device_payload[target_key] = payload[source_key]
@@ -23278,8 +23559,10 @@ def _device_pair_paired_payload(
         (node.platform, "platform"),
         (node.device_family, "deviceFamily"),
         (node.remote_ip, "remoteIp"),
+        (list(node.roles), "roles"),
+        (list(node.scopes), "scopes"),
     ):
-        if value is not None:
+        if value not in (None, []):
             device_payload[key] = value
     return device_payload
 
@@ -23300,6 +23583,8 @@ def _device_pair_paired_payload_from_node_payload(
         ("deviceFamily", "deviceFamily"),
         ("publicKey", "publicKey"),
         ("remoteIp", "remoteIp"),
+        ("roles", "roles"),
+        ("scopes", "scopes"),
     ):
         if source_key in payload and payload[source_key] is not None:
             device_payload[target_key] = payload[source_key]

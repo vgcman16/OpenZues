@@ -438,6 +438,7 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "qqbot",
     "zalo",
     "msteams",
+    "irc",
     "twitch",
     "tlon",
 }
@@ -6043,6 +6044,21 @@ def _googlechat_messages_endpoint(
             f"{endpoint}{separator}"
             f"{urlencode({'messageReplyOption': 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD'})}"
         )
+    return endpoint
+
+
+def _googlechat_resource_endpoint(
+    target: str | None,
+    resource_name: str,
+    *,
+    query: dict[str, str] | None = None,
+) -> str:
+    endpoint = f"{_googlechat_api_base(target).rstrip('/')}/{resource_name.strip('/')}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Google Chat route target must be an http(s) Chat API base URL.")
+    if query:
+        separator = "&" if "?" in endpoint else "?"
+        endpoint = f"{endpoint}{separator}{urlencode(query)}"
     return endpoint
 
 
@@ -24468,6 +24484,34 @@ class OpsMeshService:
             )
         if channel == "zalo" and action == "send":
             return await self._dispatch_zalo_send_message_action(request)
+        if channel == "googlechat" and action in {
+            "react",
+            "reactions",
+            "send",
+            "upload-file",
+        }:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Google Chat route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            if action in {"react", "reactions"}:
+                return await asyncio.to_thread(
+                    self._dispatch_googlechat_reaction_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            return await asyncio.to_thread(
+                self._dispatch_googlechat_send_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "signal" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -35280,9 +35324,15 @@ class OpsMeshService:
                             media_payload["flags"] = int(media_payload.get("flags") or 0) | (
                                 1 << 12
                             )
-                        if reply_to_id:
+                        fanout_reply_to_id = _reply_to_fanout_id(
+                            reply_to_id=reply_to_id,
+                            reply_to_id_source=reply_to_id_source,
+                            reply_to_mode=reply_to_mode,
+                            index=index,
+                        )
+                        if fanout_reply_to_id:
                             media_payload["message_reference"] = {
-                                "message_id": reply_to_id,
+                                "message_id": fanout_reply_to_id,
                                 "fail_if_not_exists": False,
                             }
                         media_result = self._post_json_webhook(
@@ -36470,6 +36520,255 @@ class OpsMeshService:
         if reply_to_id:
             native_result["replyToId"] = reply_to_id
         return native_result
+
+    def _dispatch_googlechat_send_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        action = request.action.strip()
+        params = request.params
+        target = _message_action_param_string(params, "to", required=True) or ""
+        message = (
+            _message_action_param_string(
+                params,
+                "message",
+                required=action == "send",
+                allow_empty=True,
+            )
+            or _message_action_param_string(params, "initialComment", allow_empty=True)
+            or ""
+        )
+        media_url = (
+            _message_action_param_raw_string(params, "media")
+            or _message_action_param_raw_string(params, "filePath")
+            or _message_action_param_raw_string(params, "path")
+        )
+        thread = (
+            _message_action_param_string(params, "threadId")
+            or _message_action_param_string(params, "replyTo")
+        )
+        space = _googlechat_space_target(target)
+        if space is None:
+            raise RuntimeError("Google Chat route is missing a space target.")
+        if space.lower().startswith("users/"):
+            direct_message = self._request_json_provider_url(
+                _googlechat_direct_message_endpoint(
+                    str(route.get("target") or ""),
+                    user_name=space,
+                ),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=_googlechat_bearer_token(secret_token),
+            )
+            resolved_space = _googlechat_direct_message_space(direct_message)
+            if resolved_space is None:
+                raise RuntimeError(f"No Google Chat DM found for {space}.")
+            space = resolved_space
+
+        payload: dict[str, object] = {}
+        if message:
+            payload["text"] = message
+        if thread:
+            payload["thread"] = {"name": thread}
+        media_ids: list[str] = []
+        filenames: list[str] = []
+        if media_url:
+            media_bytes, content_type, detected_filename = self._download_matrix_media_url(
+                media_url
+            )
+            upload_filename = (
+                _message_action_param_string(params, "filename")
+                or _message_action_param_string(params, "title")
+                or detected_filename
+                or _matrix_media_filename(media_url, "attachment")
+            )
+            upload = self._request_googlechat_attachment_upload(
+                str(route.get("target") or ""),
+                space=space,
+                filename=upload_filename,
+                media_bytes=media_bytes,
+                content_type=content_type,
+                secret_token=secret_token,
+            )
+            upload_token = _googlechat_attachment_upload_token(upload)
+            if upload_token is None:
+                raise RuntimeError(
+                    "Google Chat upload response did not include an attachment token."
+                )
+            media_ids.append(upload_token)
+            filenames.append(upload_filename)
+            payload["attachment"] = [
+                {
+                    "attachmentDataRef": {"attachmentUploadToken": upload_token},
+                    "contentName": upload_filename,
+                }
+            ]
+        elif action == "upload-file":
+            raise RuntimeError("upload-file requires media, filePath, or path")
+
+        result = self._post_json_webhook(
+            _googlechat_messages_endpoint(
+                str(route.get("target") or ""),
+                space=space,
+                thread=thread or None,
+            ),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Google Chat API returned a non-JSON response.")
+        if result.get("error"):
+            raise RuntimeError(f"Google Chat send failed: {result.get('error')}")
+        message_id = _googlechat_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Google Chat API response did not include a message name.")
+        action_result: dict[str, object] = {
+            "messageId": message_id,
+            "chatId": space,
+            "channelId": space,
+        }
+        if media_ids:
+            action_result["mediaIds"] = media_ids
+            action_result["filenames"] = filenames
+        if thread:
+            action_result["threadId"] = thread
+        return {"ok": True, "result": action_result}
+
+    def _googlechat_list_reactions(
+        self,
+        route: dict[str, Any],
+        *,
+        message_name: str,
+        limit: int | None = None,
+        secret_token: str | None,
+    ) -> list[dict[str, object]]:
+        query = {"pageSize": str(limit)} if limit is not None and limit > 0 else None
+        result = self._request_json_provider_url(
+            _googlechat_resource_endpoint(
+                str(route.get("target") or ""),
+                f"{message_name}/reactions",
+                query=query,
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Google Chat reactions API returned a non-JSON response.")
+        raw_reactions = result.get("reactions")
+        if not isinstance(raw_reactions, list):
+            return []
+        return [dict(reaction) for reaction in raw_reactions if isinstance(reaction, dict)]
+
+    def _googlechat_delete_reaction(
+        self,
+        route: dict[str, Any],
+        *,
+        reaction_name: str,
+        secret_token: str | None,
+    ) -> None:
+        self._request_json_provider_url(
+            _googlechat_resource_endpoint(str(route.get("target") or ""), reaction_name),
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+        )
+
+    def _googlechat_app_user_names(self, route: dict[str, Any]) -> set[str]:
+        app_users = {"users/app"}
+        conversation_target = route.get("conversation_target")
+        if isinstance(conversation_target, Mapping):
+            for key in ("botUser", "bot_user", "appUser", "app_user"):
+                value = conversation_target.get(key)
+                if value is None:
+                    continue
+                normalized = str(value).strip()
+                if normalized:
+                    app_users.add(normalized)
+        return app_users
+
+    def _dispatch_googlechat_reaction_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        action = request.action.strip()
+        message_name = (
+            _message_action_param_string(request.params, "messageId", required=True) or ""
+        )
+        if action == "reactions":
+            limit = _message_action_param_integer(request.params, "limit")
+            return {
+                "ok": True,
+                "reactions": self._googlechat_list_reactions(
+                    route,
+                    message_name=message_name,
+                    limit=limit,
+                    secret_token=secret_token,
+                ),
+            }
+
+        emoji = _message_action_param_string(
+            request.params,
+            "emoji",
+            required=True,
+            allow_empty=True,
+        )
+        remove = request.params.get("remove") is True
+        if remove and not emoji:
+            raise RuntimeError("Emoji is required to remove a Google Chat reaction.")
+        if remove or not emoji:
+            app_users = self._googlechat_app_user_names(route)
+            removed = 0
+            for reaction in self._googlechat_list_reactions(
+                route,
+                message_name=message_name,
+                secret_token=secret_token,
+            ):
+                user = reaction.get("user")
+                user_name = (
+                    str(user.get("name") or "").strip()
+                    if isinstance(user, Mapping)
+                    else ""
+                )
+                if user_name not in app_users:
+                    continue
+                raw_emoji = reaction.get("emoji")
+                reaction_unicode = (
+                    str(raw_emoji.get("unicode") or "").strip()
+                    if isinstance(raw_emoji, Mapping)
+                    else ""
+                )
+                if emoji and reaction_unicode != emoji:
+                    continue
+                reaction_name = str(reaction.get("name") or "").strip()
+                if not reaction_name:
+                    continue
+                self._googlechat_delete_reaction(
+                    route,
+                    reaction_name=reaction_name,
+                    secret_token=secret_token,
+                )
+                removed += 1
+            return {"ok": True, "removed": removed}
+
+        result = self._request_json_provider_url(
+            _googlechat_resource_endpoint(
+                str(route.get("target") or ""),
+                f"{message_name}/reactions",
+            ),
+            method="POST",
+            payload={"emoji": {"unicode": emoji}},
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Google Chat add reaction returned a non-JSON response.")
+        return {"ok": True, "reaction": result}
 
     def _post_nextcloud_talk_provider_event(
         self,
@@ -39442,8 +39741,8 @@ class OpsMeshService:
             ),
         )
         message_parts = [str(event.get("message") or "").strip()]
-        message_parts.extend(media_urls)
-        message = "\n".join(part for part in message_parts if part).strip()
+        message_parts.extend(f"Attachment: {media_url}" for media_url in media_urls)
+        message = "\n\n".join(part for part in message_parts if part).strip()
         if not message:
             raise RuntimeError("Message must be non-empty for IRC sends.")
         reply_to_id = str(event.get("replyToId") or "").strip()
@@ -39850,15 +40149,16 @@ class OpsMeshService:
         chunks = _matrix_text_chunks(str(event.get("message") or ""))
         if not chunks and not media_urls:
             raise RuntimeError("Matrix send requires text or media.")
-        relation = _matrix_relation(
-            thread_id=str(event.get("threadId") or "").strip() or None,
-            reply_to_id=str(event.get("replyToId") or "").strip() or None,
-        )
+        thread_id = str(event.get("threadId") or "").strip() or None
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        reply_to_id_source = event.get("replyToIdSource")
+        reply_to_mode = event.get("replyToMode")
         bearer_token = _matrix_bearer_token(secret_token)
         transaction_id = _matrix_transaction_id(event)
         message_ids: list[str] = []
         uploaded_media_urls: list[str] = []
         text_chunks = chunks
+        send_index = 0
         room_encrypted = (
             self._matrix_room_is_encrypted(
                 route,
@@ -39932,6 +40232,16 @@ class OpsMeshService:
                 media_content["file"] = encrypted_file
             else:
                 media_content["url"] = mxc_url
+            relation = _matrix_relation(
+                thread_id=thread_id,
+                reply_to_id=_reply_to_fanout_id(
+                    reply_to_id=reply_to_id,
+                    reply_to_id_source=reply_to_id_source,
+                    reply_to_mode=reply_to_mode,
+                    index=send_index,
+                )
+                or None,
+            )
             if relation is not None:
                 media_content["m.relates_to"] = relation
             result = self._put_json_provider(
@@ -39953,11 +40263,22 @@ class OpsMeshService:
             if message_id is None:
                 raise RuntimeError("Matrix API response did not include an event id.")
             message_ids.append(message_id)
+            send_index += 1
         for index, chunk in enumerate(text_chunks, start=1):
             content: dict[str, object] = {
                 "msgtype": "m.text",
                 "body": chunk,
             }
+            relation = _matrix_relation(
+                thread_id=thread_id,
+                reply_to_id=_reply_to_fanout_id(
+                    reply_to_id=reply_to_id,
+                    reply_to_id_source=reply_to_id_source,
+                    reply_to_mode=reply_to_mode,
+                    index=send_index,
+                )
+                or None,
+            )
             if relation is not None:
                 content["m.relates_to"] = relation
             chunk_transaction_id = (
@@ -39980,6 +40301,7 @@ class OpsMeshService:
             if message_id is None:
                 raise RuntimeError("Matrix API response did not include an event id.")
             message_ids.append(message_id)
+            send_index += 1
         native_result: dict[str, object] = {
             "runtime": "native-provider-backed",
             "messageId": message_ids[-1],

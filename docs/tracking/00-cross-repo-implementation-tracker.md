@@ -1,6 +1,6 @@
 # Cross-Repo Implementation Tracker
 
-Last updated: 2026-05-12
+Last updated: 2026-05-13
 
 Coordinator repo: `C:\Users\skull\OneDrive\Documents\OpenZues`
 
@@ -24,12 +24,16 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.969% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.999996% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline tags, structured self-closing media tags, reply sequencing, local media upload, chunked local media upload, voice-to-file fallback, file-media text follow-up delivery, direct image/video media text follow-up delivery, and inline media text ordering/result metadata are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.9999994% | Mostly landed; ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, startup optimization, packaging, and installed plugin depth are advancing | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.999999% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline tags, structured self-closing media tags, reply sequencing, local media upload, chunked local media upload, voice-to-file fallback, file-media text follow-up delivery, direct image/video media text follow-up delivery, inline media text ordering/result metadata, Matrix route-backed implicit reply fanout, IRC media attachment formatting, and Discord multi-media implicit reply fanout are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.99999992% | Mostly landed; ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, startup optimization, packaging, and installed plugin depth are advancing | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
-| Packaging/companion app breadth | ~5.9% | Minimal, active broad parity still open | `docs/openclaw-parity-progress.md` |
+| Packaging/companion app breadth | ~8.1% | Minimal, active broad parity still open; local QR password SecretRef resolution plus device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, and device approve human preview context are now checkpointed | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
+
+Latest verified adjustment: `OZ-COMP-001AR` device approve human preview
+context moves packaging/companion breadth to ~8.1%; repo-wide OpenClaw
+parity remains estimated at ~99.9%.
 
 ## Current Worktree Boundary
 
@@ -51,11 +55,13 @@ Any follow-up changes should target the next queue head only:
 - `src/openzues/services/gateway_node_methods.py`
 - `src/openzues/services/gateway_method_policy.py`
 - `src/openzues/cli.py`
+- `Dockerfile`
 - `src/openzues/web/templates/index.html`
 - `src/openzues/web/static/app.js`
 - `tests/test_ops_mesh.py`
 - `tests/test_gateway_node_methods.py`
 - `tests/test_cli.py`
+- `tests/test_packaging_dockerfile.py`
 - `tests/test_runtime_updates.py`
 - `tests/test_app.py`
 - `docs/openclaw-parity-progress.md`
@@ -71,12 +77,12 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Artifact transcript gateway methods checkpointed in `13eddac7`; `update.status` checkpointed in `59a36693`; `diagnostics.stability` checkpointed in `0a4deddc`; `doctor.memory.remHarness` checkpointed in `5e6d43f6`; `nativeHook.invoke` checkpointed in `587c181b`; `push.web.*` checkpointed in `af0fc977`; ACP resume ownership checkpointed in `27b7e14e`; ACP model/thinking overrides checkpointed in `c10e37f1`; ACP configured runtime-agent aliases checkpointed in `ccbbd403`; ACP native-agent mismatch preflight checkpointed in `a0cccb08`; ACP run-timeout runtime propagation checkpointed in `3e821817`; ACP subagent depth/child-cap policy checkpointed in `1bd16f72`; ACP subagent target allowlist policy checkpointed in `39d3b06b`; base method sweep rechecked with no missing names | Repo-wide +0.1%, active gateway/method +0.1% | Continue deeper ACP thread-bound lifecycle edges, installed plugin depth, packaging/distribution, companion, provider, and UI breadth |
-| OZ-PKG-001 | Packaging/distribution breadth | Git dev branch normalization checkpointed in `c77f60e0`; Git dev target ref checkout checkpointed in `8f305c47`; Git preflight cleanup repair checkpointed in `48ee7b20`; Git rebase abort cleanup checkpointed in `3a61f139`; Git preflight candidate selection checkpointed in `84a78474`; Git preflight worktree guard checkpointed in `438f3c33`; Git preflight candidate guard checkpointed in `254fcc9d`; Beta package latest fallback checkpointed in `93061087`; git update no-upstream guard checkpointed in `2603380f`; git update control-ui clean-check exclusion checkpointed in `5171f2f2`; npm shim rollback proof checkpointed in `03f1ee46`; doctor malformed extension manifest warning checkpointed in `df582190`; package update malformed extension manifest rejection checkpointed in `733c7b15`; package update staging debris verifier checkpointed in `d58b0879`; package update private QA omission proof checkpointed in `b663e3e0`; package update includeInCore inventory guard checkpointed in `c83c2a72`; package update staged crash cleanup proof checkpointed in `beadafaa`; package update omitted-subtree safety ordering checkpointed in `2830b5ef`; package update legacy sidecar enforcement checkpointed in `603cdb2a`; package update externalized extension omission checkpointed in `a06dd570`; package update unsafe dist path rejection checkpointed in `691fdabd`; package update inventory omission filters checkpointed in `e7d960e0`; package update supplemental sidecar enforcement checkpointed in `9ba6843f`; package update dist inventory file drift checkpointed in `1e373c7f`; package update invalid dist-inventory rejection checkpointed in `2f59d485`; package update missing dist-inventory gate checkpointed in `d7e87c9b`; source-checkout package update verifier checkpointed in `a330fecc`; missing-version verifier wording checkpointed in `ad9ba5a5`; ambient npm fallback proof checkpointed in `0826cfaa`; owning npm command checkpointed in `de046811`; owning npm root detection checkpointed in `76e2a21c`; owning pnpm/bun global-root detection checkpointed in `5d80e370`/`04472a9c`; portable Git PATH prepending checkpointed in `e692f8b6`; Windows package install env checkpointed in `80e49178`; Corepack prompt preservation checkpointed in `9fd00cad`; Corepack prompt suppression checkpointed in `0f2cb0c1`; stored-channel dry-run preview checkpointed in `c95b2810`; post-update doctor env checkpointed in `51b3bc19`; requested update-channel persistence checkpointed in `15161172`; low package-update disk warning checkpointed in `3083362b`; stale global rename-dir cleanup checkpointed in `5a31c97f`; non-interactive update doctor checkpointed in `837bbd30`; package update doctor repair checkpointed in `45009862`; post-update plugin sync checkpointed in `aa71bcbc`; staged npm package swap checkpointed in `954d74ea`; package update failedStep projection checkpointed in `98e4d5c9`; package update version verification checkpointed in `1db09c3b`; npm update omit-optional fallback checkpointed in `f3177330`; package update runtime path checkpointed in `1291d361`; inherited update status parent options checkpointed in `f088293f`; root update runtime dispatch checkpointed in `0c88812c`; explicit update install-spec preservation checkpointed in `3227786a`; update package-spec env override checkpointed in `949de445`; update-status timeout option checkpointed in `6418d7f3`; update dry-run preview package-spec mapping checkpointed in `08e8f76f`; private QA sidecar omission proof checkpointed in `ad248bf4`; bundled runtime sidecar enforcement checkpointed in `07b17ad0`; source-checkout package-root warning checkpointed in `912aee5e`; private QA dist omission checkpointed in `bde731a9`; externalized extension dist omission checkpointed in `06ba5480`; unsafe dist symlink detection checkpointed in `a9c7884f`; local build metadata omission checkpointed in `6e8bb491`; exact missing inventory warning checkpointed in `76cdb404`; mixed-case staging-debris proof checkpointed in `9422c6b7`; package dist staging-debris detection checkpointed in `b16db705`; package dist inventory drift checkpointed in `69b23cb9`; human git update hint proof checkpointed in `d5ea6096`; human update-available hint checkpointed in `20e9c885`; config channel precedence proof checkpointed in `d9150777`; git availability projection checkpointed in `de37e6f8`; registry availability projection checkpointed in `55a785a8`; update-status git metadata checkpointed in `b31d8f41`; packed git-tag update-status projection checkpointed in `71029a02`; update-status git-tag channel projection checkpointed in `dce24b5e`; source-install package doctor warnings checkpointed in `4c1d7a2a`; update status package-manager dependency posture checkpointed in `f1ac67da`; post-doctor control-UI asset repair checkpointed in `92aadaf9`; runtime exit-signal labels checkpointed in `37af5b93` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue broader distribution/startup update edges |
+| OZ-RT-001 | Runtime-control hard gaps | Artifact transcript gateway methods checkpointed in `13eddac7`; `update.status` checkpointed in `59a36693`; `diagnostics.stability` checkpointed in `0a4deddc`; `doctor.memory.remHarness` checkpointed in `5e6d43f6`; `nativeHook.invoke` checkpointed in `587c181b`; `push.web.*` checkpointed in `af0fc977`; ACP resume ownership checkpointed in `27b7e14e`; ACP resume requester-context preflight checkpointed in `03ce091c`; ACP parent-stream requester-context preflight checkpointed in `84086dcb`; ACP persisted task-record child-cap counting checkpointed in `92209e38`; ACP model/thinking overrides checkpointed in `c10e37f1`; ACP configured runtime-agent aliases checkpointed in `ccbbd403`; ACP native-agent mismatch preflight checkpointed in `a0cccb08`; ACP run-timeout runtime propagation checkpointed in `3e821817`; ACP subagent depth/child-cap policy checkpointed in `1bd16f72`; ACP subagent target allowlist policy checkpointed in `39d3b06b`; ACP route-backed thread binding checkpointed in `e2db2905`; ACP thread-binding dispatch-failure cleanup checkpointed in `1a92baa2`; ACP accepted-spawn registration cleanup checkpointed in `2236d019`; base method sweep rechecked with no missing names | Repo-wide +0.1%, active gateway/method +0.1% | Continue deeper ACP lifecycle edges, installed plugin depth, packaging/distribution, companion, provider, and UI breadth |
+| OZ-PKG-001 | Packaging/distribution breadth | Git dev branch normalization checkpointed in `c77f60e0`; Git dev target ref checkout checkpointed in `8f305c47`; Git preflight cleanup repair checkpointed in `48ee7b20`; Git rebase abort cleanup checkpointed in `3a61f139`; Git preflight candidate selection checkpointed in `84a78474`; Git preflight worktree guard checkpointed in `438f3c33`; Git preflight candidate guard checkpointed in `254fcc9d`; Beta package latest fallback checkpointed in `93061087`; git update no-upstream guard checkpointed in `2603380f`; git update control-ui clean-check exclusion checkpointed in `5171f2f2`; npm shim rollback proof checkpointed in `03f1ee46`; doctor malformed extension manifest warning checkpointed in `df582190`; package update malformed extension manifest rejection checkpointed in `733c7b15`; package update staging debris verifier checkpointed in `d58b0879`; package update private QA omission proof checkpointed in `b663e3e0`; package update includeInCore inventory guard checkpointed in `c83c2a72`; package update staged crash cleanup proof checkpointed in `beadafaa`; package update omitted-subtree safety ordering checkpointed in `2830b5ef`; package update legacy sidecar enforcement checkpointed in `603cdb2a`; package update externalized extension omission checkpointed in `a06dd570`; package update unsafe dist path rejection checkpointed in `691fdabd`; package update inventory omission filters checkpointed in `e7d960e0`; package update supplemental sidecar enforcement checkpointed in `9ba6843f`; package update dist inventory file drift checkpointed in `1e373c7f`; package update invalid dist-inventory rejection checkpointed in `2f59d485`; package update missing dist-inventory gate checkpointed in `d7e87c9b`; source-checkout package update verifier checkpointed in `a330fecc`; missing-version verifier wording checkpointed in `ad9ba5a5`; ambient npm fallback proof checkpointed in `0826cfaa`; owning npm command checkpointed in `de046811`; owning npm root detection checkpointed in `76e2a21c`; owning pnpm/bun global-root detection checkpointed in `5d80e370`/`04472a9c`; portable Git PATH prepending checkpointed in `e692f8b6`; Windows package install env checkpointed in `80e49178`; Corepack prompt preservation checkpointed in `9fd00cad`; Corepack prompt suppression checkpointed in `0f2cb0c1`; stored-channel dry-run preview checkpointed in `c95b2810`; post-update doctor env checkpointed in `51b3bc19`; requested update-channel persistence checkpointed in `15161172`; low package-update disk warning checkpointed in `3083362b`; stale global rename-dir cleanup checkpointed in `5a31c97f`; non-interactive update doctor checkpointed in `837bbd30`; package update doctor repair checkpointed in `45009862`; post-update plugin sync checkpointed in `aa71bcbc`; staged npm package swap checkpointed in `954d74ea`; package update failedStep projection checkpointed in `98e4d5c9`; package update version verification checkpointed in `1db09c3b`; npm update omit-optional fallback checkpointed in `f3177330`; package update runtime path checkpointed in `1291d361`; inherited update status parent options checkpointed in `f088293f`; root update runtime dispatch checkpointed in `0c88812c`; explicit update install-spec preservation checkpointed in `3227786a`; update package-spec env override checkpointed in `949de445`; update-status timeout option checkpointed in `6418d7f3`; update dry-run preview package-spec mapping checkpointed in `08e8f76f`; private QA sidecar omission proof checkpointed in `ad248bf4`; bundled runtime sidecar enforcement checkpointed in `07b17ad0`; source-checkout package-root warning checkpointed in `912aee5e`; private QA dist omission checkpointed in `bde731a9`; externalized extension dist omission checkpointed in `06ba5480`; unsafe dist symlink detection checkpointed in `a9c7884f`; local build metadata omission checkpointed in `6e8bb491`; exact missing inventory warning checkpointed in `76cdb404`; mixed-case staging-debris proof checkpointed in `9422c6b7`; package dist staging-debris detection checkpointed in `b16db705`; package dist inventory drift checkpointed in `69b23cb9`; human git update hint proof checkpointed in `d5ea6096`; human update-available hint checkpointed in `20e9c885`; config channel precedence proof checkpointed in `d9150777`; git availability projection checkpointed in `de37e6f8`; registry availability projection checkpointed in `55a785a8`; update-status git metadata checkpointed in `b31d8f41`; packed git-tag update-status projection checkpointed in `71029a02`; update-status git-tag channel projection checkpointed in `dce24b5e`; source-install package doctor warnings checkpointed in `4c1d7a2a`; update status package-manager dependency posture checkpointed in `f1ac67da`; post-doctor control-UI asset repair checkpointed in `92aadaf9`; runtime exit-signal labels checkpointed in `37af5b93`; Docker runtime home bootstrap checkpointed in `a6e64d0e` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue broader distribution/startup update edges |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Extension-shared SDK facade checkpointed in `b56d15d7`; Discord SDK facade checkpointed in `307777d8`; compat SDK facade checkpointed in `f21a22bd`; channel-runtime SDK facade checkpointed in `1cc947f3`; setup SDK facade checkpointed in `ec94f934`; active-registry session/UI contributions checkpointed in `2cc24e73`; installed facade registry fallback checkpointed in `19613f06`; installed runtime session/control-UI contribution capture checkpointed in `ee5cbe7a`; generation/provider/document type-only facades already verified | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader repo-wide provider/packaging/companion breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77`; voicewake routing methods checkpointed in `a74cec21`; `browser.request` node-proxy path checkpointed in `430e365b`; `browser.request` proxy-file persistence checkpointed in `97c32bc8`; `browser.request` configured-node selection checkpointed in `6b31e0d7`; `browser.request` local runtime fallback checkpointed in `45fd0ffd`; lifecycle route breadth checkpointed in `d9b5e87d`; tab mutation route breadth checkpointed in `aa7298c6`; tab action close/select checkpointed in `904f2673`; tab label route breadth checkpointed in `c6fb16d3`; storage route breadth checkpointed in `483e4aff`; cookie route breadth checkpointed in `97602084`; debug route breadth checkpointed in `d7eb616d`; setting route breadth checkpointed in `97755215`; locale/timezone route breadth checkpointed in `003b0d5a`; act utility route breadth checkpointed in `886c86f3`; status/doctor route breadth checkpointed in `4b1f8028`; snapshot artifact route breadth checkpointed in `2ecdba40`; response-body route breadth checkpointed in `e7084f1f`; dialog-hook route breadth checkpointed in `4be4d540`; permission grant route breadth checkpointed in `1a27af54`; persistent profile mutation boundary reverified as `OZ-CANVAS-001V` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Browser local-request mini-queue closed; rotate to media/canvas/provider breadth |
-| OZ-COMP-001 | Companion apps/nodes parity | QR approval guidance checkpointed in `d6052fda`; QR JSON setup-code contract checkpointed in `b79b87c3`; device pairing public-key persistence/projection checkpointed in `bef0652f`; QR public-cleartext URL rejection checkpointed in `24d89215`; QR remote saved URL/auth config checkpointed in `3d63d136`; QR Tailscale MagicDNS checkpointed in `beb67302`; QR remote env SecretRef diagnostics checkpointed in `e3b3031a`; QR unresolved remote SecretRef preflight checkpointed in `4057991c`; QR remote file SecretRefs checkpointed in `ddd1d811`; QR remote exec SecretRefs checkpointed in `6e1b84c4`; QR gateway-backed SecretRefs checkpointed in `93a57d8b`; QR inferred-loopback preflight checkpointed in `89ee261d`; device CLI mutation commands checkpointed in `1c25fdbb`; device approve preview gateway flags checkpointed in `204bcdd2`; remote device list/approve dispatch checkpointed in `fa6d230a`; remote device mutation dispatch checkpointed in `c54866d9`; configured remote device defaults checkpointed in `aa2cbf50`; loopback device local fallback checkpointed in `3616f48b`; device approval-state preview checkpointed in `a45702fc` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue provider-specific media/reply edges, packaging/distribution, or next startup/update edge |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Zalo user `channels.logout` runtime checkpointed in `4d67d5a6`; QQBot `channels.logout` runtime checkpointed in `aac53b3b`; WhatsApp `channels.logout` runtime checkpointed in `3e99a587`; Nextcloud Talk `channels.logout` runtime checkpointed in `13de6593`; LINE `channels.logout` runtime checkpointed in `9674493d`; Telegram `channels.logout` runtime checkpointed in `2d26bdc4`; `channels.stop` native Tlon runtime checkpointed in `1365c028`; `channels.start` native Tlon runtime checkpointed in `810a6af0`; Tlon production SSE monitor lifecycle checkpointed in `726f03cb`; Tlon approval block/admin handling checkpointed in `800d2ab6`; Tlon approval response replay checkpointed in `265b0a10`; Tlon inbound authorization/pending approvals checkpointed in `d7bd3f7d`; Tlon inbound media staging checkpointed in `d7556229`; Tlon group/thread inbound session routing checkpointed in `b3b06972`; Tlon DM inbound session routing checkpointed in `51e6b618`; Tlon custom S3 media upload checkpointed in `dc999418`; Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5`; direct outbound reply policy metadata checkpointed in `e115e5f1`; direct outbound `channelData`-only payloads checkpointed in `fd244774`; Slack reaction event wakes checkpointed in `10dfaa17`; Slack member event wakes checkpointed in `9d07244d`; Slack channel event wakes checkpointed in `7474eb85`; Slack pin event wakes checkpointed in `0688d049`; Slack message subtype wakes checkpointed in `8c4e74ef`; Slack App Home publish checkpointed in `58bc6b72`; Slack channel ID migration checkpointed in `22b9bd10`; Slack block interactions checkpointed in `37a9d2dc`; Slack modal interactions checkpointed in `ecdfe207`; Slack slash ingress checkpointed in `7c538421`; Slack HTTP signatures checkpointed in `7ce8a169`; Slack signing env SecretRefs checkpointed in `47c1a605`; Slack signing file SecretRefs checkpointed in `adac6624`; Slack signing exec SecretRefs checkpointed in `a4b67444`; Slack command arg interactions checkpointed in `f6cad264`; Slack command arg options checkpointed in `151bb0e5`; Slack command arg hydrated options checkpointed in `54d18930`; Slack slash arg-menu rendering checkpointed in `27836d4c`; Slack large-choice external select proof checkpointed in `b1639b4b`; Slack `/agentstatus` native alias checkpointed in `bc4f90fe`; WhatsApp reusable reply fanout checkpointed in `a1d930ab`; Slack provider plugin-command injection checkpointed in `c798e879`; Telegram media reply fanout checkpointed in `2b177851`; Telegram media caption passthrough checkpointed in `c9cd47a1`; LINE webhook redelivery dedupe checkpointed in `9acc4cd6`; Zalo webhook ingress checkpointed in `c0e8588e`; Zalo text session delivery/replay checkpointed in `edcccea3`; Zalo image media URL delivery checkpointed in `6c87d9e5`; Zalo fakeable inbound image staging checkpointed in `652f0938`; production Zalo inbound media fetch checkpointed in `00241ee2`; Zalo direct-DM disabled policy checkpointed in `ac0e17e3`; Zalo group allowlist policy checkpointed in `d0d548e2`; Zalo direct-DM pairing challenge checkpointed in `74ce8fbd`; Zalo pairing allowFrom-store authorization checkpointed in `1b2d5009`; Zalo pairing approval store mutation checkpointed in `9409ad9b`; Zalo pairing request listing checkpointed in `d1c79fea`; Zalo pairing CLI list/approve checkpointed in `6de9e5a1`; Zalo pairing approve notify checkpointed in `3a77ccf5`; Zalo pairing command-owner bootstrap checkpointed in `c105b1c5`; Zalo pairing list default checkpointed in `0b791e74`; Zalo pairing command-owner explanation checkpointed in `646fa3d0`; Zalo pairing approval not-found text checkpointed in `433368f1`; disabled channel capability actions checkpointed in `0b5231cc`; Discord voice message sends checkpointed in `6be0ca36`; Discord direct audio-as-voice sends checkpointed in `b9331153`; Signal receive routing checkpointed in `25279aa3`; QQBot route-backed text sends checkpointed in `dd8aec4d`; QQBot structured media-tag normalization checkpointed in `b5a821a7`; QQBot chunked local media upload checkpointed in `ee990c4f`; QQBot voice media file fallback checkpointed in `0ccc41c0`; QQBot file media text follow-up checkpointed in `ea9dfe30`; QQBot direct image/video media text follow-up checkpointed in `0ea67d9f`; QQBot inline media text ordering checkpointed in `9b34e2aa`; QQBot inline trailing result metadata checkpointed in `34a31061` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific media/reply edges, deeper installed plugin activation, or packaging ownership detection |
+| OZ-COMP-001 | Companion apps/nodes parity | QR approval guidance checkpointed in `d6052fda`; QR JSON setup-code contract checkpointed in `b79b87c3`; device pairing public-key persistence/projection checkpointed in `bef0652f`; QR public-cleartext URL rejection checkpointed in `24d89215`; QR remote saved URL/auth config checkpointed in `3d63d136`; QR Tailscale MagicDNS checkpointed in `beb67302`; QR remote env SecretRef diagnostics checkpointed in `e3b3031a`; QR unresolved remote SecretRef preflight checkpointed in `4057991c`; QR remote file SecretRefs checkpointed in `ddd1d811`; QR remote exec SecretRefs checkpointed in `6e1b84c4`; QR gateway-backed SecretRefs checkpointed in `93a57d8b`; QR inferred-loopback preflight checkpointed in `89ee261d`; QR local password SecretRef resolution checkpointed in `8dbfb15b`; device CLI mutation commands checkpointed in `1c25fdbb`; device approve preview gateway flags checkpointed in `204bcdd2`; remote device list/approve dispatch checkpointed in `fa6d230a`; remote device mutation dispatch checkpointed in `c54866d9`; configured remote device defaults checkpointed in `aa2cbf50`; loopback device local fallback checkpointed in `3616f48b`; device approval-state preview checkpointed in `a45702fc`; device token scope-preserving rotation checkpointed in `936bdc9b`; device-token approved-role gates checkpointed in `7d2e4cbf`; device-token approved-scope baseline checkpointed in `46bbf88c`; requested-scope approval gates checkpointed in `ce45043b`; inherited-scope rotation caller gates checkpointed in `e8214d65`; scoped revocation caller gates checkpointed in `1acdb73c`; pairing repair inherited-token scope gates checkpointed in `5f7c8445`; cross-device token mutation guards checkpointed in `8afff4f9`; operator-admin device-token scope compatibility checkpointed in `40f822d9`; approval-seeded device-auth tokens checkpointed in `6489ac37`; rotated-token raw-value redaction checkpointed in `5d99e094`; cross-device pairing removal guards checkpointed in `b3285bc1`; cross-device pairing resolution guards checkpointed in `927cb1e2`; device-bound pairing list visibility checkpointed in `2781c38d`; device-auth active-client disconnects checkpointed in `4aa51161`; terminal QR rendering checkpointed in `f534bf71`; ambiguous QR auth-mode rejection checkpointed in `e7c1059c`; device CLI terminal-output sanitization checkpointed in `bcb27a80`; device CLI upgrade-context rendering checkpointed in `71dac773`; device CLI public-key mismatch handling checkpointed in `706f23e0`; device approve human preview context checkpointed in `091d01dd` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion app device flows, provider-specific media/reply edges, packaging/distribution, or setup/onboarding gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Zalo user `channels.logout` runtime checkpointed in `4d67d5a6`; QQBot `channels.logout` runtime checkpointed in `aac53b3b`; WhatsApp `channels.logout` runtime checkpointed in `3e99a587`; Nextcloud Talk `channels.logout` runtime checkpointed in `13de6593`; LINE `channels.logout` runtime checkpointed in `9674493d`; Telegram `channels.logout` runtime checkpointed in `2d26bdc4`; `channels.stop` native Tlon runtime checkpointed in `1365c028`; `channels.start` native Tlon runtime checkpointed in `810a6af0`; Tlon production SSE monitor lifecycle checkpointed in `726f03cb`; Tlon approval block/admin handling checkpointed in `800d2ab6`; Tlon approval response replay checkpointed in `265b0a10`; Tlon inbound authorization/pending approvals checkpointed in `d7bd3f7d`; Tlon inbound media staging checkpointed in `d7556229`; Tlon group/thread inbound session routing checkpointed in `b3b06972`; Tlon DM inbound session routing checkpointed in `51e6b618`; Tlon custom S3 media upload checkpointed in `dc999418`; Tlon hosted Memex media upload checkpointed in `f742ba8a`; Tlon image-media upload hook checkpointed in `0c18844d`; Tlon group/thread reply proof checkpointed in `0fd7cbb8`; Tlon native route-backed text send checkpointed in `bab52a95`; iMessage config-backed CLI/RPC account probe checkpointed in `86d0b06b`; Tlon route-backed account probe checkpointed in `dd613729`; BlueBubbles route-backed account probe checkpointed in `7c9ffdcb`; Twitch route-backed account probe checkpointed in `5772e6a9`; IRC route-backed account probe checkpointed in `fd5d246b`; Signal route-backed account probe checkpointed in `1af31a04`; Mattermost route-backed account probe checkpointed in `ba0205fc`; Feishu/Lark route-backed account probe checkpointed in `bf1d1d3c`; Google Chat route-backed account probe checkpointed in `816d97c4`; Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5`; direct outbound reply policy metadata checkpointed in `e115e5f1`; direct outbound `channelData`-only payloads checkpointed in `fd244774`; Slack reaction event wakes checkpointed in `10dfaa17`; Slack member event wakes checkpointed in `9d07244d`; Slack channel event wakes checkpointed in `7474eb85`; Slack pin event wakes checkpointed in `0688d049`; Slack message subtype wakes checkpointed in `8c4e74ef`; Slack App Home publish checkpointed in `58bc6b72`; Slack channel ID migration checkpointed in `22b9bd10`; Slack block interactions checkpointed in `37a9d2dc`; Slack modal interactions checkpointed in `ecdfe207`; Slack slash ingress checkpointed in `7c538421`; Slack HTTP signatures checkpointed in `7ce8a169`; Slack signing env SecretRefs checkpointed in `47c1a605`; Slack signing file SecretRefs checkpointed in `adac6624`; Slack signing exec SecretRefs checkpointed in `a4b67444`; Slack command arg interactions checkpointed in `f6cad264`; Slack command arg options checkpointed in `151bb0e5`; Slack command arg hydrated options checkpointed in `54d18930`; Slack slash arg-menu rendering checkpointed in `27836d4c`; Slack large-choice external select proof checkpointed in `b1639b4b`; Slack `/agentstatus` native alias checkpointed in `bc4f90fe`; WhatsApp reusable reply fanout checkpointed in `a1d930ab`; Slack provider plugin-command injection checkpointed in `c798e879`; Telegram media reply fanout checkpointed in `2b177851`; Telegram media caption passthrough checkpointed in `c9cd47a1`; LINE webhook redelivery dedupe checkpointed in `9acc4cd6`; Zalo webhook ingress checkpointed in `c0e8588e`; Zalo text session delivery/replay checkpointed in `edcccea3`; Zalo image media URL delivery checkpointed in `6c87d9e5`; Zalo fakeable inbound image staging checkpointed in `652f0938`; production Zalo inbound media fetch checkpointed in `00241ee2`; Zalo direct-DM disabled policy checkpointed in `ac0e17e3`; Zalo group allowlist policy checkpointed in `d0d548e2`; Zalo direct-DM pairing challenge checkpointed in `74ce8fbd`; Zalo pairing allowFrom-store authorization checkpointed in `1b2d5009`; Zalo pairing approval store mutation checkpointed in `9409ad9b`; Zalo pairing request listing checkpointed in `d1c79fea`; Zalo pairing CLI list/approve checkpointed in `6de9e5a1`; Zalo pairing approve notify checkpointed in `3a77ccf5`; Zalo pairing command-owner bootstrap checkpointed in `c105b1c5`; Zalo pairing list default checkpointed in `0b791e74`; Zalo pairing command-owner explanation checkpointed in `646fa3d0`; Zalo pairing approval not-found text checkpointed in `433368f1`; disabled channel capability actions checkpointed in `0b5231cc`; Discord voice message sends checkpointed in `6be0ca36`; Discord direct audio-as-voice sends checkpointed in `b9331153`; Signal receive routing checkpointed in `25279aa3`; QQBot route-backed text sends checkpointed in `dd8aec4d`; QQBot structured media-tag normalization checkpointed in `b5a821a7`; QQBot chunked local media upload checkpointed in `ee990c4f`; QQBot voice media file fallback checkpointed in `0ccc41c0`; QQBot file media text follow-up checkpointed in `ea9dfe30`; QQBot direct image/video media text follow-up checkpointed in `0ea67d9f`; QQBot inline media text ordering checkpointed in `9b34e2aa`; QQBot inline trailing result metadata checkpointed in `34a31061`; Matrix implicit reply fanout checkpointed in `f837d7f2`; IRC media attachment formatting checkpointed in `08be87cc`; Discord multi-media implicit reply fanout checkpointed in `0d06982e` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific media/reply edges, deeper installed plugin activation, or packaging ownership detection |
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped
 `agents_list` spawn-target projection is checkpointed in `6b74d38e`; it
@@ -243,6 +249,25 @@ Provider addendum: `OZ-PROV-001GT` QQBot inline trailing result metadata is
 source/test checkpointed in `34a31061`, moving provider-native inbound/outbound
 breadth to ~99.999996%. Continue broader QQBot provider/media edge review, ACP
 bridge lifecycle depth, packaging/distribution, or companion breadth.
+Provider addendum: `OZ-PROV-001GU` Matrix implicit reply fanout is source/test
+checkpointed in `f837d7f2`, moving provider-native inbound/outbound breadth to
+~99.999997%. Continue provider media/reply edges, device-token authz depth,
+packaging/distribution, ACP lifecycle, or companion app breadth.
+Companion addendum: `OZ-COMP-001X` local QR password SecretRef resolution is
+source/test checkpointed in `8dbfb15b`, moving packaging/companion breadth to
+~6.1%. Continue device-token authz depth, QR terminal rendering,
+packaging/distribution, ACP lifecycle, provider media edges, or companion app
+breadth.
+Provider addendum: `OZ-PROV-001GV` IRC media attachment formatting is
+source/test checkpointed in `08be87cc`, moving provider-native inbound/outbound
+breadth to ~99.999998%. Continue provider media/reply edges,
+packaging/distribution, device-token authz depth, ACP lifecycle, or companion
+app breadth.
+Provider addendum: `OZ-PROV-001GW` Discord multi-media implicit reply fanout
+is source/test checkpointed in `0d06982e`, moving provider-native
+inbound/outbound breadth to ~99.999999%. Continue provider media/reply edges,
+packaging/distribution, device-token authz depth, ACP lifecycle, or companion
+app breadth.
 Runtime addendum: `OZ-PKG-001DA` package-update post-core resume mode is
 source/test checkpointed in `4f874859`, moving runtime/CLI/doctor native-bridge
 parity to ~99.999991%. Continue package-update fresh-process handoff, deeper
@@ -292,6 +317,39 @@ Runtime addendum: `OZ-ACP-001E` ACP subagent target allowlist policy is
 source/test checkpointed in `39d3b06b`, moving runtime/CLI/doctor native-bridge
 parity to ~99.9999994%. Continue deeper ACP thread-bound lifecycle edges,
 installed plugin activation, packaging/distribution, provider media edges, or
+companion breadth.
+Runtime addendum: `OZ-ACP-001F` ACP route-backed Matrix thread binding is
+source/test checkpointed in `e2db2905`, moving runtime/CLI/doctor native-bridge
+parity to ~99.9999995%. Continue deeper ACP cleanup/error lifecycle edges,
+installed plugin activation, packaging/distribution, provider media edges, or
+companion breadth.
+Runtime addendum: `OZ-ACP-001G` ACP post-bind dispatch-failure cleanup is
+source/test checkpointed in `1a92baa2`, moving runtime/CLI/doctor native-bridge
+parity to ~99.9999996%. Continue deeper ACP lifecycle edges, installed plugin
+activation, packaging/distribution, provider media edges, or companion breadth.
+Runtime addendum: `OZ-ACP-001H` ACP accepted-spawn registration-failure cleanup
+is source/test checkpointed in `2236d019`, moving runtime/CLI/doctor
+native-bridge parity to ~99.9999997%. Continue deeper ACP lifecycle edges,
+installed plugin activation, packaging/distribution, provider media edges, or
+companion breadth.
+Runtime addendum: `OZ-PKG-001DE` Docker runtime home bootstrap is source/test
+checkpointed in `a6e64d0e`, moving runtime/CLI/doctor native-bridge parity to
+~99.9999998%. Continue packaging/distribution edges, deeper ACP lifecycle,
+installed plugin activation, provider media edges, or companion breadth.
+Runtime addendum: `OZ-ACP-001I` ACP resume requester-context preflight is
+source/test checkpointed in `03ce091c`, moving runtime/CLI/doctor
+native-bridge parity to ~99.9999999%. Continue deeper ACP lifecycle edges,
+packaging/distribution, installed plugin activation, provider media edges, or
+companion breadth.
+Runtime addendum: `OZ-ACP-001J` ACP parent-stream requester-context preflight
+is source/test checkpointed in `84086dcb`, moving runtime/CLI/doctor
+native-bridge parity to ~99.99999991%. Continue deeper ACP lifecycle edges,
+packaging/distribution, installed plugin activation, provider media edges, or
+companion breadth.
+Runtime addendum: `OZ-ACP-001K` ACP persisted task-record child-cap counting
+is source/test checkpointed in `92209e38`, moving runtime/CLI/doctor
+native-bridge parity to ~99.99999992%. Continue deeper ACP lifecycle edges,
+packaging/distribution, installed plugin activation, provider media edges, or
 companion breadth.
 Packaging addendum: `OZ-PKG-001CJ` owning npm-root detection without
 `packageManager` metadata is source/test checkpointed in `76e2a21c`.
@@ -17282,6 +17340,159 @@ companion breadth.
     (`24 passed, 596 deselected`), `ruff check src\openzues\cli.py
     tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
     --check`.
+
+- [x] `OZ-COMP-001W` Device token scope-preserving rotation
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/gateway/server-methods/devices.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: rotating an existing device auth token without `scopes` preserves
+    the previous token scopes; explicitly provided scopes still replace them.
+  - Evidence required: focused device-token proof, adjacent device/pairing
+    gateway proof, ruff, mypy
+  - Status: checkpointed in `936bdc9b`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_preserves_existing_scopes_when_omitted -q`
+    (`1 failed` before implementation because the second rotation cleared the
+    scopes, then `1 passed`), adjacent
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_pair_family"`
+    (`5 passed, 1277 deselected`), `ruff check` on touched source/tests,
+    `mypy` on touched source modules, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001X` Local QR password SecretRef resolution
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`,
+    `openclaw-main/src/gateway/resolve-configured-secret-input-string.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues qr --json` resolves local
+    `gateway.auth.password` SecretRefs before setup-code auth-label
+    selection when the command is not using `--remote` and no CLI auth
+    override is provided; resolved secrets stay out of stdout/stderr.
+  - Evidence required: focused local QR password SecretRef proof, adjacent QR
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `8dbfb15b`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_local_json_resolves_gateway_password_secretref -q`
+    (`1 failed` before implementation because `auth` was
+    `bootstrap-token`, then `1 passed`), adjacent
+    `python -m pytest tests\test_cli.py -q -k "qr_"` (`16 passed, 609
+    deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+    src\openzues\cli.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001GV` IRC media attachment formatting
+  - Source: `openclaw-main/extensions/irc/src/channel.ts`,
+    `openclaw-main/extensions/irc/src/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: IRC route-backed media sends pass the original text caption to
+    the provider adapter, format media URLs as `Attachment: <url>` blocks, and
+    keep `[reply:<id>]` after the attachment block.
+  - Evidence required: focused IRC native route proof, adjacent IRC/provider
+    proof, ruff, mypy
+  - Status: checkpointed in `08be87cc`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_irc_native_route -q`
+    (`1 failed` before implementation because the message used generic media
+    summary/raw URL formatting, then `1 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "irc_native_route or irc_probe or uses_irc_native_route or irc"`
+    (`3 passed, 505 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001DE` Docker runtime home bootstrap
+  - Source: `openclaw-main/Dockerfile`,
+    `openclaw-main/src/dockerfile.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `Dockerfile`, `tests/test_packaging_dockerfile.py`
+  - Contract: the runtime Docker stage creates `/home/node/.openzues` with
+    `node:node` ownership and mode `700` before `USER node`; the Dockerfile
+    must use `install -d -m 0700 -o node -g node` and verify the resulting
+    ownership/mode instead of a loose `mkdir -p`.
+  - Evidence required: focused Dockerfile packaging proof, adjacent packaging
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `a6e64d0e`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_packaging_dockerfile.py::test_dockerfile_precreates_openzues_home_before_user_node -q`
+    (`1 failed` before implementation because `Dockerfile` was missing, then
+    `1 passed`), adjacent
+    `python -m pytest tests\test_cli.py -q -k "package_distribution or package_dist"`
+    (`8 passed, 617 deselected`), `ruff check
+    tests\test_packaging_dockerfile.py`, `mypy
+    tests\test_packaging_dockerfile.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001GW` Discord multi-media implicit reply fanout
+  - Source: `openclaw-main/src/plugin-sdk/reply-payload.test.ts`,
+    `openclaw-main/extensions/discord/src/outbound-adapter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: route-backed Discord multi-media sends consume implicit
+    `replyToId` once across media webhook fanout for `replyToMode="first"` or
+    `"batched"`, while explicit reply ids remain reusable.
+  - Evidence required: focused Discord media reply fanout proof, adjacent
+    Discord provider proof, ruff, mypy
+  - Status: checkpointed in `0d06982e`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_iterates_discord_media -q`
+    (`1 failed` before implementation because the second media payload still
+    had `message_reference`, then `1 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "discord_native_route or discord_media or discord_video or discord_audio_as_voice or discord_reply or discord_thread_query"`
+    (`7 passed, 501 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001GX` Google Chat upload-file message action
+  - Source: `openclaw-main/extensions/googlechat/src/actions.ts`,
+    `openclaw-main/extensions/googlechat/src/actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Google Chat `message.action upload-file` resolves the native
+    route/account, accepts OpenClaw `media` / `filePath` / `path`, caption,
+    filename/title, and thread/reply options, uploads the attachment through
+    the provider-backed upload endpoint, sends `attachmentDataRef`, and returns
+    message, chat, media id, filename, and thread metadata.
+  - Evidence required: focused Google Chat upload-file action proof, adjacent
+    Google Chat provider proof, ruff, mypy
+  - Status: checkpointed in `1b08e340`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_dispatch_googlechat_upload_file_message_action_uses_attachment_upload_path -q`
+    (`1 failed` before implementation because `dispatch_message_action`
+    returned `None`, then `1 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "googlechat and (message_action or direct_channel_message)"`
+    (`4 passed, 505 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001GY` Google Chat reaction message actions
+  - Source: `openclaw-main/extensions/googlechat/src/actions.ts`,
+    `openclaw-main/extensions/googlechat/src/actions.test.ts`,
+    `openclaw-main/extensions/googlechat/src/api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Google Chat `message.action react` / `reactions` resolves the
+    native route/account, uses provider-backed reaction list/create/delete
+    endpoints, removes only `users/app` or configured-bot reactions, filters
+    removal by emoji when provided, and preserves user-owned reactions.
+  - Evidence required: focused Google Chat reaction action proof, adjacent
+    Google Chat provider proof, ruff, mypy
+  - Status: checkpointed in `5dc2fce1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_dispatch_googlechat_react_remove_only_deletes_bot_reactions -q`
+    (`1 failed` before implementation because `dispatch_message_action`
+    returned `None`, then `1 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "googlechat"` (`6 passed,
+    504 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 
 ## Canonical Checklist Format
 

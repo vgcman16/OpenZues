@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-12
+Last updated: 2026-05-13
 
 Primary ledgers:
 
@@ -20,10 +20,14 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.969% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.999996% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.9999994% | High for bounded native bridge | ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
+| Provider-native inbound/outbound breadth | ~99.999999% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Matrix implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Runtime/CLI/doctor native bridge | ~99.99999992% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
-| Packaging/companion app breadth | ~5.9% | Low, broad parity still open | QR setup-code safety, SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, and approval-state preview metadata are landed; companion apps remain mostly open |
+| Packaging/companion app breadth | ~8.1% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, and device approve human preview context are landed; companion apps remain mostly open |
+
+Latest verified adjustment: `OZ-COMP-001AR` device approve human preview
+context moves packaging/companion breadth to ~8.1%; repo-wide OpenClaw
+parity remains estimated at ~99.9%.
 
 ## Implemented / Locked Bounded Areas
 
@@ -44,6 +48,67 @@ may lag behind this tracker.
     (`2 passed` after implementation), adjacent ACP gateway proof (`8 passed,
     1265 deselected`), ACP runtime proof (`19 passed`), ruff, mypy, and
     focused `git diff --check`.
+
+- [x] ACP `resumeSessionId` requester-context preflight for `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.ts`,
+    `openclaw-main/src/agents/acp-spawn.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: resume requests without an active requester session context
+    return `requester_session_required` before ACP runtime dispatch instead of
+    falling through to resume ownership checks using the default main session.
+  - Evidence required: focused ACP resume requester proof, adjacent ACP resume
+    proof, ruff, mypy
+  - Status: checkpointed in `03ce091c`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_rejects_resume_id_without_requester_session_context -q`
+    (`1 failed` before implementation with `resume_forbidden`, then `1
+    passed`), adjacent ACP resume proof `python -m pytest
+    tests\test_gateway_node_methods.py -q -k "acp and resume_id"` (`3
+    passed, 1280 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] ACP `streamTo="parent"` requester-context preflight for
+  `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.ts`,
+    `openclaw-main/src/agents/acp-spawn.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: explicit ACP parent-stream requests without an active requester
+    session context return `requester_session_required` before runtime
+    dispatch; accepted parent-stream requests carry an explicit requester
+    session key through the ACP runtime context.
+  - Evidence required: focused ACP stream requester proof, adjacent
+    requester-context proof, ruff, mypy
+  - Status: checkpointed in `84086dcb`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_stream_to_parent_requires_requester_session_context -q`
+    (`1 failed` before implementation with `accepted`, then `1 passed`),
+    focused happy-path pair (`2 passed`), adjacent requester-context proof
+    (`5 passed, 1279 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] ACP persisted task-record child-cap counting for `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.ts`,
+    `openclaw-main/src/agents/acp-spawn.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: queued/running ACP task records owned by the requester session
+    count toward `maxChildrenPerAgent` after service restart, deduped by child
+    session key alongside in-memory tracked runs.
+  - Evidence required: focused ACP persisted child-cap proof, adjacent ACP
+    child-cap/stream proof, ruff, mypy
+  - Status: checkpointed in `92209e38`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_counts_persisted_task_records_for_child_cap -q`
+    (`1 failed` before implementation with `accepted`, then `1 passed`),
+    adjacent ACP child-cap/stream proof (`4 passed, 1281 deselected`), ruff,
+    mypy, and focused `git diff --check`.
 
 - [x] ACP model/thinking override propagation for `sessions.spawn`.
   - Source: `openclaw-main/src/agents/acp-spawn.ts`,
@@ -154,6 +219,94 @@ may lag behind this tracker.
   - Last verified: 2026-05-12, focused red/green ACP allowlist proof (`2
     passed` after implementation), adjacent ACP gateway proof (`6 passed, 1274
     deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] ACP route-backed thread binding for persistent `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_acp_spawn.py`,
+    `src/openzues/services/gateway_thread_binding.py`,
+    `src/openzues/app.py`, `tests/test_gateway_acp_spawn.py`
+  - Contract: persistent ACP sessions with `thread=true` use the production
+    route-backed binder for Matrix child-thread creation before ACP turn
+    dispatch, persist a `targetKind="session"` binding, and share the app-wired
+    binder with native subagent spawns.
+  - Evidence required: focused ACP runtime proof, adjacent ACP/thread gateway
+    proof, app construction smoke, ruff, mypy
+  - Status: checkpointed in `e2db2905`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green Matrix ACP binder proof (`1
+    passed` after implementation), ACP runtime suite (`22 passed`), adjacent
+    gateway thread proof (`8 passed, 1272 deselected`), app health smoke (`1
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] ACP post-bind dispatch-failure cleanup for persistent `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_acp_spawn.py`,
+    `tests/test_gateway_acp_spawn.py`
+  - Contract: when a persistent ACP session creates a route-backed provider
+    thread binding but ACP turn dispatch fails, the runtime spawn service calls
+    the binder `unbind` hook with `reason="spawn-failed"`, includes the
+    thread/session binding metadata, and returns the original dispatch error.
+  - Evidence required: focused ACP runtime proof, adjacent ACP/runtime and
+    gateway cleanup proofs, ruff, mypy
+  - Status: checkpointed in `1a92baa2`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green ACP cleanup proof (`1 failed`
+    before implementation because no unbind ran, then `1 passed`), ACP runtime
+    suite (`23 passed`), adjacent gateway thread cleanup proof (`8 passed, 1272
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] ACP accepted-spawn registration-failure cleanup for `sessions.spawn`.
+  - Source: `openclaw-main/src/agents/acp-spawn.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: when ACP runtime spawn returns `accepted` but local gateway
+    session registration fails, OpenZues best-effort unbinds the returned thread
+    binding, cancels/closes ACP runtime ids, deletes partial local state, and
+    returns `errorCode="spawn_failed"` with the original registration error.
+  - Evidence required: focused ACP gateway proof, adjacent ACP/thread gateway
+    proof, ruff, mypy
+  - Status: checkpointed in `2236d019`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green ACP registration cleanup proof
+    (`1 failed` before implementation because the metadata failure escaped,
+    then `1 passed`), adjacent ACP gateway proof (`7 passed, 1274 deselected`),
+    ruff, mypy, and focused `git diff --check`.
+
+- [x] Device token rotation preserves existing scopes when omitted.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: a second `device.token.rotate` call without `scopes` uses the
+    previous token scopes instead of clearing them.
+  - Evidence required: focused device-token proof, adjacent device/pairing
+    proof, ruff, mypy
+  - Status: checkpointed in `936bdc9b`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green proof (`1 failed` before
+    implementation, then `1 passed`), adjacent proof (`5 passed, 1277
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] Local QR password SecretRef resolution.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: local `openzues qr` resolves `gateway.auth.password`
+    SecretRefs before setup-code auth-label selection when no explicit CLI
+    auth override is provided, and keeps the resolved password out of output.
+  - Evidence required: focused QR local SecretRef proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `8dbfb15b`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green proof (`1 failed` before
+    implementation with `auth="bootstrap-token"`, then `1 passed`), adjacent
+    QR proof (`16 passed, 609 deselected`), ruff, mypy, and focused
+    `git diff --check`.
 
 - [x] Gateway method registry, policy wiring, strict parameter guards, config
   lookup/mutation, node invoke guards, device pairing, approvals, and node/global
@@ -7620,6 +7773,49 @@ may lag behind this tracker.
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
 
+- [x] `OZ-PROV-001GU` Matrix implicit reply fanout.
+  - Source: `openclaw-main/src/plugin-sdk/reply-payload.ts`,
+    `openclaw-main/src/plugin-sdk/reply-payload.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: route-backed Matrix media/text fanout applies implicit
+    `replyToId` only to the first provider send when `replyToIdSource` is
+    `implicit` and the reply mode is `first` or `batched`; explicit replies
+    remain reusable.
+  - Evidence required: focused Matrix media reply-fanout proof, adjacent
+    Matrix native-route proof, ruff, mypy
+  - Status: checkpointed in `f837d7f2`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_matrix_media_uses_implicit_reply_once -q`
+    (`1 failed` before implementation because the second media payload still
+    had `m.relates_to`, then `1 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "matrix_native_route or matrix_media or matrix_audio or matrix_send"`
+    (`7 passed, 501 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001GV` IRC media attachment formatting.
+  - Source: `openclaw-main/extensions/irc/src/channel.ts`,
+    `openclaw-main/extensions/irc/src/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: route-backed IRC media sends render `Attachment: <url>` blocks
+    from provider media URLs and append reply markers after attachments,
+    matching OpenClaw's IRC `sendMedia` path.
+  - Evidence required: focused IRC native-route proof, adjacent IRC/provider
+    proof, ruff, mypy
+  - Status: checkpointed in `08be87cc`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_irc_native_route -q`
+    (`1 failed` before implementation because the message used generic media
+    summary/raw URL formatting, then `1 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "irc_native_route or irc_probe or uses_irc_native_route or irc"`
+    (`3 passed, 505 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
 - [x] Zalo user `channels.logout` runtime profile cleanup.
   - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,
     `openclaw-main/extensions/zalouser/src/channel.ts`,
@@ -9435,6 +9631,28 @@ may lag behind this tracker.
     src\openzues\schemas.py tests\test_cli.py`, `mypy src\openzues\cli.py
     src\openzues\schemas.py`, and focused `git diff --check`.
 
+- [x] QR local password SecretRef resolution.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`,
+    `openclaw-main/src/gateway/resolve-configured-secret-input-string.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: non-remote QR setup-code generation resolves env/file/exec-shaped
+    local `gateway.auth.password` SecretRefs through the native QR SecretRef
+    helpers when upstream would materialize the local password, reports
+    `auth="password"`, and never prints the resolved secret.
+  - Evidence required: focused local QR password SecretRef proof, adjacent QR
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `8dbfb15b`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_local_json_resolves_gateway_password_secretref -q`
+    (`1 failed` before implementation because the JSON payload reported
+    `auth="bootstrap-token"`, then `1 passed`), adjacent
+    `python -m pytest tests\test_cli.py -q -k "qr_"` (`16 passed, 609
+    deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+    src\openzues\cli.py`, and focused `git diff --check`.
+
 - [x] Direct outbound `channelData`-only payloads.
   - Source: `openclaw-main/src/infra/outbound/deliver.ts`,
     `openclaw-main/src/infra/outbound/deliver.test.ts`,
@@ -10678,6 +10896,543 @@ may lag behind this tracker.
     passed, 598 deselected`), `ruff check src\openzues\cli.py
     tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
     --check`.
+
+- [x] `OZ-PKG-001DE` Docker runtime home bootstrap.
+  - Source: `openclaw-main/Dockerfile`,
+    `openclaw-main/src/dockerfile.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `Dockerfile`, `tests/test_packaging_dockerfile.py`
+  - Contract: the runtime Docker stage creates `/home/node/.openzues` with
+    `node:node` ownership and mode `700` before `USER node`; the Dockerfile
+    uses `install -d -m 0700 -o node -g node` and verifies the resulting
+    ownership/mode instead of a loose `mkdir -p`.
+  - Evidence required: focused Dockerfile packaging proof, adjacent packaging
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `a6e64d0e`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_packaging_dockerfile.py::test_dockerfile_precreates_openzues_home_before_user_node -q`
+    (`1 failed` before implementation because `Dockerfile` was missing, then
+    `1 passed`), adjacent
+    `python -m pytest tests\test_cli.py -q -k "package_distribution or package_dist"`
+    (`8 passed, 617 deselected`), `ruff check
+    tests\test_packaging_dockerfile.py`, `mypy
+    tests\test_packaging_dockerfile.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001GW` Discord multi-media implicit reply fanout.
+  - Source: `openclaw-main/src/plugin-sdk/reply-payload.test.ts`,
+    `openclaw-main/extensions/discord/src/outbound-adapter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: route-backed Discord multi-media sends consume implicit
+    `replyToId` once across media webhook fanout for `replyToMode="first"` or
+    `"batched"`, while explicit reply ids remain reusable.
+  - Evidence required: focused Discord media reply fanout proof, adjacent
+    Discord provider proof, ruff, mypy
+  - Status: checkpointed in `0d06982e`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_iterates_discord_media -q`
+    (`1 failed` before implementation because the second media payload still
+    had `message_reference`, then `1 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "discord_native_route or discord_media or discord_video or discord_audio_as_voice or discord_reply or discord_thread_query"`
+    (`7 passed, 501 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001GX` Google Chat upload-file message action.
+  - Source: `openclaw-main/extensions/googlechat/src/actions.ts`,
+    `openclaw-main/extensions/googlechat/src/actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Google Chat `message.action upload-file` resolves the native
+    route/account, accepts OpenClaw `media` / `filePath` / `path`, caption,
+    filename/title, and thread/reply options, uploads the attachment through
+    the provider-backed upload endpoint, sends `attachmentDataRef`, and returns
+    message, chat, media id, filename, and thread metadata.
+  - Evidence required: focused Google Chat upload-file action proof, adjacent
+    Google Chat provider proof, ruff, mypy
+  - Status: checkpointed in `1b08e340`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_dispatch_googlechat_upload_file_message_action_uses_attachment_upload_path -q`
+    (`1 failed` before implementation because `dispatch_message_action`
+    returned `None`, then `1 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "googlechat and (message_action or direct_channel_message)"`
+    (`4 passed, 505 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001GY` Google Chat reaction message actions.
+  - Source: `openclaw-main/extensions/googlechat/src/actions.ts`,
+    `openclaw-main/extensions/googlechat/src/actions.test.ts`,
+    `openclaw-main/extensions/googlechat/src/api.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Google Chat `message.action react` / `reactions` resolves the
+    native route/account, uses provider-backed reaction list/create/delete
+    endpoints, removes only `users/app` or configured-bot reactions, filters
+    removal by emoji when provided, and preserves user-owned reactions.
+  - Evidence required: focused Google Chat reaction action proof, adjacent
+    Google Chat provider proof, ruff, mypy
+  - Status: checkpointed in `5dc2fce1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_dispatch_googlechat_react_remove_only_deletes_bot_reactions -q`
+    (`1 failed` before implementation because `dispatch_message_action`
+    returned `None`, then `1 passed`), adjacent
+    `python -m pytest tests\test_ops_mesh.py -q -k "googlechat"` (`6 passed,
+    504 deselected`), `ruff check
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+    src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001Y` Device token approved-role rotation gate.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/infra/device-pairing.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/database.py`,
+    `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_node_pairing_refresh.py`
+  - Contract: pairing requests persist approved `role` / `roles` / `scopes`
+    into paired-device snapshots; `device.token.rotate` and token revocation
+    deny roles that were never approved, return OpenClaw-shaped denial through
+    the gateway method, and leave paired-device token state unchanged.
+  - Evidence required: focused device-token authz proof, adjacent device pair
+    gateway proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `7d2e4cbf`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_rejects_role_not_approved_by_pairing -q`
+    (`1 failed` before implementation because `node.pair.request` rejected
+    `role`, then `1 passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_pair_family"`
+    (`6 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001Z` Device token approved-scope rotation baseline.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/infra/device-pairing.test.ts`,
+    `openclaw-main/src/shared/operator-scope-compat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `device.token.rotate` resolves requested scopes from explicit
+    input or the existing token, rejects scopes outside the paired device's
+    approved scope baseline, honors operator admin/write/read compatibility,
+    requires exact role-prefixed scopes for non-operator roles, and leaves
+    existing token state unchanged on denial.
+  - Evidence required: focused scope-baseline proof, adjacent device token/pair
+    proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `46bbf88c`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_rejects_scope_outside_approved_baseline -q`
+    (`1 failed` before implementation because the rotation did not raise, then
+    `1 passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_family"`
+    (`7 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AA` Requested operator-scope pairing approval gate.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/infra/device-pairing.test.ts`,
+    `openclaw-main/src/shared/operator-scope-compat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `device.pair.approve` keeps pending requests unresolved when
+    requested operator scopes are present but the approver has no caller-scope
+    context or lacks a compatible operator scope; command-scope approval
+    requirements remain intact.
+  - Evidence required: focused requested-scope approval proof, adjacent device
+    token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `ce45043b`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_approve_rejects_requested_operator_scope_without_caller_scope -q`
+    (`1 failed` before implementation because approval succeeded, then `1
+    passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_pair_family"`
+    (`8 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AB` Inherited-scope rotation caller gate.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/infra/device-pairing.test.ts`,
+    `openclaw-main/src/shared/operator-scope-compat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `device.token.rotate` resolves omitted `scopes` from the
+    existing token and then checks the resolved scope set against the caller's
+    scopes before writing a new token; denied rotations leave the previous
+    token and `rotatedAtMs` unchanged.
+  - Evidence required: focused inherited-scope rotation proof, adjacent device
+    token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `e8214d65`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_rejects_inherited_scope_without_caller_scope -q`
+    (`1 failed` before implementation because the rotation did not raise, then
+    `1 passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_pair_family"`
+    (`9 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AC` Scoped token revocation caller gate.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/infra/device-pairing.test.ts`,
+    `openclaw-main/src/shared/operator-scope-compat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `device.token.revoke` checks the target token's scopes against
+    caller scopes before mutating token state; insufficient callers get a
+    revocation denial and the token remains unrevoked.
+  - Evidence required: focused scoped revocation proof, adjacent device
+    token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `1acdb73c`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_token_revoke_rejects_target_scope_without_caller_scope -q`
+    (`1 failed` before implementation because revocation succeeded, then `1
+    passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_family"`
+    (`10 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AD` Pairing repair inherited-token scope gate.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/infra/device-pairing.test.ts`,
+    `openclaw-main/src/shared/operator-scope-compat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: approving a repair request with omitted scopes preserves the
+    existing approved roles/scopes and persisted token summaries; callers that
+    cannot hold the inherited operator token scopes get a forbidden approval
+    response before state mutation.
+  - Evidence required: focused repair preserve/deny proof, adjacent device
+    token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `5f7c8445`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope -q`
+    (`1 failed` before implementation because approval succeeded, then `1
+    passed`), paired focused proof
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_approve_repair_preserves_existing_token_scopes tests\test_gateway_node_methods.py::test_device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope -q`
+    (`2 passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_pair_family"`
+    (`12 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AE` Cross-device token mutation guard.
+  - Source: `openclaw-main/src/gateway/server.device-token-rotate-authz.test.ts`,
+    `openclaw-main/src/gateway/server-methods/devices.ts`,
+    `openclaw-main/src/infra/device-pairing.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `device.token.rotate` and `device.token.revoke` deny mutations
+    when the requester is bound to a different device and lacks admin scope,
+    leaving the target token unchanged.
+  - Evidence required: focused cross-device mutation proof, adjacent device
+    token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `8afff4f9`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_revoke_rejects_other_device_requester -q`
+    (`1 failed` before implementation because rotation succeeded, then `1
+    passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_pair_family"`
+    (`13 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AF` Operator-admin device-token scope compatibility.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/shared/operator-scope-compat.ts`,
+    `openclaw-main/src/gateway/server.device-token-rotate-authz.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: pairing approval and `device.token.rotate` preflight treat
+    `operator.admin` as satisfying lower/custom operator scopes before
+    dispatch, so admin callers can down-scope device tokens without exact
+    scope-string duplication.
+  - Evidence required: focused admin-superset rotation proof, adjacent device
+    token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `40f822d9`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_treats_admin_scope_as_operator_superset -q`
+    (`1 failed` before implementation because approval/rotation failed on
+    exact-scope matching, then `1 passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+    (`14 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AG` Approval-seeded device-auth tokens.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/gateway/server-methods/devices.ts`,
+    `openclaw-main/src/gateway/control-ui.http.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: approving a pairing request seeds device-auth token rows for
+    requested roles, approval/list responses project public token summaries,
+    later rotations preserve approval-created `createdAtMs`, and repair
+    approval rotates existing token rows without widening scopes.
+  - Evidence required: focused approval-seeded token proof, adjacent device
+    token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `6489ac37`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_approve_seeds_requested_role_token_summary -q`
+    (`1 failed` before implementation because approval returned no token
+    summaries, then `1 passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+    (`15 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AH` Rotated-token raw-value redaction.
+  - Source: `openclaw-main/src/gateway/server-methods/devices.ts`,
+    `openclaw-main/src/gateway/server.device-token-rotate-authz.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `device.token.rotate` includes the raw rotated token only when
+    the requester is bound to the target device; unbound/admin-style callers
+    receive metadata without the raw token.
+  - Evidence required: focused raw-redaction and same-device return proof,
+    adjacent device token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `5d99e094`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_omits_raw_token_for_unbound_requester -q`
+    (`1 failed` before implementation because the raw token was returned, then
+    `1 passed`), paired focused proof
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_omits_raw_token_for_unbound_requester tests\test_gateway_node_methods.py::test_device_token_rotate_returns_raw_token_for_same_device_requester -q`
+    (`2 passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_rotate_omits_raw_token_for_unbound_requester or device_token_rotate_returns_raw_token_for_same_device_requester or device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+    (`17 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AI` Cross-device pairing removal guard.
+  - Source: `openclaw-main/src/gateway/server-methods/devices.ts`,
+    `openclaw-main/src/gateway/server.device-token-rotate-authz.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `device.pair.remove` denies non-admin requesters bound to a
+    different device before mutating state, preserving the target pairing.
+  - Evidence required: focused cross-device remove denial proof, adjacent
+    device token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `b3285bc1`
+  - Weight: 1
+  - Last verified: 2026-05-12, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_remove_rejects_other_device_requester -q`
+    (`1 failed` before implementation because removal succeeded, then `1
+    passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_remove_rejects_other_device_requester or device_token_rotate_omits_raw_token_for_unbound_requester or device_token_rotate_returns_raw_token_for_same_device_requester or device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+    (`18 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AJ` Cross-device pairing resolution guard.
+  - Source: `openclaw-main/src/gateway/server-methods/devices.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `device.pair.approve` and `device.pair.reject` deny
+    non-admin requesters bound to a different device before resolving a
+    pending request, preserving pending state and returning OpenClaw-shaped
+    approval/rejection denied errors.
+  - Evidence required: focused approve/reject cross-device denial proof,
+    adjacent device token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `927cb1e2`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_approve_reject_rejects_other_device_requester -q`
+    (`1 failed` before implementation because approval succeeded, then `1
+    passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_approve_reject_rejects_other_device_requester or device_pair_remove_rejects_other_device_requester or device_token_rotate_omits_raw_token_for_unbound_requester or device_token_rotate_returns_raw_token_for_same_device_requester or device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+    (`19 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AK` Device-bound pairing list visibility.
+  - Source: `openclaw-main/src/gateway/server-methods/devices.ts`,
+    `openclaw-main/src/gateway/server-methods/devices.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: `device.pair.list` filters pending and paired records to the
+    caller device for non-admin device-bound requesters, while admin-scoped
+    and unbound operator callers keep the full list.
+  - Evidence required: focused device-bound list visibility proof, adjacent
+    device token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `2781c38d`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_list_filters_device_bound_non_admin_requester -q`
+    (`1 failed` before implementation because an unrelated pending request
+    was visible, then `1 passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_list_filters_device_bound_non_admin_requester or device_pair_approve_reject_rejects_other_device_requester or device_pair_remove_rejects_other_device_requester or device_token_rotate_omits_raw_token_for_unbound_requester or device_token_rotate_returns_raw_token_for_same_device_requester or device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+    (`20 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AL` Device-auth active-client disconnect lifecycle.
+  - Source: `openclaw-main/src/gateway/server-methods/devices.ts`,
+    `openclaw-main/src/gateway/server-methods/devices.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: after successful `device.pair.remove`, `device.token.rotate`,
+    or `device.token.revoke`, active node sessions for the affected device are
+    disconnected; failed mutations leave live sessions untouched.
+  - Evidence required: focused remove/rotate/revoke disconnect proof,
+    adjacent device token/pair proof, pairing refresh proof, ruff, mypy
+  - Status: checkpointed in `4aa51161`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_remove_disconnects_active_node_session tests\test_gateway_node_methods.py::test_device_token_rotate_revoke_disconnects_active_node_session -q`
+    (`2 failed` before implementation because active node sessions remained
+    registered, then `2 passed`), adjacent gateway proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_remove_disconnects_active_node_session or device_token_rotate_revoke_disconnects_active_node_session or device_pair_list_filters_device_bound_non_admin_requester or device_pair_approve_reject_rejects_other_device_requester or device_pair_remove_rejects_other_device_requester or device_token_rotate_omits_raw_token_for_unbound_requester or device_token_rotate_returns_raw_token_for_same_device_requester or device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+    (`22 passed, 1280 deselected`), adjacent pairing refresh proof
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+    passed`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AM` Terminal QR rendering.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/media/qr-terminal.ts`
+  - References: Hermes/Warp `none`
+  - Target: `pyproject.toml`, `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: human `openzues qr` output renders a terminal QR for the setup
+    code when ASCII output is enabled, while `--setup-code-only` and `--json`
+    remain machine-readable and do not include the QR art.
+  - Evidence required: focused terminal QR proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `f534bf71`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_human_output_renders_terminal_qr -q`
+    (`1 failed` before implementation because the placeholder was emitted,
+    then `1 passed`), adjacent QR CLI proof
+    `python -m pytest tests\test_cli.py -q -k "qr_"` (`17 passed, 609
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AN` Ambiguous QR auth-mode rejection.
+  - Source: `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: local `openzues qr` setup-code generation fails before issuing
+    a bootstrap token when both gateway auth token and password SecretRefs are
+    configured and `gateway.auth.mode` is unset.
+  - Evidence required: focused ambiguous-auth proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `e7c1059c`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_rejects_inferred_token_password_secretrefs_before_token_issue -q`
+    (`1 failed` before implementation because a setup code was issued, then
+    `1 passed`), adjacent QR CLI proof
+    `python -m pytest tests\test_cli.py -q -k "qr_"` (`18 passed, 609
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AO` Device CLI terminal-output sanitization.
+  - Source: `openclaw-main/src/cli/devices-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: human `openzues devices list` output strips ANSI/OSC escape
+    sequences, C0/C1 control characters, and DEL from device-controlled
+    pending/paired display fields before writing terminal output.
+  - Evidence required: focused human-output sanitization proof, adjacent device
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `bcb27a80`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_cli.py::test_devices_list_human_output_sanitizes_device_controlled_fields -q`
+    (`1 failed` before implementation because escape characters reached
+    stdout, then `1 passed`), adjacent device CLI proof
+    `python -m pytest tests\test_cli.py -q -k "devices_list or devices_approve_latest or devices_clear or devices_mutation_commands or devices_remote_mutation or devices_list_human_output_sanitizes_device_controlled_fields"`
+    (`18 passed, 610 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001AP` Device CLI upgrade-context rendering.
+  - Source: `openclaw-main/src/cli/devices-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: human `openzues devices list` output renders requested versus
+    approved access and OpenClaw-shaped approval-kind labels for pending device
+    upgrades.
+  - Evidence required: focused pending-upgrade rendering proof, adjacent device
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `71dac773`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_cli.py::test_devices_list_human_output_renders_requested_and_approved_access -q`
+    (`1 failed` before implementation because `Requested`, `Approved`, and
+    `scope upgrade` were absent, then `1 passed`), adjacent device CLI proof
+    `python -m pytest tests\test_cli.py -q -k "devices_list_human_output_sanitizes_device_controlled_fields or devices_list_human_output_renders_requested_and_approved_access or devices_list or devices_approve_latest or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+    (`19 passed, 610 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001AQ` Device CLI public-key mismatch handling.
+  - Source: `openclaw-main/src/cli/devices-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: human `openzues devices list` pending approval context matches
+    paired approvals by normalized device id only when both present public keys
+    agree, treating key-mismatched rows as new pairings.
+  - Evidence required: focused key-mismatch proof, adjacent device CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `706f23e0`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_cli.py::test_devices_list_human_output_treats_public_key_mismatch_as_new_pairing -q`
+    (`1 failed` before implementation because the old paired access was reused
+    as a `scope upgrade`, then `1 passed`), adjacent device CLI proof
+    `python -m pytest tests\test_cli.py -q -k "devices_list_human_output_treats_public_key_mismatch_as_new_pairing or devices_list_human_output_renders_requested_and_approved_access or devices_list_human_output_sanitizes_device_controlled_fields or devices_list or devices_approve_latest or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+    (`20 passed, 610 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001AR` Device approve human preview context.
+  - Source: `openclaw-main/src/cli/devices-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: implicit/latest `openzues devices approve` human previews render
+    the selected pending device with paired approval context and upgrade
+    guidance, then require an explicit approval rerun.
+  - Evidence required: focused approve-preview proof, adjacent device CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `091d01dd`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_cli.py::test_devices_approve_latest_human_renders_selected_approval_context -q`
+    (`1 failed` before implementation because approved access rendered as
+    `none`, then `1 passed`), adjacent device CLI proof
+    `python -m pytest tests\test_cli.py -q -k "devices_approve_latest_human_renders_selected_approval_context or devices_approve_latest or devices_list_human_output_treats_public_key_mismatch_as_new_pairing or devices_list_human_output_renders_requested_and_approved_access or devices_list_human_output_sanitizes_device_controlled_fields or devices_list or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+    (`21 passed, 610 deselected`), ruff, mypy, and focused
+    `git diff --check`.
 
 ## Update Rule
 

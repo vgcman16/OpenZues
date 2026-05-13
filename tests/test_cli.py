@@ -155,6 +155,26 @@ def test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload(
     assert record["profile"]["scopes"] == list(BOOTSTRAP_HANDOFF_OPERATOR_SCOPES)
 
 
+def test_qr_human_output_renders_terminal_qr(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Pairing QR" in result.stdout
+    assert "(terminal QR rendering is unavailable" not in result.stdout
+    assert "Setup code:" in result.stdout
+    assert any(block in result.stdout for block in ("█", "▀", "▄"))
+
+
 def test_qr_default_loopback_requires_explicit_reachable_url_before_token_issue(
     tmp_path, monkeypatch
 ) -> None:
@@ -235,6 +255,125 @@ def test_qr_setup_code_only_allows_private_lan_cleartext_url(
     assert result.exit_code == 0, result.stdout
     payload = _decode_base64url_json(result.stdout.strip())
     assert payload["url"] == "ws://192.168.1.8:18789"
+
+
+def test_qr_local_json_resolves_gateway_password_secretref(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("QR_LOCAL_GATEWAY_PASSWORD", "local-password-secret")
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+    monkeypatch.delenv("OPENCLAW_GATEWAY_PASSWORD", raising=False)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {
+                        "mode": "password",
+                        "password": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "QR_LOCAL_GATEWAY_PASSWORD",
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--json",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "local-password-secret" not in result.stdout
+    assert "local-password-secret" not in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://gateway.example.test:18789"
+    assert payload["auth"] == "password"
+    assert payload["urlSource"] == "cli.url"
+
+
+def test_qr_rejects_inferred_token_password_secretrefs_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("QR_INFERRED_GATEWAY_TOKEN", "inferred-token")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "secrets": {"providers": {"default": {"source": "env"}}},
+                "gateway": {
+                    "auth": {
+                        "token": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "QR_INFERRED_GATEWAY_TOKEN",
+                        },
+                        "password": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "MISSING_LOCAL_GATEWAY_PASSWORD",
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "gateway.auth.mode is unset" in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
 def test_qr_remote_requires_explicit_remote_url_before_token_issue(
@@ -772,6 +911,150 @@ def test_devices_list_json_calls_device_pair_list(monkeypatch) -> None:
     assert json.loads(result.stdout) == {"pending": [], "paired": []}
 
 
+def test_devices_list_human_output_sanitizes_device_controlled_fields(
+    monkeypatch,
+) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            assert method == "device.pair.list"
+            assert params == {}
+            return {
+                "pending": [
+                    {
+                        "requestId": "req-1",
+                        "deviceId": "device-1",
+                        "displayName": "Bad\x1b[2J\nName",
+                        "role": "operator",
+                        "scopes": ["operator.admin"],
+                        "remoteIp": "10.0.0.9\rspoof",
+                        "ts": 1,
+                    },
+                ],
+                "paired": [
+                    {
+                        "deviceId": "device-1",
+                        "displayName": "Pair\x1b]8;;https://evil.example\x1b\\ed",
+                        "roles": ["operator"],
+                        "scopes": ["operator.read"],
+                        "remoteIp": "10.0.0.1\x7f",
+                    },
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "list"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "\x1b" not in result.stdout
+    assert "\r" not in result.stdout
+    assert "\x7f" not in result.stdout
+    assert "BadName" in result.stdout
+    assert "spoof" in result.stdout
+    assert "Paired" in result.stdout
+
+
+def test_devices_list_human_output_renders_requested_and_approved_access(
+    monkeypatch,
+) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            assert method == "device.pair.list"
+            assert params == {}
+            return {
+                "pending": [
+                    {
+                        "requestId": "req-1",
+                        "deviceId": "device-1",
+                        "displayName": "Device One",
+                        "role": "operator",
+                        "scopes": ["operator.admin", "operator.read"],
+                        "ts": 1,
+                    },
+                ],
+                "paired": [
+                    {
+                        "deviceId": "device-1",
+                        "displayName": "Device One",
+                        "roles": ["operator"],
+                        "scopes": ["operator.read"],
+                    },
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "list"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Requested" in result.stdout
+    assert "Approved" in result.stdout
+    assert "operator.write" in result.stdout
+    assert "operator.read" in result.stdout
+    assert "scope upgrade" in result.stdout
+
+
+def test_devices_list_human_output_treats_public_key_mismatch_as_new_pairing(
+    monkeypatch,
+) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            assert method == "device.pair.list"
+            assert params == {}
+            return {
+                "pending": [
+                    {
+                        "requestId": "req-1",
+                        "deviceId": "device-1",
+                        "publicKey": "new-key",
+                        "displayName": "Device One",
+                        "role": "operator",
+                        "scopes": ["operator.admin"],
+                        "ts": 1,
+                    },
+                ],
+                "paired": [
+                    {
+                        "deviceId": "device-1",
+                        "publicKey": "old-key",
+                        "displayName": "Device One",
+                        "roles": ["operator"],
+                        "scopes": ["operator.read"],
+                    },
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "list"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "new pairing" in result.stdout
+    assert "scope upgrade" not in result.stdout
+    assert "roles: operator; scopes: operator.read" not in result.stdout
+
+
 def test_devices_approve_json_calls_device_pair_approve(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
@@ -877,6 +1160,58 @@ def test_devices_approve_latest_json_includes_approval_state(monkeypatch) -> Non
         },
         "approved": {"roles": ["operator"], "scopes": ["operator.read"]},
     }
+
+
+def test_devices_approve_latest_human_renders_selected_approval_context(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            assert method == "device.pair.list"
+            assert params == {}
+            return {
+                "pending": [
+                    {
+                        "requestId": "req-abc",
+                        "deviceId": "device-9",
+                        "displayName": "Device Nine",
+                        "role": "operator",
+                        "scopes": ["operator.admin"],
+                        "remoteIp": "10.0.0.9",
+                        "ts": 1000,
+                    },
+                ],
+                "paired": [
+                    {
+                        "deviceId": "device-9",
+                        "displayName": "Device Nine",
+                        "roles": ["operator"],
+                        "scopes": ["operator.read"],
+                    },
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "approve"])
+
+    assert result.exit_code == 1
+    assert calls == [("device.pair.list", {})]
+    assert "req-abc" in result.stdout
+    assert "Device Nine" in result.stdout
+    assert "Approved: roles: operator; scopes: operator.read" in result.stdout
+    assert "Requested scopes exceed the current approval" in result.stdout
+    assert "openzues devices approve req-abc" in result.stderr
 
 
 def test_devices_approve_latest_json_preserves_gateway_flags_without_secrets(

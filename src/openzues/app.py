@@ -2715,6 +2715,10 @@ def create_app(
         save_session=save_setup_wizard_session,
         list_instances=active_manager.list_views,
     )
+    active_subagent_thread_binder = GatewaySubagentThreadBinderRegistry(
+        list_notification_route_views=active_ops_mesh_service.list_notification_route_views,
+        message_action_dispatcher=active_ops_mesh_service.dispatch_message_action,
+    )
 
     if active_gateway_node_method_service is None:
         active_gateway_node_method_service = GatewayNodeMethodService(
@@ -2746,12 +2750,10 @@ def create_app(
             acp_spawn_service=RuntimeManagerAcpSpawnService(
                 active_manager,
                 parent_stream_relay=FileAcpParentStreamRelay(active_settings.data_dir),
+                thread_binder=active_subagent_thread_binder,
             ),
             sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(active_manager),
-            subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
-                list_notification_route_views=active_ops_mesh_service.list_notification_route_views,
-                message_action_dispatcher=active_ops_mesh_service.dispatch_message_action,
-            ),
+            subagent_thread_binder=active_subagent_thread_binder,
             chat_send_service=submit_gateway_chat_message,
             chat_attachment_send_service=submit_gateway_chat_attachment_message,
             send_apns_push_service=active_gateway_apns_push_service.send_push,

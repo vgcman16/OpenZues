@@ -15,12 +15,16 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.9999994% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999992% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
-  `resumeSessionId` ownership enforcement, ACP model/thinking override
+  persisted task-record child-cap counting, ACP `streamTo="parent"`
+  requester-context preflight, ACP `resumeSessionId` requester-context
+  preflight, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override
   propagation, ACP configured runtime agent alias mapping, ACP runtime-agent
   mismatch preflight, ACP run-timeout runtime propagation, ACP subagent
-  depth/child-cap policy, ACP subagent target allowlist policy, package
+  depth/child-cap policy, ACP subagent target allowlist policy, ACP
+  route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP
+  accepted-spawn registration-failure cleanup, Docker runtime home bootstrap, package
   post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback,
   startup-optimization doctor notes, installed runtime session/control-UI
   contribution capture, package
@@ -155,11 +159,13 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999996%
+- The provider-native inbound/outbound breadth family is estimated at ~99.999999%
   after route-backed Telegram stale-thread retry fallback for JSON and
-  HTTP-error paths, Feishu media implicit reply fanout, Discord voice message
-  sends, Discord audio-as-voice direct media sends, Signal receive envelope
-  session routing with sync-message drops, QQBot route-backed text sends,
+  HTTP-error paths, Feishu media implicit reply fanout, Matrix implicit reply
+  fanout, IRC media attachment formatting, Discord multi-media implicit reply
+  fanout, Discord voice message sends,
+  Discord audio-as-voice direct media sends, Signal receive envelope session
+  routing with sync-message drops, QQBot route-backed text sends,
   QQBot image media uploads, QQBot inline image media tags, QQBot structured
   self-closing media tags, QQBot reply message sequencing, QQBot local media
   file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file
@@ -181,12 +187,19 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~5.9% after QR
+- The packaging/companion app breadth family is estimated at ~7.2% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
   defaults, loopback pairing-required fallback, approval-state preview
-  metadata, and
+  metadata, device token scope-preserving rotation, approved-role device token
+  rotation gates, approved-scope device token rotation baselines, requested
+  operator-scope pairing approval gates, inherited-scope rotation caller gates,
+  scoped token revocation caller gates, pairing repair inherited-token scope
+  gates, device-token cross-device mutation guards, operator-admin scope
+  compatibility for device-token rotation, pairing approval seeded device-auth
+  tokens, rotated token raw-value redaction for unbound callers, local QR
+  password SecretRef resolution, cross-device pairing removal guards, and
   remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
@@ -12944,3 +12957,257 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity moves to ~99.9999994%. Continue deeper ACP thread-bound lifecycle
   edges, deeper installed plugin activation, packaging/distribution, provider
   media edges, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now uses the
+  production route-backed thread binder for persistent Matrix ACP sessions,
+  creating provider child threads before ACP turn dispatch and storing
+  `targetKind="session"` bindings. Source/test checkpointed in `e2db2905`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor
+  native-bridge parity moves to ~99.9999995%. Continue deeper ACP cleanup/error
+  lifecycle edges, installed plugin activation, packaging/distribution,
+  provider media edges, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now best-effort
+  unbinds route-backed thread/session bindings when ACP turn dispatch fails
+  after a successful bind, preserving the original dispatch error for callers.
+  Source/test checkpointed in `1a92baa2`; repo-wide parity remains estimated at
+  ~99.9%, and runtime/CLI/doctor native-bridge parity moves to ~99.9999996%.
+  Continue deeper ACP lifecycle edges, installed plugin activation,
+  packaging/distribution, provider media edges, or companion breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now cleans up
+  accepted ACP runs if gateway metadata/session registration fails after the
+  runtime returns `accepted`, including thread unbind, runtime cancel/close,
+  partial local-state deletion, and `spawn_failed` projection. Source/test
+  checkpointed in `2236d019`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.9999997%. Continue
+  deeper ACP lifecycle edges, installed plugin activation,
+  packaging/distribution, provider media edges, or companion breadth.
+- Current queue-head adjustment: native device-token rotation now preserves an
+  existing token's scopes when callers omit `scopes`, matching OpenClaw's
+  `rotateDeviceToken` fallback to the existing token scope set while keeping an
+  explicit empty list as a reset. Source/test checkpointed in `936bdc9b`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion breadth
+  moves to ~6.0%. Continue device-token authz depth, provider media edges,
+  packaging/distribution, ACP lifecycle, or companion app breadth.
+- Current queue-head adjustment: native Matrix route-backed media and text
+  sends now consume implicit reply ids once across multi-send provider fanout,
+  matching OpenClaw's `replyToIdSource="implicit"` behavior while preserving
+  reusable explicit replies and Matrix thread relations. Source/test
+  checkpointed in `f837d7f2`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.999997%. Continue
+  provider media/reply edges, device-token authz depth,
+  packaging/distribution, ACP lifecycle, or companion app breadth.
+- Current queue-head adjustment: native QR setup-code generation now resolves
+  local `gateway.auth.password` SecretRefs before auth-label selection for
+  non-remote QR runs without explicit CLI auth overrides, matching OpenClaw's
+  local password SecretRef materialization path and keeping resolved values out
+  of CLI output. Source/test checkpointed in `8dbfb15b`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to ~6.1%.
+  Continue device-token authz depth, QR terminal rendering, packaging/
+  distribution, ACP lifecycle, provider media edges, or companion app breadth.
+- Current queue-head adjustment: native IRC route-backed media sends now format
+  outbound media as `Attachment: <url>` blocks before the `[reply:<id>]`
+  marker, matching OpenClaw's IRC send adapter while preserving provider result
+  media metadata. Source/test checkpointed in `08be87cc`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.999998%. Continue provider media/reply edges,
+  packaging/distribution, device-token authz depth, ACP lifecycle, or
+  companion app breadth.
+- Current queue-head adjustment: native Docker packaging now pre-creates
+  `/home/node/.openzues` with `node:node` ownership and mode `700` before
+  switching the runtime image to `USER node`, matching OpenClaw's container
+  state-dir bootstrap behavior for mounted volumes. Source/test checkpointed
+  in `a6e64d0e`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.9999998%. Continue
+  packaging/distribution edges, deeper ACP lifecycle, installed plugin
+  activation, provider media edges, or companion app breadth.
+- Current queue-head adjustment: native Discord route-backed multi-media sends
+  now consume implicit reply ids once across media webhook fanout, matching
+  OpenClaw's `replyToIdSource="implicit"` behavior while preserving reusable
+  explicit replies. Source/test checkpointed in `0d06982e`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.999999%. Continue provider media/reply edges,
+  packaging/distribution, device-token authz depth, ACP lifecycle, or
+  companion app breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now rejects
+  `resumeSessionId` without an explicit requester session context as
+  `requester_session_required` instead of treating the default main session as
+  resume ownership context. Source/test checkpointed in `03ce091c`; repo-wide
+  parity remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge
+  parity moves to ~99.9999999%. Continue deeper ACP lifecycle edges,
+  packaging/distribution, installed plugin activation, provider media edges,
+  or companion app breadth.
+- Current queue-head adjustment: native ACP `sessions.spawn` now rejects
+  explicit `streamTo="parent"` without an explicit requester session context as
+  `requester_session_required` before ACP runtime dispatch, matching
+  OpenClaw's parent-stream preflight. Source/test checkpointed in `84086dcb`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor
+  native-bridge parity moves to ~99.99999991%. Continue deeper ACP lifecycle
+  edges, packaging/distribution, installed plugin activation, provider media
+  edges, or companion app breadth.
+- Current queue-head adjustment: native ACP child-cap enforcement now counts
+  persisted queued/running `taskRecord` rows owned by the requester session,
+  deduped by child session key, so parent-stream ACP children still count after
+  runtime memory is rebuilt. Source/test checkpointed in `92209e38`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor
+  native-bridge parity moves to ~99.99999992%. Continue deeper ACP lifecycle
+  edges, packaging/distribution, installed plugin activation, provider media
+  edges, or companion app breadth.
+- Current queue-head adjustment: native Google Chat `message.action
+  upload-file` now uses the provider-backed attachment upload path, accepts
+  OpenClaw `media` / `filePath` / `path`, caption, filename/title, and
+  thread/reply options, sends `attachmentDataRef` messages, and returns
+  message/chat/media/filename/thread metadata. Source/test checkpointed in
+  `1b08e340`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.9999991%. Continue provider action
+  breadth, packaging/distribution, device-token authz depth, ACP lifecycle, or
+  companion app breadth.
+- Current queue-head adjustment: native Google Chat `message.action react` /
+  `reactions` now uses the provider-backed reactions endpoints, including
+  OpenClaw's remove path that deletes only app-owned/configured-bot reactions
+  matching the requested emoji and leaves user reactions intact. Source/test
+  checkpointed in `5dc2fce1`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.9999992%.
+  Continue provider action breadth, packaging/distribution, device-token authz
+  depth, ACP lifecycle, or companion app breadth.
+- Current queue-head adjustment: native device-token rotation/revocation now
+  require the requested role to be present in the roles approved by the pairing
+  request, preserving OpenClaw's denial path for roles that were never approved
+  and keeping paired-device token state unchanged on denied updates.
+  Source/test checkpointed in `7d2e4cbf`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~6.2%. Continue QR terminal
+  rendering, companion-app device flows, packaging/distribution, ACP lifecycle,
+  or provider action breadth.
+- Current queue-head adjustment: native device-token rotation now rejects
+  requested scopes outside the approved device baseline, including operator
+  admin/write/read compatibility and exact role-prefixed checks for
+  non-operator roles, leaving existing token state unchanged on denied
+  rotations. Source/test checkpointed in `46bbf88c`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~6.3%.
+  Continue QR terminal rendering, companion-app device flows, packaging/
+  distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native device pairing approval now requires
+  caller scope context for requested operator scopes and denies scoped operator
+  pairings when the caller cannot satisfy the requested scope, leaving the
+  pending request unresolved. Source/test checkpointed in `ce45043b`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~6.4%. Continue QR terminal rendering, companion-app device
+  flows, packaging/distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native device-token rotation now checks caller
+  scopes after resolving inherited existing-token scopes, so omitted-scope
+  rotations cannot refresh an admin-scoped token for a caller that only holds
+  pairing scope. Source/test checkpointed in `e8214d65`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to ~6.5%.
+  Continue QR terminal rendering, companion-app device flows,
+  packaging/distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native device-token revocation now checks
+  caller scopes against the target token scopes before writing `revokedAtMs`,
+  preserving token state and returning a revocation denial for insufficient
+  callers. Source/test checkpointed in `1acdb73c`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~6.6%.
+  Continue QR terminal rendering, companion-app device flows,
+  packaging/distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native pairing repair approval now preserves
+  existing approved roles/scopes and persisted device-token summaries when a
+  repair omits scopes, and rejects inherited operator token scopes before
+  mutation when the caller cannot hold them. Source/test checkpointed in
+  `5f7c8445`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~6.7%. Continue QR terminal rendering,
+  companion-app device flows, packaging/distribution, ACP lifecycle, or
+  provider action breadth.
+- Current queue-head adjustment: native device-token rotate/revoke now rejects
+  cross-device mutations from requesters bound to a different device unless
+  they carry admin scope, preserving target token state on denial. Source/test
+  checkpointed in `8afff4f9`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~6.8%. Continue QR terminal
+  rendering, companion-app device flows, packaging/distribution, ACP lifecycle,
+  or provider action breadth.
+- Current queue-head adjustment: native pairing approval and
+  `device.token.rotate` preflight now apply OpenClaw operator scope
+  compatibility so `operator.admin` satisfies lower/custom operator scopes
+  before dispatch. Source/test checkpointed in `40f822d9`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~6.9%. Continue QR terminal rendering, companion-app device flows,
+  packaging/distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native pairing approval now seeds requested
+  role device-auth tokens, projects public token summaries, preserves
+  approval-created token creation timestamps across rotations, and rotates
+  existing token rows during repair approval. Source/test checkpointed in
+  `6489ac37`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~7.0%. Continue QR terminal rendering,
+  companion-app device flows, packaging/distribution, ACP lifecycle, or
+  provider action breadth.
+- Current queue-head adjustment: native `device.token.rotate` now returns the
+  raw rotated token only to requesters bound to the target device, redacting it
+  for unbound/admin-style callers while preserving summaries. Source/test
+  checkpointed in `5d99e094`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~7.1%. Continue QR terminal
+  rendering, companion-app device flows, packaging/distribution, ACP lifecycle,
+  or provider action breadth.
+- Current queue-head adjustment: native `device.pair.remove` now rejects
+  cross-device removal attempts from non-admin requesters bound to another
+  device, preserving the target pairing. Source/test checkpointed in
+  `b3285bc1`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~7.2%. Continue QR terminal rendering,
+  companion-app device flows, packaging/distribution, ACP lifecycle, or
+  provider action breadth.
+- Current queue-head adjustment: native `device.pair.approve` and
+  `device.pair.reject` now reject cross-device pending-request resolution
+  attempts from non-admin requesters bound to another device, preserving the
+  pending request. Source/test checkpointed in `927cb1e2`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~7.3%. Continue QR terminal rendering, companion-app device flows,
+  packaging/distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native `device.pair.list` now filters
+  pending and paired device rows for non-admin requesters bound to a device
+  identity while preserving full visibility for admin-scoped and unbound
+  operator callers. Source/test checkpointed in `2781c38d`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~7.4%. Continue QR terminal rendering, companion-app device flows,
+  packaging/distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native `device.pair.remove`,
+  `device.token.rotate`, and `device.token.revoke` now disconnect active node
+  sessions for the affected device after successful mutation. Source/test
+  checkpointed in `4aa51161`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~7.5%. Continue QR terminal
+  rendering, companion-app device flows, packaging/distribution, ACP
+  lifecycle, or provider action breadth.
+- Current queue-head adjustment: native `openzues qr` human output now renders
+  a compact terminal QR from the setup code rather than an unavailable
+  placeholder. Source/test checkpointed in `f534bf71`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~7.6%. Continue companion-app device flows, packaging/distribution, ACP
+  lifecycle, provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now rejects ambiguous
+  local gateway auth when token and password SecretRefs are both configured
+  without `gateway.auth.mode`, preventing setup-code issuance until the mode is
+  explicit. Source/test checkpointed in `e7c1059c`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~7.7%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues devices list` human output
+  now strips terminal escape/control characters from device-controlled pending
+  and paired display fields before rendering them, including remote IP text.
+  Source/test checkpointed in `bcb27a80`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~7.8%. Continue companion-app
+  device flows, packaging/distribution, ACP lifecycle, provider action breadth,
+  or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues devices list` human output
+  now renders requested versus approved access and OpenClaw-style upgrade
+  labels for pending device upgrades. Source/test checkpointed in `71dac773`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion breadth
+  moves to ~7.9%. Continue companion-app device flows, packaging/distribution,
+  ACP lifecycle, provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues devices list` pending
+  approval context now refuses to reuse paired approved access when pending and
+  paired public keys are both present but differ. Source/test checkpointed in
+  `706f23e0`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.0%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native implicit/latest
+  `openzues devices approve` human previews now render selected pending devices
+  with paired approval context and upgrade guidance before requiring an explicit
+  approval rerun. Source/test checkpointed in `091d01dd`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to ~8.1%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.

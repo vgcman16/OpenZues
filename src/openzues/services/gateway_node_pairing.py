@@ -15,6 +15,9 @@ _NODE_SYSTEM_RUN_COMMANDS = ("system.run.prepare", "system.run")
 PAIRING_GATEWAY_METHOD_SCOPE = "operator.pairing"
 WRITE_GATEWAY_METHOD_SCOPE = "operator.write"
 ADMIN_GATEWAY_METHOD_SCOPE = "operator.admin"
+READ_GATEWAY_METHOD_SCOPE = "operator.read"
+_OPERATOR_ROLE = "operator"
+_OPERATOR_SCOPE_PREFIX = "operator."
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +34,8 @@ class GatewayNodePairingRequest:
     model_identifier: str | None = None
     caps: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
+    scopes: tuple[str, ...] = ()
     remote_ip: str | None = None
     silent: bool | None = None
     ts: int = 0
@@ -50,6 +55,8 @@ class GatewayPairedNode:
     model_identifier: str | None = None
     caps: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
+    scopes: tuple[str, ...] = ()
     bins: tuple[str, ...] = ()
     permissions: dict[str, bool] | None = None
     remote_ip: str | None = None
@@ -72,6 +79,12 @@ class GatewayDeviceAuthToken:
     last_used_at_ms: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class GatewayDeviceTokenMutationDenied:
+    reason: str
+    missing_scope: str | None = None
+
+
 class GatewayNodePairingService:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -89,6 +102,9 @@ class GatewayNodePairingService:
         model_identifier: str | None,
         caps: list[str] | None,
         commands: list[str] | None,
+        role: str | None = None,
+        roles: list[str] | None = None,
+        scopes: list[str] | None = None,
         remote_ip: str | None,
         silent: bool | None,
         now_ms: int,
@@ -114,6 +130,8 @@ class GatewayNodePairingService:
             resolved_model_identifier = model_identifier
             resolved_caps = _string_list(caps)
             resolved_commands = _string_list(commands)
+            resolved_roles = _resolve_pairing_roles(role=role, roles=roles)
+            resolved_scopes = _string_list(scopes)
             resolved_remote_ip = remote_ip
         else:
             persisted_silent = bool(existing_request.silent) and bool(silent)
@@ -151,6 +169,14 @@ class GatewayNodePairingService:
                 if commands is not None
                 else list(existing_request.commands)
             )
+            resolved_roles = (
+                _resolve_pairing_roles(role=role, roles=roles)
+                if role is not None or roles is not None
+                else list(existing_request.roles)
+            )
+            resolved_scopes = (
+                _string_list(scopes) if scopes is not None else list(existing_request.scopes)
+            )
             resolved_remote_ip = (
                 remote_ip if remote_ip is not None else existing_request.remote_ip
             )
@@ -173,6 +199,8 @@ class GatewayNodePairingService:
             model_identifier=resolved_model_identifier,
             caps=resolved_caps,
             commands=resolved_commands,
+            roles=resolved_roles,
+            scopes=resolved_scopes,
             remote_ip=resolved_remote_ip,
             silent=persisted_silent,
             requested_at_ms=now_ms,
@@ -188,6 +216,10 @@ class GatewayNodePairingService:
     async def list_pending(self) -> list[dict[str, object]]:
         rows = await self.database.list_gateway_node_pairing_requests()
         return [_pending_payload(_request_from_row(row)) for row in rows]
+
+    async def get_pending_request(self, request_id: str) -> GatewayNodePairingRequest | None:
+        row = await self.database.get_gateway_node_pairing_request(request_id)
+        return _request_from_row(row) if row is not None else None
 
     async def reject(self, request_id: str) -> dict[str, str] | None:
         row = await self.database.delete_gateway_node_pairing_request(request_id)
@@ -289,6 +321,8 @@ class GatewayNodePairingService:
             model_identifier=resolved_model_identifier,
             caps=resolved_caps,
             commands=resolved_commands,
+            roles=list(existing.roles),
+            scopes=list(existing.scopes),
             bins=resolved_bins,
             permissions=resolved_permissions,
             remote_ip=resolved_remote_ip,
@@ -323,8 +357,8 @@ class GatewayNodePairingService:
         if request_row is None:
             return None
         request = _request_from_row(request_row)
-        missing_scope = _missing_scope(
-            required_scopes=_required_approve_scopes(request.commands),
+        missing_scope = _missing_pairing_approve_scope(
+            request=request,
             caller_scopes=caller_scopes,
         )
         if missing_scope is not None:
@@ -334,6 +368,27 @@ class GatewayNodePairingService:
             }
             return forbidden
         existing = await self.database.get_gateway_node_paired_node(request.node_id)
+        existing_node = _paired_node_from_row(existing) if existing is not None else None
+        approved_roles = _dedupe_scopes(
+            [*(list(existing_node.roles) if existing_node is not None else []), *request.roles]
+        )
+        approved_scopes = _dedupe_scopes(
+            [
+                *(list(existing_node.scopes) if existing_node is not None else []),
+                *request.scopes,
+            ]
+        )
+        inherited_missing_scope = await self._missing_inherited_token_scope(
+            request=request,
+            approved_scopes=approved_scopes,
+            caller_scopes=caller_scopes,
+        )
+        if inherited_missing_scope is not None:
+            forbidden = {
+                "status": "forbidden",
+                "missingScope": inherited_missing_scope,
+            }
+            return forbidden
         created_at_ms = (
             cast(int, existing["created_at_ms"]) if existing is not None else now_ms
         )
@@ -350,12 +405,19 @@ class GatewayNodePairingService:
             model_identifier=request.model_identifier,
             caps=list(request.caps),
             commands=list(request.commands),
+            roles=approved_roles,
+            scopes=approved_scopes,
             bins=[],
             permissions=None,
             remote_ip=request.remote_ip,
             created_at_ms=created_at_ms,
             approved_at_ms=now_ms,
             last_connected_at_ms=None,
+        )
+        await self._upsert_approved_device_tokens(
+            request=request,
+            approved_scopes=approved_scopes,
+            now_ms=now_ms,
         )
         await self.database.delete_gateway_node_pairing_request(request_id)
         paired = _paired_node_from_row(paired_row)
@@ -364,6 +426,89 @@ class GatewayNodePairingService:
             "node": _paired_detail_payload(paired),
         }
         return approved_result
+
+    async def _missing_inherited_token_scope(
+        self,
+        *,
+        request: GatewayNodePairingRequest,
+        approved_scopes: list[str],
+        caller_scopes: tuple[str, ...] | None,
+    ) -> str | None:
+        for role in request.roles:
+            token_scopes = _role_scoped_token_scopes(role, list(request.scopes))
+            if not token_scopes:
+                existing_token_row = await self.database.get_gateway_node_device_token(
+                    request.node_id,
+                    role,
+                )
+                existing_token = (
+                    _device_token_from_row(existing_token_row)
+                    if existing_token_row is not None
+                    else None
+                )
+                token_scopes = _role_scoped_token_scopes(
+                    role,
+                    list(existing_token.scopes)
+                    if existing_token is not None
+                    else approved_scopes,
+                )
+            if role != _OPERATOR_ROLE or not token_scopes:
+                continue
+            if caller_scopes is None:
+                return token_scopes[0]
+            if not _role_scopes_allow(
+                role=role,
+                requested_scopes=token_scopes,
+                allowed_scopes=list(caller_scopes),
+            ):
+                return _missing_role_scope(
+                    role=role,
+                    requested_scopes=token_scopes,
+                    allowed_scopes=list(caller_scopes),
+                )
+        return None
+
+    async def _upsert_approved_device_tokens(
+        self,
+        *,
+        request: GatewayNodePairingRequest,
+        approved_scopes: list[str],
+        now_ms: int,
+    ) -> None:
+        for role in request.roles:
+            existing_token_row = await self.database.get_gateway_node_device_token(
+                request.node_id,
+                role,
+            )
+            existing_token = (
+                _device_token_from_row(existing_token_row)
+                if existing_token_row is not None
+                else None
+            )
+            token_scopes = _approved_token_scopes(
+                role=role,
+                requested_scopes=list(request.scopes),
+                approved_scopes=approved_scopes,
+                existing_token=existing_token,
+            )
+            await self.database.upsert_gateway_node_device_token(
+                device_id=request.node_id,
+                role=role,
+                token=secrets.token_urlsafe(32),
+                scopes=token_scopes,
+                created_at_ms=(
+                    existing_token.created_at_ms
+                    if existing_token is not None
+                    else now_ms
+                ),
+                rotated_at_ms=now_ms if existing_token is not None else None,
+                revoked_at_ms=None,
+                last_used_at_ms=(
+                    existing_token.last_used_at_ms
+                    if existing_token is not None
+                    else None
+                ),
+            )
 
     async def verify(self, node_id: str, token: str) -> dict[str, object]:
         paired_row = await self.database.get_gateway_node_paired_node(node_id)
@@ -406,6 +551,7 @@ class GatewayNodePairingService:
         device_id: str,
         role: str,
         scopes: list[str] | None,
+        caller_scopes: tuple[str, ...] | None = None,
         now_ms: int,
     ) -> GatewayDeviceAuthToken | None:
         normalized_device_id = _normalize_device_id(device_id)
@@ -415,12 +561,33 @@ class GatewayNodePairingService:
         paired_node = await self.database.get_gateway_node_paired_node(normalized_device_id)
         if paired_node is None:
             return None
+        paired = _paired_node_from_row(paired_node)
+        if normalized_role not in paired.roles:
+            return None
         existing_row = await self.database.get_gateway_node_device_token(
             normalized_device_id,
             normalized_role,
         )
         existing = _device_token_from_row(existing_row) if existing_row is not None else None
-        resolved_scopes = _string_list(scopes)
+        resolved_scopes = (
+            _string_list(scopes)
+            if scopes is not None
+            else list(existing.scopes)
+            if existing is not None
+            else []
+        )
+        if not _role_scopes_allow(
+            role=normalized_role,
+            requested_scopes=resolved_scopes,
+            allowed_scopes=list(paired.scopes),
+        ):
+            return None
+        if caller_scopes is not None and not _role_scopes_allow(
+            role=normalized_role,
+            requested_scopes=resolved_scopes,
+            allowed_scopes=list(caller_scopes),
+        ):
+            return None
         row = await self.database.upsert_gateway_node_device_token(
             device_id=normalized_device_id,
             role=normalized_role,
@@ -438,8 +605,9 @@ class GatewayNodePairingService:
         *,
         device_id: str,
         role: str,
+        caller_scopes: tuple[str, ...] | None = None,
         now_ms: int,
-    ) -> GatewayDeviceAuthToken | None:
+    ) -> GatewayDeviceAuthToken | GatewayDeviceTokenMutationDenied | None:
         normalized_device_id = _normalize_device_id(device_id)
         normalized_role = _normalize_role(role)
         if normalized_device_id is None or normalized_role is None:
@@ -447,6 +615,29 @@ class GatewayNodePairingService:
         paired_node = await self.database.get_gateway_node_paired_node(normalized_device_id)
         if paired_node is None:
             return None
+        paired = _paired_node_from_row(paired_node)
+        if normalized_role not in paired.roles:
+            return None
+        existing_row = await self.database.get_gateway_node_device_token(
+            normalized_device_id,
+            normalized_role,
+        )
+        if existing_row is None:
+            return None
+        existing = _device_token_from_row(existing_row)
+        if caller_scopes is not None and not _role_scopes_allow(
+            role=normalized_role,
+            requested_scopes=list(existing.scopes),
+            allowed_scopes=list(caller_scopes),
+        ):
+            return GatewayDeviceTokenMutationDenied(
+                reason="caller-missing-scope",
+                missing_scope=_missing_role_scope(
+                    role=normalized_role,
+                    requested_scopes=list(existing.scopes),
+                    allowed_scopes=list(caller_scopes),
+                ),
+            )
         row = await self.database.revoke_gateway_node_device_token(
             device_id=normalized_device_id,
             role=normalized_role,
@@ -486,6 +677,8 @@ def _request_from_row(row: dict[str, object]) -> GatewayNodePairingRequest:
         model_identifier=_optional_string(row.get("model_identifier")),
         caps=tuple(_string_list(row.get("caps"))),
         commands=tuple(_string_list(row.get("commands"))),
+        roles=tuple(_string_list(row.get("roles"))),
+        scopes=tuple(_string_list(row.get("scopes"))),
         remote_ip=_optional_string(row.get("remote_ip")),
         silent=silent,
         ts=cast(int, row["requested_at_ms"]),
@@ -507,6 +700,8 @@ def _paired_node_from_row(row: dict[str, object]) -> GatewayPairedNode:
         model_identifier=_optional_string(row.get("model_identifier")),
         caps=tuple(_string_list(row.get("caps"))),
         commands=tuple(_string_list(row.get("commands"))),
+        roles=tuple(_string_list(row.get("roles"))),
+        scopes=tuple(_string_list(row.get("scopes"))),
         bins=tuple(_string_list(row.get("bins"))),
         permissions=permissions if isinstance(permissions, dict) else None,
         remote_ip=_optional_string(row.get("remote_ip")),
@@ -551,6 +746,10 @@ def _request_payload(request: GatewayNodePairingRequest) -> dict[str, object]:
         payload["silent"] = request.silent
     if request.public_key is not None:
         payload["publicKey"] = request.public_key
+    if request.roles:
+        payload["roles"] = list(request.roles)
+    if request.scopes:
+        payload["scopes"] = list(request.scopes)
     return payload
 
 
@@ -575,6 +774,10 @@ def _pending_payload(request: GatewayNodePairingRequest) -> dict[str, object]:
         payload["silent"] = request.silent
     if request.public_key is not None:
         payload["publicKey"] = request.public_key
+    if request.roles:
+        payload["roles"] = list(request.roles)
+    if request.scopes:
+        payload["scopes"] = list(request.scopes)
     return payload
 
 
@@ -605,6 +808,10 @@ def _paired_list_payload(node: GatewayPairedNode) -> dict[str, object]:
         payload["bins"] = list(node.bins)
     if node.public_key is not None:
         payload["publicKey"] = node.public_key
+    if node.roles:
+        payload["roles"] = list(node.roles)
+    if node.scopes:
+        payload["scopes"] = list(node.scopes)
     return payload
 
 
@@ -635,6 +842,10 @@ def _paired_detail_payload(node: GatewayPairedNode) -> dict[str, object]:
         payload["bins"] = list(node.bins)
     if node.public_key is not None:
         payload["publicKey"] = node.public_key
+    if node.roles:
+        payload["roles"] = list(node.roles)
+    if node.scopes:
+        payload["scopes"] = list(node.scopes)
     return payload
 
 
@@ -669,9 +880,159 @@ def _missing_scope(
         return None
     allowed = set(caller_scopes)
     for scope in required_scopes:
-        if scope not in allowed:
+        if not _scope_satisfied(scope, allowed):
             return scope
     return None
+
+
+def _missing_pairing_approve_scope(
+    *,
+    request: GatewayNodePairingRequest,
+    caller_scopes: tuple[str, ...] | None,
+) -> str | None:
+    command_scope = _missing_scope(
+        required_scopes=_required_approve_scopes(request.commands),
+        caller_scopes=caller_scopes,
+    )
+    if command_scope is not None:
+        return command_scope
+    requested_roles = _dedupe_scopes(list(request.roles))
+    requested_scopes = _dedupe_scopes(list(request.scopes))
+    scope_outside_roles = _scope_outside_roles(
+        requested_roles=requested_roles,
+        requested_scopes=requested_scopes,
+    )
+    if scope_outside_roles is not None:
+        return scope_outside_roles
+    if _OPERATOR_ROLE not in requested_roles:
+        return None
+    operator_scopes = [
+        scope for scope in requested_scopes if scope.startswith(_OPERATOR_SCOPE_PREFIX)
+    ]
+    if not operator_scopes:
+        return None
+    if caller_scopes is None:
+        return operator_scopes[0]
+    for scope in operator_scopes:
+        if not _role_scopes_allow(
+            role=_OPERATOR_ROLE,
+            requested_scopes=[scope],
+            allowed_scopes=list(caller_scopes),
+        ):
+            return scope
+    return None
+
+
+def _scope_outside_roles(
+    *,
+    requested_roles: list[str],
+    requested_scopes: list[str],
+) -> str | None:
+    for scope in requested_scopes:
+        if not any(
+            _role_scopes_allow(
+                role=role,
+                requested_scopes=[scope],
+                allowed_scopes=[scope],
+            )
+            for role in requested_roles
+        ):
+            return scope
+    return None
+
+
+def _approved_token_scopes(
+    *,
+    role: str,
+    requested_scopes: list[str],
+    approved_scopes: list[str],
+    existing_token: GatewayDeviceAuthToken | None,
+) -> list[str]:
+    token_scopes = _role_scoped_token_scopes(role, requested_scopes)
+    if token_scopes:
+        return token_scopes
+    if existing_token is not None:
+        return _role_scoped_token_scopes(role, list(existing_token.scopes))
+    return _role_scoped_token_scopes(role, approved_scopes)
+
+
+def _role_scoped_token_scopes(role: str, scopes: list[str]) -> list[str]:
+    normalized_scopes = _dedupe_scopes(scopes)
+    if role == _OPERATOR_ROLE:
+        return [
+            scope
+            for scope in normalized_scopes
+            if scope.startswith(_OPERATOR_SCOPE_PREFIX)
+        ]
+    return [
+        scope
+        for scope in normalized_scopes
+        if not scope.startswith(_OPERATOR_SCOPE_PREFIX)
+    ]
+
+
+def _role_scopes_allow(
+    *,
+    role: str,
+    requested_scopes: list[str],
+    allowed_scopes: list[str],
+) -> bool:
+    requested = _dedupe_scopes(requested_scopes)
+    if not requested:
+        return True
+    allowed = _dedupe_scopes(allowed_scopes)
+    if not allowed:
+        return False
+    allowed_set = set(allowed)
+    if role != _OPERATOR_ROLE:
+        prefix = f"{role}."
+        return all(scope.startswith(prefix) and scope in allowed_set for scope in requested)
+    return all(_operator_scope_satisfied(scope, allowed_set) for scope in requested)
+
+
+def _missing_role_scope(
+    *,
+    role: str,
+    requested_scopes: list[str],
+    allowed_scopes: list[str],
+) -> str | None:
+    for scope in requested_scopes:
+        if not _role_scopes_allow(
+            role=role,
+            requested_scopes=[scope],
+            allowed_scopes=allowed_scopes,
+        ):
+            return scope
+    return None
+
+
+def _operator_scope_satisfied(scope: str, allowed: set[str]) -> bool:
+    if not scope.startswith(_OPERATOR_SCOPE_PREFIX):
+        return False
+    if ADMIN_GATEWAY_METHOD_SCOPE in allowed:
+        return True
+    if scope == READ_GATEWAY_METHOD_SCOPE:
+        return READ_GATEWAY_METHOD_SCOPE in allowed or WRITE_GATEWAY_METHOD_SCOPE in allowed
+    if scope == WRITE_GATEWAY_METHOD_SCOPE:
+        return WRITE_GATEWAY_METHOD_SCOPE in allowed
+    return scope in allowed
+
+
+def _scope_satisfied(scope: str, allowed: set[str]) -> bool:
+    if scope.startswith(_OPERATOR_SCOPE_PREFIX):
+        return _operator_scope_satisfied(scope, allowed)
+    return scope in allowed
+
+
+def _dedupe_scopes(scopes: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for scope in scopes:
+        normalized = scope.strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            deduped.append(normalized)
+    return deduped
 
 
 def _optional_string(value: object) -> str | None:
@@ -693,6 +1054,24 @@ def _normalize_device_id(device_id: str) -> str | None:
 def _normalize_role(role: str) -> str | None:
     trimmed = role.strip()
     return trimmed or None
+
+
+def _resolve_pairing_roles(
+    *,
+    role: str | None,
+    roles: list[str] | None,
+) -> list[str]:
+    resolved: list[str] = []
+    candidates: list[str] = []
+    if roles is not None:
+        candidates.extend(roles)
+    if role is not None:
+        candidates.append(role)
+    for candidate in candidates:
+        normalized = _normalize_role(str(candidate))
+        if normalized is not None and normalized not in resolved:
+            resolved.append(normalized)
+    return resolved
 
 
 def _string_list(value: object) -> list[str]:

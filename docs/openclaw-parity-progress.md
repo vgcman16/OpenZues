@@ -8,21 +8,29 @@
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
-- Estimated packaging/companion app breadth: ~5.9% after QR setup-code
+- Estimated packaging/companion app breadth: ~7.2% after QR setup-code
   safety/SecretRef slices and device pairing CLI list/approve plus
   approve preview gateway/auth flag preservation, remote list/approve gateway
   dispatch, remote mutation dispatch, configured remote URL defaults,
   loopback pairing-required fallback, approval-state preview metadata, and
-  remove/clear/reject/rotate/revoke coverage; companion apps remain broadly
-  open.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.9999994% after the runtime bridge doctor posture, native ACP client interactive replay, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override propagation, ACP configured runtime agent alias mapping, ACP runtime-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, deeper ACP bridge lifecycle edge cases, deeper installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated provider-native inbound/outbound breadth: ~99.999996% after Slack
+  remove/clear/reject/rotate/revoke coverage, device token scope-preserving
+  rotation, approved-role device token rotation gates, approved-scope device
+  token rotation baselines, requested operator-scope pairing approval gates,
+  inherited-scope rotation caller gates, scoped token revocation caller gates,
+  pairing repair inherited-token scope gates, device-token cross-device
+  mutation guards, operator-admin scope compatibility for device-token
+  rotation, pairing approval seeded device-auth tokens, rotated token raw-value
+  redaction for unbound callers, cross-device pairing removal guards, and
+  local QR password SecretRef resolution; companion apps remain broadly open.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.99999992% after the runtime bridge doctor posture, native ACP client interactive replay, ACP persisted task-record child-cap counting, ACP `streamTo="parent"` requester-context preflight, ACP `resumeSessionId` requester-context preflight, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override propagation, ACP configured runtime agent alias mapping, ACP runtime-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP accepted-spawn registration-failure cleanup, Docker runtime home bootstrap, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, deeper ACP bridge lifecycle edge cases, deeper installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated provider-native inbound/outbound breadth: ~99.999999% after Slack
   event/interactions/slash/signing coverage, command aliases/plugin command
   injection, WhatsApp reply fanout, Telegram media reply fanout/caption
-  passthrough, Feishu media implicit reply fanout, Telegram stale-thread retry
-  fallback for route-backed JSON and HTTP-error send/poll paths, Discord
-  video-caption split delivery, Discord voice message sends, Discord
-  audio-as-voice direct media sends, Signal receive envelope session routing
+  passthrough, Feishu media implicit reply fanout, Matrix implicit reply
+  fanout, IRC media attachment formatting, Telegram stale-thread retry fallback
+  for route-backed JSON and HTTP-error send/poll paths, Discord
+  video-caption split delivery, Discord
+  voice message sends, Discord audio-as-voice direct media sends, Signal receive envelope session routing
   with sync-message drops, LINE signed webhook ingress, and LINE text
   webhook/postback/media-placeholder/sticker/location session delivery plus
   group mention gating, native LINE mention metadata handling, group
@@ -41,7 +49,9 @@
   QQBot reply message sequencing, QQBot local media file-data uploads, and
   QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot
   file-media text follow-up delivery, and QQBot direct image/video media
-  text follow-up delivery plus QQBot inline media text ordering/result metadata.
+  text follow-up delivery plus QQBot inline media text ordering/result
+  metadata, Matrix media/text implicit reply fanout, IRC media attachment
+  formatting, and Discord multi-media implicit reply fanout.
 - Runtime helper addendum: imported `agent-runtime` core helper coverage is
   now verified in `a8e871a3` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `agent-runtime` model-selection helper
@@ -2533,7 +2543,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
 | Channels + direct announce delivery | Strong partial | ~97% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, direct-announce provider metadata/replay, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, active/archived `thread-list`, core `thread-reply`, `search`, `sticker`, `sticker-upload`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `kick`, `ban`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, route-backed Feishu/Lark `send`, presentation-card `send`/`thread-reply`, image/file/audio/video media `send`, `read`, `edit`, `pin`, `unpin`, `list-pins`, `channel-info`, `member-info`, `channel-list`, `react`, and `reactions` action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
 | Browser/canvas/nodes/voice | Locked bounded family | ~99.4% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, `browser.request` browser-node proxy dispatch, proxy-file persistence/path rewriting, configured-node selection, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, password-safe auth save, and voicewake routing methods are now landed. |
-| Packaging + companion apps | Minimal | ~5.9% | QR setup-code security, remote URL/auth, Tailscale, SecretRef, device-pairing, device CLI mutations, approve-preview gateway/auth flag preservation, remote device command dispatch, configured remote URL defaults, loopback pairing-required fallback, and approval-state preview metadata are landed, but companion apps remain largely outside the current shipped OpenZues surface. |
+| Packaging + companion apps | Minimal | ~6.1% | QR setup-code security, local/remote URL/auth, Tailscale, SecretRef, device-pairing, device CLI mutations, approve-preview gateway/auth flag preservation, remote device command dispatch, configured remote URL defaults, loopback pairing-required fallback, approval-state preview metadata, and device token scope-preserving rotation are landed, but companion apps remain largely outside the current shipped OpenZues surface. |
 
 ## Remaining Not-Fully-Complete Areas
 
@@ -24398,6 +24408,630 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy
   src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `39d3b06b`.
+
+- Native ACP `sessions.spawn` now uses the production route-backed thread
+  binder for persistent ACP sessions. Matrix top-level room targets create the
+  provider child thread through the shared binder before the ACP turn starts,
+  session bindings are stored as `targetKind="session"`, and app construction
+  shares the same binder instance between ACP and native subagent spawns. This
+  closes `OZ-ACP-001F`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.9999995%.
+- Verified the ACP route-backed thread-binding seam with focused red/green
+  `python -m pytest tests\test_gateway_acp_spawn.py::test_runtime_manager_acp_spawn_uses_route_backed_matrix_thread_binder -q`
+  (`1 failed` before implementation because `RuntimeManagerAcpSpawnService`
+  had no `thread_binder` wiring, then `1 passed`), adjacent proofs
+  `python -m pytest tests\test_gateway_acp_spawn.py -q` (`22 passed`),
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "thread_mode_uses_matrix_route_backed_thread_binder or thread_mode_creates_matrix_child_thread_with_route_binder or acp_thread_mode"`
+  (`8 passed, 1272 deselected`), and `python -m pytest
+  tests\test_app.py::test_health_endpoint -q` (`1 passed`), plus `ruff check`
+  on touched source/tests, `mypy` on touched source modules, and focused
+  `git diff --check`. Source/test checkpointed in `e2db2905`.
+
+- Native ACP `sessions.spawn` now performs OpenClaw-shaped cleanup when a
+  thread-bound ACP session successfully binds to a provider thread but ACP turn
+  dispatch fails. The runtime spawn service calls the binder's `unbind` hook
+  with `reason="spawn-failed"` and the session/thread binding metadata, then
+  preserves the original dispatch error for callers. This closes
+  `OZ-ACP-001G`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.9999996%.
+- Verified the ACP post-bind cleanup seam with focused red/green
+  `python -m pytest tests\test_gateway_acp_spawn.py::test_runtime_manager_acp_spawn_unbinds_thread_when_turn_start_fails -q`
+  (`1 failed` before implementation because no unbind ran, then `1 passed`),
+  adjacent proofs `python -m pytest tests\test_gateway_acp_spawn.py -q` (`23
+  passed`) and `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "acp_thread_mode or thread_mode_cleans_up_binding_when_runtime_start_fails or
+  thread_mode_uses_matrix_route_backed_thread_binder"` (`8 passed, 1272
+  deselected`), plus `ruff check
+  src\openzues\services\gateway_acp_spawn.py tests\test_gateway_acp_spawn.py`,
+  `mypy src\openzues\services\gateway_acp_spawn.py`, and focused
+  `git diff --check`. Source/test checkpointed in `1a92baa2`.
+
+- Native ACP `sessions.spawn` now cleans up accepted ACP runs if local gateway
+  registration fails after the ACP runtime has already returned `accepted`.
+  OpenZues best-effort unbinds any returned thread binding, cancels and closes
+  the ACP runtime ids, deletes partial local session state, and returns
+  `errorCode="spawn_failed"` with the original registration error. This closes
+  `OZ-ACP-001H`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.9999997%.
+- Verified the ACP accepted-spawn registration cleanup seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_cleans_runtime_when_metadata_registration_fails -q`
+  (`1 failed` before implementation because the metadata failure escaped, then
+  `1 passed`), adjacent ACP proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "acp and (metadata_registration or
+  session_binding_metadata or thread_mode_uses_channel_default_account or
+  route_backed_thread_binding or acp_thread_mode)"` (`7 passed, 1274
+  deselected`), plus `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `2236d019`.
+
+- Device token rotation now preserves an existing token's scopes when
+  `device.token.rotate` omits `scopes`, matching OpenClaw's
+  `rotateDeviceToken` fallback from `params.scopes` to existing token scopes.
+  Explicit `scopes: []` remains an explicit reset. This closes
+  `OZ-COMP-001W`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~6.0%.
+- Verified the device-token scope-preservation seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_preserves_existing_scopes_when_omitted -q`
+  (`1 failed` before implementation because the second rotation returned
+  `scopes=[]`, then `1 passed`), adjacent proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "device_token_family or
+  device_token_rotate_preserves_existing_scopes_when_omitted or
+  device_pair_family"` (`5 passed, 1277 deselected`), `ruff check
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `936bdc9b`.
+
+- Native Matrix route-backed media and text sends now apply OpenClaw's implicit
+  reply fanout rules per provider send. `replyToIdSource="implicit"` with
+  `replyToMode="first"` or `"batched"` attaches the reply relation to only the
+  first Matrix event across media and text chunks, while explicit replies remain
+  reusable through the existing relation path. This closes `OZ-PROV-001GU`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.999997%.
+- Verified the Matrix implicit reply fanout seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_matrix_media_uses_implicit_reply_once -q`
+  (`1 failed` before implementation because the second media payload still had
+  `m.relates_to`, then `1 passed`), adjacent proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route or matrix_media or
+  matrix_audio or matrix_send"` (`7 passed, 501 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `f837d7f2`.
+
+- Native QR setup-code generation now resolves local
+  `gateway.auth.password` SecretRefs before auth-label selection when the QR
+  command is not using `--remote` and no explicit CLI auth override is present.
+  Env-backed password refs now produce `auth="password"` without leaking the
+  resolved value, while explicit `--token` / `--password` and
+  `OPENCLAW_GATEWAY_PASSWORD` continue to bypass local SecretRef resolution.
+  This closes `OZ-COMP-001X`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~6.1%.
+- Verified the local QR password SecretRef seam with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_local_json_resolves_gateway_password_secretref -q`
+  (`1 failed` before implementation because the JSON payload reported
+  `auth="bootstrap-token"`, then `1 passed`), adjacent proof `python -m pytest
+  tests\test_cli.py -q -k "qr_"` (`16 passed, 609 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `8dbfb15b`.
+
+- Native IRC route-backed media sends now match OpenClaw's media attachment
+  text contract: provider media URLs are rendered as `Attachment: <url>` blocks
+  in the IRC message body, separated from the message text and any
+  `[reply:<id>]` marker, while the shared direct-send path passes the original
+  caption into IRC instead of a generic `Media:` summary. This closes
+  `OZ-PROV-001GV`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.999998%.
+- Verified the IRC media attachment seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_irc_native_route -q`
+  (`1 failed` before implementation because the message used the generic media
+  summary/raw URL instead of `Attachment: ...`, then `1 passed`), adjacent
+  proof `python -m pytest tests\test_ops_mesh.py -q -k "irc_native_route or
+  irc_probe or uses_irc_native_route or irc"` (`3 passed, 505 deselected`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+  `mypy src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `08be87cc`.
+
+- Native Docker packaging now pre-creates `/home/node/.openzues` with
+  `node:node` ownership and mode `700` before switching the runtime image to
+  `USER node`, matching OpenClaw's container state-dir bootstrap contract and
+  avoiding root-owned default state when a volume is mounted there. This closes
+  `OZ-PKG-001DE`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.9999998%.
+- Verified the Docker runtime home bootstrap seam with focused red/green
+  `python -m pytest tests\test_packaging_dockerfile.py::test_dockerfile_precreates_openzues_home_before_user_node -q`
+  (`1 failed` before implementation because `Dockerfile` was missing, then
+  `1 passed`), adjacent proof
+  `python -m pytest tests\test_cli.py -q -k "package_distribution or package_dist"`
+  (`8 passed, 617 deselected`), `ruff check
+  tests\test_packaging_dockerfile.py`, `mypy
+  tests\test_packaging_dockerfile.py`, and focused `git diff --check`.
+  Source/test checkpointed in `a6e64d0e`.
+
+- Native Discord route-backed multi-media sends now apply OpenClaw's implicit
+  reply fanout contract: `replyToIdSource="implicit"` with
+  `replyToMode="first"` or `"batched"` attaches the Discord
+  `message_reference` only to the first media webhook payload, while explicit
+  reply ids remain reusable through the existing shared helper. This closes
+  `OZ-PROV-001GW`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.999999%.
+- Verified the Discord multi-media implicit reply fanout seam with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_iterates_discord_media -q`
+  (`1 failed` before implementation because the second media payload still
+  had `message_reference`, then `1 passed`), adjacent proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "discord_native_route or discord_media or discord_video or discord_audio_as_voice or discord_reply or discord_thread_query"`
+  (`7 passed, 501 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `0d06982e`.
+
+- Native ACP `sessions.spawn` now preserves a missing requester session context
+  for `resumeSessionId` validation instead of silently falling back to the main
+  session before the ownership check. Resume requests without
+  `requesterSessionKey` now return OpenClaw's `requester_session_required`
+  preflight before ACP runtime dispatch, while explicit requester-owned resume
+  ids continue through the existing accepted path. This closes `OZ-ACP-001I`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor
+  native-bridge parity moves to ~99.9999999%.
+- Verified the ACP resume requester-context preflight seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_rejects_resume_id_without_requester_session_context -q`
+  (`1 failed` before implementation because the call returned
+  `resume_forbidden`, then `1 passed`), adjacent resume proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and resume_id"`
+  (`3 passed, 1280 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `03ce091c`.
+
+- Native ACP `sessions.spawn` now matches OpenClaw's explicit
+  `streamTo="parent"` requester-context preflight. Calls that request parent
+  streaming without `requesterSessionKey` return `requester_session_required`
+  before ACP runtime dispatch, while the accepted parent-stream path now passes
+  an explicit requester session key through the runtime context. This closes
+  `OZ-ACP-001J`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.99999991%.
+- Verified the ACP parent-stream requester-context preflight seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_stream_to_parent_requires_requester_session_context -q`
+  (`1 failed` before implementation because the call returned `accepted`, then
+  `1 passed`), focused happy-path pair
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_stream_to_parent_requires_requester_session_context tests\test_gateway_node_methods.py::test_sessions_spawn_acp_stream_to_parent_tracks_child_run -q`
+  (`2 passed`), adjacent requester-context proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and (stream_to_parent_requires_requester_session_context or stream_to_parent_tracks_child_run or resume_id)"`
+  (`5 passed, 1279 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `84086dcb`.
+
+- Native ACP child-cap enforcement now counts persisted queued/running
+  `taskRecord` rows owned by the requester session in addition to in-memory
+  tracked runs. This matches OpenClaw's task-store-backed child-cap behavior for
+  parent-stream ACP children after restart and dedupes counts by child session
+  key. This closes `OZ-ACP-001K`; repo-wide parity remains estimated at
+  ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.99999992%.
+- Verified the persisted ACP task-record child-cap seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_sessions_spawn_acp_counts_persisted_task_records_for_child_cap -q`
+  (`1 failed` before implementation because the new child was accepted, then
+  `1 passed`), adjacent ACP child-cap/stream proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and (max_children or persisted_task_records or stream_to_parent)"`
+  (`4 passed, 1281 deselected`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `92209e38`.
+
+- Native Google Chat `message.action upload-file` now routes through the same
+  provider-backed attachment upload/send path as direct Google Chat media
+  delivery. The action accepts OpenClaw's `media` / `filePath` / `path`,
+  `message` / `initialComment`, `filename` / `title`, and `threadId` /
+  `replyTo` options, uploads the attachment, sends the message with
+  `attachmentDataRef`, and returns message, chat, media id, filename, and
+  thread metadata. This closes `OZ-PROV-001GX`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.9999991%.
+- Verified the Google Chat upload-file action seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_dispatch_googlechat_upload_file_message_action_uses_attachment_upload_path -q`
+  (`1 failed` before implementation because `dispatch_message_action`
+  returned `None`, then `1 passed`), adjacent Google Chat provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "googlechat and (message_action or direct_channel_message)"`
+  (`4 passed, 505 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `1b08e340`.
+
+- Native Google Chat `message.action react` / `reactions` now route through
+  provider-backed Chat API reaction endpoints. The remove path matches
+  OpenClaw's app-owned cleanup contract by listing reactions, deleting only
+  `users/app` or configured bot-user matches, filtering by emoji when
+  provided, and leaving user-owned reactions intact. This closes
+  `OZ-PROV-001GY`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.9999992%.
+- Verified the Google Chat reaction action seam with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_dispatch_googlechat_react_remove_only_deletes_bot_reactions -q`
+  (`1 failed` before implementation because `dispatch_message_action`
+  returned `None`, then `1 passed`), adjacent Google Chat provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "googlechat"` (`6 passed,
+  504 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `5dc2fce1`.
+
+- Native device-token rotation/revocation now require the requested role to be
+  one of the roles approved by the original pairing request, matching
+  OpenClaw's `resolveDeviceTokenUpdateContext` gate that rejects rotation for a
+  role that was never approved. Pairing requests now persist role/scope metadata
+  into paired-device snapshots, and unauthorized token mutation leaves the
+  paired device token set unchanged. This closes `OZ-COMP-001Y`; repo-wide
+  parity remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~6.2%.
+- Verified the device-token approved-role gate with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_rejects_role_not_approved_by_pairing -q`
+  (`1 failed` before implementation because `node.pair.request` rejected
+  `role`, then `1 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_pair_family"`
+  (`6 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\database.py
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py tests\test_gateway_node_pairing_refresh.py`,
+  `mypy src\openzues\database.py
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `7d2e4cbf`.
+
+- Native device-token rotation now rejects requested scopes outside the
+  approved device baseline, matching OpenClaw's
+  `scope-outside-approved-baseline` guard while preserving the existing token
+  state on denial. The check honors operator `admin` / `write` / `read`
+  compatibility and keeps non-operator scopes role-prefixed and exact. This
+  closes `OZ-COMP-001Z`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~6.3%.
+- Verified the device-token approved-scope baseline seam with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_rejects_scope_outside_approved_baseline -q`
+  (`1 failed` before implementation because the rotation did not raise, then
+  `1 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_family"`
+  (`7 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_pairing.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_pairing.py`, and focused
+  `git diff --check`. Source/test checkpointed in `46bbf88c`.
+
+- Native device pairing approval now rejects requested operator scopes when the
+  approving caller lacks scope context or cannot satisfy the requested scope,
+  matching OpenClaw's `caller-scopes-required` / `caller-missing-scope` branch
+  for scoped operator device pairings. The pending request remains pending on
+  denial. This closes `OZ-COMP-001AA`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~6.4%.
+- Verified the device pairing requested-scope approval seam with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_approve_rejects_requested_operator_scope_without_caller_scope -q`
+  (`1 failed` before implementation because approval succeeded, then `1
+  passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_pair_family"`
+  (`8 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_pairing.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_pairing.py`, and focused
+  `git diff --check`. Source/test checkpointed in `ce45043b`.
+
+- Native device-token rotation now checks caller scopes after resolving
+  inherited token scopes, matching OpenClaw's denial path when callers omit
+  `scopes` but the current token holds scopes the caller cannot hold. This
+  keeps the existing token unchanged on denial. This closes `OZ-COMP-001AB`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~6.5%.
+- Verified the inherited-scope rotation caller gate with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_rejects_inherited_scope_without_caller_scope -q`
+  (`1 failed` before implementation because the rotation did not raise, then
+  `1 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_pair_family"`
+  (`9 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e8214d65`.
+
+- Native device-token revocation now checks the target token scopes against
+  caller scopes before writing `revokedAtMs`, matching OpenClaw's
+  `caller-missing-scope` revocation denial while preserving the existing token
+  state on denial. This closes `OZ-COMP-001AC`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~6.6%.
+- Verified the scoped token revocation caller gate with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_token_revoke_rejects_target_scope_without_caller_scope -q`
+  (`1 failed` before implementation because revocation succeeded, then `1
+  passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_family"`
+  (`10 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `1acdb73c`.
+
+- Native pairing repair approval now preserves the existing approved role/scope
+  baseline and returns persisted device-token summaries when a repair request
+  omits scopes, while rejecting the repair before mutation when the caller
+  cannot hold the inherited operator token scopes. This closes
+  `OZ-COMP-001AD`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~6.7%.
+- Verified the repair inherited-token scope gate with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope -q`
+  (`1 failed` before implementation because approval succeeded, then `1
+  passed`), paired focused proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_approve_repair_preserves_existing_token_scopes tests\test_gateway_node_methods.py::test_device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope -q`
+  (`2 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_pair_family"`
+  (`12 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `5f7c8445`.
+
+- Native `device.token.rotate` and `device.token.revoke` now reject
+  cross-device mutations from a requester bound to another device unless the
+  requester carries admin scope, matching OpenClaw's device-token IDOR guard
+  while preserving the target token state. This closes `OZ-COMP-001AE`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~6.8%.
+- Verified the cross-device mutation guard with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_revoke_rejects_other_device_requester -q`
+  (`1 failed` before implementation because rotation succeeded, then `1
+  passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_pair_family"`
+  (`13 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `8afff4f9`.
+
+- Native pairing approval and `device.token.rotate` preflight now treat
+  `operator.admin` as satisfying lower/custom operator scopes at the gateway
+  edge before dispatch, matching OpenClaw's operator scope compatibility and
+  allowing admin-scoped callers to down-scope tokens. This closes
+  `OZ-COMP-001AF`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~6.9%.
+- Verified the operator-admin device-token compatibility with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_treats_admin_scope_as_operator_superset -q`
+  (`1 failed` before implementation because approval/rotation failed on
+  exact-scope matching, then `1 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+  (`14 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `40f822d9`.
+
+- Native pairing approval now seeds device-auth tokens for each requested
+  role, returns public token summaries from approval/list responses, preserves
+  approval-created token creation timestamps across later rotations, and
+  rotates existing token rows on repair approval. This closes
+  `OZ-COMP-001AG`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~7.0%.
+- Verified approval-seeded device tokens with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_approve_seeds_requested_role_token_summary -q`
+  (`1 failed` before implementation because approval returned no token
+  summaries, then `1 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+  (`15 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `6489ac37`.
+
+- Native `device.token.rotate` now redacts the raw rotated token unless the
+  requester is bound to the target device, while preserving raw-token return
+  for same-device requesters. This mirrors OpenClaw's
+  `shouldReturnRotatedDeviceToken` behavior and closes `OZ-COMP-001AH`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~7.1%.
+- Verified rotated-token raw-value redaction with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_omits_raw_token_for_unbound_requester -q`
+  (`1 failed` before implementation because the raw token was returned, then
+  `1 passed`), paired focused proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_token_rotate_omits_raw_token_for_unbound_requester tests\test_gateway_node_methods.py::test_device_token_rotate_returns_raw_token_for_same_device_requester -q`
+  (`2 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_token_rotate_omits_raw_token_for_unbound_requester or device_token_rotate_returns_raw_token_for_same_device_requester or device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+  (`17 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `5d99e094`.
+
+- Native `device.pair.remove` now rejects removal attempts from requesters
+  bound to a different device unless they carry admin scope, matching
+  OpenClaw's device-management ownership guard while leaving the target pairing
+  intact. This closes `OZ-COMP-001AI`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~7.2%.
+- Verified cross-device pairing removal denial with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_remove_rejects_other_device_requester -q`
+  (`1 failed` before implementation because removal succeeded, then `1
+  passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_remove_rejects_other_device_requester or device_token_rotate_omits_raw_token_for_unbound_requester or device_token_rotate_returns_raw_token_for_same_device_requester or device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+  (`18 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `b3285bc1`.
+
+- Native `device.pair.approve` and `device.pair.reject` now reject
+  cross-device pending-request resolution attempts from non-admin requesters
+  bound to another device, matching OpenClaw's device-management ownership
+  guard while preserving the pending request. This closes `OZ-COMP-001AJ`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~7.3%.
+- Verified cross-device pairing resolution denial with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_approve_reject_rejects_other_device_requester -q`
+  (`1 failed` before implementation because approval succeeded, then `1
+  passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_approve_reject_rejects_other_device_requester or device_pair_remove_rejects_other_device_requester or device_token_rotate_omits_raw_token_for_unbound_requester or device_token_rotate_returns_raw_token_for_same_device_requester or device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+  (`19 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `927cb1e2`.
+
+- Native `device.pair.list` now filters pending and paired device records for
+  non-admin requesters bound to a device identity while preserving full
+  visibility for admin-scoped and unbound operator callers, matching
+  OpenClaw's device-token session visibility boundary. This closes
+  `OZ-COMP-001AK`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~7.4%.
+- Verified device-bound pairing list visibility with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_list_filters_device_bound_non_admin_requester -q`
+  (`1 failed` before implementation because an unrelated pending request was
+  visible, then `1 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_list_filters_device_bound_non_admin_requester or device_pair_approve_reject_rejects_other_device_requester or device_pair_remove_rejects_other_device_requester or device_token_rotate_omits_raw_token_for_unbound_requester or device_token_rotate_returns_raw_token_for_same_device_requester or device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+  (`20 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `2781c38d`.
+
+- Native `device.pair.remove`, `device.token.rotate`, and
+  `device.token.revoke` now disconnect active node sessions for the affected
+  device after successful mutation, matching OpenClaw's
+  `disconnectClientsForDevice` lifecycle behavior while leaving failed
+  mutations untouched. This closes `OZ-COMP-001AL`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~7.5%.
+- Verified device-auth disconnect lifecycle with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_remove_disconnects_active_node_session tests\test_gateway_node_methods.py::test_device_token_rotate_revoke_disconnects_active_node_session -q`
+  (`2 failed` before implementation because active node sessions remained
+  registered, then `2 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_remove_disconnects_active_node_session or device_token_rotate_revoke_disconnects_active_node_session or device_pair_list_filters_device_bound_non_admin_requester or device_pair_approve_reject_rejects_other_device_requester or device_pair_remove_rejects_other_device_requester or device_token_rotate_omits_raw_token_for_unbound_requester or device_token_rotate_returns_raw_token_for_same_device_requester or device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+  (`22 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `4aa51161`.
+
+- Native `openzues qr` human output now renders a real compact terminal QR
+  from the setup code instead of the prior placeholder, using the Python
+  `qrcode` runtime declared in packaging dependencies while preserving
+  setup-code-only and JSON output. This closes `OZ-COMP-001AM`; repo-wide
+  parity remains estimated at ~99.9%, and packaging/companion breadth moves
+  to ~7.6%.
+- Verified terminal QR rendering with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_human_output_renders_terminal_qr -q`
+  (`1 failed` before implementation because the placeholder was emitted, then
+  `1 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`17 passed, 609
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `f534bf71`.
+
+- Native `openzues qr` now rejects ambiguous local gateway auth when both
+  token and password SecretRefs are configured but `gateway.auth.mode` is
+  unset, matching OpenClaw's fail-fast setup-code behavior and avoiding
+  accidental bootstrap-token issuance before the operator chooses token or
+  password mode. This closes `OZ-COMP-001AN`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~7.7%.
+- Verified ambiguous QR auth-mode rejection with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_rejects_inferred_token_password_secretrefs_before_token_issue -q`
+  (`1 failed` before implementation because a setup code was issued, then `1
+  passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q -k
+  "qr_"` (`18 passed, 609 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `e7c1059c`.
+
+- Native `openzues devices list` human output now strips ANSI/OSC terminal
+  escape sequences, C0/C1 control characters, and DEL from device-controlled
+  display fields before rendering pending and paired devices, including remote
+  IP text. This closes `OZ-COMP-001AO`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~7.8%.
+- Verified device CLI terminal-output sanitization with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_list_human_output_sanitizes_device_controlled_fields -q`
+  (`1 failed` before implementation because escape characters reached stdout,
+  then `1 passed`), adjacent device CLI proof `python -m pytest
+  tests\test_cli.py -q -k "devices_list or devices_approve_latest or
+  devices_clear or devices_mutation_commands or devices_remote_mutation or
+  devices_list_human_output_sanitizes_device_controlled_fields"` (`18 passed,
+  610 deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `bcb27a80`.
+
+- Native `openzues devices list` human output now renders requested versus
+  approved access for pending device upgrades, including normalized operator
+  scope expansion and OpenClaw-shaped approval-kind labels such as `scope
+  upgrade`. This closes `OZ-COMP-001AP`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~7.9%.
+- Verified device CLI pending-upgrade rendering with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_list_human_output_renders_requested_and_approved_access -q`
+  (`1 failed` before implementation because `Requested`, `Approved`, and
+  `scope upgrade` were absent, then `1 passed`), adjacent device CLI proof
+  `python -m pytest tests\test_cli.py -q -k "devices_list_human_output_sanitizes_device_controlled_fields or devices_list_human_output_renders_requested_and_approved_access or devices_list or devices_approve_latest or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+  (`19 passed, 610 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `71dac773`.
+
+- Native `openzues devices list` pending approval context now matches paired
+  devices by normalized device id while refusing to reuse approved access when
+  both pending and paired public keys are present but differ. This closes
+  `OZ-COMP-001AQ`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.0%.
+- Verified device CLI public-key mismatch handling with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_list_human_output_treats_public_key_mismatch_as_new_pairing -q`
+  (`1 failed` before implementation because the old paired access was reused
+  as a `scope upgrade`, then `1 passed`), adjacent device CLI proof `python -m
+  pytest tests\test_cli.py -q -k
+  "devices_list_human_output_treats_public_key_mismatch_as_new_pairing or
+  devices_list_human_output_renders_requested_and_approved_access or
+  devices_list_human_output_sanitizes_device_controlled_fields or devices_list
+  or devices_approve_latest or devices_clear or devices_mutation_commands or
+  devices_remote_mutation"` (`20 passed, 610 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `706f23e0`.
+
+- Native `openzues devices approve` implicit/latest human preview now renders
+  the selected pending request with the real paired approval context, preserves
+  the rerun command, and prints OpenClaw-style guidance when requested scopes or
+  roles exceed the current approval. This closes `OZ-COMP-001AR`; repo-wide
+  parity remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~8.1%.
+- Verified device approve human preview context with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_approve_latest_human_renders_selected_approval_context -q`
+  (`1 failed` before implementation because approved access was rendered as
+  `none`, then `1 passed`), adjacent device CLI proof `python -m pytest
+  tests\test_cli.py -q -k "devices_approve_latest_human_renders_selected_approval_context or devices_approve_latest or devices_list_human_output_treats_public_key_mismatch_as_new_pairing or devices_list_human_output_renders_requested_and_approved_access or devices_list_human_output_sanitizes_device_controlled_fields or devices_list or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+  (`21 passed, 610 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `091d01dd`.
 
 ## References
 

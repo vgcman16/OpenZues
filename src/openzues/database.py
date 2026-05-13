@@ -257,6 +257,8 @@ class Database:
                     model_identifier TEXT,
                     caps_json TEXT NOT NULL DEFAULT '[]',
                     commands_json TEXT NOT NULL DEFAULT '[]',
+                    roles_json TEXT NOT NULL DEFAULT '[]',
+                    scopes_json TEXT NOT NULL DEFAULT '[]',
                     remote_ip TEXT,
                     silent INTEGER NOT NULL DEFAULT 0,
                     requested_at_ms INTEGER NOT NULL,
@@ -278,6 +280,8 @@ class Database:
                     model_identifier TEXT,
                     caps_json TEXT NOT NULL DEFAULT '[]',
                     commands_json TEXT NOT NULL DEFAULT '[]',
+                    roles_json TEXT NOT NULL DEFAULT '[]',
+                    scopes_json TEXT NOT NULL DEFAULT '[]',
                     bins_json TEXT NOT NULL DEFAULT '[]',
                     permissions_json TEXT,
                     remote_ip TEXT,
@@ -646,6 +650,30 @@ class Database:
             )
             await self._ensure_column(db, "notification_routes", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "notification_routes", "conversation_target_json", "TEXT")
+            await self._ensure_column(
+                db,
+                "gateway_node_pairing_requests",
+                "roles_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
+            await self._ensure_column(
+                db,
+                "gateway_node_pairing_requests",
+                "scopes_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
+            await self._ensure_column(
+                db,
+                "gateway_node_paired_nodes",
+                "roles_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
+            await self._ensure_column(
+                db,
+                "gateway_node_paired_nodes",
+                "scopes_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
             await self._ensure_column(db, "outbound_deliveries", "event_payload_json", "TEXT")
             await self._ensure_column(
                 db, "outbound_deliveries", "request_idempotency_key", "TEXT"
@@ -827,6 +855,8 @@ class Database:
             "model_identifier": payload["model_identifier"],
             "caps": Database._decode_json_list(payload.get("caps_json")),
             "commands": Database._decode_json_list(payload.get("commands_json")),
+            "roles": Database._decode_json_list(payload.get("roles_json")),
+            "scopes": Database._decode_json_list(payload.get("scopes_json")),
             "remote_ip": payload["remote_ip"],
             "silent": bool(payload["silent"]),
             "requested_at_ms": int(payload["requested_at_ms"]),
@@ -874,10 +904,14 @@ class Database:
         requested_at_ms: int,
         request_id: str,
         public_key: str | None = None,
+        roles: Sequence[str] = (),
+        scopes: Sequence[str] = (),
     ) -> tuple[dict[str, Any], bool]:
         now = utcnow()
         caps_json = json.dumps(list(caps))
         commands_json = json.dumps(list(commands))
+        roles_json = json.dumps(list(roles))
+        scopes_json = json.dumps(list(scopes))
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             existing_cursor = await db.execute(
@@ -909,13 +943,15 @@ class Database:
                         model_identifier,
                         caps_json,
                         commands_json,
+                        roles_json,
+                        scopes_json,
                         remote_ip,
                         silent,
                         requested_at_ms,
                         created_at,
                         updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         persisted_request_id,
@@ -930,6 +966,8 @@ class Database:
                         model_identifier,
                         caps_json,
                         commands_json,
+                        roles_json,
+                        scopes_json,
                         remote_ip,
                         int(bool(silent)),
                         requested_at_ms,
@@ -951,6 +989,8 @@ class Database:
                         model_identifier = ?,
                         caps_json = ?,
                         commands_json = ?,
+                        roles_json = ?,
+                        scopes_json = ?,
                         remote_ip = ?,
                         silent = ?,
                         requested_at_ms = ?,
@@ -968,6 +1008,8 @@ class Database:
                         model_identifier,
                         caps_json,
                         commands_json,
+                        roles_json,
+                        scopes_json,
                         remote_ip,
                         int(bool(silent)),
                         requested_at_ms,
@@ -1021,6 +1063,8 @@ class Database:
             "model_identifier": payload["model_identifier"],
             "caps": Database._decode_json_list(payload.get("caps_json")),
             "commands": Database._decode_json_list(payload.get("commands_json")),
+            "roles": Database._decode_json_list(payload.get("roles_json")),
+            "scopes": Database._decode_json_list(payload.get("scopes_json")),
             "bins": Database._decode_json_list(payload.get("bins_json")),
             "permissions": Database._decode_json_object(payload.get("permissions_json")),
             "remote_ip": payload["remote_ip"],
@@ -1077,6 +1121,8 @@ class Database:
         model_identifier: str | None,
         caps: Sequence[str],
         commands: Sequence[str],
+        roles: Sequence[str] = (),
+        scopes: Sequence[str] = (),
         bins: Sequence[str] = (),
         permissions: dict[str, bool] | None,
         remote_ip: str | None,
@@ -1102,6 +1148,8 @@ class Database:
                     model_identifier,
                     caps_json,
                     commands_json,
+                    roles_json,
+                    scopes_json,
                     bins_json,
                     permissions_json,
                     remote_ip,
@@ -1111,7 +1159,7 @@ class Database:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(node_id) DO UPDATE SET
                     token = excluded.token,
                     public_key = excluded.public_key,
@@ -1124,6 +1172,8 @@ class Database:
                     model_identifier = excluded.model_identifier,
                     caps_json = excluded.caps_json,
                     commands_json = excluded.commands_json,
+                    roles_json = excluded.roles_json,
+                    scopes_json = excluded.scopes_json,
                     bins_json = excluded.bins_json,
                     permissions_json = excluded.permissions_json,
                     remote_ip = excluded.remote_ip,
@@ -1145,6 +1195,8 @@ class Database:
                     model_identifier,
                     json.dumps(list(caps)),
                     json.dumps(list(commands)),
+                    json.dumps(list(roles)),
+                    json.dumps(list(scopes)),
                     json.dumps(list(bins)),
                     json.dumps(permissions) if permissions is not None else None,
                     remote_ip,

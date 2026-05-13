@@ -4,6 +4,7 @@ import asyncio
 import base64
 import codecs
 import copy
+import importlib
 import inspect
 import ipaddress
 import json
@@ -99596,6 +99597,47 @@ def _encode_pairing_setup_code(payload: Mapping[str, object]) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def _render_terminal_qr(text: str) -> str:
+    value = str(text)
+    if not value:
+        raise ValueError("QR text must not be empty.")
+    try:
+        qrcode = importlib.import_module("qrcode")
+    except ModuleNotFoundError as exc:
+        raise ValueError(
+            "Terminal QR rendering requires the qrcode Python package."
+        ) from exc
+    qr = qrcode.QRCode(
+        border=2,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+    )
+    qr.add_data(value)
+    qr.make(fit=True)
+    matrix = qr.get_matrix()
+    if not matrix:
+        raise ValueError("Terminal QR rendering failed.")
+    lines: list[str] = []
+    width = max(len(row) for row in matrix)
+    padded_rows = [list(row) + [False] * (width - len(row)) for row in matrix]
+    if len(padded_rows) % 2:
+        padded_rows.append([False] * width)
+    for row_index in range(0, len(padded_rows), 2):
+        top = padded_rows[row_index]
+        bottom = padded_rows[row_index + 1]
+        line = "".join(
+            "█"
+            if top[col] and bottom[col]
+            else "▀"
+            if top[col]
+            else "▄"
+            if bottom[col]
+            else " "
+            for col in range(width)
+        )
+        lines.append(line.rstrip())
+    return "\n".join(lines)
+
+
 def _format_pairing_host(host: str) -> str:
     if ":" in host and not host.startswith("["):
         return f"[{host}]"
@@ -100137,6 +100179,76 @@ def _resolve_qr_remote_secret_refs(
     return resolved_snapshot, _dedupe_cli_strings(diagnostics)
 
 
+def _resolve_qr_secret_ref_string(
+    config_snapshot: Mapping[str, object],
+    *,
+    value: object,
+) -> tuple[str | None, str | None]:
+    parts = _qr_secret_ref_parts(value)
+    if parts is None:
+        return None, None
+    source, provider, secret_id = parts
+    if source == "env":
+        resolved = _optional_cli_string(os.environ.get(secret_id))
+    elif source == "file":
+        resolved = _resolve_qr_file_secret_ref(
+            config_snapshot,
+            provider=provider,
+            secret_id=secret_id,
+        )
+    elif source == "exec":
+        resolved = _resolve_qr_exec_secret_ref(
+            config_snapshot,
+            provider=provider,
+            secret_id=secret_id,
+        )
+    else:
+        resolved = None
+    return resolved, f"{source}:{provider}:{secret_id}"
+
+
+def _should_resolve_qr_local_gateway_password_secret(
+    config_snapshot: Mapping[str, object] | None,
+) -> bool:
+    if config_snapshot is None:
+        return False
+    if _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PASSWORD")) is not None:
+        return False
+    auth_config = _qr_config_mapping(_qr_gateway_config(config_snapshot).get("auth"))
+    auth_mode = str(auth_config.get("mode") or "").strip().lower()
+    if auth_mode == "password":
+        return True
+    if auth_mode in {"token", "none", "trusted-proxy"}:
+        return False
+    if _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_TOKEN")) is not None:
+        return False
+    return not _has_configured_secret_input(auth_config.get("token"))
+
+
+def _resolve_qr_local_gateway_password_secret_ref(
+    config_snapshot: Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
+    if config_snapshot is None:
+        return None
+    resolved_snapshot = copy.deepcopy(dict(config_snapshot))
+    gateway = resolved_snapshot.get("gateway")
+    if not isinstance(gateway, dict):
+        return resolved_snapshot
+    auth_config = gateway.get("auth")
+    if not isinstance(auth_config, dict):
+        return resolved_snapshot
+    resolved, ref_label = _resolve_qr_secret_ref_string(
+        resolved_snapshot,
+        value=auth_config.get("password"),
+    )
+    if ref_label is None:
+        return resolved_snapshot
+    if resolved is None:
+        raise ValueError(f"gateway.auth.password SecretRef is unresolved ({ref_label}).")
+    auth_config["password"] = resolved
+    return resolved_snapshot
+
+
 def _emit_qr_secret_resolve_diagnostics(
     diagnostics: Sequence[str],
     *,
@@ -100172,6 +100284,8 @@ def _resolve_qr_auth_label(
         return "token"
 
     gateway_config = _qr_gateway_config(config_snapshot)
+    env_token = _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_TOKEN"))
+    env_password = _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PASSWORD"))
     if remote:
         remote_config = _qr_gateway_remote_config(config_snapshot)
         if _qr_config_text(remote_config.get("token")):
@@ -100181,8 +100295,23 @@ def _resolve_qr_auth_label(
 
     auth_config = _qr_config_mapping(gateway_config.get("auth"))
     auth_mode = str(auth_config.get("mode") or "").strip().lower()
-    has_token = _qr_config_text(auth_config.get("token")) is not None
-    has_password = _qr_config_text(auth_config.get("password")) is not None
+    if (
+        not auth_mode
+        and _has_configured_secret_input(auth_config.get("token"))
+        and _has_configured_secret_input(auth_config.get("password"))
+    ):
+        raise ValueError(
+            "gateway.auth.mode is unset for token/password auth. Set "
+            "gateway.auth.mode to token or password before generating a setup code."
+        )
+    has_token = (
+        env_token is not None
+        or _qr_config_text(auth_config.get("token")) is not None
+    )
+    has_password = (
+        env_password is not None
+        or _qr_config_text(auth_config.get("password")) is not None
+    )
     if auth_mode == "password":
         if has_password:
             return "password"
@@ -100441,6 +100570,14 @@ def qr_command(
                 json_output=json_output,
                 setup_code_only=setup_code_only,
             )
+        elif (
+            not str(token or "").strip()
+            and not str(password or "").strip()
+            and _should_resolve_qr_local_gateway_password_secret(config_snapshot)
+        ):
+            config_snapshot = _resolve_qr_local_gateway_password_secret_ref(
+                config_snapshot
+            )
         gateway_url, url_source = _resolve_qr_gateway_url(
             app_settings=app_settings,
             url=url,
@@ -100485,12 +100622,7 @@ def qr_command(
         "",
     ]
     if ascii_qr:
-        lines.extend(
-            [
-                "(terminal QR rendering is unavailable in this native CLI build)",
-                "",
-            ]
-        )
+        lines.extend([_render_terminal_qr(setup_code), ""])
     lines.extend(
         [
             f"Setup code: {setup_code}",
@@ -105946,6 +106078,58 @@ def tasks_show_command(
     _emit_task_show(task, json_output=json_output)
 
 
+_ANSI_CSI_RE = re.compile(r"\x1b\[[\x20-\x3f]*[\x40-\x7e]")
+_OSC8_RE = re.compile(r"\x1b\]8;;.*?(?:\x1b\\|\x07)|\x1b\]8;;(?:\x1b\\|\x07)")
+_CONTROL_CHARS_RE = re.compile(
+    f"[{chr(0x00)}-{chr(0x1F)}{chr(0x7F)}-{chr(0x9F)}]"
+)
+
+
+def _sanitize_cli_terminal_text(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    sanitized = _CONTROL_CHARS_RE.sub("", _ANSI_CSI_RE.sub("", _OSC8_RE.sub("", text)))
+    return sanitized.strip() or None
+
+
+def _devices_format_access_summary(access: object) -> str:
+    if not isinstance(access, Mapping):
+        return "none"
+    roles = [
+        role
+        for raw_role in _devices_string_list(access.get("roles"))
+        if (role := _sanitize_cli_terminal_text(raw_role)) is not None
+    ]
+    scopes = [
+        scope
+        for raw_scope in _devices_string_list(access.get("scopes"))
+        if (scope := _sanitize_cli_terminal_text(raw_scope)) is not None
+    ]
+    role_text = ", ".join(roles) if roles else "none"
+    scope_text = ", ".join(scopes) if scopes else "none"
+    return f"roles: {role_text}; scopes: {scope_text}"
+
+
+def _devices_format_approval_kind(kind: object) -> str:
+    normalized = _sanitize_cli_terminal_text(kind) or "new-pairing"
+    return {
+        "new-pairing": "new pairing",
+        "role-upgrade": "role upgrade",
+        "scope-upgrade": "scope upgrade",
+        "re-approval": "re-approval",
+    }.get(normalized, normalized)
+
+
+def _devices_approval_preview_guidance(approval: Mapping[str, object]) -> str | None:
+    kind = _optional_cli_string(approval.get("kind"))
+    if kind == "scope-upgrade":
+        return "Requested scopes exceed the current approval."
+    if kind == "role-upgrade":
+        return "Requested roles exceed the current approval."
+    return None
+
+
 def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
@@ -105959,24 +106143,52 @@ def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None
         for item in pending:
             if not isinstance(item, dict):
                 continue
-            request_id = _optional_cli_string(item.get("requestId")) or "<unknown>"
-            device_id = _optional_cli_string(item.get("displayName")) or _optional_cli_string(
+            request_id = _sanitize_cli_terminal_text(item.get("requestId")) or "<unknown>"
+            device_id = _sanitize_cli_terminal_text(
+                item.get("displayName")
+            ) or _sanitize_cli_terminal_text(
                 item.get("deviceId")
             )
+            remote_ip = _sanitize_cli_terminal_text(item.get("remoteIp"))
+            if device_id and remote_ip:
+                device_id = f"{device_id} - {remote_ip}"
             device_text = f" {device_id}" if device_id is not None else ""
             typer.echo(f"  {request_id}{device_text}")
+            approval = _devices_approval_state(payload, item)
+            typer.echo(
+                f"    Status: {_devices_format_approval_kind(approval.get('kind'))}"
+            )
+            typer.echo(
+                "    Requested: "
+                + _devices_format_access_summary(approval.get("requested"))
+            )
+            typer.echo(
+                "    Approved: "
+                + _devices_format_access_summary(approval.get("approved"))
+            )
     if paired:
         typer.echo(f"Paired ({len(paired)})")
         for item in paired:
             if not isinstance(item, dict):
                 continue
-            device_id = _optional_cli_string(item.get("displayName")) or _optional_cli_string(
+            device_id = _sanitize_cli_terminal_text(
+                item.get("displayName")
+            ) or _sanitize_cli_terminal_text(
                 item.get("deviceId")
             )
+            remote_ip = _sanitize_cli_terminal_text(item.get("remoteIp"))
             roles = item.get("roles")
             role_text = ""
             if isinstance(roles, list) and roles:
-                role_text = " " + ", ".join(str(role) for role in roles)
+                safe_roles = [
+                    role
+                    for raw_role in roles
+                    if (role := _sanitize_cli_terminal_text(raw_role)) is not None
+                ]
+                if safe_roles:
+                    role_text = " " + ", ".join(safe_roles)
+            if device_id and remote_ip:
+                device_id = f"{device_id} - {remote_ip}"
             typer.echo(f"  {device_id or '<unknown>'}{role_text}")
     if not pending and not paired:
         typer.echo("No device pairing entries.")
@@ -106066,6 +106278,14 @@ def _devices_lookup_paired_for_pending(
         if not isinstance(item, Mapping):
             continue
         if _optional_cli_string(item.get("deviceId")) == pending_device_id:
+            pending_public_key = _optional_cli_string(pending.get("publicKey"))
+            paired_public_key = _optional_cli_string(item.get("publicKey"))
+            if (
+                pending_public_key is not None
+                and paired_public_key is not None
+                and pending_public_key != paired_public_key
+            ):
+                continue
             return item
     return None
 
@@ -106438,9 +106658,10 @@ def devices_approve_command(
             approve_args.extend(["--timeout", timeout_value])
         if json_output:
             approve_args.append("--json")
+        approval_state = _devices_approval_state(listing, selected)
         preview = {
             "selected": selected,
-            "approvalState": _devices_approval_state(listing, selected),
+            "approvalState": approval_state,
             "approveCommand": _doctor_format_cli_args(approve_args),
             "requiresAuthFlags": {
                 "token": token_value is not None,
@@ -106450,7 +106671,17 @@ def devices_approve_command(
         if json_output:
             typer.echo(json.dumps(preview, indent=2))
         else:
-            _emit_devices_list({"pending": [selected], "paired": []}, json_output=False)
+            paired_preview = listing.get("paired")
+            _emit_devices_list(
+                {
+                    "pending": [selected],
+                    "paired": paired_preview if isinstance(paired_preview, list) else [],
+                },
+                json_output=False,
+            )
+            guidance = _devices_approval_preview_guidance(approval_state)
+            if guidance is not None:
+                typer.echo(guidance)
             typer.echo(f"Run: {preview['approveCommand']}", err=True)
             if token_value is not None or password_value is not None:
                 typer.echo("Reuse the same auth flag when running approve.", err=True)

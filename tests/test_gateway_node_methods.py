@@ -1386,6 +1386,370 @@ async def test_device_pair_family_uses_persisted_node_pairing_runtime(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_device_pair_remove_rejects_other_device_requester(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester_a = GatewayNodeMethodRequester(
+        node_id="device-remove-owner-a",
+        caller_scopes=("operator.pairing",),
+    )
+
+    for device_id in ("device-remove-owner-a", "device-remove-owner-b"):
+        created = await service.call(
+            "node.pair.request",
+            {
+                "nodeId": device_id,
+                "displayName": device_id,
+                "role": "operator",
+            },
+            now_ms=1_000,
+        )
+        await service.call(
+            "device.pair.approve",
+            {"requestId": created["request"]["requestId"]},
+            now_ms=2_000,
+        )
+
+    with pytest.raises(ValueError, match="device pairing removal denied"):
+        await service.call(
+            "device.pair.remove",
+            {"deviceId": "device-remove-owner-b"},
+            requester=requester_a,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert [device["deviceId"] for device in listed["paired"]] == [
+        "device-remove-owner-a",
+        "device-remove-owner-b",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_device_pair_remove_disconnects_active_node_session(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        registry,
+        pairing_service=pairing_service,
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-remove-disconnect",
+            "displayName": "Disconnect Device",
+            "role": "operator",
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "device.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        now_ms=2_000,
+    )
+    registry.register(
+        FakeNodeConnection("conn-device-remove-disconnect"),
+        GatewayNodeConnect(
+            client_id="client-device-remove-disconnect",
+            device_id="device-remove-disconnect",
+        ),
+    )
+
+    removed = await service.call(
+        "device.pair.remove",
+        {"deviceId": " device-remove-disconnect "},
+        now_ms=3_000,
+    )
+
+    assert removed["deviceId"] == "device-remove-disconnect"
+    assert registry.get("device-remove-disconnect") is None
+
+
+@pytest.mark.asyncio
+async def test_device_pair_list_filters_device_bound_non_admin_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester_a = GatewayNodeMethodRequester(
+        node_id="device-list-owner-a",
+        caller_scopes=("operator.pairing",),
+    )
+    admin_requester = GatewayNodeMethodRequester(
+        node_id="device-list-owner-a",
+        caller_scopes=("operator.pairing", "operator.admin"),
+    )
+
+    for device_id in ("device-list-owner-a", "device-list-owner-b"):
+        created = await service.call(
+            "node.pair.request",
+            {
+                "nodeId": device_id,
+                "displayName": device_id,
+                "role": "operator",
+            },
+            now_ms=1_000,
+        )
+        await service.call(
+            "device.pair.approve",
+            {"requestId": created["request"]["requestId"]},
+            now_ms=2_000,
+        )
+
+    pending = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-list-owner-c",
+            "displayName": "device-list-owner-c",
+            "role": "operator",
+        },
+        now_ms=3_000,
+    )
+
+    visible = await service.call(
+        "device.pair.list",
+        {},
+        requester=requester_a,
+    )
+    admin_visible = await service.call(
+        "device.pair.list",
+        {},
+        requester=admin_requester,
+    )
+    full = await service.call("device.pair.list", {})
+
+    assert visible["pending"] == []
+    assert [device["deviceId"] for device in visible["paired"]] == [
+        "device-list-owner-a",
+    ]
+    assert [entry["requestId"] for entry in full["pending"]] == [
+        pending["request"]["requestId"]
+    ]
+    assert [device["deviceId"] for device in full["paired"]] == [
+        "device-list-owner-a",
+        "device-list-owner-b",
+    ]
+    assert admin_visible == full
+
+
+@pytest.mark.asyncio
+async def test_device_pair_approve_reject_rejects_other_device_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester_a = GatewayNodeMethodRequester(
+        node_id="device-pair-owner-a",
+        caller_scopes=("operator.pairing",),
+    )
+    request_b_id: str | None = None
+
+    for device_id in ("device-pair-owner-a", "device-pair-owner-b"):
+        created = await service.call(
+            "node.pair.request",
+            {
+                "nodeId": device_id,
+                "displayName": device_id,
+                "role": "operator",
+            },
+            now_ms=1_000,
+        )
+        if device_id == "device-pair-owner-a":
+            await service.call(
+                "device.pair.approve",
+                {"requestId": created["request"]["requestId"]},
+                now_ms=2_000,
+            )
+        else:
+            request_b_id = str(created["request"]["requestId"])
+    assert request_b_id is not None
+
+    with pytest.raises(ValueError, match="device pairing approval denied"):
+        await service.call(
+            "device.pair.approve",
+            {"requestId": request_b_id},
+            requester=requester_a,
+            now_ms=3_000,
+        )
+
+    with pytest.raises(ValueError, match="device pairing rejection denied"):
+        await service.call(
+            "device.pair.reject",
+            {"requestId": request_b_id},
+            requester=requester_a,
+            now_ms=4_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert [entry["requestId"] for entry in listed["pending"]] == [request_b_id]
+    assert [device["deviceId"] for device in listed["paired"]] == ["device-pair-owner-a"]
+
+
+@pytest.mark.asyncio
+async def test_device_pair_approve_seeds_requested_role_token_summary(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.read")
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-approved",
+            "displayName": "Approved Token Device",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+
+    approved = await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=requester,
+        now_ms=2_000,
+    )
+
+    assert approved["device"]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.read"],
+            "createdAtMs": 2_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["tokens"] == approved["device"]["tokens"]
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_omits_raw_token_for_unbound_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.read")
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-raw-redacted",
+            "displayName": "Raw Redacted Device",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "device.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=requester,
+        now_ms=2_000,
+    )
+
+    rotated = await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-raw-redacted",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        requester=requester,
+        now_ms=3_000,
+    )
+
+    assert "token" not in rotated
+    assert rotated == {
+        "deviceId": "device-token-raw-redacted",
+        "role": "operator",
+        "scopes": ["operator.read"],
+        "rotatedAtMs": 3_000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_returns_raw_token_for_same_device_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    pairing_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.read")
+    )
+    device_requester = GatewayNodeMethodRequester(
+        node_id="device-token-raw-own",
+        caller_scopes=("operator.pairing", "operator.read"),
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-raw-own",
+            "displayName": "Raw Own Device",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "device.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=pairing_requester,
+        now_ms=2_000,
+    )
+
+    rotated = await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-raw-own",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        requester=device_requester,
+        now_ms=3_000,
+    )
+
+    assert isinstance(rotated["token"], str)
+    assert len(rotated["token"]) >= 32
+
+
+@pytest.mark.asyncio
 async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()
@@ -1394,14 +1758,27 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
         GatewayNodeRegistry(),
         pairing_service=pairing_service,
     )
+    requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.write")
+    )
 
     created = await service.call(
         "node.pair.request",
-        {"nodeId": "device-token-node", "displayName": "Token Device"},
+        {
+            "nodeId": "device-token-node",
+            "displayName": "Token Device",
+            "role": "operator",
+            "scopes": ["operator.read", "operator.write"],
+        },
         now_ms=1_000,
     )
     request_id = created["request"]["requestId"]
-    await service.call("device.pair.approve", {"requestId": request_id}, now_ms=2_000)
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=requester,
+        now_ms=2_000,
+    )
 
     rotated = await service.call(
         "device.token.rotate",
@@ -1417,15 +1794,14 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
     assert rotated["role"] == "operator"
     assert rotated["scopes"] == ["operator.read", "operator.write"]
     assert rotated["rotatedAtMs"] == 3_000
-    assert isinstance(rotated["token"], str)
-    assert len(rotated["token"]) >= 32
+    assert "token" not in rotated
 
     listed = await service.call("device.pair.list", {})
     assert listed["paired"][0]["tokens"] == [
         {
             "role": "operator",
             "scopes": ["operator.read", "operator.write"],
-            "createdAtMs": 3_000,
+            "createdAtMs": 2_000,
             "rotatedAtMs": 3_000,
             "lastUsedAtMs": None,
         }
@@ -1447,12 +1823,731 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
         {
             "role": "operator",
             "scopes": ["operator.read", "operator.write"],
-            "createdAtMs": 3_000,
+            "createdAtMs": 2_000,
             "rotatedAtMs": 3_000,
             "revokedAtMs": 4_000,
             "lastUsedAtMs": None,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_rejects_role_not_approved_by_pairing(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-operator-only",
+            "displayName": "Operator Device",
+            "role": "operator",
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call("device.pair.approve", {"requestId": request_id}, now_ms=2_000)
+
+    with pytest.raises(ValueError, match="device token rotation denied"):
+        await service.call(
+            "device.token.rotate",
+            {
+                "deviceId": "device-token-operator-only",
+                "role": "node",
+            },
+            now_ms=3_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["roles"] == ["operator"]
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": [],
+            "createdAtMs": 2_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_rejects_scope_outside_approved_baseline(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    read_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.read")
+    )
+    admin_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.admin")
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-read-only",
+            "displayName": "Read Only Device",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=read_requester,
+        now_ms=2_000,
+    )
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-read-only",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        requester=read_requester,
+        now_ms=3_000,
+    )
+
+    with pytest.raises(ValueError, match="device token rotation denied"):
+        await service.call(
+            "device.token.rotate",
+            {
+                "deviceId": "device-token-read-only",
+                "role": "operator",
+                "scopes": ["operator.admin"],
+            },
+            requester=admin_requester,
+            now_ms=4_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["scopes"] == ["operator.read"]
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.read"],
+            "createdAtMs": 2_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_device_pair_approve_rejects_requested_operator_scope_without_caller_scope(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-request",
+            "displayName": "Admin Request Device",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+
+    with pytest.raises(ValueError, match="missing scope: operator.admin"):
+        await service.call(
+            "device.pair.approve",
+            {"requestId": request_id},
+            now_ms=2_000,
+        )
+
+    pairing = await service.call("device.pair.list", {})
+    assert pairing["pending"][0]["requestId"] == request_id
+    assert pairing["pending"][0]["scopes"] == ["operator.admin"]
+    assert pairing["paired"] == []
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_preserves_existing_scopes_when_omitted(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.write")
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-scope-node",
+            "displayName": "Scope Device",
+            "role": "operator",
+            "scopes": ["operator.read", "operator.write"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=requester,
+        now_ms=2_000,
+    )
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-scope-node",
+            "role": "operator",
+            "scopes": ["operator.read", "operator.write"],
+        },
+        now_ms=3_000,
+    )
+
+    rotated = await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-scope-node",
+            "role": "operator",
+        },
+        now_ms=4_000,
+    )
+
+    assert rotated["scopes"] == ["operator.read", "operator.write"]
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.read", "operator.write"],
+            "createdAtMs": 2_000,
+            "rotatedAtMs": 4_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_rejects_inherited_scope_without_caller_scope(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    admin_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.admin")
+    )
+    weak_requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing",))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-inherited",
+            "displayName": "Admin Token Device",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=admin_requester,
+        now_ms=2_000,
+    )
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-admin-inherited",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        requester=admin_requester,
+        now_ms=3_000,
+    )
+
+    with pytest.raises(ValueError, match="device token rotation denied"):
+        await service.call(
+            "device.token.rotate",
+            {
+                "deviceId": "device-token-admin-inherited",
+                "role": "operator",
+            },
+            requester=weak_requester,
+            now_ms=4_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.admin"],
+            "createdAtMs": 2_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_device_token_revoke_rejects_target_scope_without_caller_scope(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    admin_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.admin")
+    )
+    weak_requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing",))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-revoke",
+            "displayName": "Admin Revoke Device",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=admin_requester,
+        now_ms=2_000,
+    )
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-admin-revoke",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        requester=admin_requester,
+        now_ms=3_000,
+    )
+
+    with pytest.raises(ValueError, match="device token revocation denied"):
+        await service.call(
+            "device.token.revoke",
+            {
+                "deviceId": "device-token-admin-revoke",
+                "role": "operator",
+            },
+            requester=weak_requester,
+            now_ms=4_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.admin"],
+            "createdAtMs": 2_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_device_pair_approve_repair_preserves_existing_token_scopes(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    admin_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.admin")
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-repair-preserve",
+            "displayName": "Admin Repair Preserve",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=admin_requester,
+        now_ms=2_000,
+    )
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-admin-repair-preserve",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        requester=admin_requester,
+        now_ms=3_000,
+    )
+
+    repair = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-repair-preserve",
+            "displayName": "Admin Repair Preserve",
+            "role": "operator",
+        },
+        now_ms=4_000,
+    )
+    repair_request_id = repair["request"]["requestId"]
+
+    approved = await service.call(
+        "device.pair.approve",
+        {"requestId": repair_request_id},
+        requester=admin_requester,
+        now_ms=5_000,
+    )
+
+    assert approved["device"]["scopes"] == ["operator.admin"]
+    assert approved["device"]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.admin"],
+            "createdAtMs": 2_000,
+            "rotatedAtMs": 5_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+    listed = await service.call("device.pair.list", {})
+    assert listed["pending"] == []
+    assert listed["paired"][0]["scopes"] == ["operator.admin"]
+    assert listed["paired"][0]["tokens"] == approved["device"]["tokens"]
+
+
+@pytest.mark.asyncio
+async def test_device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    admin_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.admin")
+    )
+    weak_requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing",))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-repair",
+            "displayName": "Admin Repair Device",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=admin_requester,
+        now_ms=2_000,
+    )
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-admin-repair",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        requester=admin_requester,
+        now_ms=3_000,
+    )
+
+    repair = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-repair",
+            "displayName": "Admin Repair Device",
+            "role": "operator",
+        },
+        now_ms=4_000,
+    )
+    repair_request_id = repair["request"]["requestId"]
+
+    with pytest.raises(ValueError, match="missing scope: operator.admin"):
+        await service.call(
+            "device.pair.approve",
+            {"requestId": repair_request_id},
+            requester=weak_requester,
+            now_ms=5_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert listed["pending"][0]["requestId"] == repair_request_id
+    assert listed["paired"][0]["scopes"] == ["operator.admin"]
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.admin"],
+            "createdAtMs": 2_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_revoke_rejects_other_device_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    pairing_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing",)
+    )
+    requester_a = GatewayNodeMethodRequester(
+        node_id="device-token-owner-a",
+        caller_scopes=("operator.pairing",),
+    )
+
+    for device_id in ("device-token-owner-a", "device-token-owner-b"):
+        created = await service.call(
+            "node.pair.request",
+            {
+                "nodeId": device_id,
+                "displayName": device_id,
+                "role": "operator",
+                "scopes": ["operator.pairing"],
+            },
+            now_ms=1_000,
+        )
+        await service.call(
+            "device.pair.approve",
+            {"requestId": created["request"]["requestId"]},
+            requester=pairing_requester,
+            now_ms=2_000,
+        )
+        await service.call(
+            "device.token.rotate",
+            {
+                "deviceId": device_id,
+                "role": "operator",
+                "scopes": ["operator.pairing"],
+            },
+            requester=pairing_requester,
+            now_ms=3_000,
+        )
+
+    with pytest.raises(ValueError, match="device token rotation denied"):
+        await service.call(
+            "device.token.rotate",
+            {
+                "deviceId": "device-token-owner-b",
+                "role": "operator",
+                "scopes": ["operator.pairing"],
+            },
+            requester=requester_a,
+            now_ms=4_000,
+        )
+
+    with pytest.raises(ValueError, match="device token revocation denied"):
+        await service.call(
+            "device.token.revoke",
+            {"deviceId": "device-token-owner-b", "role": "operator"},
+            requester=requester_a,
+            now_ms=5_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    target = next(
+        device
+        for device in listed["paired"]
+        if device["deviceId"] == "device-token-owner-b"
+    )
+    assert target["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.pairing"],
+            "createdAtMs": 2_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_treats_admin_scope_as_operator_superset(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    admin_requester = GatewayNodeMethodRequester(caller_scopes=("operator.admin",))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-superset",
+            "displayName": "Admin Superset Device",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "device.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=admin_requester,
+        now_ms=2_000,
+    )
+
+    rotated = await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-admin-superset",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        requester=admin_requester,
+        now_ms=3_000,
+    )
+
+    assert rotated["scopes"] == ["operator.read"]
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.read"],
+            "createdAtMs": 2_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_revoke_disconnects_active_node_session(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        registry,
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing",))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-disconnect",
+            "displayName": "Token Disconnect Device",
+            "role": "operator",
+            "scopes": ["operator.pairing"],
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "device.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=requester,
+        now_ms=2_000,
+    )
+    registry.register(
+        FakeNodeConnection("conn-device-token-rotate-disconnect"),
+        GatewayNodeConnect(
+            client_id="client-device-token-rotate-disconnect",
+            device_id="device-token-disconnect",
+        ),
+    )
+
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": " device-token-disconnect ",
+            "role": " operator ",
+            "scopes": ["operator.pairing"],
+        },
+        requester=requester,
+        now_ms=3_000,
+    )
+
+    assert registry.get("device-token-disconnect") is None
+
+    registry.register(
+        FakeNodeConnection("conn-device-token-revoke-disconnect"),
+        GatewayNodeConnect(
+            client_id="client-device-token-revoke-disconnect",
+            device_id="device-token-disconnect",
+        ),
+    )
+
+    revoked = await service.call(
+        "device.token.revoke",
+        {
+            "deviceId": " device-token-disconnect ",
+            "role": " operator ",
+        },
+        requester=requester,
+        now_ms=4_000,
+    )
+
+    assert revoked == {
+        "deviceId": "device-token-disconnect",
+        "role": "operator",
+        "revokedAtMs": 4_000,
+    }
+    assert registry.get("device-token-disconnect") is None
 
 
 @pytest.mark.asyncio
@@ -96707,6 +97802,111 @@ async def test_sessions_spawn_acp_honors_configured_max_children_per_agent(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_counts_persisted_task_records_for_child_cap(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-task-record-child-cap.db")
+    await database.initialize()
+    requester_session_key = "agent:main:subagent:parent"
+    existing_child_session_key = "agent:codex:acp:existing-parent-stream"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Parent", "spawnDepth": 1},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=existing_child_session_key,
+        metadata={
+            "runtime": "acp",
+            "spawnedBy": requester_session_key,
+            "parentSessionKey": requester_session_key,
+            "runtimeThreadId": "thread-existing-parent-stream",
+            "runtimeSessionId": "session-existing-parent-stream",
+            "taskRecord": {
+                "runtime": "acp",
+                "status": "running",
+                "childSessionKey": existing_child_session_key,
+                "requesterSessionKey": requester_session_key,
+                "ownerKey": requester_session_key,
+            },
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "maxSpawnDepth": 3,
+                                "maxChildrenPerAgent": 1,
+                                "allowAgents": ["codex"],
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:new-parent-stream",
+                "runId": "run-acp-new-parent-stream",
+                "mode": "run",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Start another ACP child while one persisted task is active.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "streamTo": "parent",
+            "requesterSessionKey": requester_session_key,
+        },
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "errorCode": "subagent_policy",
+        "error": "sessions_spawn has reached max active children for this session (1/1)",
+        "role": "codex",
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_rejects_agent_outside_subagent_allowlist(
     tmp_path,
 ) -> None:
@@ -97365,6 +98565,229 @@ async def test_sessions_spawn_acp_thread_mode_persists_session_binding_metadata(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_cleans_runtime_when_metadata_registration_fails(
+    tmp_path,
+) -> None:
+    class FailingMetadataDatabase(Database):
+        async def upsert_gateway_session_metadata(
+            self,
+            *,
+            session_key: str,
+            metadata: dict[str, object],
+        ) -> None:
+            del session_key, metadata
+            raise RuntimeError("metadata store unavailable")
+
+    database = FailingMetadataDatabase(
+        tmp_path / "gateway-sessions-spawn-acp-metadata-failure.db"
+    )
+    await database.initialize()
+    cleanup_calls: list[dict[str, object]] = []
+    unbind_calls: list[dict[str, object]] = []
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+                "channels": {
+                    "matrix": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnAcpSessions": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-registration-fail",
+                "runId": "run-acp-registration-fail",
+                "mode": "session",
+                "runtimeThreadId": "thread-registration-fail",
+                "runtimeSessionId": "session-registration-fail",
+                "threadBinding": {
+                    "channel": "matrix",
+                    "accountId": "default",
+                    "to": "room:!room:example.org",
+                    "threadId": "$child-thread",
+                },
+                "sessionBinding": {
+                    "bindingId": "matrix-binding-registration-fail",
+                    "targetSessionKey": "agent:codex:acp:thread-registration-fail",
+                    "targetKind": "session",
+                    "conversation": {
+                        "channel": "matrix",
+                        "accountId": "default",
+                        "conversationId": "$child-thread",
+                        "parentConversationId": "!room:example.org",
+                    },
+                    "status": "active",
+                },
+            }
+
+        async def cancel_session(
+            self,
+            *,
+            session_key: str,
+            runtime_thread_id: str | None,
+            runtime_session_id: str | None,
+            reason: str,
+        ) -> dict[str, object]:
+            cleanup_calls.append(
+                {
+                    "op": "cancel",
+                    "sessionKey": session_key,
+                    "runtimeThreadId": runtime_thread_id,
+                    "runtimeSessionId": runtime_session_id,
+                    "reason": reason,
+                }
+            )
+            return {"status": "ok", "cancelled": True}
+
+        async def close_session(
+            self,
+            *,
+            session_key: str,
+            runtime_thread_id: str | None,
+            runtime_session_id: str | None,
+            reason: str,
+            discard_persistent_state: bool,
+            require_acp_session: bool,
+            allow_backend_unavailable: bool,
+        ) -> dict[str, object]:
+            cleanup_calls.append(
+                {
+                    "op": "close",
+                    "sessionKey": session_key,
+                    "runtimeThreadId": runtime_thread_id,
+                    "runtimeSessionId": runtime_session_id,
+                    "reason": reason,
+                    "discardPersistentState": discard_persistent_state,
+                    "requireAcpSession": require_acp_session,
+                    "allowBackendUnavailable": allow_backend_unavailable,
+                }
+            )
+            return {"status": "ok", "closed": True}
+
+    class FakeThreadBinder:
+        async def unbind(
+            self,
+            target: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            unbind_calls.append({"target": dict(target), "context": dict(context)})
+            return {"status": "ok", "unbound": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+        subagent_thread_binder=FakeThreadBinder(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Bind this ACP session before metadata fails.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_account_id="default",
+            message_to="room:!room:example.org",
+        ),
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "spawn_failed",
+        "error": "metadata store unavailable",
+        "childSessionKey": "agent:codex:acp:thread-registration-fail",
+        "mode": "session",
+        "cleanup": "keep",
+        "role": "codex",
+    }
+    assert cleanup_calls == [
+        {
+            "op": "cancel",
+            "sessionKey": "agent:codex:acp:thread-registration-fail",
+            "runtimeThreadId": "thread-registration-fail",
+            "runtimeSessionId": "session-registration-fail",
+            "reason": "spawn-failed",
+        },
+        {
+            "op": "close",
+            "sessionKey": "agent:codex:acp:thread-registration-fail",
+            "runtimeThreadId": "thread-registration-fail",
+            "runtimeSessionId": "session-registration-fail",
+            "reason": "spawn-failed",
+            "discardPersistentState": True,
+            "requireAcpSession": False,
+            "allowBackendUnavailable": True,
+        },
+    ]
+    assert unbind_calls == [
+        {
+            "target": {
+                "sessionKey": "agent:codex:acp:thread-registration-fail",
+                "agentId": "codex",
+            },
+            "context": {
+                "reason": "spawn-failed",
+                "channel": "matrix",
+                "to": "room:!room:example.org",
+                "accountId": "default",
+                "threadId": "$child-thread",
+            },
+        }
+    ]
+    assert (
+        await database.get_gateway_session_metadata(
+            "agent:codex:acp:thread-registration-fail"
+        )
+        is None
+    )
+    assert (
+        await database.count_control_chat_messages(
+            session_key="agent:codex:acp:thread-registration-fail"
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_thread_mode_uses_channel_default_account(
     tmp_path,
 ) -> None:
@@ -97643,6 +99066,66 @@ async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_rejects_resume_id_without_requester_session_context(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-resume-no-requester.db")
+    await database.initialize()
+    await database.upsert_gateway_session_metadata(
+        session_key="agent:codex:acp:thread-owned",
+        metadata={
+            "runtime": "acp",
+            "spawnedBy": "agent:main:main",
+            "parentSessionKey": "agent:main:main",
+            "runtimeThreadId": "thread-owned",
+            "runtimeSessionId": "session-owned",
+        },
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-owned",
+                "runId": "run-acp-resume-without-requester-1",
+                "mode": "run",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Resume my ACP thread without a requester context.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "resumeSessionId": "session-owned",
+        },
+        now_ms=20_000,
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "requester_session_required",
+        "error": "sessions_spawn resumeSessionId requires an active requester session context.",
+        "role": "codex",
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_rejects_resume_id_not_owned_by_requester(
     tmp_path,
 ) -> None:
@@ -97842,6 +99325,7 @@ async def test_sessions_spawn_acp_run_from_subagent_requester_implicitly_streams
                         "defaults": {
                             "subagents": {
                                 "maxSpawnDepth": 3,
+                                "allowAgents": ["codex"],
                             },
                         },
                     },
@@ -97965,6 +99449,7 @@ async def test_sessions_spawn_acp_run_from_subagent_requester_skips_stream_when_
                         "defaults": {
                             "subagents": {
                                 "maxSpawnDepth": 3,
+                                "allowAgents": ["codex"],
                             },
                         },
                     },
@@ -98225,6 +99710,8 @@ async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
 ) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-acp-parent-stream.db")
     await database.initialize()
+    sessions_service = GatewaySessionsService(database)
+    requester_session_key = await sessions_service.main_session_key()
     calls: list[dict[str, object]] = []
     stream_log_path = str(tmp_path / "agent-main-acp-stream.jsonl")
 
@@ -98250,7 +99737,7 @@ async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
         GatewayNodeRegistry(),
         database=database,
         hub=BroadcastHub(),
-        sessions_service=GatewaySessionsService(database),
+        sessions_service=sessions_service,
         acp_spawn_service=FakeAcpSpawnService(),
     )
 
@@ -98263,6 +99750,7 @@ async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
             "streamTo": "parent",
             "cleanup": "delete",
             "runTimeoutSeconds": 11,
+            "requesterSessionKey": requester_session_key,
         },
         now_ms=20_000,
     )
@@ -98273,6 +99761,7 @@ async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
     assert spawn_payload["streamLogPath"] == stream_log_path
     assert spawn_payload["note"] == "streaming progress to parent session"
     assert calls[0]["params"]["streamTo"] == "parent"
+    assert calls[0]["context"]["requesterSessionKey"] == requester_session_key
     metadata_row = await database.get_gateway_session_metadata(child_session_key)
     assert metadata_row is not None
     metadata = metadata_row["metadata"]
@@ -98327,6 +99816,56 @@ async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
     assert [message["content"] for message in parent_messages] == [
         f"Subagent {child_session_key} completed: ACP streamed child finished."
     ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_stream_to_parent_requires_requester_session_context(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-parent-stream-no-requester.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:main:acp:thread-acp-stream",
+                "runId": "run-acp-stream-1",
+                "mode": "run",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this through ACP and stream progress home.",
+            "runtime": "acp",
+            "agentId": "main",
+            "streamTo": "parent",
+        },
+        now_ms=20_000,
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "requester_session_required",
+        "error": 'sessions_spawn streamTo="parent" requires an active requester session context.',
+        "role": "main",
+    }
+    assert calls == []
 
 
 @pytest.mark.asyncio
