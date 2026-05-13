@@ -1401,6 +1401,7 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
             "nodeId": "device-token-node",
             "displayName": "Token Device",
             "role": "operator",
+            "scopes": ["operator.read", "operator.write"],
         },
         now_ms=1_000,
     )
@@ -1497,6 +1498,77 @@ async def test_device_token_rotate_rejects_role_not_approved_by_pairing(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_device_token_rotate_rejects_scope_outside_approved_baseline(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    read_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.read")
+    )
+    admin_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.admin")
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-read-only",
+            "displayName": "Read Only Device",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=read_requester,
+        now_ms=2_000,
+    )
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-read-only",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        requester=read_requester,
+        now_ms=3_000,
+    )
+
+    with pytest.raises(ValueError, match="device token rotation denied"):
+        await service.call(
+            "device.token.rotate",
+            {
+                "deviceId": "device-token-read-only",
+                "role": "operator",
+                "scopes": ["operator.admin"],
+            },
+            requester=admin_requester,
+            now_ms=4_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["scopes"] == ["operator.read"]
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.read"],
+            "createdAtMs": 3_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_device_token_rotate_preserves_existing_scopes_when_omitted(
     tmp_path,
 ) -> None:
@@ -1514,6 +1586,7 @@ async def test_device_token_rotate_preserves_existing_scopes_when_omitted(
             "nodeId": "device-token-scope-node",
             "displayName": "Scope Device",
             "role": "operator",
+            "scopes": ["operator.read", "operator.write"],
         },
         now_ms=1_000,
     )

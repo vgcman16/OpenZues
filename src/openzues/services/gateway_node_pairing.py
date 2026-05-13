@@ -15,6 +15,9 @@ _NODE_SYSTEM_RUN_COMMANDS = ("system.run.prepare", "system.run")
 PAIRING_GATEWAY_METHOD_SCOPE = "operator.pairing"
 WRITE_GATEWAY_METHOD_SCOPE = "operator.write"
 ADMIN_GATEWAY_METHOD_SCOPE = "operator.admin"
+READ_GATEWAY_METHOD_SCOPE = "operator.read"
+_OPERATOR_ROLE = "operator"
+_OPERATOR_SCOPE_PREFIX = "operator."
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,6 +456,12 @@ class GatewayNodePairingService:
             if existing is not None
             else []
         )
+        if not _role_scopes_allow(
+            role=normalized_role,
+            requested_scopes=resolved_scopes,
+            allowed_scopes=list(paired.scopes),
+        ):
+            return None
         row = await self.database.upsert_gateway_node_device_token(
             device_id=normalized_device_id,
             role=normalized_role,
@@ -727,6 +736,48 @@ def _missing_scope(
         if scope not in allowed:
             return scope
     return None
+
+
+def _role_scopes_allow(
+    *,
+    role: str,
+    requested_scopes: list[str],
+    allowed_scopes: list[str],
+) -> bool:
+    requested = _dedupe_scopes(requested_scopes)
+    if not requested:
+        return True
+    allowed = _dedupe_scopes(allowed_scopes)
+    if not allowed:
+        return False
+    allowed_set = set(allowed)
+    if role != _OPERATOR_ROLE:
+        prefix = f"{role}."
+        return all(scope.startswith(prefix) and scope in allowed_set for scope in requested)
+    return all(_operator_scope_satisfied(scope, allowed_set) for scope in requested)
+
+
+def _operator_scope_satisfied(scope: str, allowed: set[str]) -> bool:
+    if not scope.startswith(_OPERATOR_SCOPE_PREFIX):
+        return False
+    if ADMIN_GATEWAY_METHOD_SCOPE in allowed:
+        return True
+    if scope == READ_GATEWAY_METHOD_SCOPE:
+        return READ_GATEWAY_METHOD_SCOPE in allowed or WRITE_GATEWAY_METHOD_SCOPE in allowed
+    if scope == WRITE_GATEWAY_METHOD_SCOPE:
+        return WRITE_GATEWAY_METHOD_SCOPE in allowed
+    return scope in allowed
+
+
+def _dedupe_scopes(scopes: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for scope in scopes:
+        normalized = scope.strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            deduped.append(normalized)
+    return deduped
 
 
 def _optional_string(value: object) -> str | None:
