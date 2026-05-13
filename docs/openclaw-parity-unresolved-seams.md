@@ -187,7 +187,7 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~6.9% after QR
+- The packaging/companion app breadth family is estimated at ~7.0% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
@@ -197,8 +197,8 @@ Current percentage rollup:
   operator-scope pairing approval gates, inherited-scope rotation caller gates,
   scoped token revocation caller gates, pairing repair inherited-token scope
   gates, device-token cross-device mutation guards, operator-admin scope
-  compatibility for device-token rotation, local QR password SecretRef
-  resolution, and
+  compatibility for device-token rotation, pairing approval seeded device-auth
+  tokens, local QR password SecretRef resolution, and
   remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
@@ -13127,3 +13127,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and packaging/companion breadth moves to
   ~6.9%. Continue QR terminal rendering, companion-app device flows,
   packaging/distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native pairing approval now seeds requested
+  role device-auth tokens, projects public token summaries, preserves
+  approval-created token creation timestamps across rotations, and rotates
+  existing token rows during repair approval. Source/test checkpointed in
+  `6489ac37`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~7.0%. Continue QR terminal rendering,
+  companion-app device flows, packaging/distribution, ACP lifecycle, or
+  provider action breadth.
