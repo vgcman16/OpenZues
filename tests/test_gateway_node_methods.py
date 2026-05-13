@@ -1430,6 +1430,109 @@ async def test_device_pair_approve_seeds_requested_role_token_summary(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_device_token_rotate_omits_raw_token_for_unbound_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.read")
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-raw-redacted",
+            "displayName": "Raw Redacted Device",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "device.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=requester,
+        now_ms=2_000,
+    )
+
+    rotated = await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-raw-redacted",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        requester=requester,
+        now_ms=3_000,
+    )
+
+    assert "token" not in rotated
+    assert rotated == {
+        "deviceId": "device-token-raw-redacted",
+        "role": "operator",
+        "scopes": ["operator.read"],
+        "rotatedAtMs": 3_000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_returns_raw_token_for_same_device_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    pairing_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.read")
+    )
+    device_requester = GatewayNodeMethodRequester(
+        node_id="device-token-raw-own",
+        caller_scopes=("operator.pairing", "operator.read"),
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-raw-own",
+            "displayName": "Raw Own Device",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "device.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=pairing_requester,
+        now_ms=2_000,
+    )
+
+    rotated = await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-raw-own",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        requester=device_requester,
+        now_ms=3_000,
+    )
+
+    assert isinstance(rotated["token"], str)
+    assert len(rotated["token"]) >= 32
+
+
+@pytest.mark.asyncio
 async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()
@@ -1474,8 +1577,7 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
     assert rotated["role"] == "operator"
     assert rotated["scopes"] == ["operator.read", "operator.write"]
     assert rotated["rotatedAtMs"] == 3_000
-    assert isinstance(rotated["token"], str)
-    assert len(rotated["token"]) >= 32
+    assert "token" not in rotated
 
     listed = await service.call("device.pair.list", {})
     assert listed["paired"][0]["tokens"] == [

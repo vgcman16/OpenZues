@@ -13011,13 +13011,18 @@ class GatewayNodeMethodService:
             )
             if rotated is None:
                 raise ValueError("device token rotation denied")
-            return {
+            rotated_payload: dict[str, Any] = {
                 "deviceId": rotated.device_id,
                 "role": rotated.role,
-                "token": rotated.token,
                 "scopes": list(rotated.scopes),
                 "rotatedAtMs": rotated.rotated_at_ms or rotated.created_at_ms,
             }
+            if _device_token_should_return_raw_token(
+                requester=resolved_requester,
+                device_id=device_id,
+            ):
+                rotated_payload["token"] = rotated.token
+            return rotated_payload
 
         if resolved_method == "device.token.revoke":
             _validate_exact_keys(
@@ -20729,6 +20734,15 @@ def _device_token_requester_target_denied(
     if not requester_device_id or requester_device_id == device_id:
         return False
     return ADMIN_GATEWAY_METHOD_SCOPE not in set(requester.caller_scopes or ())
+
+
+def _device_token_should_return_raw_token(
+    *,
+    requester: GatewayNodeMethodRequester,
+    device_id: str,
+) -> bool:
+    requester_device_id = requester.node_id.strip() if requester.node_id else None
+    return bool(requester_device_id and requester_device_id == device_id)
 
 
 def _optional_bounded_int(
