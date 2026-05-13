@@ -187,7 +187,7 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~6.6% after QR
+- The packaging/companion app breadth family is estimated at ~6.7% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
@@ -195,8 +195,9 @@ Current percentage rollup:
   metadata, device token scope-preserving rotation, approved-role device token
   rotation gates, approved-scope device token rotation baselines, requested
   operator-scope pairing approval gates, inherited-scope rotation caller gates,
-  scoped token revocation caller gates, local QR password SecretRef resolution,
-  and remove/clear/reject/rotate/revoke coverage.
+  scoped token revocation caller gates, pairing repair inherited-token scope
+  gates, local QR password SecretRef resolution, and
+  remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -13102,3 +13103,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and packaging/companion breadth moves to ~6.6%.
   Continue QR terminal rendering, companion-app device flows,
   packaging/distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native pairing repair approval now preserves
+  existing approved roles/scopes and persisted device-token summaries when a
+  repair omits scopes, and rejects inherited operator token scopes before
+  mutation when the caller cannot hold them. Source/test checkpointed in
+  `5f7c8445`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~6.7%. Continue QR terminal rendering,
+  companion-app device flows, packaging/distribution, ACP lifecycle, or
+  provider action breadth.
