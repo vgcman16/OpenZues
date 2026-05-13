@@ -1745,6 +1745,73 @@ async def test_device_token_rotate_rejects_inherited_scope_without_caller_scope(
 
 
 @pytest.mark.asyncio
+async def test_device_token_revoke_rejects_target_scope_without_caller_scope(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    admin_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.admin")
+    )
+    weak_requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing",))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-revoke",
+            "displayName": "Admin Revoke Device",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=admin_requester,
+        now_ms=2_000,
+    )
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-admin-revoke",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        requester=admin_requester,
+        now_ms=3_000,
+    )
+
+    with pytest.raises(ValueError, match="device token revocation denied"):
+        await service.call(
+            "device.token.revoke",
+            {
+                "deviceId": "device-token-admin-revoke",
+                "role": "operator",
+            },
+            requester=weak_requester,
+            now_ms=4_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.admin"],
+            "createdAtMs": 3_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_device_pair_reject_removes_pending_request_and_broadcasts(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()

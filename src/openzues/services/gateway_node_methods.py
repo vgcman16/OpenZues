@@ -69,6 +69,7 @@ from openzues.services.gateway_node_command_policy import (
     resolve_node_command_allowlist,
 )
 from openzues.services.gateway_node_pairing import (
+    GatewayDeviceTokenMutationDenied,
     GatewayNodePairingService,
     GatewayPairedNode,
 )
@@ -13029,8 +13030,11 @@ class GatewayNodeMethodService:
             revoked = await self._pairing_service.revoke_device_token(
                 device_id=device_id,
                 role=role,
+                caller_scopes=resolved_requester.caller_scopes,
                 now_ms=_timestamp_ms(now_ms),
             )
+            if isinstance(revoked, GatewayDeviceTokenMutationDenied):
+                raise ValueError("device token revocation denied")
             if revoked is None:
                 raise ValueError("unknown deviceId/role")
             return {

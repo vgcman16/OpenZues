@@ -79,6 +79,12 @@ class GatewayDeviceAuthToken:
     last_used_at_ms: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class GatewayDeviceTokenMutationDenied:
+    reason: str
+    missing_scope: str | None = None
+
+
 class GatewayNodePairingService:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -486,8 +492,9 @@ class GatewayNodePairingService:
         *,
         device_id: str,
         role: str,
+        caller_scopes: tuple[str, ...] | None = None,
         now_ms: int,
-    ) -> GatewayDeviceAuthToken | None:
+    ) -> GatewayDeviceAuthToken | GatewayDeviceTokenMutationDenied | None:
         normalized_device_id = _normalize_device_id(device_id)
         normalized_role = _normalize_role(role)
         if normalized_device_id is None or normalized_role is None:
@@ -498,6 +505,26 @@ class GatewayNodePairingService:
         paired = _paired_node_from_row(paired_node)
         if normalized_role not in paired.roles:
             return None
+        existing_row = await self.database.get_gateway_node_device_token(
+            normalized_device_id,
+            normalized_role,
+        )
+        if existing_row is None:
+            return None
+        existing = _device_token_from_row(existing_row)
+        if caller_scopes is not None and not _role_scopes_allow(
+            role=normalized_role,
+            requested_scopes=list(existing.scopes),
+            allowed_scopes=list(caller_scopes),
+        ):
+            return GatewayDeviceTokenMutationDenied(
+                reason="caller-missing-scope",
+                missing_scope=_missing_role_scope(
+                    role=normalized_role,
+                    requested_scopes=list(existing.scopes),
+                    allowed_scopes=list(caller_scopes),
+                ),
+            )
         row = await self.database.revoke_gateway_node_device_token(
             device_id=normalized_device_id,
             role=normalized_role,
@@ -818,6 +845,22 @@ def _role_scopes_allow(
         prefix = f"{role}."
         return all(scope.startswith(prefix) and scope in allowed_set for scope in requested)
     return all(_operator_scope_satisfied(scope, allowed_set) for scope in requested)
+
+
+def _missing_role_scope(
+    *,
+    role: str,
+    requested_scopes: list[str],
+    allowed_scopes: list[str],
+) -> str | None:
+    for scope in requested_scopes:
+        if not _role_scopes_allow(
+            role=role,
+            requested_scopes=[scope],
+            allowed_scopes=allowed_scopes,
+        ):
+            return scope
+    return None
 
 
 def _operator_scope_satisfied(scope: str, allowed: set[str]) -> bool:
