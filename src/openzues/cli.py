@@ -106093,6 +106093,34 @@ def _sanitize_cli_terminal_text(value: object) -> str | None:
     return sanitized.strip() or None
 
 
+def _devices_format_access_summary(access: object) -> str:
+    if not isinstance(access, Mapping):
+        return "none"
+    roles = [
+        role
+        for raw_role in _devices_string_list(access.get("roles"))
+        if (role := _sanitize_cli_terminal_text(raw_role)) is not None
+    ]
+    scopes = [
+        scope
+        for raw_scope in _devices_string_list(access.get("scopes"))
+        if (scope := _sanitize_cli_terminal_text(raw_scope)) is not None
+    ]
+    role_text = ", ".join(roles) if roles else "none"
+    scope_text = ", ".join(scopes) if scopes else "none"
+    return f"roles: {role_text}; scopes: {scope_text}"
+
+
+def _devices_format_approval_kind(kind: object) -> str:
+    normalized = _sanitize_cli_terminal_text(kind) or "new-pairing"
+    return {
+        "new-pairing": "new pairing",
+        "role-upgrade": "role upgrade",
+        "scope-upgrade": "scope upgrade",
+        "re-approval": "re-approval",
+    }.get(normalized, normalized)
+
+
 def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
@@ -106117,6 +106145,18 @@ def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None
                 device_id = f"{device_id} - {remote_ip}"
             device_text = f" {device_id}" if device_id is not None else ""
             typer.echo(f"  {request_id}{device_text}")
+            approval = _devices_approval_state(payload, item)
+            typer.echo(
+                f"    Status: {_devices_format_approval_kind(approval.get('kind'))}"
+            )
+            typer.echo(
+                "    Requested: "
+                + _devices_format_access_summary(approval.get("requested"))
+            )
+            typer.echo(
+                "    Approved: "
+                + _devices_format_access_summary(approval.get("approved"))
+            )
     if paired:
         typer.echo(f"Paired ({len(paired)})")
         for item in paired:
