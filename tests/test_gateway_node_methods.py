@@ -1386,6 +1386,50 @@ async def test_device_pair_family_uses_persisted_node_pairing_runtime(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_device_pair_remove_rejects_other_device_requester(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester_a = GatewayNodeMethodRequester(
+        node_id="device-remove-owner-a",
+        caller_scopes=("operator.pairing",),
+    )
+
+    for device_id in ("device-remove-owner-a", "device-remove-owner-b"):
+        created = await service.call(
+            "node.pair.request",
+            {
+                "nodeId": device_id,
+                "displayName": device_id,
+                "role": "operator",
+            },
+            now_ms=1_000,
+        )
+        await service.call(
+            "device.pair.approve",
+            {"requestId": created["request"]["requestId"]},
+            now_ms=2_000,
+        )
+
+    with pytest.raises(ValueError, match="device pairing removal denied"):
+        await service.call(
+            "device.pair.remove",
+            {"deviceId": "device-remove-owner-b"},
+            requester=requester_a,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert [device["deviceId"] for device in listed["paired"]] == [
+        "device-remove-owner-a",
+        "device-remove-owner-b",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_device_pair_approve_seeds_requested_role_token_summary(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()

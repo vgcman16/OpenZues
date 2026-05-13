@@ -12963,6 +12963,11 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
+            if _device_requester_target_denied(
+                requester=resolved_requester,
+                device_id=device_id,
+            ):
+                raise ValueError("device pairing removal denied")
             removed = await self._pairing_service.remove(device_id)
             if removed is None:
                 raise ValueError("unknown deviceId")
@@ -12996,7 +13001,7 @@ class GatewayNodeMethodService:
             )
             if (
                 device_token_missing_scope is not None
-                or _device_token_requester_target_denied(
+                or _device_requester_target_denied(
                     requester=resolved_requester,
                     device_id=device_id,
                 )
@@ -13041,7 +13046,7 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
-            if _device_token_requester_target_denied(
+            if _device_requester_target_denied(
                 requester=resolved_requester,
                 device_id=device_id,
             ):
@@ -20725,7 +20730,7 @@ def _gateway_scope_satisfied(scope: str, allowed: set[str]) -> bool:
     return scope in allowed
 
 
-def _device_token_requester_target_denied(
+def _device_requester_target_denied(
     *,
     requester: GatewayNodeMethodRequester,
     device_id: str,
