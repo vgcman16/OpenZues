@@ -12905,6 +12905,28 @@ class GatewayNodeMethodService:
                     status_code=503,
                 )
             timestamp_ms = _timestamp_ms(now_ms)
+            pending_request = await self._pairing_service.get_pending_request(request_id)
+            if (
+                pending_request is None
+                and _device_requester_is_device_bound_non_admin(resolved_requester)
+            ):
+                raise ValueError(
+                    "device pairing rejection denied"
+                    if resolved_method == "device.pair.reject"
+                    else "device pairing approval denied"
+                )
+            if (
+                pending_request is not None
+                and _device_requester_target_denied(
+                    requester=resolved_requester,
+                    device_id=pending_request.node_id,
+                )
+            ):
+                raise ValueError(
+                    "device pairing rejection denied"
+                    if resolved_method == "device.pair.reject"
+                    else "device pairing approval denied"
+                )
             if resolved_method == "device.pair.reject":
                 rejected = await self._pairing_service.reject(request_id)
                 if rejected is None:
@@ -20739,6 +20761,16 @@ def _device_requester_target_denied(
     if not requester_device_id or requester_device_id == device_id:
         return False
     return ADMIN_GATEWAY_METHOD_SCOPE not in set(requester.caller_scopes or ())
+
+
+def _device_requester_is_device_bound_non_admin(
+    requester: GatewayNodeMethodRequester,
+) -> bool:
+    requester_device_id = requester.node_id.strip() if requester.node_id else None
+    return bool(
+        requester_device_id
+        and ADMIN_GATEWAY_METHOD_SCOPE not in set(requester.caller_scopes or ())
+    )
 
 
 def _device_token_should_return_raw_token(

@@ -1430,6 +1430,64 @@ async def test_device_pair_remove_rejects_other_device_requester(tmp_path) -> No
 
 
 @pytest.mark.asyncio
+async def test_device_pair_approve_reject_rejects_other_device_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester_a = GatewayNodeMethodRequester(
+        node_id="device-pair-owner-a",
+        caller_scopes=("operator.pairing",),
+    )
+    request_b_id: str | None = None
+
+    for device_id in ("device-pair-owner-a", "device-pair-owner-b"):
+        created = await service.call(
+            "node.pair.request",
+            {
+                "nodeId": device_id,
+                "displayName": device_id,
+                "role": "operator",
+            },
+            now_ms=1_000,
+        )
+        if device_id == "device-pair-owner-a":
+            await service.call(
+                "device.pair.approve",
+                {"requestId": created["request"]["requestId"]},
+                now_ms=2_000,
+            )
+        else:
+            request_b_id = str(created["request"]["requestId"])
+    assert request_b_id is not None
+
+    with pytest.raises(ValueError, match="device pairing approval denied"):
+        await service.call(
+            "device.pair.approve",
+            {"requestId": request_b_id},
+            requester=requester_a,
+            now_ms=3_000,
+        )
+
+    with pytest.raises(ValueError, match="device pairing rejection denied"):
+        await service.call(
+            "device.pair.reject",
+            {"requestId": request_b_id},
+            requester=requester_a,
+            now_ms=4_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert [entry["requestId"] for entry in listed["pending"]] == [request_b_id]
+    assert [device["deviceId"] for device in listed["paired"]] == ["device-pair-owner-a"]
+
+
+@pytest.mark.asyncio
 async def test_device_pair_approve_seeds_requested_role_token_summary(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()

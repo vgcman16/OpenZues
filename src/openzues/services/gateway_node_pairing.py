@@ -217,6 +217,10 @@ class GatewayNodePairingService:
         rows = await self.database.list_gateway_node_pairing_requests()
         return [_pending_payload(_request_from_row(row)) for row in rows]
 
+    async def get_pending_request(self, request_id: str) -> GatewayNodePairingRequest | None:
+        row = await self.database.get_gateway_node_pairing_request(request_id)
+        return _request_from_row(row) if row is not None else None
+
     async def reject(self, request_id: str) -> dict[str, str] | None:
         row = await self.database.delete_gateway_node_pairing_request(request_id)
         if row is None:
