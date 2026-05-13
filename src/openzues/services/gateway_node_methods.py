@@ -12993,7 +12993,13 @@ class GatewayNodeMethodService:
                 requested_scopes=scopes or (),
                 caller_scopes=resolved_requester.caller_scopes,
             )
-            if device_token_missing_scope is not None:
+            if (
+                device_token_missing_scope is not None
+                or _device_token_requester_target_denied(
+                    requester=resolved_requester,
+                    device_id=device_id,
+                )
+            ):
                 raise ValueError("device token rotation denied")
             rotated = await self._pairing_service.rotate_device_token(
                 device_id=device_id,
@@ -13029,6 +13035,11 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
+            if _device_token_requester_target_denied(
+                requester=resolved_requester,
+                device_id=device_id,
+            ):
+                raise ValueError("device token revocation denied")
             revoked = await self._pairing_service.revoke_device_token(
                 device_id=device_id,
                 role=role,
@@ -20694,6 +20705,17 @@ def _missing_requested_scope(
         if scope not in allowed:
             return scope
     return None
+
+
+def _device_token_requester_target_denied(
+    *,
+    requester: GatewayNodeMethodRequester,
+    device_id: str,
+) -> bool:
+    requester_device_id = requester.node_id.strip() if requester.node_id else None
+    if not requester_device_id or requester_device_id == device_id:
+        return False
+    return ADMIN_GATEWAY_METHOD_SCOPE not in set(requester.caller_scopes or ())
 
 
 def _optional_bounded_int(
