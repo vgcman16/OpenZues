@@ -106078,6 +106078,21 @@ def tasks_show_command(
     _emit_task_show(task, json_output=json_output)
 
 
+_ANSI_CSI_RE = re.compile(r"\x1b\[[\x20-\x3f]*[\x40-\x7e]")
+_OSC8_RE = re.compile(r"\x1b\]8;;.*?(?:\x1b\\|\x07)|\x1b\]8;;(?:\x1b\\|\x07)")
+_CONTROL_CHARS_RE = re.compile(
+    f"[{chr(0x00)}-{chr(0x1F)}{chr(0x7F)}-{chr(0x9F)}]"
+)
+
+
+def _sanitize_cli_terminal_text(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    sanitized = _CONTROL_CHARS_RE.sub("", _ANSI_CSI_RE.sub("", _OSC8_RE.sub("", text)))
+    return sanitized.strip() or None
+
+
 def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
@@ -106091,10 +106106,15 @@ def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None
         for item in pending:
             if not isinstance(item, dict):
                 continue
-            request_id = _optional_cli_string(item.get("requestId")) or "<unknown>"
-            device_id = _optional_cli_string(item.get("displayName")) or _optional_cli_string(
+            request_id = _sanitize_cli_terminal_text(item.get("requestId")) or "<unknown>"
+            device_id = _sanitize_cli_terminal_text(
+                item.get("displayName")
+            ) or _sanitize_cli_terminal_text(
                 item.get("deviceId")
             )
+            remote_ip = _sanitize_cli_terminal_text(item.get("remoteIp"))
+            if device_id and remote_ip:
+                device_id = f"{device_id} - {remote_ip}"
             device_text = f" {device_id}" if device_id is not None else ""
             typer.echo(f"  {request_id}{device_text}")
     if paired:
@@ -106102,13 +106122,24 @@ def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None
         for item in paired:
             if not isinstance(item, dict):
                 continue
-            device_id = _optional_cli_string(item.get("displayName")) or _optional_cli_string(
+            device_id = _sanitize_cli_terminal_text(
+                item.get("displayName")
+            ) or _sanitize_cli_terminal_text(
                 item.get("deviceId")
             )
+            remote_ip = _sanitize_cli_terminal_text(item.get("remoteIp"))
             roles = item.get("roles")
             role_text = ""
             if isinstance(roles, list) and roles:
-                role_text = " " + ", ".join(str(role) for role in roles)
+                safe_roles = [
+                    role
+                    for raw_role in roles
+                    if (role := _sanitize_cli_terminal_text(raw_role)) is not None
+                ]
+                if safe_roles:
+                    role_text = " " + ", ".join(safe_roles)
+            if device_id and remote_ip:
+                device_id = f"{device_id} - {remote_ip}"
             typer.echo(f"  {device_id or '<unknown>'}{role_text}")
     if not pending and not paired:
         typer.echo("No device pairing entries.")

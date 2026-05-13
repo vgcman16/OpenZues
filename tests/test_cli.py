@@ -911,6 +911,56 @@ def test_devices_list_json_calls_device_pair_list(monkeypatch) -> None:
     assert json.loads(result.stdout) == {"pending": [], "paired": []}
 
 
+def test_devices_list_human_output_sanitizes_device_controlled_fields(
+    monkeypatch,
+) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            assert method == "device.pair.list"
+            assert params == {}
+            return {
+                "pending": [
+                    {
+                        "requestId": "req-1",
+                        "deviceId": "device-1",
+                        "displayName": "Bad\x1b[2J\nName",
+                        "role": "operator",
+                        "scopes": ["operator.admin"],
+                        "remoteIp": "10.0.0.9\rspoof",
+                        "ts": 1,
+                    },
+                ],
+                "paired": [
+                    {
+                        "deviceId": "device-1",
+                        "displayName": "Pair\x1b]8;;https://evil.example\x1b\\ed",
+                        "roles": ["operator"],
+                        "scopes": ["operator.read"],
+                        "remoteIp": "10.0.0.1\x7f",
+                    },
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "list"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "\x1b" not in result.stdout
+    assert "\r" not in result.stdout
+    assert "\x7f" not in result.stdout
+    assert "BadName" in result.stdout
+    assert "spoof" in result.stdout
+    assert "Paired" in result.stdout
+
+
 def test_devices_approve_json_calls_device_pair_approve(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
