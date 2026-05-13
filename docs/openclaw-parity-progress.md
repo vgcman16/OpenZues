@@ -24923,6 +24923,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `2781c38d`.
 
+- Native `device.pair.remove`, `device.token.rotate`, and
+  `device.token.revoke` now disconnect active node sessions for the affected
+  device after successful mutation, matching OpenClaw's
+  `disconnectClientsForDevice` lifecycle behavior while leaving failed
+  mutations untouched. This closes `OZ-COMP-001AL`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~7.5%.
+- Verified device-auth disconnect lifecycle with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_device_pair_remove_disconnects_active_node_session tests\test_gateway_node_methods.py::test_device_token_rotate_revoke_disconnects_active_node_session -q`
+  (`2 failed` before implementation because active node sessions remained
+  registered, then `2 passed`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair_remove_disconnects_active_node_session or device_token_rotate_revoke_disconnects_active_node_session or device_pair_list_filters_device_bound_non_admin_requester or device_pair_approve_reject_rejects_other_device_requester or device_pair_remove_rejects_other_device_requester or device_token_rotate_omits_raw_token_for_unbound_requester or device_token_rotate_returns_raw_token_for_same_device_requester or device_pair_approve_seeds_requested_role_token_summary or device_token_family or device_token_rotate_preserves_existing_scopes_when_omitted or device_token_rotate_rejects_role_not_approved_by_pairing or device_token_rotate_rejects_scope_outside_approved_baseline or device_pair_approve_rejects_requested_operator_scope_without_caller_scope or device_token_rotate_rejects_inherited_scope_without_caller_scope or device_token_revoke_rejects_target_scope_without_caller_scope or device_pair_approve_repair_preserves_existing_token_scopes or device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope or device_token_rotate_revoke_rejects_other_device_requester or device_token_rotate_treats_admin_scope_as_operator_superset or device_pair_family"`
+  (`22 passed, 1280 deselected`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\gateway_node_methods.py`, and focused
+  `git diff --check`. Source/test checkpointed in `4aa51161`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

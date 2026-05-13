@@ -13164,3 +13164,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and packaging/companion breadth moves to
   ~7.4%. Continue QR terminal rendering, companion-app device flows,
   packaging/distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native `device.pair.remove`,
+  `device.token.rotate`, and `device.token.revoke` now disconnect active node
+  sessions for the affected device after successful mutation. Source/test
+  checkpointed in `4aa51161`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~7.5%. Continue QR terminal
+  rendering, companion-app device flows, packaging/distribution, ACP
+  lifecycle, or provider action breadth.
