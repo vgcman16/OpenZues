@@ -187,7 +187,7 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~7.1% after QR
+- The packaging/companion app breadth family is estimated at ~7.2% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
@@ -199,7 +199,7 @@ Current percentage rollup:
   gates, device-token cross-device mutation guards, operator-admin scope
   compatibility for device-token rotation, pairing approval seeded device-auth
   tokens, rotated token raw-value redaction for unbound callers, local QR
-  password SecretRef resolution, and
+  password SecretRef resolution, cross-device pairing removal guards, and
   remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
@@ -13143,3 +13143,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and packaging/companion breadth moves to ~7.1%. Continue QR terminal
   rendering, companion-app device flows, packaging/distribution, ACP lifecycle,
   or provider action breadth.
+- Current queue-head adjustment: native `device.pair.remove` now rejects
+  cross-device removal attempts from non-admin requesters bound to another
+  device, preserving the target pairing. Source/test checkpointed in
+  `b3285bc1`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~7.2%. Continue QR terminal rendering,
+  companion-app device flows, packaging/distribution, ACP lifecycle, or
+  provider action breadth.
