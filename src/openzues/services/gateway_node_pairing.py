@@ -410,6 +410,11 @@ class GatewayNodePairingService:
             approved_at_ms=now_ms,
             last_connected_at_ms=None,
         )
+        await self._upsert_approved_device_tokens(
+            request=request,
+            approved_scopes=approved_scopes,
+            now_ms=now_ms,
+        )
         await self.database.delete_gateway_node_pairing_request(request_id)
         paired = _paired_node_from_row(paired_row)
         approved_result: dict[str, object] = {
@@ -458,6 +463,48 @@ class GatewayNodePairingService:
                     allowed_scopes=list(caller_scopes),
                 )
         return None
+
+    async def _upsert_approved_device_tokens(
+        self,
+        *,
+        request: GatewayNodePairingRequest,
+        approved_scopes: list[str],
+        now_ms: int,
+    ) -> None:
+        for role in request.roles:
+            existing_token_row = await self.database.get_gateway_node_device_token(
+                request.node_id,
+                role,
+            )
+            existing_token = (
+                _device_token_from_row(existing_token_row)
+                if existing_token_row is not None
+                else None
+            )
+            token_scopes = _approved_token_scopes(
+                role=role,
+                requested_scopes=list(request.scopes),
+                approved_scopes=approved_scopes,
+                existing_token=existing_token,
+            )
+            await self.database.upsert_gateway_node_device_token(
+                device_id=request.node_id,
+                role=role,
+                token=secrets.token_urlsafe(32),
+                scopes=token_scopes,
+                created_at_ms=(
+                    existing_token.created_at_ms
+                    if existing_token is not None
+                    else now_ms
+                ),
+                rotated_at_ms=now_ms if existing_token is not None else None,
+                revoked_at_ms=None,
+                last_used_at_ms=(
+                    existing_token.last_used_at_ms
+                    if existing_token is not None
+                    else None
+                ),
+            )
 
     async def verify(self, node_id: str, token: str) -> dict[str, object]:
         paired_row = await self.database.get_gateway_node_paired_node(node_id)
@@ -888,6 +935,21 @@ def _scope_outside_roles(
         ):
             return scope
     return None
+
+
+def _approved_token_scopes(
+    *,
+    role: str,
+    requested_scopes: list[str],
+    approved_scopes: list[str],
+    existing_token: GatewayDeviceAuthToken | None,
+) -> list[str]:
+    token_scopes = _role_scoped_token_scopes(role, requested_scopes)
+    if token_scopes:
+        return token_scopes
+    if existing_token is not None:
+        return _role_scoped_token_scopes(role, list(existing_token.scopes))
+    return _role_scoped_token_scopes(role, approved_scopes)
 
 
 def _role_scoped_token_scopes(role: str, scopes: list[str]) -> list[str]:

@@ -1386,6 +1386,50 @@ async def test_device_pair_family_uses_persisted_node_pairing_runtime(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_device_pair_approve_seeds_requested_role_token_summary(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.read")
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-approved",
+            "displayName": "Approved Token Device",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+
+    approved = await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=requester,
+        now_ms=2_000,
+    )
+
+    assert approved["device"]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.read"],
+            "createdAtMs": 2_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["tokens"] == approved["device"]["tokens"]
+
+
+@pytest.mark.asyncio
 async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()
@@ -1438,7 +1482,7 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
         {
             "role": "operator",
             "scopes": ["operator.read", "operator.write"],
-            "createdAtMs": 3_000,
+            "createdAtMs": 2_000,
             "rotatedAtMs": 3_000,
             "lastUsedAtMs": None,
         }
@@ -1460,7 +1504,7 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
         {
             "role": "operator",
             "scopes": ["operator.read", "operator.write"],
-            "createdAtMs": 3_000,
+            "createdAtMs": 2_000,
             "rotatedAtMs": 3_000,
             "revokedAtMs": 4_000,
             "lastUsedAtMs": None,
@@ -1502,7 +1546,14 @@ async def test_device_token_rotate_rejects_role_not_approved_by_pairing(tmp_path
 
     listed = await service.call("device.pair.list", {})
     assert listed["paired"][0]["roles"] == ["operator"]
-    assert listed["paired"][0]["tokens"] == {}
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": [],
+            "createdAtMs": 2_000,
+            "lastUsedAtMs": None,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -1569,7 +1620,7 @@ async def test_device_token_rotate_rejects_scope_outside_approved_baseline(
         {
             "role": "operator",
             "scopes": ["operator.read"],
-            "createdAtMs": 3_000,
+            "createdAtMs": 2_000,
             "rotatedAtMs": 3_000,
             "lastUsedAtMs": None,
         }
@@ -1670,7 +1721,7 @@ async def test_device_token_rotate_preserves_existing_scopes_when_omitted(
         {
             "role": "operator",
             "scopes": ["operator.read", "operator.write"],
-            "createdAtMs": 3_000,
+            "createdAtMs": 2_000,
             "rotatedAtMs": 4_000,
             "lastUsedAtMs": None,
         }
@@ -1737,7 +1788,7 @@ async def test_device_token_rotate_rejects_inherited_scope_without_caller_scope(
         {
             "role": "operator",
             "scopes": ["operator.admin"],
-            "createdAtMs": 3_000,
+            "createdAtMs": 2_000,
             "rotatedAtMs": 3_000,
             "lastUsedAtMs": None,
         }
@@ -1804,7 +1855,7 @@ async def test_device_token_revoke_rejects_target_scope_without_caller_scope(
         {
             "role": "operator",
             "scopes": ["operator.admin"],
-            "createdAtMs": 3_000,
+            "createdAtMs": 2_000,
             "rotatedAtMs": 3_000,
             "lastUsedAtMs": None,
         }
@@ -1877,8 +1928,8 @@ async def test_device_pair_approve_repair_preserves_existing_token_scopes(
         {
             "role": "operator",
             "scopes": ["operator.admin"],
-            "createdAtMs": 3_000,
-            "rotatedAtMs": 3_000,
+            "createdAtMs": 2_000,
+            "rotatedAtMs": 5_000,
             "lastUsedAtMs": None,
         }
     ]
@@ -1958,7 +2009,7 @@ async def test_device_pair_approve_repair_rejects_inherited_token_scope_without_
         {
             "role": "operator",
             "scopes": ["operator.admin"],
-            "createdAtMs": 3_000,
+            "createdAtMs": 2_000,
             "rotatedAtMs": 3_000,
             "lastUsedAtMs": None,
         }
@@ -2042,7 +2093,7 @@ async def test_device_token_rotate_revoke_rejects_other_device_requester(
         {
             "role": "operator",
             "scopes": ["operator.pairing"],
-            "createdAtMs": 3_000,
+            "createdAtMs": 2_000,
             "rotatedAtMs": 3_000,
             "lastUsedAtMs": None,
         }
@@ -2096,7 +2147,7 @@ async def test_device_token_rotate_treats_admin_scope_as_operator_superset(
         {
             "role": "operator",
             "scopes": ["operator.read"],
-            "createdAtMs": 3_000,
+            "createdAtMs": 2_000,
             "rotatedAtMs": 3_000,
             "lastUsedAtMs": None,
         }
