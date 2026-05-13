@@ -12937,6 +12937,8 @@ class GatewayNodeMethodService:
                 raise ValueError("approved device payload unavailable")
             approved_device = _device_pair_paired_payload_from_node_payload(approved_node)
             device_id = _require_non_empty_string(approved_device.get("deviceId"), label="deviceId")
+            approved_tokens = await self._pairing_service.list_device_token_summaries(device_id)
+            approved_device["tokens"] = approved_tokens or {}
             await self._publish_gateway_event(
                 "device.pair.resolved",
                 {

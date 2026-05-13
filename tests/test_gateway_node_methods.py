@@ -1812,6 +1812,160 @@ async def test_device_token_revoke_rejects_target_scope_without_caller_scope(
 
 
 @pytest.mark.asyncio
+async def test_device_pair_approve_repair_preserves_existing_token_scopes(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    admin_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.admin")
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-repair-preserve",
+            "displayName": "Admin Repair Preserve",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=admin_requester,
+        now_ms=2_000,
+    )
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-admin-repair-preserve",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        requester=admin_requester,
+        now_ms=3_000,
+    )
+
+    repair = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-repair-preserve",
+            "displayName": "Admin Repair Preserve",
+            "role": "operator",
+        },
+        now_ms=4_000,
+    )
+    repair_request_id = repair["request"]["requestId"]
+
+    approved = await service.call(
+        "device.pair.approve",
+        {"requestId": repair_request_id},
+        requester=admin_requester,
+        now_ms=5_000,
+    )
+
+    assert approved["device"]["scopes"] == ["operator.admin"]
+    assert approved["device"]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.admin"],
+            "createdAtMs": 3_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+    listed = await service.call("device.pair.list", {})
+    assert listed["pending"] == []
+    assert listed["paired"][0]["scopes"] == ["operator.admin"]
+    assert listed["paired"][0]["tokens"] == approved["device"]["tokens"]
+
+
+@pytest.mark.asyncio
+async def test_device_pair_approve_repair_rejects_inherited_token_scope_without_caller_scope(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    admin_requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.admin")
+    )
+    weak_requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing",))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-repair",
+            "displayName": "Admin Repair Device",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=admin_requester,
+        now_ms=2_000,
+    )
+    await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-admin-repair",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        requester=admin_requester,
+        now_ms=3_000,
+    )
+
+    repair = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-repair",
+            "displayName": "Admin Repair Device",
+            "role": "operator",
+        },
+        now_ms=4_000,
+    )
+    repair_request_id = repair["request"]["requestId"]
+
+    with pytest.raises(ValueError, match="missing scope: operator.admin"):
+        await service.call(
+            "device.pair.approve",
+            {"requestId": repair_request_id},
+            requester=weak_requester,
+            now_ms=5_000,
+        )
+
+    listed = await service.call("device.pair.list", {})
+    assert listed["pending"][0]["requestId"] == repair_request_id
+    assert listed["paired"][0]["scopes"] == ["operator.admin"]
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.admin"],
+            "createdAtMs": 3_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_device_pair_reject_removes_pending_request_and_broadcasts(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()
