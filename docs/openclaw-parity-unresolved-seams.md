@@ -13191,3 +13191,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, and packaging/companion breadth moves to ~7.8%. Continue companion-app
   device flows, packaging/distribution, ACP lifecycle, provider action breadth,
   or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues devices list` human output
+  now renders requested versus approved access and OpenClaw-style upgrade
+  labels for pending device upgrades. Source/test checkpointed in `71dac773`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion breadth
+  moves to ~7.9%. Continue companion-app device flows, packaging/distribution,
+  ACP lifecycle, provider action breadth, or setup/onboarding gaps.

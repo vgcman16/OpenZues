@@ -24986,6 +24986,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py`, and focused `git diff --check`. Source/test
   checkpointed in `bcb27a80`.
 
+- Native `openzues devices list` human output now renders requested versus
+  approved access for pending device upgrades, including normalized operator
+  scope expansion and OpenClaw-shaped approval-kind labels such as `scope
+  upgrade`. This closes `OZ-COMP-001AP`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~7.9%.
+- Verified device CLI pending-upgrade rendering with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_list_human_output_renders_requested_and_approved_access -q`
+  (`1 failed` before implementation because `Requested`, `Approved`, and
+  `scope upgrade` were absent, then `1 passed`), adjacent device CLI proof
+  `python -m pytest tests\test_cli.py -q -k "devices_list_human_output_sanitizes_device_controlled_fields or devices_list_human_output_renders_requested_and_approved_access or devices_list or devices_approve_latest or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+  (`19 passed, 610 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `71dac773`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
