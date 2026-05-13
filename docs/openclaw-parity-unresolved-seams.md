@@ -13225,3 +13225,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   packaging/companion breadth moves to ~8.3%. Continue companion-app device
   flows, packaging/distribution, ACP lifecycle, provider action breadth, or
   setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues devices rotate` and
+  `openzues devices revoke` now reject blank device or role values with the
+  OpenClaw-shaped `--device and --role required` error before gateway dispatch.
+  Source/test checkpointed in `c52ba967`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~8.4%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.

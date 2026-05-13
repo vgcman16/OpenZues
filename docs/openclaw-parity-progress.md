@@ -25067,6 +25067,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `d20e583e`.
 
+- Native `openzues devices rotate` and `openzues devices revoke` now reject
+  blank `--device` or `--role` values with the OpenClaw-shaped
+  `--device and --role required` error before dispatching to the gateway. This
+  closes `OZ-COMP-001AU`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.4%.
+- Verified blank device-token target rejection with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_rotate_rejects_blank_device_or_role_before_dispatch -q`
+  (`1 failed` before implementation because Typer returned a generic parameter
+  error, then `1 passed`), adjacent device CLI proof `python -m pytest
+  tests\test_cli.py -q -k "devices_rotate_rejects_blank_device_or_role_before_dispatch or devices_approve_latest or devices_list_human_output or devices_list or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+  (`24 passed, 610 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `c52ba967`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
