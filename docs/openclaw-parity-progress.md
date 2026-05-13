@@ -24941,6 +24941,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py`, and focused
   `git diff --check`. Source/test checkpointed in `4aa51161`.
 
+- Native `openzues qr` human output now renders a real compact terminal QR
+  from the setup code instead of the prior placeholder, using the Python
+  `qrcode` runtime declared in packaging dependencies while preserving
+  setup-code-only and JSON output. This closes `OZ-COMP-001AM`; repo-wide
+  parity remains estimated at ~99.9%, and packaging/companion breadth moves
+  to ~7.6%.
+- Verified terminal QR rendering with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_human_output_renders_terminal_qr -q`
+  (`1 failed` before implementation because the placeholder was emitted, then
+  `1 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`17 passed, 609
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `f534bf71`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

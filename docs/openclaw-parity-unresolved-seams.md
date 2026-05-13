@@ -13171,3 +13171,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and packaging/companion breadth moves to ~7.5%. Continue QR terminal
   rendering, companion-app device flows, packaging/distribution, ACP
   lifecycle, or provider action breadth.
+- Current queue-head adjustment: native `openzues qr` human output now renders
+  a compact terminal QR from the setup code rather than an unavailable
+  placeholder. Source/test checkpointed in `f534bf71`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~7.6%. Continue companion-app device flows, packaging/distribution, ACP
+  lifecycle, provider action breadth, or setup/onboarding gaps.
