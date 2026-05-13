@@ -432,6 +432,7 @@ class GatewayNodePairingService:
         device_id: str,
         role: str,
         scopes: list[str] | None,
+        caller_scopes: tuple[str, ...] | None = None,
         now_ms: int,
     ) -> GatewayDeviceAuthToken | None:
         normalized_device_id = _normalize_device_id(device_id)
@@ -460,6 +461,12 @@ class GatewayNodePairingService:
             role=normalized_role,
             requested_scopes=resolved_scopes,
             allowed_scopes=list(paired.scopes),
+        ):
+            return None
+        if caller_scopes is not None and not _role_scopes_allow(
+            role=normalized_role,
+            requested_scopes=resolved_scopes,
+            allowed_scopes=list(caller_scopes),
         ):
             return None
         row = await self.database.upsert_gateway_node_device_token(

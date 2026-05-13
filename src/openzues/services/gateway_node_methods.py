@@ -12996,6 +12996,7 @@ class GatewayNodeMethodService:
                 device_id=device_id,
                 role=role,
                 scopes=scopes,
+                caller_scopes=resolved_requester.caller_scopes,
                 now_ms=_timestamp_ms(now_ms),
             )
             if rotated is None:
